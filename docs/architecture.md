@@ -223,6 +223,20 @@ Use the existing capture, frame assembly, import, and query paths. Bump the impo
 
 Keep automatic reference eligibility restricted to validated F1 25 Time Trial. A 2026 Time Trial context, Race context, or unknown context may produce diagnostic attempts but must abstain from automatic references. Synthetic TT, Race, unknown-context, reordered, malformed, unsupported-version, highest-player-index, and format-transition streams validate protocol and lifecycle behavior. Label support as specification and synthetic validated; real 2026 capture validation remains a separate evidence gate.
 
+## Decision 0017: complete 2026 Motion and Participants adapters
+
+**Status:** accepted
+
+**Date:** 2026-10-03
+
+Extend 2026 Season Pack support with Motion v1 and Participants v1 using the pinned EA structures and Season 8 v1.2 PDF. Select adapters by `(packet_format, packet_id, packet_version)`, validate the documented packet body sizes, decode all 24 records, and preserve participant driver/network/team identifiers as unsigned 16-bit values including sentinel `65535`.
+
+Normalize Motion into the existing `CarMotionData` units and `CarSample` fields. Divide 2026 signed quantized lateral, longitudinal, and vertical G-force values by `1000.0`; retain the documented XYZ directions, world vectors, and radian orientation. Preserve independent valid field groups when another group is malformed. Join Motion to player Lap Data only for the same admitted assembled session/frame and header-designated player index. Missing Motion remains null. Participants remain session-scoped snapshots in the existing SQLite table; names and IDs do not establish persistent player identity or automatic cross-session references.
+
+Bump the importer identity so captures imported before these packet families were decoded can be reprocessed. Keep trace schema v2 because the canonical trace already has Motion columns and participant snapshots already have durable storage. Reject delayed participant snapshots from an older wire format after a same-UID format transition. Reuse the existing observed-trajectory export, including its units, provenance, and discontinuity segmentation; the output remains an observed driven path, not a centreline.
+
+Synthetic packet fixtures and capture imports establish documented-layout decoding, player-23 joins, identifier preservation, storage, and export behavior. Real 2026 capture validation remains pending. Automatic references remain limited to validated F1 25 Time Trial, and geometry, coaching, and opponent-reference policies stay deferred.
+
 ## Data flow
 
 ```text
@@ -252,8 +266,8 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - Both live input and replay produce `RawDatagram` values and use `TelemetryPipeline`.
 - Known Session packet versions produce canonical `SessionContext`; unsupported variants remain raw and are reported as unavailable context. Attempts snapshot context changes with frame provenance.
 - F1 25 Lap Data v1 packets produce immutable records for all 22 cars; 2026 Season Pack Lap Data v1 produces all 24 records. The lifecycle inventory follows only the header-designated player and preserves invalid, partial, and abandoned attempts.
-- F1 25 and 2026 Season Pack Car Telemetry v1 preserve their documented wire records (22 and 24 cars respectively); F1 25 Participants v1 preserves 22 records. Assembled-frame synchronization joins supported player Car Telemetry to the player's Lap Data by session UID, frame, and player car index; missing telemetry remains explicitly unavailable in the canonical sample.
-- F1 25 Motion v1 decodes all 22 packed car records. The primary player's world position, velocity, forward/right directions, G-forces, and orientation join to Lap Data by assembled session/frame and the header-designated car index. Missing Motion stays null and is never carried forward. MotionEx remains opaque.
+- F1 25 and 2026 Season Pack Car Telemetry v1 preserve their documented wire records (22 and 24 cars respectively); Participants v1 decodes 22 F1 25 or 24 2026 records. The 2026 adapter preserves widened driver, network, and team IDs. Assembled-frame synchronization joins supported player Car Telemetry to the player's Lap Data by session UID, frame, and player car index; missing telemetry remains explicitly unavailable in the canonical sample.
+- Motion v1 decodes all 22 F1 25 or 24 2026 packed car records. The 2026 adapter converts quantized signed G-force values to g units. The primary player's world position, velocity, forward/right directions, G-forces, and orientation join to Lap Data by assembled session/frame and the header-designated car index. Missing Motion stays null and is never carried forward. MotionEx remains opaque.
 - Completed and partial attempts, context history, participant snapshots, and canonical samples are persisted to SQLite and checksummed Parquet traces. New traces use schema v2; readers preserve compatibility with schema v1 and expose its absent Motion fields as null. Imports stream bounded row groups and publish them atomically.
 - An observed-trajectory export preserves source attempt/run/checksum/context, units, frame/distance/time anchors, quality, and discontinuity segments. It is a diagnostic driven path and is never identified as a track centreline.
 - Replay timing is based only on the monotonic intervals stored in the capture; maximum-speed replay skips sleeps.
@@ -263,7 +277,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 
 ## Deferred decisions
 
-- Remaining packet-body parsers are added from EA's official structure files, with their source and revision recorded. Support is explicit per `(packet_format, packet_id, packet_version)`. Current typed body support covers F1 25 Session, Lap Data, Participants, Car Telemetry, and Motion v1 plus 2026 Session, Lap Data, and Car Telemetry v1. Session packet adapters populate canonical gameplay context independently of the wire format.
+- Remaining packet-body parsers are added from EA's official structure files, with their source and revision recorded. Support is explicit per `(packet_format, packet_id, packet_version)`. Current typed body support covers F1 25 Session, Lap Data, Participants, Car Telemetry, and Motion v1 plus 2026 Season Pack Session, Lap Data, Participants, Car Telemetry, and Motion v1. Session packet adapters populate canonical gameplay context independently of the wire format.
 - Add canonical traces for additional cars only when validated multi-car capture coverage justifies them. Slower packet families will use freshness windows rather than being required in every frame.
 - Distance comparison, run-scoped Time Trial reference selection, and the read-only local historical explorer are implemented for diagnostics. Validated circuit geometry, race reference policy, and actionable coaching remain deferred until their supporting evidence and interfaces are ready.
 - The local dashboard starts and stops mode-independent UDP capture and imports finalized `.f1ecap` files through durable jobs. Race reference policy, live analysis/coaching, and opponent coverage remain deferred.

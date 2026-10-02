@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import math
+import sqlite3
 import struct
 import time
 from dataclasses import replace
@@ -8,16 +10,23 @@ from dataclasses import replace
 import pytest
 
 from f1_engineer.pipeline import TelemetryPipeline
+from f1_engineer.analysis.trajectory import build_observed_trajectory
 from f1_engineer.recording.capture import CaptureWriter
 from f1_engineer.recording.service import _AcquisitionObserver
 from f1_engineer.sessions.context import GameMode, RuleSet, SessionType
 from f1_engineer.sessions.lap_tracker import LapDisposition
 from f1_engineer.storage.importer import import_capture, list_laps, list_sessions
-from f1_engineer.storage.query import load_attempt_trace, load_reference_inventory
+from f1_engineer.storage.query import (
+    TRAJECTORY_TRACE_COLUMNS,
+    load_attempt_trace,
+    load_reference_inventory,
+)
 from f1_engineer.udp.car_telemetry import CarTelemetryDecoder
 from f1_engineer.udp.decoder import PacketDecoder
 from f1_engineer.udp.lap_data import LapDataDecoder
+from f1_engineer.udp.motion import MotionDecoder
 from f1_engineer.udp.models import RawDatagram
+from f1_engineer.udp.participants import ParticipantsDecoder
 from f1_engineer.udp.session_context import SessionContextDecoder
 from tests.helpers import make_datagram
 
@@ -25,6 +34,9 @@ from tests.helpers import make_datagram
 _SESSION_BODY_SIZE = 897
 _LAP_RECORD = struct.Struct("<IIHBHBHBHBfff15BHHBfB")
 _TELEMETRY_RECORD = struct.Struct("<HfffBbHBBH4H4B4BB4f4B")
+_MOTION_RECORD = struct.Struct("<6f9h3f")
+_PARTICIPANT_RECORD = struct.Struct("<BHHHBBB32sBBHBB12B")
+_F1_25_PARTICIPANT_RECORD = struct.Struct("<7B32s2BH14B")
 _SESSION_UID = 26_001
 
 
@@ -187,6 +199,89 @@ def _telemetry_body() -> bytes:
     ) + bytes((2, 255, 6))
 
 
+def _motion_body(*, invalid_player_groups: bool = False) -> bytes:
+    records = []
+    for car_index in range(24):
+        position = (float(100 + car_index), 20.0, 30.0)
+        velocity = (1.0, 2.0, 3.0)
+        forward = (32767, 0, 0)
+        yaw = 0.4
+        if invalid_player_groups and car_index == 23:
+            position = (math.nan, 20.0, 30.0)
+            velocity = (1.0, math.inf, 3.0)
+            forward = (0, 0, 0)
+            yaw = math.inf
+        records.append(
+            _MOTION_RECORD.pack(
+                *position,
+                *velocity,
+                *forward,
+                0,
+                32767,
+                0,
+                1250,
+                -750,
+                1000,
+                yaw,
+                0.5,
+                0.6,
+            )
+        )
+    return b"".join(records)
+
+
+def _participants_body(
+    *, active_count: int = 24, driver_id: int = 513, team_id: int = 65535
+) -> bytes:
+    name = "Écurie 🚗".encode("utf-8")
+    records = []
+    for car_index in range(24):
+        records.append(
+            _PARTICIPANT_RECORD.pack(
+                0,
+                driver_id if car_index == 23 else car_index,
+                1025 if car_index == 23 else 0,
+                team_id if car_index == 23 else 3,
+                1,
+                44,
+                8,
+                name.ljust(32, b"\0") if car_index == 23 else bytes(32),
+                1,
+                1,
+                1024,
+                0,
+                4,
+                *range(12),
+            )
+        )
+    return bytes((active_count,)) + b"".join(records)
+
+
+def _f1_25_participants_body(name: str) -> bytes:
+    encoded_name = name.encode("utf-8")
+    records = []
+    for car_index in range(22):
+        records.append(
+            _F1_25_PARTICIPANT_RECORD.pack(
+                0,
+                7,
+                0,
+                3,
+                1,
+                44,
+                8,
+                encoded_name.ljust(32, b"\0") if car_index == 0 else bytes(32),
+                1,
+                1,
+                99,
+                0,
+                3,
+                *([0] * 12),
+            )
+        )
+    return bytes((22,)) + b"".join(records)
+
+
 def _packet(
     packet_id: int,
     body: bytes,
@@ -326,6 +421,102 @@ def test_2026_car_telemetry_v1_rejects_wrong_size_and_unknown_version() -> None:
     assert "unsupported car telemetry packet adapter" in unsupported.error
 
 
+def test_2026_motion_v1_decodes_24_cars_and_quantized_g_force() -> None:
+    assert _MOTION_RECORD.size == 54
+    body = _motion_body()
+    assert len(body) == 1_296
+    result = MotionDecoder().decode(PacketDecoder().decode(_packet(0, body)))
+
+    assert result.error is None
+    assert result.motion is not None
+    assert len(result.motion.cars) == 24
+    player = result.motion.cars[23]
+    assert player.world_position_m == (123.0, 20.0, 30.0)
+    assert player.world_velocity_mps == (1.0, 2.0, 3.0)
+    assert player.world_forward == (1.0, 0.0, 0.0)
+    assert player.world_right == (0.0, 1.0, 0.0)
+    assert player.g_force == pytest.approx((1.25, -0.75, 1.0))
+    assert (player.yaw_rad, player.pitch_rad, player.roll_rad) == pytest.approx(
+        (0.4, 0.5, 0.6)
+    )
+    assert player.validation_flags == ()
+
+
+def test_2026_motion_v1_preserves_valid_groups_when_other_groups_are_invalid() -> None:
+    result = MotionDecoder().decode(
+        PacketDecoder().decode(_packet(0, _motion_body(invalid_player_groups=True)))
+    )
+
+    assert result.motion is not None
+    player = result.motion.cars[23]
+    assert player.world_position_m is None
+    assert player.world_velocity_mps is None
+    assert player.world_forward is None
+    assert player.world_right == (0.0, 1.0, 0.0)
+    assert player.g_force == pytest.approx((1.25, -0.75, 1.0))
+    assert player.yaw_rad is None
+    assert player.pitch_rad == pytest.approx(0.5)
+    assert player.roll_rad == pytest.approx(0.6)
+    assert set(player.validation_flags) == {
+        "invalid_motion_world_position",
+        "invalid_motion_world_velocity",
+        "invalid_motion_world_forward",
+        "invalid_motion_yaw",
+    }
+
+
+def test_2026_motion_v1_rejects_wrong_size_and_unknown_version() -> None:
+    decoder = MotionDecoder()
+    packet_decoder = PacketDecoder()
+    body = _motion_body()
+
+    malformed = decoder.decode(packet_decoder.decode(_packet(0, body[:-1])))
+    unsupported = decoder.decode(
+        packet_decoder.decode(_packet(0, body, packet_version=2))
+    )
+
+    assert malformed.motion is None
+    assert "1296 bytes" in malformed.error
+    assert unsupported.motion is None
+    assert "unsupported motion packet adapter" in unsupported.error
+
+
+def test_2026_participants_v1_preserves_wide_ids_sentinels_and_utf8_names() -> None:
+    assert _PARTICIPANT_RECORD.size == 60
+    body = _participants_body()
+    assert len(body) == 1_441
+    result = ParticipantsDecoder().decode(PacketDecoder().decode(_packet(4, body)))
+
+    assert result.error is None
+    assert result.participants is not None
+    assert result.participants.active_car_count == 24
+    assert len(result.participants.cars) == 24
+    player = result.participants.cars[23]
+    assert player.driver_id == 513
+    assert player.network_id == 1025
+    assert player.team_id == 65535
+    assert player.name == "Écurie 🚗"
+    assert player.tech_level == 1024
+    assert player.colours_rgb == ((0, 1, 2), (3, 4, 5), (6, 7, 8), (9, 10, 11))
+
+
+@pytest.mark.parametrize("body", (_participants_body()[:-1], _participants_body(active_count=25)))
+def test_2026_participants_v1_rejects_bad_size_and_active_count(body: bytes) -> None:
+    result = ParticipantsDecoder().decode(PacketDecoder().decode(_packet(4, body)))
+
+    assert result.participants is None
+    assert result.error is not None
+
+
+def test_2026_participants_v1_rejects_unknown_version() -> None:
+    result = ParticipantsDecoder().decode(
+        PacketDecoder().decode(_packet(4, _participants_body(), packet_version=2))
+    )
+
+    assert result.participants is None
+    assert "unsupported participants packet adapter" in result.error
+
+
 @pytest.mark.parametrize(
     ("session_fields", "expected_reason"),
     (
@@ -444,6 +635,187 @@ def test_2026_packet_16_does_not_poison_live_packet_6_snapshot() -> None:
     assert live["throttle"] == 0.75
 
 
+def test_2026_pipeline_joins_motion_by_frame_and_player_without_carry_forward() -> None:
+    pipeline = TelemetryPipeline(reorder_window_frames=1)
+    outputs = []
+    datagrams = (
+        _packet(1, _session_body(), frame=1, sequence=1),
+        _packet(0, _motion_body(), frame=10, sequence=2),
+        _packet(
+            2,
+            _lap_body(distance_m=-1.0, driver_status=0),
+            frame=10,
+            sequence=3,
+        ),
+        _packet(0, _motion_body(), frame=11, sequence=4),
+        _packet(2, _lap_body(distance_m=100.0), frame=11, sequence=5),
+        _packet(
+            2,
+            _lap_body(lap_number=2, distance_m=1.0, current_time_ms=100),
+            frame=12,
+            sequence=6,
+        ),
+        _packet(255, b"advance", frame=14, sequence=7),
+    )
+    for datagram in datagrams:
+        outputs.extend(pipeline.process(datagram).car_samples)
+    outputs.extend(pipeline.finish_with_outputs().car_samples)
+
+    by_frame = {sample.frame_identifier: sample for sample in outputs}
+    assert by_frame[11].car_index == 23
+    assert by_frame[11].motion_available is True
+    assert by_frame[11].world_position_x_m == 123.0
+    assert by_frame[11].g_force_lateral == pytest.approx(1.25)
+    assert by_frame[12].motion_available is False
+    assert by_frame[12].world_position_x_m is None
+    assert pipeline.player_motion_samples == 2
+    assert pipeline.missing_player_motion_samples == 1
+
+
+def test_2026_import_persists_motion_and_wide_participant_snapshot(tmp_path) -> None:
+    capture_path = tmp_path / "season-pack-2026-with-motion.f1ecap"
+    database_path = tmp_path / "state" / "f1.sqlite3"
+    datagrams = (
+        _packet(1, _session_body(), frame=1, sequence=1),
+        _packet(4, _participants_body(), frame=1, sequence=2),
+        _packet(
+            2,
+            _lap_body(distance_m=-1.0, driver_status=0),
+            frame=10,
+            sequence=3,
+        ),
+        _packet(0, _motion_body(), frame=10, sequence=4),
+        _packet(2, _lap_body(distance_m=100.0), frame=11, sequence=5),
+        _packet(0, _motion_body(), frame=11, sequence=6),
+        _packet(6, _telemetry_body(), frame=11, sequence=7),
+        _packet(
+            2,
+            _lap_body(
+                lap_number=2,
+                distance_m=1.0,
+                current_time_ms=100,
+                last_lap_time_ms=80_000,
+            ),
+            frame=12,
+            sequence=8,
+        ),
+        _packet(0, _motion_body(), frame=12, sequence=9),
+        _packet(6, _telemetry_body(), frame=12, sequence=10),
+    )
+    with CaptureWriter(capture_path, {"fixture": "season-pack-2026-motion"}) as writer:
+        for datagram in datagrams:
+            writer.write(datagram)
+
+    imported = import_capture(capture_path, database_path)
+
+    assert imported.status == "complete"
+    assert imported.motion_packets == 3
+    assert imported.participant_packets == 1
+    assert imported.player_motion_samples == 2
+    assert imported.missing_player_motion_samples == 0
+    sessions = list_sessions(database_path)
+    assert sessions[0]["pipeline_version"] == "player-traces-v10-2026-motion-participants"
+    attempts = list_laps(database_path)
+    complete = next(attempt for attempt in attempts if attempt["disposition"] == "completed")
+    stored = load_attempt_trace(
+        database_path,
+        complete["attempt_key"],
+        columns=TRAJECTORY_TRACE_COLUMNS,
+    )
+    assert stored is not None
+    assert stored.samples
+    assert stored.samples[0]["motion_available"] is True
+    assert stored.samples[0]["world_position_x_m"] == 123.0
+    assert stored.samples[0]["g_force_lateral"] == pytest.approx(1.25)
+    trajectory = build_observed_trajectory(
+        attempt_key=stored.attempt_key,
+        run_id=stored.run_id,
+        session_uid=stored.session_uid,
+        car_index=stored.car_index,
+        disposition=stored.disposition,
+        lap_time_ms=stored.lap_time_ms,
+        game_valid=stored.game_valid,
+        reference_eligible=stored.reference_eligible,
+        exclusion_reasons=stored.exclusion_reasons,
+        trace_sha256=stored.trace_sha256,
+        trace_schema_version=stored.trace_schema_version,
+        context_segments=stored.context_segments,
+        samples=stored.samples,
+    )
+    assert trajectory["is_centreline"] is False
+    assert trajectory["units"]["g_force"] == "g"
+    assert trajectory["source"]["trace_sha256"] == stored.trace_sha256
+    assert trajectory["coverage"]["position_sample_count"] == len(stored.samples)
+    assert trajectory["segments"][0]["points"][0]["g_force_g"]["lateral"] == pytest.approx(1.25)
+
+    with sqlite3.connect(database_path) as connection:
+        snapshot_json = connection.execute(
+            "SELECT participant_json FROM driver_snapshots WHERE car_index=23"
+        ).fetchone()[0]
+    participant = json.loads(snapshot_json)
+    assert participant["driver_id"] == 513
+    assert participant["network_id"] == 1025
+    assert participant["team_id"] == 65535
+    assert participant["name"] == "Écurie 🚗"
+
+    repeated = import_capture(capture_path, database_path)
+    assert repeated.run_id == imported.run_id
+    assert repeated.already_imported is True
+
+
+def test_import_ignores_delayed_participant_packet_from_prior_wire_format(tmp_path) -> None:
+    capture_path = tmp_path / "format-transition.f1ecap"
+    database_path = tmp_path / "state" / "f1.sqlite3"
+    datagrams = (
+        make_datagram(
+            packet_format=2025,
+            packet_id=255,
+            session_uid=_SESSION_UID,
+            frame=1,
+            sequence=1,
+            body=b"start old format",
+        ),
+        make_datagram(
+            packet_format=2025,
+            packet_id=4,
+            session_uid=_SESSION_UID,
+            frame=2,
+            sequence=2,
+            body=_f1_25_participants_body("Old Format"),
+        ),
+        _packet(255, b"switch to 2026", frame=3, sequence=3),
+        make_datagram(
+            packet_format=2025,
+            packet_id=4,
+            session_uid=_SESSION_UID,
+            frame=2,
+            sequence=4,
+            body=_f1_25_participants_body("Delayed Old Format"),
+        ),
+        _packet(4, _participants_body(), frame=5, sequence=5),
+    )
+    with CaptureWriter(capture_path, {"fixture": "format-transition"}) as writer:
+        for datagram in datagrams:
+            writer.write(datagram)
+
+    imported = import_capture(capture_path, database_path)
+
+    assert imported.status == "complete"
+    assert list_sessions(database_path)[0]["packet_format"] == 2026
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(
+            "SELECT car_index, effective_frame, participant_json "
+            "FROM driver_snapshots ORDER BY effective_frame, car_index"
+        ).fetchall()
+
+    assert len(rows) == 46
+    assert {row[1] for row in rows} == {2, 5}
+    old_player = json.loads(next(row[2] for row in rows if row[0] == 0 and row[1] == 2))
+    new_player = json.loads(next(row[2] for row in rows if row[0] == 23 and row[1] == 5))
+    assert old_player["name"] == "Old Format"
+    assert new_player["name"] == "Écurie 🚗"
+
+
 def test_2026_capture_import_query_and_reimport_are_stable(tmp_path) -> None:
     capture_path = tmp_path / "season-pack-2026.f1ecap"
     database_path = tmp_path / "state" / "f1.sqlite3"
@@ -484,7 +856,7 @@ def test_2026_capture_import_query_and_reimport_are_stable(tmp_path) -> None:
     session = list_sessions(database_path)[0]
     assert session["packet_format"] == 2026
     assert session["context"]["track_name"] == "Madrid"
-    assert session["pipeline_version"] == "player-traces-v9-2026-player-trace"
+    assert session["pipeline_version"] == "player-traces-v10-2026-motion-participants"
     attempts = list_laps(database_path)
     complete = next(
         attempt for attempt in attempts if attempt["disposition"] == "completed"

@@ -8,9 +8,15 @@ from .models import DecodedPacket, PacketFormat, PacketId
 
 
 CAR_COUNT = 22
+SEASON_PACK_2026_CAR_COUNT = 24
 _PARTICIPANT_V1_RECORD_SIZE = 57
 _F1_25_PARTICIPANTS_V1_BODY_SIZE = 1 + CAR_COUNT * _PARTICIPANT_V1_RECORD_SIZE
 _PARTICIPANT_PREFIX = struct.Struct("<7B32s2BH14B")
+_SEASON_PACK_2026_PARTICIPANT_V1_RECORD_SIZE = 60
+_SEASON_PACK_2026_PARTICIPANTS_V1_BODY_SIZE = (
+    1 + SEASON_PACK_2026_CAR_COUNT * _SEASON_PACK_2026_PARTICIPANT_V1_RECORD_SIZE
+)
+_SEASON_PACK_2026_PARTICIPANT_PREFIX = struct.Struct("<BHHHBBB32sBBHBB12B")
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +56,9 @@ class ParticipantsDecoder:
     def __init__(self) -> None:
         self._parsers: dict[tuple[PacketFormat, PacketId, int], ParticipantsParser] = {
             (PacketFormat.F1_25, PacketId.PARTICIPANTS, 1): _decode_f1_25_v1,
+            (PacketFormat.SEASON_PACK_2026, PacketId.PARTICIPANTS, 1): (
+                _decode_season_pack_2026_v1
+            ),
         }
 
     def decode(self, packet: DecodedPacket) -> ParticipantsDecodeResult:
@@ -73,23 +82,51 @@ class ParticipantsDecoder:
 
 
 def _decode_f1_25_v1(packet: DecodedPacket) -> ParticipantsPacket:
+    return _decode_records(
+        packet,
+        record=_PARTICIPANT_PREFIX,
+        record_size=_PARTICIPANT_V1_RECORD_SIZE,
+        body_size=_F1_25_PARTICIPANTS_V1_BODY_SIZE,
+        car_count=CAR_COUNT,
+        format_name="F1 25",
+    )
+
+
+def _decode_season_pack_2026_v1(packet: DecodedPacket) -> ParticipantsPacket:
+    return _decode_records(
+        packet,
+        record=_SEASON_PACK_2026_PARTICIPANT_PREFIX,
+        record_size=_SEASON_PACK_2026_PARTICIPANT_V1_RECORD_SIZE,
+        body_size=_SEASON_PACK_2026_PARTICIPANTS_V1_BODY_SIZE,
+        car_count=SEASON_PACK_2026_CAR_COUNT,
+        format_name="2026 Season Pack",
+    )
+
+
+def _decode_records(
+    packet: DecodedPacket,
+    *,
+    record: struct.Struct,
+    record_size: int,
+    body_size: int,
+    car_count: int,
+    format_name: str,
+) -> ParticipantsPacket:
     body = packet.body
-    if len(body) != _F1_25_PARTICIPANTS_V1_BODY_SIZE:
+    if len(body) != body_size:
         raise ValueError(
-            "F1 25 Participants v1 body must be "
-            f"{_F1_25_PARTICIPANTS_V1_BODY_SIZE} bytes, got {len(body)}"
+            f"{format_name} Participants v1 body must be {body_size} bytes, "
+            f"got {len(body)}"
         )
     active_count = body[0]
-    if active_count > CAR_COUNT:
+    if active_count > car_count:
         raise ValueError(f"invalid active car count {active_count}")
     cars = tuple(
         _decode_participant(
-            _PARTICIPANT_PREFIX.unpack_from(
-                body, 1 + index * _PARTICIPANT_V1_RECORD_SIZE
-            ),
+            record.unpack_from(body, 1 + index * record_size),
             index,
         )
-        for index in range(CAR_COUNT)
+        for index in range(car_count)
     )
     return ParticipantsPacket(active_count, cars)
 

@@ -16,7 +16,7 @@ from .lock import ImportRunLock
 from .parquet import ParquetTraceWriter, TRACE_SCHEMA_VERSION, sha256_file
 
 
-PIPELINE_VERSION = "player-traces-v9-2026-player-trace"
+PIPELINE_VERSION = "player-traces-v10-2026-motion-participants"
 DEFAULT_DATABASE = Path("data") / "f1-engineer.sqlite3"
 IMPORT_CONFIG = {"max_open_frames": 256, "reorder_window_frames": 3}
 
@@ -376,6 +376,8 @@ def import_capture(
                         uid != 0
                         and uid == pipeline.sessions.current_session_uid
                         and not pipeline.sessions.is_retired(uid)
+                        and result.packet.packet_format
+                        is pipeline.sessions.current_packet_format
                         and result.participants is not None
                     ):
                         for car_index, participant in enumerate(result.participants.cars):

@@ -11,7 +11,7 @@ The EA post was checked on 2026-10-03 and labels its documentation revision **Ve
 
 The selected PDF is EA's current Season 8 document v1.2; it adds F2 driver IDs. The Session, Lap Data, and Car Telemetry sizes and consumed field widths described below match the structures attachment and the earlier v1.1 PDF. The complete attachments are not vendored. Keep exact supported adapters versioned by `(packet_format, packet_id, packet_version)` and derive layouts only from these EA sources.
 
-The envelope decoder recognizes `packetFormat` 2025 and 2026. The shared header fields are decoded little-endian. Packet 15 (`LapPositions`) is present in both formats; packet 16 (`CarTelemetry2`) is specific to 2026. Unknown packet IDs and unsupported packet bodies remain raw and uninterpreted. Typed body support is F1 25 (`packetFormat=2025`) Session (1), Lap Data (2), Participants (4), Car Telemetry (6), and Motion (0), plus 2026 Season Pack (`packetFormat=2026`) Session (1), Lap Data (2), and Car Telemetry (6); each supported packet version is v1.
+The envelope decoder recognizes `packetFormat` 2025 and 2026. The shared header fields are decoded little-endian. Packet 15 (`LapPositions`) is present in both formats; packet 16 (`CarTelemetry2`) is specific to 2026. Unknown packet IDs and unsupported packet bodies remain raw and uninterpreted. Typed body support is F1 25 (`packetFormat=2025`) Session (1), Lap Data (2), Participants (4), Car Telemetry (6), and Motion (0), plus 2026 Season Pack (`packetFormat=2026`) Session (1), Lap Data (2), Participants (4), Car Telemetry (6), and Motion (0); each supported packet version is v1.
 
 ## F1 25 Session packet v1
 
@@ -40,7 +40,19 @@ EA documents a 1,399-byte packet including the common header. Its 1,370-byte bod
 
 EA documents a 1,448-byte packet including the header. Its 1,419-byte body contains 24 packed 59-byte car records and a 3-byte trailer. Compared with F1 25, engine temperature is a `uint8` rather than `uint16`; the adapter uses its own layout so later pressure and surface fields remain correctly aligned. Packet 6's DRS field retains its DRS meaning. Active Aero, Overtake Mode, and wrong-way state are in separate packet 16, which remains opaque and is not mapped onto DRS.
 
-These 2026 adapters are specification-derived and synthetic-fixture validated. No real 2026 capture has validated their end-to-end behavior. Session contexts and attempts are retained for Time Trial, Race, and unknown modes, but automatic reference eligibility remains restricted to validated F1 25 Time Trial. Participants, Motion, Car Telemetry 2, and all other 2026 bodies remain opaque; missing channels remain unavailable.
+## 2026 Season Pack Motion packet v1
+
+EA documents a 1,325-byte packet including the common header. Its 1,296-byte body contains 24 packed 54-byte `CarMotionData` records. The record has six float32 values for world position and velocity, six signed int16 values for forward/right directions, three signed int16 G-force components, and three float32 angles. Direction components are divided by `32767.0`; quantized lateral, longitudinal, and vertical G-force values are divided by `1000.0` and retained in g units. Angles remain radians.
+
+The decoder validates the full body size and independently retains valid vector and orientation groups when another group is non-finite or invalid. It decodes all 24 records and joins only the header-designated player record to Lap Data in the same assembled session/frame. Missing Motion is null and is never carried between frames. The existing schema-v2 trace and observed-trajectory export already carry these fields and units.
+
+## 2026 Season Pack Participants packet v1
+
+EA documents a 1,470-byte packet including the header. Its 1,441-byte body contains a one-byte active-car count and 24 packed 60-byte participant records. Driver, network, and team IDs are unsigned 16-bit values; the adapter preserves values above 255 and sentinel `65535` without truncation. Names are decoded as UTF-8, and participant metadata remains indexed by vehicle index and stored as session-scoped snapshots.
+
+## 2026 compatibility and validation status
+
+The 2026 Session, Lap Data, Car Telemetry, Motion, and Participants adapters are specification-derived and synthetic-fixture validated. Synthetic capture import, query, trace, and trajectory export cover Motion and participant evidence. No real 2026 capture has validated their end-to-end behavior. Session contexts and attempts are retained for Time Trial, Race, and unknown modes, but automatic reference eligibility remains restricted to validated F1 25 Time Trial. Car Telemetry 2 and all other 2026 packet bodies remain opaque; missing channels remain unavailable.
 
 ## F1 25 Motion packet v1
 

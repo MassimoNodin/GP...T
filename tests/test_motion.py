@@ -55,7 +55,7 @@ def test_motion_decoder_reads_packed_v1_vectors_and_signed_directions() -> None:
     assert player.validation_flags == ()
 
 
-@pytest.mark.parametrize("packet_version,packet_format", [(1, 2026), (2, 2025)])
+@pytest.mark.parametrize("packet_version,packet_format", [(2, 2026), (2, 2025)])
 def test_motion_decoder_rejects_unsupported_format_or_version(
     packet_version: int, packet_format: int
 ) -> None:
