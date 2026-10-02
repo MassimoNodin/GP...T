@@ -8,7 +8,8 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-TRACE_SCHEMA_VERSION = 1
+TRACE_SCHEMA_VERSION = 2
+SUPPORTED_TRACE_SCHEMA_VERSIONS = (1, TRACE_SCHEMA_VERSION)
 ROW_GROUP_SIZE = 4096
 
 
@@ -17,8 +18,7 @@ def _field(name: str, data_type: pa.DataType, *, unit: str | None = None) -> pa.
     return pa.field(name, data_type, nullable=True, metadata=metadata)
 
 
-TRACE_SCHEMA = pa.schema(
-    [
+_TRACE_V1_FIELDS = [
         _field("session_uid", pa.string()),
         _field("frame_identifier", pa.uint32()),
         _field("session_time_s", pa.float64(), unit="s"),
@@ -40,6 +40,34 @@ TRACE_SCHEMA = pa.schema(
         _field("rev_lights_bit_value", pa.uint16()),
         _field("car_telemetry_available", pa.bool_()),
         _field("validation_flags", pa.list_(pa.string())),
+    ]
+
+TRACE_SCHEMA_V1 = pa.schema(
+    _TRACE_V1_FIELDS,
+    metadata={b"trace_schema_version": b"1"},
+)
+TRACE_SCHEMA = pa.schema(
+    [
+        *_TRACE_V1_FIELDS,
+        _field("motion_available", pa.bool_()),
+        _field("world_position_x_m", pa.float32(), unit="m"),
+        _field("world_position_y_m", pa.float32(), unit="m"),
+        _field("world_position_z_m", pa.float32(), unit="m"),
+        _field("world_velocity_x_mps", pa.float32(), unit="m/s"),
+        _field("world_velocity_y_mps", pa.float32(), unit="m/s"),
+        _field("world_velocity_z_mps", pa.float32(), unit="m/s"),
+        _field("world_forward_x", pa.float32()),
+        _field("world_forward_y", pa.float32()),
+        _field("world_forward_z", pa.float32()),
+        _field("world_right_x", pa.float32()),
+        _field("world_right_y", pa.float32()),
+        _field("world_right_z", pa.float32()),
+        _field("g_force_lateral", pa.float32(), unit="g"),
+        _field("g_force_longitudinal", pa.float32(), unit="g"),
+        _field("g_force_vertical", pa.float32(), unit="g"),
+        _field("yaw_rad", pa.float32(), unit="rad"),
+        _field("pitch_rad", pa.float32(), unit="rad"),
+        _field("roll_rad", pa.float32(), unit="rad"),
     ],
     metadata={b"trace_schema_version": str(TRACE_SCHEMA_VERSION).encode("ascii")},
 )
@@ -64,6 +92,8 @@ class ParquetTraceWriter:
         self._buffer: list[dict[str, Any]] = []
         self._sample_count = 0
         self._missing_telemetry_count = 0
+        self._missing_motion_count = 0
+        self._valid_position_count = 0
         self._largest_frame_gap = 0
         self._distance_discontinuities = 0
         self._previous_frame: int | None = None
@@ -91,6 +121,12 @@ class ParquetTraceWriter:
         self._previous_distance = float(distance) if distance is not None else None
         if not item["car_telemetry_available"]:
             self._missing_telemetry_count += 1
+        if not item.get("motion_available", False):
+            self._missing_motion_count += 1
+        if all(item.get(field) is not None for field in (
+            "world_position_x_m", "world_position_y_m", "world_position_z_m"
+        )):
+            self._valid_position_count += 1
         self._sample_count += 1
         self._buffer.append(item)
         if len(self._buffer) >= ROW_GROUP_SIZE:
@@ -116,6 +152,8 @@ class ParquetTraceWriter:
             quality = {
                 "sample_count": self._sample_count,
                 "missing_car_telemetry_count": self._missing_telemetry_count,
+                "missing_motion_count": self._missing_motion_count,
+                "valid_motion_position_count": self._valid_position_count,
                 "largest_frame_gap": self._largest_frame_gap,
                 "distance_discontinuities": self._distance_discontinuities,
             }
@@ -147,8 +185,35 @@ _sha256 = sha256_file
 
 
 def read_trace(
-    path: str | Path | bytes, *, columns: list[str] | None = None
+    path: str | Path | bytes,
+    *,
+    columns: list[str] | None = None,
+    expected_schema_version: int | None = None,
 ) -> tuple[pq.FileMetaData, pa.Table]:
     source = pa.BufferReader(path) if isinstance(path, bytes) else path
     parquet = pq.ParquetFile(source)
-    return parquet.metadata, parquet.read(columns=columns)
+    metadata = parquet.metadata
+    raw_version = (metadata.metadata or {}).get(b"trace_schema_version")
+    try:
+        schema_version = int(raw_version) if raw_version is not None else 1
+    except ValueError as exc:
+        raise ValueError("trace has an invalid schema version") from exc
+    if schema_version not in SUPPORTED_TRACE_SCHEMA_VERSIONS:
+        raise ValueError(f"unsupported trace schema version {schema_version}")
+    if expected_schema_version is not None and schema_version != expected_schema_version:
+        raise ValueError("trace schema version does not match SQLite")
+    if columns is None:
+        return metadata, parquet.read()
+
+    unknown = set(columns) - set(TRACE_SCHEMA.names)
+    if unknown:
+        raise ValueError(f"unknown trace columns: {', '.join(sorted(unknown))}")
+    available = set(parquet.schema_arrow.names)
+    selected = [column for column in columns if column in available]
+    table = parquet.read(columns=selected)
+    for column in columns:
+        if column in available:
+            continue
+        field = TRACE_SCHEMA.field(column)
+        table = table.append_column(field, pa.nulls(table.num_rows, type=field.type))
+    return metadata, table.select(columns)

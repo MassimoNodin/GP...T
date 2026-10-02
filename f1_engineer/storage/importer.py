@@ -16,7 +16,7 @@ from .lock import ImportRunLock
 from .parquet import ParquetTraceWriter, TRACE_SCHEMA_VERSION, sha256_file
 
 
-PIPELINE_VERSION = "player-traces-v6"
+PIPELINE_VERSION = "player-traces-v7-motion"
 DEFAULT_DATABASE = Path("data") / "f1-engineer.sqlite3"
 IMPORT_CONFIG = {"max_open_frames": 256, "reorder_window_frames": 3}
 
@@ -39,6 +39,10 @@ class ImportSummary:
     lap_data_errors: int = 0
     car_telemetry_errors: int = 0
     participant_errors: int = 0
+    motion_packets: int = 0
+    motion_decode_errors: int = 0
+    player_motion_samples: int = 0
+    missing_player_motion_samples: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -290,6 +294,7 @@ def import_capture(capture_path: str | Path, database_path: str | Path = DEFAULT
             lap_data_error_count = 0
             car_telemetry_error_count = 0
             participant_error_count = 0
+            motion_error_count = 0
             capture_metadata: dict[str, object]
             capture_completion: dict[str, object] | None = None
             capture_complete = False
@@ -308,10 +313,12 @@ def import_capture(capture_path: str | Path, database_path: str | Path = DEFAULT
                     lap_data_error_count += len(result.lap_data_errors)
                     car_telemetry_error_count += len(result.car_telemetry_errors)
                     participant_error_count += int(result.participants_error is not None)
+                    motion_error_count += len(pipeline.motion_decode_errors)
                     pipeline.laps.drain_attempts()
                     pipeline.lap_data_decode_errors.clear()
                     pipeline.car_telemetry_decode_errors.clear()
                     pipeline.participants_decode_errors.clear()
+                    pipeline.motion_decode_errors.clear()
                     uid = result.packet.header.session_uid
                     if (
                         uid != 0
@@ -368,6 +375,8 @@ def import_capture(capture_path: str | Path, database_path: str | Path = DEFAULT
                 pipeline.laps.drain_attempts()
                 lap_data_error_count += len(flushed.lap_data_errors)
                 car_telemetry_error_count += len(flushed.car_telemetry_errors)
+                motion_error_count += len(pipeline.motion_decode_errors)
+                pipeline.motion_decode_errors.clear()
                 trace_manager.finish_all(tuple(attempts))
                 capture_complete = capture.complete
                 capture_completion = capture.completion
@@ -399,6 +408,10 @@ def import_capture(capture_path: str | Path, database_path: str | Path = DEFAULT
                 "missing_car_telemetry_frames": [list(frame) for frame in missing_capture_frames],
                 "canonical_lap_sample_count": sample_count,
                 "missing_car_telemetry_lap_sample_count": missing_samples,
+                "motion_packets_decoded": pipeline.motion_packets_decoded,
+                "motion_decode_errors": motion_error_count,
+                "player_motion_sample_count": pipeline.player_motion_samples,
+                "missing_player_motion_sample_count": pipeline.missing_player_motion_samples,
             }
 
             import_summary = ImportSummary(
@@ -418,6 +431,10 @@ def import_capture(capture_path: str | Path, database_path: str | Path = DEFAULT
                 lap_data_errors=lap_data_error_count,
                 car_telemetry_errors=car_telemetry_error_count,
                 participant_errors=participant_error_count,
+                motion_packets=pipeline.motion_packets_decoded,
+                motion_decode_errors=motion_error_count,
+                player_motion_samples=pipeline.player_motion_samples,
+                missing_player_motion_samples=pipeline.missing_player_motion_samples,
             )
             metrics_json = _json(
                 {"capture_quality": capture_quality, "summary": import_summary.to_dict()}
@@ -646,7 +663,9 @@ def get_lap(database_path: str | Path, attempt_key: str) -> dict[str, object] | 
             raise ValueError("stored trace path escapes the database directory")
         if not path.is_file() or sha256_file(path) != row["sha256"]:
             raise ValueError("trace file is missing or its checksum does not match SQLite")
-        metadata, table = read_trace(path)
+        metadata, table = read_trace(
+            path, expected_schema_version=row["schema_version"]
+        )
         return {
             "attempt": json.loads(row["attempt_json"]),
             "attempt_key": row["attempt_key"],

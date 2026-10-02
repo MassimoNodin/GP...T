@@ -18,6 +18,8 @@ def make_datagram(
     session_time: float = 1.25,
     body: bytes = b"body",
     sequence: int = 0,
+    player_car_index: int = 0,
+    secondary_player_car_index: int = 255,
 ) -> RawDatagram:
     header = HEADER.pack(
         packet_format,
@@ -30,8 +32,8 @@ def make_datagram(
         session_time,
         frame,
         frame,
-        0,
-        255,
+        player_car_index,
+        secondary_player_car_index,
     )
     return RawDatagram(
         sequence=sequence,

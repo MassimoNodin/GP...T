@@ -18,6 +18,7 @@ from .recording.capture import CaptureReader, CaptureWriter
 from .sessions.context import SessionContext
 from .analysis.resampling import ResamplingConfig
 from .analysis.service import compare_attempts
+from .analysis.trajectory import build_observed_trajectory
 from .storage.importer import (
     DEFAULT_DATABASE,
     get_lap,
@@ -25,6 +26,7 @@ from .storage.importer import (
     list_laps,
     list_sessions,
 )
+from .storage.query import TRAJECTORY_TRACE_COLUMNS, load_attempt_trace
 from .udp.models import DecodedPacket, RawDatagram
 from .udp.source import ReplaySource, UDPSource
 
@@ -81,6 +83,10 @@ def _add_lap_stats(counts: Counter[str], pipeline: TelemetryPipeline) -> None:
     counts["reference_eligible_laps"] = sum(
         attempt.reference_eligible for attempt in attempts
     )
+    counts["motion_packets_decoded"] = pipeline.motion_packets_decoded
+    counts["motion_decode_errors"] = len(pipeline.motion_decode_errors)
+    counts["player_motion_samples"] = pipeline.player_motion_samples
+    counts["missing_player_motion_samples"] = pipeline.missing_player_motion_samples
 
 
 def _collect_session_context(
@@ -428,6 +434,53 @@ def _compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _trajectory(args: argparse.Namespace) -> int:
+    attempt = load_attempt_trace(
+        args.database,
+        args.attempt_key,
+        columns=TRAJECTORY_TRACE_COLUMNS,
+    )
+    if attempt is None:
+        print("error: lap attempt not found or its trace is not ready", file=sys.stderr)
+        return 2
+    document = build_observed_trajectory(
+        attempt_key=attempt.attempt_key,
+        run_id=attempt.run_id,
+        session_uid=attempt.session_uid,
+        car_index=attempt.car_index,
+        disposition=attempt.disposition,
+        lap_time_ms=attempt.lap_time_ms,
+        game_valid=attempt.game_valid,
+        reference_eligible=attempt.reference_eligible,
+        exclusion_reasons=attempt.exclusion_reasons,
+        trace_sha256=attempt.trace_sha256,
+        trace_schema_version=attempt.trace_schema_version,
+        context_segments=attempt.context_segments,
+        samples=attempt.samples,
+    )
+    output = Path(args.output)
+    if output.exists() and not args.overwrite:
+        print(f"error: output already exists: {output} (use --overwrite)", file=sys.stderr)
+        return 2
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(output.name + ".tmp")
+    temporary.write_text(
+        json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(output)
+    _json_line(
+        {
+            "output": str(output),
+            "schema_version": document["schema_version"],
+            "artifact_kind": document["artifact_kind"],
+            "diagnostic_only": document["diagnostic_only"],
+            "coverage": document["coverage"],
+        }
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="f1-engineer", description="F1 telemetry capture and replay")
     parser.add_argument("--version", action="version", version=f"f1-engineer {__version__}")
@@ -492,6 +545,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="versioned JSON track model; adds diagnostic corner-region analysis",
     )
     compare.set_defaults(handler=_compare)
+
+    trajectory = commands.add_parser(
+        "trajectory", help="export an observed world-space lap trajectory"
+    )
+    trajectory.add_argument("attempt_key", help="attempt key printed by the laps command")
+    trajectory.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
+    trajectory.add_argument("--output", required=True, help="destination versioned JSON path")
+    trajectory.add_argument("--overwrite", action="store_true", help="replace an existing output file")
+    trajectory.set_defaults(handler=_trajectory)
     return parser
 
 

@@ -92,6 +92,23 @@ Detect sustained threshold events in chronological raw observations using sessio
 
 Steering-only turn-in is a proxy. A configured track apex is a metadata anchor and carries the model's validation status. Driver-apex and trajectory-based turn-in remain unavailable until Motion position/direction is stored with validated track-relative geometry. A player's driven line is evidence for a reference path, not automatically the circuit centreline.
 
+## Decision 0008: persist Motion before calibrating track geometry
+
+**Status:** accepted
+**Date:** 2026-10-02
+
+Decode F1 25 Motion packet v1, join it to canonical samples by session UID, overall frame, and car index, and persist the primary player's position, velocity, normalized forward/right directions, G-forces, and orientation. Missing Motion stays null; never reuse a neighbouring frame. Decode all 22 wire records but initially persist Motion for the Lap Data header-designated player. Add an availability flag and validation flags for unusable vectors; preserve valid field groups when another group is invalid. Keep MotionEx opaque for this slice.
+
+The supplied Melbourne capture contains 13,950 Motion packets with the expected 1,349-byte v1 layout; their frame keys match all 13,950 Lap Data packets. The player's positions are finite and direction-vector norms are near one. This is enough evidence to add and inspect a trajectory, but the two completed laps are game-invalid and cannot validate a circuit centreline, track boundaries, or geometric apexes. EA's F1 25 specification defines Motion v1's packed 22-car layout and normalized direction encoding: https://forums.ea.com/t5/s/tghpe58374/attachments/tghpe58374/f1-games-game-info-hub-en/61/4/Data%20Output%20from%20F1%2025%20v3.pdf.
+
+Version the canonical trace schema and importer pipeline. Write schema v2 traces while retaining read support for v1 traces; distance-only analysis must continue to work when geometry fields are unavailable. Add a versioned observed-trajectory JSON export with attempt/run identity, trace checksum, session context, units, frame/distance/time anchors, quality/validity, and explicit discontinuity segments. Label it as an observed driven trajectory, never a centreline. Preserve invalid laps as diagnostic artifacts.
+
+Keep the Motion G-force axes named lateral, longitudinal, and vertical in trajectory JSON. Require nonnegative session-time and integer-millisecond lap-time anchors for supported trajectory points. Split continuity at session-time gaps above 100 ms, 3D position steps above 25 m, and lap-clock rewinds above 20 ms; preserve exact one-frame adjacency (including uint32 wrap) and the existing session-time and lap-distance regression checks. Apply one float32 ULP of tolerance at the endpoint magnitude to session-time gap/regression checks, and sqrt(3) ULPs at the largest position component to 3D step checks. Compare lap-clock changes in their integer-millisecond source units. Include the active continuity limits in each artifact. These intentionally conservative thresholds exceed the supplied capture's adjacent-sample maxima (31.815 ms and 3.006 m) and observed 12 ms lap-clock jitter. Do not reject on velocity/position consistency: this capture has apparent position/time speeds up to 182.4 m/s, so that rule needs better evidence.
+
+Defer track projection, centreline calibration, racing-line comparisons, and driver-apex detection until clean captures establish validated geometry and manually reviewed corner boundaries. A driven path alone does not describe the circuit centreline; requiring MotionEx would add no necessary geometry evidence at this stage.
+
+Acceptance requires strict packet size/version checks; synthetic tests for layout, signed direction conversion, malformed/non-finite values; frame-join tests for ordering, missing Motion, player-index changes, and lap boundaries; a replay of the supplied capture with 13,950 successful Motion decodes and same-frame canonical enrichment; unchanged lap inventory/reference eligibility/distance comparison; idempotent v2 imports plus v1 trace reads; and trajectory export that records provenance, validity, coverage, and unsupported discontinuities.
+
 ## Data flow
 
 ```text
@@ -105,8 +122,8 @@ UDPSource / ReplaySource
            ↙                 ↘
 SessionContextDecoder     FrameAssembler
            ↓             ↙           ↘
-SessionContextTimeline  LapDataDecoder  CarTelemetryDecoder
-                         ↘             ↙
+SessionContextTimeline  LapDataDecoder  CarTelemetryDecoder  MotionDecoder
+                         ↘             ↓             ↙
                          Player samples
                               ↓
                        Parquet + SQLite
@@ -122,13 +139,15 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - Known Session packet versions produce canonical `SessionContext`; unsupported variants remain raw and are reported as unavailable context. Attempts snapshot context changes with frame provenance.
 - Known F1 25 Lap Data v1 packets produce immutable records for all 22 cars; the first lifecycle inventory follows only the header-designated player and preserves invalid, partial, and abandoned attempts.
 - F1 25 Car Telemetry v1 and Participants v1 preserve all 22 wire records. Assembled-frame synchronization joins player Car Telemetry to the player's Lap Data by session UID, frame, and player car index; missing telemetry remains explicitly unavailable in the canonical sample.
-- Completed and partial attempts, context history, participant snapshots, and canonical player samples are persisted to SQLite and checksummed Parquet traces. Imports stream bounded row groups and publish them atomically.
+- F1 25 Motion v1 decodes all 22 packed car records. The primary player's world position, velocity, forward/right directions, G-forces, and orientation join to Lap Data by assembled session/frame and the header-designated car index. Missing Motion stays null and is never carried forward. MotionEx remains opaque.
+- Completed and partial attempts, context history, participant snapshots, and canonical samples are persisted to SQLite and checksummed Parquet traces. New traces use schema v2; readers preserve compatibility with schema v1 and expose its absent Motion fields as null. Imports stream bounded row groups and publish them atomically.
+- An observed-trajectory export preserves source attempt/run/checksum/context, units, frame/distance/time anchors, quality, and discontinuity segments. It is a diagnostic driven path and is never identified as a track centreline.
 - Replay timing is based only on the monotonic intervals stored in the capture; maximum-speed replay skips sleeps.
 - The capture format has a magic value and schema version. Unknown packet IDs remain inspectable.
 
 ## Deferred decisions
 
-- Remaining packet-body parsers are added from EA's official structure files, with their source and revision recorded. Support is explicit per `(packet_format, packet_id, packet_version)`. Current typed body support covers F1 25 Session, Lap Data, Participants, and Car Telemetry packet v1; Session packet adapters populate canonical gameplay context independently of the wire format.
+- Remaining packet-body parsers are added from EA's official structure files, with their source and revision recorded. Support is explicit per `(packet_format, packet_id, packet_version)`. Current typed body support covers F1 25 Session, Lap Data, Participants, Car Telemetry, and Motion packet v1; Session packet adapters populate canonical gameplay context independently of the wire format.
 - Add canonical traces for additional cars only when validated multi-car capture coverage justifies them. Slower packet families will use freshness windows rather than being required in every frame.
 - Distance resampling, comparison metrics, and the API/frontend follow this durable player-trace slice.
 - Voice, LLM, and frontend work remain above deterministic analysis; no LLM is needed to capture or inspect telemetry.

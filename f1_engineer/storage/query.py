@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Mapping
 
 from .database import Database
-from .parquet import TRACE_SCHEMA_VERSION, read_trace
+from .parquet import SUPPORTED_TRACE_SCHEMA_VERSIONS, read_trace
 
 
 ANALYSIS_TRACE_COLUMNS = [
@@ -21,6 +21,28 @@ ANALYSIS_TRACE_COLUMNS = [
     "steering",
     "gear",
     "drs_active",
+]
+TRAJECTORY_TRACE_COLUMNS = [
+    *ANALYSIS_TRACE_COLUMNS,
+    "motion_available",
+    "world_position_x_m",
+    "world_position_y_m",
+    "world_position_z_m",
+    "world_velocity_x_mps",
+    "world_velocity_y_mps",
+    "world_velocity_z_mps",
+    "world_forward_x",
+    "world_forward_y",
+    "world_forward_z",
+    "world_right_x",
+    "world_right_y",
+    "world_right_z",
+    "g_force_lateral",
+    "g_force_longitudinal",
+    "g_force_vertical",
+    "yaw_rad",
+    "pitch_rad",
+    "roll_rad",
 ]
 
 
@@ -43,7 +65,10 @@ class StoredAttemptTrace:
 
 
 def load_attempt_trace(
-    database_path: str | Path, attempt_key: str
+    database_path: str | Path,
+    attempt_key: str,
+    *,
+    columns: list[str] | None = None,
 ) -> StoredAttemptTrace | None:
     """Load a completed attempt after verifying its published Parquet trace."""
     database_path = Path(database_path)
@@ -76,13 +101,17 @@ def load_attempt_trace(
         raise ValueError("stored trace path escapes the database directory")
     if not trace_path.is_file():
         raise ValueError("trace file is missing")
-    if row["schema_version"] != TRACE_SCHEMA_VERSION:
+    if row["schema_version"] not in SUPPORTED_TRACE_SCHEMA_VERSIONS:
         raise ValueError(f"unsupported trace schema version {row['schema_version']}")
 
     trace_snapshot = trace_path.read_bytes()
     if hashlib.sha256(trace_snapshot).hexdigest() != row["sha256"]:
         raise ValueError("trace file is missing or its checksum does not match SQLite")
-    metadata, table = read_trace(trace_snapshot, columns=ANALYSIS_TRACE_COLUMNS)
+    metadata, table = read_trace(
+        trace_snapshot,
+        columns=ANALYSIS_TRACE_COLUMNS if columns is None else columns,
+        expected_schema_version=row["schema_version"],
+    )
     if metadata.num_rows != row["row_count"]:
         raise ValueError("trace row count does not match SQLite")
 

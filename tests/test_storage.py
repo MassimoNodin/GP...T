@@ -13,7 +13,8 @@ from f1_engineer.storage import importer as importer_module
 from f1_engineer.storage import query as query_module
 from f1_engineer.storage.importer import get_lap, import_capture, list_laps, list_sessions
 from f1_engineer.storage.lock import ImportRunLock
-from f1_engineer.storage.query import load_attempt_trace
+from f1_engineer.storage.query import TRAJECTORY_TRACE_COLUMNS, load_attempt_trace
+from f1_engineer.storage.parquet import TRACE_SCHEMA_V1, TRACE_SCHEMA_VERSION, read_trace
 from f1_engineer.udp.car_telemetry import _CAR_TELEMETRY_V1_CAR
 from f1_engineer.udp.participants import _PARTICIPANT_PREFIX
 from tests.helpers import make_datagram
@@ -110,17 +111,30 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert imported.missing_car_telemetry_samples == 1
     assert imported.missing_car_telemetry_frames == ((SESSION_UID, 13),)
     assert imported.participant_packets == 1
+    assert imported.motion_packets == 0
+    assert imported.player_motion_samples == 3
+    assert imported.missing_player_motion_samples == 3
     assert len(list_sessions(database_path)) == 1
     laps = list_laps(database_path)
     assert len(laps) == 1
     assert laps[0]["disposition"] == "partial"
     assert laps[0]["quality"]["missing_car_telemetry_count"] == 1
+    assert laps[0]["quality"]["missing_motion_count"] == 3
 
     stored_attempt = load_attempt_trace(database_path, laps[0]["attempt_key"])
     assert stored_attempt is not None
     assert len(stored_attempt.samples) == 3
     assert stored_attempt.trace_sha256
+    assert stored_attempt.trace_schema_version == TRACE_SCHEMA_VERSION == 2
     assert stored_attempt.context_segments[0][1]["game_mode"] == "time_trial"
+    trajectory_attempt = load_attempt_trace(
+        database_path,
+        laps[0]["attempt_key"],
+        columns=TRAJECTORY_TRACE_COLUMNS,
+    )
+    assert trajectory_attempt is not None
+    assert trajectory_attempt.samples[0]["motion_available"] is False
+    assert trajectory_attempt.samples[0]["world_position_x_m"] is None
 
     details = get_lap(database_path, laps[0]["attempt_key"])
     assert details is not None
@@ -138,9 +152,15 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     altered_bytes = altered_buffer.getvalue()
     actual_read_trace = query_module.read_trace
 
-    def replace_trace_before_parsing(snapshot, *, columns=None):
+    def replace_trace_before_parsing(
+        snapshot, *, columns=None, expected_schema_version=None
+    ):
         trace_path.write_bytes(altered_bytes)
-        return actual_read_trace(snapshot, columns=columns)
+        return actual_read_trace(
+            snapshot,
+            columns=columns,
+            expected_schema_version=expected_schema_version,
+        )
 
     monkeypatch.setattr(query_module, "read_trace", replace_trace_before_parsing)
     try:
@@ -183,6 +203,36 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert other_details is not None
     assert other_details["trace_path"] != details["trace_path"]
     assert get_lap(database_path, laps[0]["attempt_key"]) is not None
+
+
+def test_trace_reader_adapts_v1_rows_with_unavailable_motion_fields() -> None:
+    table = pa.Table.from_pylist(
+        [{"frame_identifier": 7, "lap_distance_m": 125.5}],
+        schema=TRACE_SCHEMA_V1,
+    )
+    encoded = BytesIO()
+    pq.write_table(table, encoded, compression="zstd")
+
+    metadata, loaded = read_trace(
+        encoded.getvalue(),
+        columns=[
+            "frame_identifier",
+            "lap_distance_m",
+            "motion_available",
+            "world_position_x_m",
+        ],
+        expected_schema_version=1,
+    )
+
+    assert metadata.num_rows == 1
+    assert loaded.to_pylist() == [
+        {
+            "frame_identifier": 7,
+            "lap_distance_m": 125.5,
+            "motion_available": None,
+            "world_position_x_m": None,
+        }
+    ]
 
 
 def test_format_change_invalidates_current_persisted_session_context(tmp_path) -> None:

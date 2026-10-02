@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from ..udp.lap_data import CarLapData
 from ..udp.car_telemetry import CarTelemetryData
+from ..udp.motion import CarMotionData
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,25 @@ class CarSample:
     rev_lights_bit_value: int | None
     car_telemetry_available: bool
     validation_flags: tuple[str, ...]
+    motion_available: bool = False
+    world_position_x_m: float | None = None
+    world_position_y_m: float | None = None
+    world_position_z_m: float | None = None
+    world_velocity_x_mps: float | None = None
+    world_velocity_y_mps: float | None = None
+    world_velocity_z_mps: float | None = None
+    world_forward_x: float | None = None
+    world_forward_y: float | None = None
+    world_forward_z: float | None = None
+    world_right_x: float | None = None
+    world_right_y: float | None = None
+    world_right_z: float | None = None
+    g_force_lateral: float | None = None
+    g_force_longitudinal: float | None = None
+    g_force_vertical: float | None = None
+    yaw_rad: float | None = None
+    pitch_rad: float | None = None
+    roll_rad: float | None = None
 
     def to_record(self) -> dict[str, object]:
         return {
@@ -54,6 +74,25 @@ class CarSample:
             "rev_lights_bit_value": self.rev_lights_bit_value,
             "car_telemetry_available": self.car_telemetry_available,
             "validation_flags": list(self.validation_flags),
+            "motion_available": self.motion_available,
+            "world_position_x_m": self.world_position_x_m,
+            "world_position_y_m": self.world_position_y_m,
+            "world_position_z_m": self.world_position_z_m,
+            "world_velocity_x_mps": self.world_velocity_x_mps,
+            "world_velocity_y_mps": self.world_velocity_y_mps,
+            "world_velocity_z_mps": self.world_velocity_z_mps,
+            "world_forward_x": self.world_forward_x,
+            "world_forward_y": self.world_forward_y,
+            "world_forward_z": self.world_forward_z,
+            "world_right_x": self.world_right_x,
+            "world_right_y": self.world_right_y,
+            "world_right_z": self.world_right_z,
+            "g_force_lateral": self.g_force_lateral,
+            "g_force_longitudinal": self.g_force_longitudinal,
+            "g_force_vertical": self.g_force_vertical,
+            "yaw_rad": self.yaw_rad,
+            "pitch_rad": self.pitch_rad,
+            "roll_rad": self.roll_rad,
         }
 
 
@@ -66,6 +105,7 @@ def make_car_sample(
     attempt_id: str,
     lap: CarLapData,
     telemetry: CarTelemetryData | None,
+    motion: CarMotionData | None = None,
 ) -> CarSample:
     flags: list[str] = []
     lap_distance = _finite(lap.lap_distance_m)
@@ -122,6 +162,37 @@ def make_car_sample(
             flags.append("invalid_rev_lights_percent")
         values["rev_lights_bit_value"] = telemetry.rev_lights_bit_value
 
+    if motion is not None:
+        flags.extend(motion.validation_flags)
+        if motion.world_position_m is not None:
+            values.update(zip(
+                ("world_position_x_m", "world_position_y_m", "world_position_z_m"),
+                motion.world_position_m,
+            ))
+        if motion.world_velocity_mps is not None:
+            values.update(zip(
+                ("world_velocity_x_mps", "world_velocity_y_mps", "world_velocity_z_mps"),
+                motion.world_velocity_mps,
+            ))
+        if motion.world_forward is not None:
+            values.update(zip(
+                ("world_forward_x", "world_forward_y", "world_forward_z"),
+                motion.world_forward,
+            ))
+        if motion.world_right is not None:
+            values.update(zip(
+                ("world_right_x", "world_right_y", "world_right_z"),
+                motion.world_right,
+            ))
+        if motion.g_force is not None:
+            values.update(zip(
+                ("g_force_lateral", "g_force_longitudinal", "g_force_vertical"),
+                motion.g_force,
+            ))
+        values["yaw_rad"] = motion.yaw_rad
+        values["pitch_rad"] = motion.pitch_rad
+        values["roll_rad"] = motion.roll_rad
+
     return CarSample(
         session_uid=session_uid,
         frame_identifier=frame_identifier,
@@ -134,6 +205,7 @@ def make_car_sample(
         current_lap_time_ms=lap.current_lap_time_ms,
         car_telemetry_available=telemetry is not None,
         validation_flags=tuple(flags),
+        motion_available=motion is not None,
         **values,
     )
 

@@ -16,6 +16,7 @@ from .udp.car_telemetry import CarTelemetryDecoder
 from .udp.decoder import PacketDecoder
 from .udp.models import DecodedPacket, PacketFrame, PacketId, RawDatagram, SessionEvent
 from .udp.lap_data import LapDataDecoder
+from .udp.motion import CarMotionData, MotionDecoder
 from .udp.participants import ParticipantsDecoder, ParticipantsPacket
 from .udp.session_context import SessionContextDecoder
 
@@ -60,12 +61,17 @@ class TelemetryPipeline:
         )
         self.lap_data_decoder = LapDataDecoder()
         self.car_telemetry_decoder = CarTelemetryDecoder()
+        self.motion_decoder = MotionDecoder()
         self.participants_decoder = ParticipantsDecoder()
         self.laps = LapTracker()
         self.lap_data_packets_decoded = 0
         self.lap_data_decode_errors: list[str] = []
         self.car_telemetry_packets_decoded = 0
         self.car_telemetry_decode_errors: list[str] = []
+        self.motion_packets_decoded = 0
+        self.motion_decode_errors: list[str] = []
+        self.player_motion_samples = 0
+        self.missing_player_motion_samples = 0
         self.participants_packets_decoded = 0
         self.participants_decode_errors: list[str] = []
         self.missing_car_telemetry_frame_count = 0
@@ -80,18 +86,35 @@ class TelemetryPipeline:
         telemetry_errors: list[str] = []
         for frame in frames:
             telemetry_by_car: dict[int, object] = {}
+            motion_by_car: tuple[CarMotionData, ...] | None = None
+            conflicting_motion = False
             missing_telemetry_for_frame = False
             for packet in frame.packets:
-                if packet.packet_kind is not PacketId.CAR_TELEMETRY:
-                    continue
-                decoded_telemetry = self.car_telemetry_decoder.decode(packet)
-                if decoded_telemetry.error is not None:
-                    telemetry_errors.append(decoded_telemetry.error)
-                    self.car_telemetry_decode_errors.append(decoded_telemetry.error)
-                elif decoded_telemetry.telemetry is not None:
-                    self.car_telemetry_packets_decoded += 1
-                    for car_index, car in enumerate(decoded_telemetry.telemetry.cars):
-                        telemetry_by_car[car_index] = car
+                if packet.packet_kind is PacketId.CAR_TELEMETRY:
+                    decoded_telemetry = self.car_telemetry_decoder.decode(packet)
+                    if decoded_telemetry.error is not None:
+                        telemetry_errors.append(decoded_telemetry.error)
+                        self.car_telemetry_decode_errors.append(decoded_telemetry.error)
+                    elif decoded_telemetry.telemetry is not None:
+                        self.car_telemetry_packets_decoded += 1
+                        for car_index, car in enumerate(decoded_telemetry.telemetry.cars):
+                            telemetry_by_car[car_index] = car
+                elif packet.packet_kind is PacketId.MOTION:
+                    decoded_motion = self.motion_decoder.decode(packet)
+                    if decoded_motion.error is not None:
+                        self.motion_decode_errors.append(decoded_motion.error)
+                    elif decoded_motion.motion is not None:
+                        self.motion_packets_decoded += 1
+                        if motion_by_car is None:
+                            motion_by_car = decoded_motion.motion.cars
+                        elif motion_by_car != decoded_motion.motion.cars:
+                            conflicting_motion = True
+            if conflicting_motion:
+                motion_by_car = None
+                self.motion_decode_errors.append(
+                    "conflicting Motion packets in assembled frame "
+                    f"{frame.session_uid}:{frame.overall_frame_identifier}"
+                )
             if frame.session_uid == 0:
                 continue
             for packet in frame.packets:
@@ -141,6 +164,18 @@ class TelemetryPipeline:
                 )
                 attempt_id = self.laps.active_attempt_id(car_index)
                 if attempt_id is not None:
+                    player_car_index = packet.header.player_car_index
+                    motion = (
+                        motion_by_car[car_index]
+                        if motion_by_car is not None
+                        and car_index == player_car_index
+                        and 0 <= car_index < len(motion_by_car)
+                        else None
+                    )
+                    if car_index == player_car_index:
+                        self.player_motion_samples += 1
+                        if motion is None:
+                            self.missing_player_motion_samples += 1
                     samples.append(
                         make_car_sample(
                             session_uid=frame.session_uid,
@@ -150,6 +185,7 @@ class TelemetryPipeline:
                             attempt_id=attempt_id,
                             lap=result.lap_data.cars[car_index],
                             telemetry=telemetry_by_car.get(car_index),
+                            motion=motion,
                         )
                     )
             if missing_telemetry_for_frame:

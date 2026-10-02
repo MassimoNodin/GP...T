@@ -1,10 +1,49 @@
 from __future__ import annotations
 
+import struct
+
 from f1_engineer.pipeline import TelemetryPipeline
 from f1_engineer.telemetry.frames import FrameAssembler
 from f1_engineer.udp.decoder import PacketDecoder
 from tests.helpers import make_datagram
 from tests.test_lap_tracking import SESSION_UID, _lap_packet
+
+
+MOTION_CAR = struct.Struct("<6f6h6f")
+
+
+def _motion_packet(frame: int, sequence: int, *, player_car_index: int = 0):
+    body = b"".join(
+        MOTION_CAR.pack(
+            100.0 + car_index,
+            20.0,
+            30.0,
+            1.0,
+            2.0,
+            3.0,
+            32767,
+            0,
+            0,
+            0,
+            32767,
+            0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+        )
+        for car_index in range(22)
+    )
+    return make_datagram(
+        packet_id=0,
+        session_uid=SESSION_UID,
+        frame=frame,
+        player_car_index=player_car_index,
+        body=body,
+        sequence=sequence,
+    )
 
 
 def test_pipeline_reports_session_transitions_and_ignores_retired_uid() -> None:
@@ -73,6 +112,156 @@ def test_completion_reset_sample_belongs_to_incoming_lap_attempt() -> None:
     assert result.car_samples[0].frame_identifier == 11
     assert result.car_samples[0].attempt_id == f"{SESSION_UID}:0:2"
     assert result.car_samples[0].car_telemetry_available is False
+
+
+def test_pipeline_joins_reordered_motion_by_same_frame_and_player_index() -> None:
+    pipeline = TelemetryPipeline(reorder_window_frames=1)
+    pipeline.process(_motion_packet(10, 1))
+    pipeline.process(
+        _lap_packet(
+            frame=10,
+            lap_number=1,
+            distance_m=100,
+            session_time=1,
+            current_lap_time_ms=1_000,
+            sequence=2,
+        )
+    )
+
+    result = pipeline.process(
+        make_datagram(
+            packet_id=255,
+            session_uid=SESSION_UID,
+            frame=11,
+            sequence=3,
+        )
+    )
+
+    assert len(result.car_samples) == 1
+    sample = result.car_samples[0]
+    assert sample.frame_identifier == 10
+    assert sample.car_index == 0
+    assert sample.motion_available
+    assert sample.world_position_x_m == 100.0
+    assert sample.world_position_y_m == 20.0
+    assert sample.world_forward_x == 1.0
+    assert pipeline.motion_packets_decoded == 1
+    assert pipeline.missing_player_motion_samples == 0
+
+
+def test_pipeline_does_not_carry_motion_across_frames() -> None:
+    pipeline = TelemetryPipeline(reorder_window_frames=1)
+    pipeline.process(_motion_packet(10, 1))
+    pipeline.process(
+        _lap_packet(
+            frame=11,
+            lap_number=1,
+            distance_m=100,
+            session_time=1,
+            current_lap_time_ms=1_000,
+            sequence=2,
+        )
+    )
+
+    result = pipeline.process(
+        make_datagram(
+            packet_id=255,
+            session_uid=SESSION_UID,
+            frame=12,
+            sequence=3,
+        )
+    )
+
+    assert len(result.car_samples) == 1
+    assert result.car_samples[0].frame_identifier == 11
+    assert result.car_samples[0].motion_available is False
+    assert result.car_samples[0].world_position_x_m is None
+    assert pipeline.missing_player_motion_samples == 1
+
+
+def test_pipeline_uses_the_current_player_index_after_it_changes() -> None:
+    pipeline = TelemetryPipeline(reorder_window_frames=1)
+    pipeline.process(_motion_packet(10, 1, player_car_index=0))
+    pipeline.process(
+        _lap_packet(
+            frame=10,
+            lap_number=1,
+            distance_m=100,
+            session_time=1,
+            current_lap_time_ms=1_000,
+            sequence=2,
+            player_car_index=0,
+            active_car_index=0,
+        )
+    )
+    frame_ten = pipeline.process(_motion_packet(11, 3, player_car_index=1))
+    pipeline.process(
+        _lap_packet(
+            frame=11,
+            lap_number=1,
+            distance_m=101,
+            session_time=1.1,
+            current_lap_time_ms=1_100,
+            sequence=4,
+            player_car_index=1,
+            active_car_index=1,
+        )
+    )
+    frame_eleven = pipeline.process(
+        make_datagram(
+            packet_id=255,
+            session_uid=SESSION_UID,
+            frame=12,
+            sequence=5,
+        )
+    )
+
+    assert len(frame_ten.car_samples) == 1
+    assert (frame_ten.car_samples[0].car_index, frame_ten.car_samples[0].world_position_x_m) == (0, 100.0)
+    assert len(frame_eleven.car_samples) == 1
+    assert (frame_eleven.car_samples[0].car_index, frame_eleven.car_samples[0].world_position_x_m) == (1, 101.0)
+
+
+def test_motion_at_lap_reset_belongs_to_the_incoming_attempt() -> None:
+    pipeline = TelemetryPipeline(reorder_window_frames=1)
+    pipeline.process(
+        _lap_packet(
+            frame=10,
+            lap_number=1,
+            distance_m=100,
+            session_time=1,
+            current_lap_time_ms=1_000,
+            sequence=1,
+        )
+    )
+    pipeline.process(_motion_packet(10, 2))
+    pipeline.process(
+        _lap_packet(
+            frame=11,
+            lap_number=2,
+            distance_m=0,
+            session_time=2,
+            current_lap_time_ms=0,
+            last_lap_time_ms=80_000,
+            sequence=3,
+        )
+    )
+    pipeline.process(_motion_packet(11, 4))
+
+    result = pipeline.process(
+        make_datagram(
+            packet_id=255,
+            session_uid=SESSION_UID,
+            frame=12,
+            sequence=5,
+        )
+    )
+
+    assert len(result.car_samples) == 1
+    assert result.car_samples[0].frame_identifier == 11
+    assert result.car_samples[0].attempt_id == f"{SESSION_UID}:0:2"
+    assert result.car_samples[0].motion_available
+    assert result.car_samples[0].world_position_x_m == 100.0
 
 
 def test_frame_assembler_evicts_old_session_watermarks() -> None:

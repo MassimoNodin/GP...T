@@ -2,9 +2,9 @@
 
 The current EA F1 25 / 2026 Season Pack specification post provides separate UDP modes for the original F1 25 format and the 2026 Season Pack format. EA labels the documentation revision **Version 11.0**; that value is distinct from the per-packet `packetVersion` in the 29-byte header.
 
-The post was checked on 2026-10-02. For the current F1 25 Session, Lap Data, Participants, and Car Telemetry decoders, the implementation also references EA's [F1 25 UDP data output v3 PDF](https://forums.ea.com/t5/s/tghpe58374/attachments/tghpe58374/f1-games-game-info-hub-en/61/4/Data%20Output%20from%20F1%2025%20v3.pdf), retrieved on 2026-10-02. The full specification and 2026 attachments have not been copied into the repository or pinned with checksums; support remains explicitly versioned per packet adapter.
+The post was checked on 2026-10-02. For the current F1 25 Session, Lap Data, Participants, Car Telemetry, and Motion decoders, the implementation also references EA's [F1 25 UDP data output v3 PDF](https://forums.ea.com/t5/s/tghpe58374/attachments/tghpe58374/f1-games-game-info-hub-en/61/4/Data%20Output%20from%20F1%2025%20v3.pdf), retrieved on 2026-10-02. The full specification and 2026 attachments have not been copied into the repository or pinned with checksums; support remains explicitly versioned per packet adapter.
 
-The envelope decoder recognizes `packetFormat` 2025 and 2026. The shared header fields are decoded little-endian. Packet 15 (`LapPositions`) is present in both formats; packet 16 (`CarTelemetry2`) is specific to the 2026 format. Unknown packet IDs and unsupported packet bodies are retained without interpretation. Typed body support currently consists of F1 25 (`packetFormat=2025`) Session (`packetId=1`), Lap Data (`packetId=2`), Participants (`packetId=4`), and Car Telemetry (`packetId=6`), each at `packetVersion=1`.
+The envelope decoder recognizes `packetFormat` 2025 and 2026. The shared header fields are decoded little-endian. Packet 15 (`LapPositions`) is present in both formats; packet 16 (`CarTelemetry2`) is specific to the 2026 format. Unknown packet IDs and unsupported packet bodies are retained without interpretation. Typed body support currently consists of F1 25 (`packetFormat=2025`) Session (`packetId=1`), Lap Data (`packetId=2`), Participants (`packetId=4`), Car Telemetry (`packetId=6`), and Motion (`packetId=0`), each at `packetVersion=1`.
 
 ## F1 25 Session packet v1
 
@@ -20,6 +20,12 @@ EA documents this packet as 1,285 bytes including the 29-byte header. Its 1,256-
 The recording at `recordings/session-aus-mclaren-1.f1ecap` contains 467 F1 25 Session v1 packets; all are 753 bytes and consistently report session type 18, game mode 5, ruleset 2, track 0 (Melbourne), and track length 5,276 m. It also contains 13,950 Lap Data v1 packets, all 1,285 bytes. Ordered replay identifies two completed laps (79.295 s and 81.437 s), both marked invalid by the game, followed by a partial third lap when capture ended. The resulting inventory has no eligible Time Trial PB reference. The recording completed with all 83,139 datagrams persisted and no reported queue drops or socket errors. The repository keeps one 753-byte Session datagram as `tests/fixtures/f1_25_session_packet_v1.bin` instead of checking in the 92 MB capture. Fixture SHA-256: `202f887495439430280b5b3090563be5f123b2040bcd457e5899e231a062e4e7`.
 
 The 2026 Session and Lap Data packets are not decoded yet. Synthetic tests verify that Race session type is distinguished from its Career game mode and that Race laps do not pass the initial Time Trial reference policy. Real Race-mode behavior and 2026 mode mappings still need capture validation. All other packet bodies remain opaque.
+
+## F1 25 Motion packet v1
+
+EA documents a 1,349-byte packet including the 29-byte header. The 1,320-byte body contains 22 packed 60-byte car records. Each record carries world position and velocity as XYZ float32 vectors, forward and right directions as signed int16 XYZ vectors, three G-force values, and yaw/pitch/roll in radians. Direction components are divided by 32767.0 and accepted only when the resulting vector norm is within the implementation's 0.9–1.1 validity tolerance.
+
+The pipeline decodes all 22 records but initially persists Motion for the header-designated player car. It joins Motion and Lap Data only inside the same assembled session/frame. Missing Motion is kept null; it is never copied from a neighbouring frame. The supplied capture has 13,950 Motion v1 packets, matching 13,950 Lap Data frames. Its two completed laps are game-invalid, so their observed paths are diagnostic evidence rather than validated track geometry. MotionEx remains opaque; no centreline or driver-apex claims are made from this data alone.
 
 The EA post currently links these primary references:
 
