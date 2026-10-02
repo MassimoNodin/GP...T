@@ -7,6 +7,10 @@ from pathlib import Path
 SCHEMA_VERSION = 3
 
 
+class DatabaseSchemaError(ValueError):
+    """The configured database cannot be safely read by this application version."""
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_info (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -116,12 +120,35 @@ CREATE INDEX IF NOT EXISTS idx_lap_attempts_session ON lap_attempts(session_key,
 
 
 class Database:
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, read_only: bool = False) -> None:
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(self.path)
+        if read_only:
+            if not self.path.is_file():
+                raise FileNotFoundError(f"database does not exist: {self.path}")
+            uri = f"{self.path.resolve().as_uri()}?mode=ro"
+            self.connection = sqlite3.connect(uri, uri=True)
+        else:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.connection = sqlite3.connect(self.path)
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys = ON")
+        if read_only:
+            try:
+                version = self.connection.execute(
+                    "SELECT version FROM schema_info WHERE singleton = 1"
+                ).fetchone()[0]
+            except (sqlite3.DatabaseError, TypeError, IndexError) as exc:
+                self.connection.close()
+                raise DatabaseSchemaError(
+                    "database schema is unavailable for read-only access"
+                ) from exc
+            if version != SCHEMA_VERSION:
+                self.connection.close()
+                raise DatabaseSchemaError(
+                    f"database schema {version} is not supported for read-only access"
+                )
+            return
+
         self.connection.execute("PRAGMA journal_mode = WAL")
         self.connection.executescript(_SCHEMA)
         version = self.connection.execute(

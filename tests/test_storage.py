@@ -11,6 +11,7 @@ import pytest
 from f1_engineer.recording.capture import CaptureWriter
 from f1_engineer.storage import importer as importer_module
 from f1_engineer.storage import query as query_module
+from f1_engineer.storage.database import Database
 from f1_engineer.storage.importer import get_lap, import_capture, list_laps, list_sessions
 from f1_engineer.storage.lock import ImportRunLock
 from f1_engineer.storage.query import (
@@ -121,6 +122,11 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert imported.player_motion_samples == 3
     assert imported.missing_player_motion_samples == 3
     assert len(list_sessions(database_path)) == 1
+    session_record = list_sessions(database_path)[0]
+    assert session_record["capture_sha256"] == imported.capture_sha256
+    assert session_record["pipeline_version"] == importer_module.PIPELINE_VERSION
+    assert session_record["started_at_utc"]
+    assert session_record["finished_at_utc"]
     laps = list_laps(database_path)
     assert len(laps) == 1
     assert laps[0]["disposition"] == "partial"
@@ -146,6 +152,9 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert inventory.processing_quality["import_frame_overflow_packets_dropped"] == 0
     assert len(inventory.attempts) == 1
     assert inventory.attempts[0].trace_row_count == 3
+    with Database(database_path, read_only=True) as read_only_db:
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            read_only_db.connection.execute("DELETE FROM sessions")
     trajectory_attempt = load_attempt_trace(
         database_path,
         laps[0]["attempt_key"],

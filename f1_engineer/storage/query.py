@@ -111,7 +111,7 @@ def load_attempt_trace(
 ) -> StoredAttemptTrace | None:
     """Load a completed attempt after verifying its published Parquet trace."""
     database_path = Path(database_path)
-    with Database(database_path) as db:
+    with Database(database_path, read_only=True) as db:
         row = db.connection.execute(
             """SELECT l.attempt_key, l.car_index, l.attempt_number,
                       l.disposition, l.lap_time_ms, l.start_observed, l.pit_encountered,
@@ -190,7 +190,7 @@ def load_reference_inventory(
 ) -> StoredReferenceInventory | None:
     """Read run-scoped attempt/context metadata for deterministic reference selection."""
     database_path = Path(database_path)
-    with Database(database_path) as db:
+    with Database(database_path, read_only=True) as db:
         target = db.connection.execute(
             """SELECT l.attempt_key, l.attempt_number, l.car_index,
                       s.run_id, s.session_uid

@@ -122,6 +122,19 @@ An invalid target may use a selected valid reference for manual diagnostic compa
 
 Defer all-time personal bests until persistent player identity and cross-session comparability are established. Defer theoretical-best laps, corner opportunity rankings, diagnoses, confidence scoring, and actionable coaching until track regions and reference evidence are validated. The supplied Melbourne capture exercises abstention because both completed laps are game-invalid; synthetic clean laps validate deterministic positive selection. Positive integration evidence remains pending until a clean Time Trial capture is available.
 
+## Decision 0010: expose historical analysis through a local application
+
+**Status:** accepted
+**Date:** 2026-10-02
+
+Bring the planned historical API and dashboard forward now that stored laps can be compared. Add a read-only FastAPI adapter and a minimal Next.js session/lap explorer with explicit distance comparison and recorded-session reference selection. Keep analysis, compatibility, and eligibility policy in the existing Python services; the frontend only renders their evidence.
+
+Open the API on loopback by default and configure its database at server startup, never from a request. Use read-only SQLite connections for browsing and analysis. Version every response and preserve source identities, checksums, analysis versions, validity, coverage, masks, and exclusion reasons. Keep session UIDs as strings. Browse all recorded modes through shared models; comparison and reference policy return explicit unsupported/unavailable states outside supported Time Trial cases. Charts preserve nulls and masks, and distinguish official lap-time difference from observed-range delta change.
+
+The available Melbourne recording validates the session explorer, diagnostic comparison, and reference abstention. It does not validate positive reference selection, circuit geometry, or coaching. Keep HTTP capture import, live telemetry, trajectory overlays, corner charts, and generated coaching out of this slice; revisit them when their evidence and interfaces are ready.
+
+The dashboard collapses repeated imports of the same capture/session to the most recently completed processing run while preserving separate recordings with different capture checksums. Its page is server-rendered and calls the loopback API with caching disabled; browser requests carry opaque session and attempt keys only.
+
 ## Data flow
 
 ```text
@@ -162,5 +175,5 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 
 - Remaining packet-body parsers are added from EA's official structure files, with their source and revision recorded. Support is explicit per `(packet_format, packet_id, packet_version)`. Current typed body support covers F1 25 Session, Lap Data, Participants, Car Telemetry, and Motion packet v1; Session packet adapters populate canonical gameplay context independently of the wire format.
 - Add canonical traces for additional cars only when validated multi-car capture coverage justifies them. Slower packet families will use freshness windows rather than being required in every frame.
-- Distance comparison and run-scoped Time Trial reference selection are implemented for diagnostics. Validated circuit geometry, race reference policy, actionable coaching, and the API/frontend remain deferred until their supporting evidence and interfaces are ready.
+- Distance comparison, run-scoped Time Trial reference selection, and the read-only local historical explorer are implemented for diagnostics. Validated circuit geometry, race reference policy, and actionable coaching remain deferred until their supporting evidence and interfaces are ready.
 - Voice, LLM, and frontend work remain above deterministic analysis; no LLM is needed to capture or inspect telemetry.

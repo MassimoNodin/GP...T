@@ -473,6 +473,24 @@ def _reference(args: argparse.Namespace) -> int:
     )
 
 
+def _api(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+    except ImportError:
+        print("error: install the app extra with `uv sync --extra app`", file=sys.stderr)
+        return 2
+
+    from .api.app import create_app
+
+    uvicorn.run(
+        create_app(args.database),
+        host="127.0.0.1",
+        port=args.port,
+        log_level="info",
+    )
+    return 0
+
+
 def _trajectory(args: argparse.Namespace) -> int:
     attempt = load_attempt_trace(
         args.database,
@@ -591,6 +609,11 @@ def build_parser() -> argparse.ArgumentParser:
     reference.add_argument("target_attempt_key", help="target attempt from the laps command")
     reference.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
     reference.set_defaults(handler=_reference)
+
+    api = commands.add_parser("api", help="serve the read-only local analysis API")
+    api.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
+    api.add_argument("--port", type=int, default=8765, help="loopback port (default: 8765)")
+    api.set_defaults(handler=_api)
 
     trajectory = commands.add_parser(
         "trajectory", help="export an observed world-space lap trajectory"

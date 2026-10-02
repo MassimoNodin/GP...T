@@ -570,14 +570,17 @@ def import_capture(capture_path: str | Path, database_path: str | Path = DEFAULT
 
 
 def list_sessions(database_path: str | Path = DEFAULT_DATABASE) -> list[dict[str, object]]:
-    with Database(database_path) as db:
+    with Database(database_path, read_only=True) as db:
         rows = db.connection.execute(
             """SELECT s.session_key, s.run_id, s.session_uid, s.packet_format,
                       s.context_json, r.status AS run_status, r.metrics_json,
+                      r.capture_sha256, r.pipeline_version, r.started_at_utc,
+                      r.finished_at_utc,
                       COUNT(DISTINCT l.attempt_key) AS lap_attempts
                  FROM sessions s JOIN processing_runs r USING(run_id)
                  LEFT JOIN lap_attempts l USING(session_key)
-                 GROUP BY s.session_key ORDER BY r.started_at_utc, s.session_uid"""
+                 GROUP BY s.session_key
+                 ORDER BY COALESCE(r.finished_at_utc, r.started_at_utc), s.session_uid"""
         ).fetchall()
         return [
             {
@@ -592,6 +595,10 @@ def list_sessions(database_path: str | Path = DEFAULT_DATABASE) -> list[dict[str
                     if row["metrics_json"]
                     else None
                 ),
+                "capture_sha256": row["capture_sha256"],
+                "pipeline_version": row["pipeline_version"],
+                "started_at_utc": row["started_at_utc"],
+                "finished_at_utc": row["finished_at_utc"],
                 "lap_attempts": row["lap_attempts"],
             }
             for row in rows
@@ -612,10 +619,14 @@ def list_laps(
     if session_uid is not None:
         clauses.append("s.session_uid = ?")
         parameters.append(session_uid)
-    with Database(database_path) as db:
+    with Database(database_path, read_only=True) as db:
         rows = db.connection.execute(
             f"""SELECT l.*, s.session_uid, s.run_id, t.relative_path,
-                       t.row_count AS trace_row_count, t.quality_json, t.sha256 AS trace_sha256
+                       t.row_count AS trace_row_count, t.quality_json, t.sha256 AS trace_sha256,
+                       t.schema_version AS trace_schema_version,
+                       (SELECT c.context_json FROM lap_context_segments c
+                          WHERE c.attempt_key = l.attempt_key ORDER BY c.ordinal LIMIT 1)
+                          AS initial_context_json
                   FROM lap_attempts l JOIN sessions s USING(session_key)
                   JOIN telemetry_files t USING(attempt_key)
                   JOIN processing_runs r USING(run_id)
@@ -636,8 +647,17 @@ def list_laps(
                 "lap_time_ms": row["lap_time_ms"],
                 "game_valid": None if row["game_valid"] is None else bool(row["game_valid"]),
                 "reference_eligible": bool(row["reference_eligible"]),
+                "start_observed": bool(row["start_observed"]),
+                "pit_encountered": bool(row["pit_encountered"]),
                 "sample_count": row["sample_count"],
                 "trace_row_count": row["trace_row_count"],
+                "trace_schema_version": row["trace_schema_version"],
+                "trace_sha256": row["trace_sha256"],
+                "context": (
+                    json.loads(row["initial_context_json"])
+                    if row["initial_context_json"]
+                    else None
+                ),
                 "quality": json.loads(row["quality_json"]),
                 "exclusion_reasons": json.loads(row["exclusion_reasons_json"]),
             }
@@ -646,7 +666,7 @@ def list_laps(
 
 
 def get_lap(database_path: str | Path, attempt_key: str) -> dict[str, object] | None:
-    with Database(database_path) as db:
+    with Database(database_path, read_only=True) as db:
         row = db.connection.execute(
             """SELECT l.*, s.session_uid, s.run_id, t.relative_path, t.row_count,
                       t.sha256, t.quality_json, t.schema_version

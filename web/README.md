@@ -1,0 +1,23 @@
+# Historical dashboard
+
+This Next.js app renders the local F1 Engineer archive and calls the read-only
+FastAPI service from the server. Both servers bind to loopback; the database
+path is configured only on the API process.
+
+From the repository root, start the API:
+
+```powershell
+uv sync --extra app
+uv run --extra app f1-engineer api --database data/f1-engineer.sqlite3
+```
+
+Then start the dashboard in a second terminal:
+
+```powershell
+cd web
+npm ci
+npm run dev
+```
+
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000). For data import,
+supported analysis, and privacy details, see the repository [README](../README.md).
