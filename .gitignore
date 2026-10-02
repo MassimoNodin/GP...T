@@ -8,7 +8,7 @@ dist/
 .ruff_cache/
 .mypy_cache/
 recordings/
-data/
+/data/
 *.traces/
 .*.locks/
 .env

@@ -77,6 +77,21 @@ Require every context segment to have a known, stable track and compatible Time 
 
 Return the sampled traces, per-channel masks and coverage, excluded spans, full delta curve, official lap-time difference, observed-range delta change, source trace checksums, and analysis/configuration versions. Define positive delta as the target being slower than its reference. Synthetic traces validate math and exclusions; the available Melbourne capture validates import/replay and diagnostic comparison of two invalid completed attempts but cannot prove automatic PB selection. A clean Time Trial capture is still needed for positive reference validation.
 
+## Decision 0007: begin corner analysis with distance metadata and observed events
+
+**Status:** accepted
+**Date:** 2026-10-02
+
+Start Phase D with versioned, metadata-backed distance regions and deterministic events derived from the stored distance, speed, brake, throttle, and steering channels. Motion decoding is not required for braking, observed minimum speed, throttle pickup, exit speed, or boundary delta analysis. Use the existing Melbourne capture for diagnostic regions only: its two completed laps are game-invalid, and the plan's example distances are not verified game corner coordinates. Label these regions as draft and do not use them for automatic coaching.
+
+Put immutable, validated track and region models in `tracks.model`, JSON loading and provenance in `tracks.loader`, and pure sustained-event and region-feature calculations in `analysis.events` and `analysis.corners`. The comparison service loads verified traces and requires explicit track-model selection before returning region analysis. Preserve completed Time Trial compatibility checks and expose invalid-lap exclusions with every diagnostic result.
+
+Track models identify packet format, track ID, layout, expected lap length, distance origin, revision, provenance, and validation status. Regions have half-open analysis/search windows, optional direction, a nominal apex anchor, and complex membership. Reject unordered or out-of-track bounds; permit overlapping windows only when the regions share an explicit complex. Report event distance brackets rather than implying sub-sample precision.
+
+Detect sustained threshold events in chronological raw observations using session time for duration; do not use the lap clock because it may repeat. Break event continuity on missing values, excessive time or distance gaps, and time/distance regressions. If a threshold is active at a search-window entrance, label the event left-censored and do not invent its onset. Retain multiple brake applications and throttle lifts. Reuse Phase C resampling masks for boundary values and never bridge unsupported spans. Mark observed minima as partial when the full region is unsupported.
+
+Steering-only turn-in is a proxy. A configured track apex is a metadata anchor and carries the model's validation status. Driver-apex and trajectory-based turn-in remain unavailable until Motion position/direction is stored with validated track-relative geometry. A player's driven line is evidence for a reference path, not automatically the circuit centreline.
+
 ## Data flow
 
 ```text

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from f1_engineer.analysis import service as service_module
+from f1_engineer.analysis.events import detect_sustained_threshold_events
 from f1_engineer.analysis.resampling import (
     ResamplingConfig,
     TraceSample,
@@ -10,6 +11,7 @@ from f1_engineer.analysis.resampling import (
     resample_trace,
 )
 from f1_engineer.storage.query import StoredAttemptTrace
+from f1_engineer.tracks.model import CornerDefinition, TrackModel
 
 
 def _sample(
@@ -19,7 +21,9 @@ def _sample(
     *,
     speed: float | None = None,
     throttle: float | None = 0.5,
+    brake: float | None = 0.0,
     gear: int | None = 3,
+    session_time_s: float | None = None,
 ) -> TraceSample:
     return TraceSample(
         frame_identifier=frame,
@@ -27,10 +31,11 @@ def _sample(
         time_s=time_s,
         speed_mps=speed,
         throttle=throttle,
-        brake=0.0,
+        brake=brake,
         steering=0.0,
         gear=gear,
         drs_active=False,
+        session_time_s=session_time_s,
     )
 
 
@@ -176,6 +181,95 @@ def test_resampler_rejects_out_of_order_frames_instead_of_sorting() -> None:
         resample_trace(samples, (0, 5, 10))
 
 
+def test_sustained_event_uses_session_time_and_reports_distance_brackets() -> None:
+    samples = (
+        _sample(1, 0.0, 0.0, speed=50.0, brake=0.0, session_time_s=10.0),
+        _sample(2, 1.0, 0.0, speed=49.0, brake=0.2, session_time_s=10.05),
+        _sample(3, 2.0, 0.0, speed=48.0, brake=0.8, session_time_s=10.10),
+        _sample(4, 3.0, 0.01, speed=47.0, brake=0.7, session_time_s=10.15),
+        _sample(5, 4.0, 0.01, speed=46.0, brake=0.0, session_time_s=10.20),
+    )
+
+    result = detect_sustained_threshold_events(
+        samples,
+        channel="brake",
+        threshold=0.1,
+        search_window_m=(0.0, 5.0),
+        minimum_duration_s=0.1,
+    )
+
+    assert result.status == "detected"
+    assert len(result.sustained_events) == 1
+    event = result.sustained_events[0]
+    assert event.start_distance_m == 1.0
+    assert event.start_distance_bracket_m == (0.0, 1.0)
+    assert event.end_distance_m == 3.0
+    assert event.end_distance_bracket_m == (3.0, 4.0)
+    assert event.duration_s == pytest.approx(0.1)
+    assert event.peak_value == 0.8
+    assert not event.left_censored
+    assert not event.right_censored
+
+
+def test_threshold_detector_preserves_multiple_applications_and_censoring() -> None:
+    samples = (
+        _sample(1, 0.0, 0.0, throttle=0.0, session_time_s=1.00),
+        _sample(2, 1.0, 0.01, throttle=0.2, session_time_s=1.05),
+        _sample(3, 2.0, 0.02, throttle=0.0, session_time_s=1.10),
+        _sample(4, 3.0, 0.03, throttle=0.2, session_time_s=1.15),
+        _sample(5, 4.0, 0.04, throttle=0.3, session_time_s=1.20),
+        _sample(6, 5.0, 0.05, throttle=0.4, session_time_s=1.25),
+        _sample(7, 6.0, 0.06, throttle=0.0, session_time_s=1.30),
+    )
+
+    result = detect_sustained_threshold_events(
+        samples,
+        channel="throttle",
+        threshold=0.1,
+        search_window_m=(0.0, 7.0),
+        minimum_duration_s=0.1,
+    )
+
+    assert len(result.sustained_events) == 1
+    assert result.rejected_short_event_count == 1
+    assert result.sustained_events[0].start_distance_m == 3.0
+
+    censored = detect_sustained_threshold_events(
+        samples,
+        channel="throttle",
+        threshold=0.1,
+        search_window_m=(4.0, 6.0),
+        minimum_duration_s=0.05,
+    )
+
+    assert censored.status == "left_censored"
+    assert censored.sustained_events[0].left_censored
+
+
+def test_threshold_detector_breaks_at_missing_values_and_large_gaps() -> None:
+    samples = (
+        _sample(1, 0.0, 0.0, throttle=0.3, session_time_s=0.0),
+        _sample(2, 1.0, 0.01, throttle=0.4, session_time_s=0.05),
+        _sample(3, 2.0, 0.02, throttle=None, session_time_s=0.10),
+        _sample(4, 3.0, 0.03, throttle=0.4, session_time_s=0.25),
+        _sample(5, 4.0, 0.04, throttle=0.5, session_time_s=0.30),
+        _sample(6, 5.0, 0.05, throttle=0.6, session_time_s=0.35),
+    )
+
+    result = detect_sustained_threshold_events(
+        samples,
+        channel="throttle",
+        threshold=0.1,
+        search_window_m=(0.0, 6.0),
+        minimum_duration_s=0.1,
+        max_gap_time_s=0.1,
+    )
+
+    assert result.unsupported_break_count >= 2
+    assert result.sustained_events
+    assert result.sustained_events[0].left_censored
+
+
 def _stored_attempt(
     attempt_key: str,
     times_ms: tuple[int, int, int],
@@ -207,6 +301,7 @@ def _stored_attempt(
             "frame_identifier": frame,
             "lap_distance_m": distance,
             "current_lap_time_ms": time_ms,
+            "session_time_s": frame / 100,
             "speed_mps": speed_mps,
             "throttle": throttle,
             "brake": 0.0,
@@ -284,3 +379,77 @@ def test_comparison_rejects_unknown_context_and_cross_mode_attempts(monkeypatch)
     )
     with pytest.raises(ValueError, match="not a known Time Trial"):
         service_module.compare_attempts("test.sqlite3", "target-attempt", "reference-attempt")
+
+
+def test_corner_region_analysis_keeps_draft_and_invalid_laps_diagnostic(monkeypatch) -> None:
+    target = _stored_attempt("target-attempt", (100, 200, 300), game_valid=False)
+    reference = _stored_attempt("reference-attempt", (100, 150, 200), game_valid=False)
+    attempts = {target.attempt_key: target, reference.attempt_key: reference}
+    monkeypatch.setattr(
+        service_module,
+        "load_attempt_trace",
+        lambda _database, key: attempts.get(key),
+    )
+    model = TrackModel(
+        model_id="melbourne-draft-test",
+        revision=1,
+        packet_format=2025,
+        track_id=0,
+        track_name="Melbourne",
+        layout_id="default",
+        track_length_m=20,
+        distance_origin_m=0,
+        provenance="synthetic test region",
+        validation_status="draft",
+        corners=(
+            CornerDefinition(
+                identifier="region-1",
+                label="Draft region 1",
+                start_distance_m=0,
+                end_distance_m=20,
+                braking_search_window_m=(0, 20),
+                turn_in_search_window_m=(0, 20),
+                throttle_pickup_window_m=(0, 20),
+                nominal_apex_m=10,
+                exit_distance_m=10,
+            ),
+        ),
+    )
+
+    result = service_module.compare_attempts(
+        "test.sqlite3",
+        "target-attempt",
+        "reference-attempt",
+        track_model=model,
+    )
+
+    corner_analysis = result["corner_analysis"]
+    assert corner_analysis["diagnostic_only"] is True
+    assert corner_analysis["model"]["validation_status"] == "draft"
+    region = corner_analysis["regions"][0]
+    assert region["label"] == "Draft region 1"
+    assert region["diagnostic_only"] is True
+    assert region["target"]["minimum_speed"]["status"] == "observed_minimum_complete_window"
+    assert region["target"]["track_apex"]["status"] == "draft_metadata_anchor"
+    assert region["target"]["driver_apex"]["reason"] == "trajectory_position_not_stored"
+    assert region["target"]["throttle_pickup"]["0.5"]["status"] == "left_censored"
+    assert region["delta_change"]["delta_change_s"] == pytest.approx(0.1)
+
+    attempts[target.attempt_key] = _stored_attempt(
+        "target-attempt", (100, 200, 300), game_valid=True
+    )
+    attempts[reference.attempt_key] = _stored_attempt(
+        "reference-attempt", (100, 150, 200), game_valid=True
+    )
+    eligible_result = service_module.compare_attempts(
+        "test.sqlite3",
+        "target-attempt",
+        "reference-attempt",
+        track_model=model,
+    )
+    assert eligible_result["corner_analysis"]["diagnostic_only"] is True
+    assert eligible_result["corner_analysis"]["regions"][0]["diagnostic_only"] is True
+    assert (
+        eligible_result["corner_analysis"]["regions"][0]["delta_change"]["status"]
+        == "diagnostic_region_delta_change"
+    )

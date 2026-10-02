@@ -38,6 +38,8 @@ Capture paths are created exclusively by default. Pass `--overwrite` only when y
 `import` defaults to `data/f1-engineer.sqlite3` and stores Parquet traces beneath `data/f1-engineer.sqlite3.traces/`. Pass `--database path.sqlite3` to choose another database; its traces are stored in a database-specific sibling directory. Importing the same capture with the same pipeline version and configuration is idempotent. If a run was interrupted, rerunning `import` resumes it by rebuilding that run's traces from the raw capture. Simultaneous imports of the same run into one database are rejected while the active OS lock is held.
 `compare` uses `lap_distance_m` and the lap clock from the stored traces, defaults to a 1 m grid, and does not extrapolate over unsupported gaps. Both attempts must be completed laps with known, compatible Time Trial context. The command takes an explicit target and reference; it does not choose a personal best automatically.
 
+Pass `--track-model f1_engineer/tracks/data/melbourne_f1_25_tt_draft_v1.json` to include the current diagnostic region analysis. Those six regions are draft windows around braking observations in two game-invalid Melbourne laps; they are not verified corner numbers or apex locations. The analysis reports censored braking/throttle onset, minimum-speed support, steering-only turn-in proxies, exit-speed coverage, and delta changes. It does not produce coaching from draft definitions.
+
 Install the package to use the `f1-engineer` command:
 
 ```powershell
@@ -65,4 +67,4 @@ Replay source ───┘                              │
 
 Raw datagrams are written before decoding. That preserves the exact input even when a packet is truncated, unknown, or unsupported by the current decoder. Recording and replay feed a single processing pipeline.
 
-See [docs/architecture.md](docs/architecture.md) for the first implementation decisions and [docs/telemetry-protocol.md](docs/telemetry-protocol.md) for protocol compatibility notes.
+See [docs/architecture.md](docs/architecture.md) for the accepted architecture decisions and [docs/telemetry-protocol.md](docs/telemetry-protocol.md) for protocol compatibility notes.

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 
-ANALYSIS_VERSION = "distance-comparison-v1"
+ANALYSIS_VERSION = "distance-comparison-v2"
 CHANNELS = ("time_s", "speed_mps", "throttle", "brake", "steering", "gear", "drs_active")
 CONTINUOUS_CHANNELS = ("time_s", "speed_mps", "throttle", "brake", "steering")
 _FRAME_MASK = 0xFFFFFFFF
@@ -26,6 +26,7 @@ class TraceSample:
     steering: float | None
     gear: int | None
     drs_active: bool | None
+    session_time_s: float | None = None
 
     @classmethod
     def from_record(cls, record: Mapping[str, object]) -> TraceSample:
@@ -45,6 +46,7 @@ class TraceSample:
             steering=_finite_optional(record.get("steering")),
             gear=_integer_optional(record.get("gear")),
             drs_active=_boolean_optional(record.get("drs_active")),
+            session_time_s=_finite_optional(record.get("session_time_s")),
         )
 
 
@@ -332,15 +334,16 @@ def resample_trace(
                         and _channel_value(following, channel) is None
                     )
                 ):
-                    if first < last:
-                        spans.append(
-                            ExcludedSpan(
-                                grid[first],
-                                grid[last - 1],
-                                "channel_missing",
-                                channel,
-                            )
+                    # Preserve the unsupported raw bracket even when the analysis
+                    # grid has no interior point inside it.
+                    spans.append(
+                        ExcludedSpan(
+                            previous.distance_m,
+                            following.distance_m,
+                            "channel_missing",
+                            channel,
                         )
+                    )
 
     values: dict[str, tuple[float | int | bool | None, ...]] = {}
     masks: dict[str, tuple[bool, ...]] = {}

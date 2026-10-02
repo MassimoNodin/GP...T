@@ -21,5 +21,8 @@ f1-engineer = "f1_engineer.cli:main"
 [tool.setuptools.packages.find]
 include = ["f1_engineer*"]
 
+[tool.setuptools.package-data]
+f1_engineer = ["tracks/data/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

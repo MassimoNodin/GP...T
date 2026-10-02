@@ -12,6 +12,7 @@ from .parquet import TRACE_SCHEMA_VERSION, read_trace
 
 ANALYSIS_TRACE_COLUMNS = [
     "frame_identifier",
+    "session_time_s",
     "lap_distance_m",
     "current_lap_time_ms",
     "speed_mps",

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Mapping
 
 from .comparison import calculate_channel_differences, calculate_delta_time
+from .corners import analyze_corner_regions
 from .resampling import (
     ANALYSIS_VERSION,
     ResamplingConfig,
@@ -13,6 +14,8 @@ from .resampling import (
     resample_trace,
 )
 from ..storage.query import StoredAttemptTrace, load_attempt_trace
+from ..tracks.loader import load_track_model
+from ..tracks.model import TrackModel
 
 
 _COMPATIBILITY_FIELDS = (
@@ -37,6 +40,7 @@ def compare_attempts(
     reference_attempt_key: str,
     *,
     config: ResamplingConfig = ResamplingConfig(),
+    track_model: TrackModel | str | Path | None = None,
 ) -> dict[str, object]:
     """Compare two explicitly selected, stored, completed Time Trial attempts."""
     if target_attempt_key == reference_attempt_key:
@@ -80,7 +84,7 @@ def compare_attempts(
     if target.lap_time_ms is not None and reference.lap_time_ms is not None:
         official_lap_time_difference_s = (target.lap_time_ms - reference.lap_time_ms) / 1000.0
 
-    return {
+    result = {
         "analysis_version": ANALYSIS_VERSION,
         "config": config.to_dict(),
         "target": _attempt_summary(target),
@@ -118,6 +122,25 @@ def compare_attempts(
             ],
         },
     }
+    if track_model is not None:
+        model = (
+            track_model
+            if isinstance(track_model, TrackModel)
+            else load_track_model(track_model)
+        )
+        _require_track_model_compatible(model, target_context)
+        result["corner_analysis"] = analyze_corner_regions(
+            target_samples,
+            reference_samples,
+            target_resampled,
+            reference_resampled,
+            delta,
+            model,
+            config=config,
+            target_reference_eligible=target.reference_eligible,
+            reference_reference_eligible=reference.reference_eligible,
+        )
+    return result
 
 
 def _require_completed(attempt: StoredAttemptTrace) -> None:
@@ -171,6 +194,22 @@ def _stable_time_trial_context(
             f"attempt {attempt.attempt_key!r} changes track or Time Trial settings during the lap"
         )
     return contexts[-1], signature
+
+
+def _require_track_model_compatible(
+    model: TrackModel, context: Mapping[str, object]
+) -> None:
+    if model.packet_format != context["packet_format"]:
+        raise ValueError("track model packet format does not match the attempts")
+    if model.track_id != context["track_id"]:
+        raise ValueError("track model ID does not match the attempts")
+    if model.track_name.casefold() != str(context["track_name"]).casefold():
+        raise ValueError("track model name does not match the attempts")
+    context_length = context["track_length_m"]
+    if not isinstance(context_length, (int, float)) or not math.isclose(
+        model.track_length_m, float(context_length), rel_tol=0.0, abs_tol=1.0
+    ):
+        raise ValueError("track model length does not match the attempts")
 
 
 def _attempt_summary(attempt: StoredAttemptTrace) -> dict[str, object]:

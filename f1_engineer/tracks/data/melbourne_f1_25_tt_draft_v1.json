@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "model_id": "melbourne-f1-25-time-trial-draft-v1",
+  "revision": 1,
+  "packet_format": 2025,
+  "track_id": 0,
+  "track_name": "Melbourne",
+  "layout_id": "track-id-0-default",
+  "track_length_m": 5276,
+  "distance_origin_m": 0,
+  "provenance": "Draft analysis regions bracket recurring braking observations from two completed, game-invalid local Time Trial laps. Region boundaries and numbering have not been validated against circuit geometry.",
+  "validation_status": "draft",
+  "corners": [
+    {
+      "identifier": "melbourne-braking-region-01",
+      "label": "Draft braking region 1",
+      "start_distance_m": 230,
+      "end_distance_m": 470,
+      "braking_search_window_m": [260, 390],
+      "turn_in_search_window_m": [260, 410],
+      "throttle_pickup_window_m": [310, 470],
+      "exit_distance_m": 430
+    },
+    {
+      "identifier": "melbourne-braking-region-02",
+      "label": "Draft braking region 2",
+      "start_distance_m": 930,
+      "end_distance_m": 1250,
+      "braking_search_window_m": [960, 1150],
+      "turn_in_search_window_m": [960, 1160],
+      "throttle_pickup_window_m": [1060, 1250],
+      "exit_distance_m": 1190
+    },
+    {
+      "identifier": "melbourne-braking-region-03",
+      "label": "Draft braking region 3",
+      "start_distance_m": 1740,
+      "end_distance_m": 1950,
+      "braking_search_window_m": [1780, 1880],
+      "turn_in_search_window_m": [1780, 1900],
+      "throttle_pickup_window_m": [1840, 1950],
+      "exit_distance_m": 1910
+    },
+    {
+      "identifier": "melbourne-braking-region-04",
+      "label": "Draft braking region 4",
+      "start_distance_m": 3180,
+      "end_distance_m": 3400,
+      "braking_search_window_m": [3220, 3320],
+      "turn_in_search_window_m": [3220, 3330],
+      "throttle_pickup_window_m": [3270, 3400],
+      "exit_distance_m": 3360
+    },
+    {
+      "identifier": "melbourne-braking-region-05",
+      "label": "Draft braking region 5",
+      "start_distance_m": 3960,
+      "end_distance_m": 4250,
+      "braking_search_window_m": [4000, 4180],
+      "turn_in_search_window_m": [4000, 4190],
+      "throttle_pickup_window_m": [4110, 4250],
+      "exit_distance_m": 4210
+    },
+    {
+      "identifier": "melbourne-braking-region-06",
+      "label": "Draft braking region 6",
+      "start_distance_m": 4510,
+      "end_distance_m": 4760,
+      "braking_search_window_m": [4540, 4680],
+      "turn_in_search_window_m": [4540, 4690],
+      "throttle_pickup_window_m": [4620, 4760],
+      "exit_distance_m": 4720
+    }
+  ]
+}

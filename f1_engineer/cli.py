@@ -422,6 +422,7 @@ def _compare(args: argparse.Namespace) -> int:
             args.target_attempt_key,
             args.reference_attempt_key,
             config=config,
+            track_model=args.track_model,
         )
     )
     return 0
@@ -486,6 +487,10 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--grid-step-m", type=float, default=1.0, help="distance grid step (default: %(default)s)")
     compare.add_argument("--max-gap-s", type=float, default=0.1, help="maximum interpolation time gap in seconds")
     compare.add_argument("--max-gap-m", type=float, default=25.0, help="maximum interpolation distance gap in metres")
+    compare.add_argument(
+        "--track-model",
+        help="versioned JSON track model; adds diagnostic corner-region analysis",
+    )
     compare.set_defaults(handler=_compare)
     return parser
 
