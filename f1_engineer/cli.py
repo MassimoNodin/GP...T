@@ -23,6 +23,7 @@ from .analysis.reference_selection import (
     ReferenceRequest,
     select_reference,
 )
+from .analysis.quality import inspect_attempt_quality
 from .analysis.trajectory import build_observed_trajectory
 from .storage.importer import (
     DEFAULT_DATABASE,
@@ -284,6 +285,15 @@ def _lap(args: argparse.Namespace) -> int:
     return 0
 
 
+def _quality(args: argparse.Namespace) -> int:
+    result = inspect_attempt_quality(args.database, args.attempt_key)
+    if result is None:
+        print("error: attempt not found or its trace is not ready", file=sys.stderr)
+        return 2
+    _json_line(result)
+    return 0
+
+
 def _compare(args: argparse.Namespace) -> int:
     config = ResamplingConfig(
         grid_step_m=args.grid_step_m,
@@ -457,6 +467,13 @@ def build_parser() -> argparse.ArgumentParser:
     lap.add_argument("attempt_key", help="attempt key printed by the laps command")
     lap.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
     lap.set_defaults(handler=_lap)
+
+    quality = commands.add_parser(
+        "quality", help="inspect standalone telemetry quality for a lap attempt"
+    )
+    quality.add_argument("attempt_key", help="attempt key printed by the laps command")
+    quality.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
+    quality.set_defaults(handler=_quality)
 
     compare = commands.add_parser(
         "compare", help="compare two completed Time Trial laps by distance"

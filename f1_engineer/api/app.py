@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, select_reference
+from ..analysis.quality import inspect_attempt_quality
 from ..analysis.service import compare_attempts
 from ..storage.import_jobs import list_recording_sources
 from ..storage.importer import DEFAULT_DATABASE, list_laps, list_sessions
@@ -247,6 +248,27 @@ def create_app(
                     session_uid=session_uid,
                 )
             )
+        )
+
+    @app.get(
+        "/api/v1/attempts/{attempt_key}/quality",
+        response_model=APIResponse[dict[str, Any]],
+    )
+    def attempt_quality(attempt_key: str) -> APIResponse[dict[str, Any]]:
+        try:
+            result = inspect_attempt_quality(configured_database_path, attempt_key)
+        except ValueError as exc:
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason=str(exc),
+            )
+        if result is None:
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason="attempt_trace_unavailable",
+            )
+        return APIResponse[dict[str, Any]](
+            data=_stringify_session_uids(result)
         )
 
     @app.get(

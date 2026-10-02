@@ -128,6 +128,118 @@ export interface LapRecord {
   exclusion_reasons: string[];
 }
 
+export interface AttemptQualityAvailability {
+  status: string;
+  available_samples: number | null;
+  sample_count: number;
+  missing_samples: number | null;
+}
+
+export interface AttemptQualityReport {
+  report_version: number;
+  analysis_version: string;
+  identity: {
+    attempt_key: string;
+    run_id: string;
+    session_uid: string;
+    car_index: number;
+    attempt_number: number;
+    trace_sha256: string;
+    trace_schema_version: number;
+    trace_row_count: number;
+    trace_checksum_verified: boolean;
+  };
+  attempt: {
+    disposition: string;
+    lap_time_ms: number | null;
+    game_valid: boolean | null;
+    reference_eligible: boolean;
+    start_observed: boolean;
+    pit_encountered: boolean;
+    exclusion_reasons: string[];
+  };
+  context: {
+    segments: Array<{
+      from_frame_identifier: number;
+      context: SessionContext | null;
+    }>;
+    session_types: string[];
+    game_modes: string[];
+    track_names: string[];
+  };
+  evidence: {
+    recording: {
+      capture_complete: boolean;
+      footer_available: boolean;
+      footer_evidence_status: string;
+      footer_status: string | null;
+      footer_status_evidence: string;
+      counters: Record<string, number | null>;
+      counter_evidence: Record<string, string>;
+    };
+    capture_decode: {
+      available: boolean;
+      capture_wide_counters: Record<string, unknown>;
+    };
+    replay_assembly: {
+      available: boolean;
+      counters: Record<string, number | null>;
+      counter_evidence: Record<string, string>;
+    };
+    recording_observer: {
+      available: boolean;
+      source_scope: string;
+      counters: Record<string, number | null>;
+      counter_evidence: Record<string, string>;
+    };
+    attempt_trace: Record<string, unknown>;
+  };
+  channels: Record<string, AttemptQualityAvailability>;
+  continuity: {
+    frame_gaps: {
+      count: number;
+      largest_missing_frame_count: number;
+      order_discontinuity_count: number;
+    };
+    lap_clock: {
+      gap_threshold_s: number;
+      gap_count: number;
+      regression_count: number;
+      largest_nonnegative_gap_s: number;
+    };
+    session_time: {
+      gap_threshold_s: number;
+      gap_count: number;
+      regression_count: number;
+      largest_nonnegative_gap_s: number;
+    };
+    lap_distance: {
+      gap_threshold_m: number;
+      gap_count: number;
+      regression_count: number;
+      largest_nonnegative_gap_m: number;
+    };
+  };
+  distance_support: {
+    resolution_m: number;
+    track_length_m: number | null;
+    track_length_source: string | null;
+    track_length_unavailable_reason: string | null;
+    observed_distance_range_m: [number, number] | null;
+    status: string;
+    reason: string | null;
+    channels: Record<
+      string,
+      {
+        observed_range_coverage: number | null;
+        observed_grid_point_count?: number;
+        full_track_coverage: number | null;
+        full_track_grid_point_count?: number | null;
+      }
+    >;
+  };
+}
+
 export interface ReferenceCandidate {
   attempt_key: string;
   attempt_number: number;

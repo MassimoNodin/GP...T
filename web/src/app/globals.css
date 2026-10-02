@@ -681,6 +681,109 @@ h1 span {
   font-size: 11px;
   font-weight: 600;
 }
+.attempt-quality {
+  margin-bottom: 14px;
+  padding: 18px;
+}
+.quality-panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.quality-panel-heading h2 {
+  margin: 7px 0 0;
+  font-size: 17px;
+}
+.quality-state {
+  flex: none;
+  padding: 5px 7px;
+  border: 1px solid #58412b;
+  color: var(--gold);
+  background: rgba(240, 180, 92, 0.07);
+  font: 8px var(--font-mono);
+  letter-spacing: 0.08em;
+}
+.quality-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+.quality-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+.quality-summary-grid > div,
+.quality-evidence-grid > div {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid #252e2f;
+  background: rgba(9, 12, 13, 0.45);
+}
+.quality-summary-grid span,
+.quality-evidence-grid > div > span {
+  color: #7d8987;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.05em;
+}
+.quality-summary-grid strong {
+  overflow-wrap: anywhere;
+  color: #e1e8e4;
+  font: 12px var(--font-mono);
+}
+.quality-evidence-grid strong {
+  color: #cbd4d0;
+  font: 9px var(--font-mono);
+  line-height: 1.5;
+}
+.quality-evidence-grid small {
+  color: #85918e;
+  font: 8px var(--font-mono);
+  line-height: 1.5;
+}
+.quality-table-wrap {
+  overflow-x: auto;
+  margin-top: 10px;
+}
+.quality-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.quality-table-wrap th,
+.quality-table-wrap td {
+  padding: 7px 9px;
+  border-top: 1px solid #252d2e;
+  color: #a8b2ae;
+  font: 8px var(--font-mono);
+  white-space: nowrap;
+}
+.quality-table-wrap th {
+  color: #788482;
+  font-size: 7px;
+  letter-spacing: 0.06em;
+}
+.quality-provenance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 14px;
+  margin-top: 10px;
+  color: #889491;
+  font: 8px var(--font-mono);
+}
+.quality-footnote,
+.quality-unavailable {
+  margin: 10px 0 0;
+  color: #899693;
+  font-size: 9px;
+  line-height: 1.55;
+}
 .quality-row > div > span {
   font-size: 7px;
 }
@@ -1340,6 +1443,13 @@ h1 span {
   }
   .quality-title {
     grid-column: span 2;
+  }
+  .quality-summary-grid,
+  .quality-evidence-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .attempt-quality {
+    padding: 13px;
   }
   .footer-bar {
     gap: 12px;

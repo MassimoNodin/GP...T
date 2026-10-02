@@ -182,6 +182,17 @@ A complete recording means orderly finalization, not zero receive losses, valid 
 
 Validate CLI compatibility, start/stop idempotency, controller ownership, import/record serialization, stop while waiting and during queued writes, malformed packets, queue overflow, socket and disk errors, publication collisions and staging cleanup failures, restart recovery, path containment, authorization, same-origin proxying, and mode-independent acquisition with synthetic Time Trial, Race, and unknown-context streams. Replay the Melbourne capture through the extracted service and preserve payload ordering, lap inventory, diagnostic comparison, and reference abstention. A clean valid Time Trial capture is still required to validate positive reference selection; race and opponent policies and geometry keep their separate evidence gates.
 
+## Decision 0014: inspect telemetry quality per attempt
+
+**Status:** accepted
+**Date:** 2026-10-03
+
+Add a versioned standalone quality report for every persisted attempt with a verified trace, including completed, invalid, partial, and abandoned attempts. Build it in a shared Python analysis service and expose it through the CLI, read-only API, and selected-attempt dashboard panel. The report combines trace provenance, capture/footer, recording-observer and replay-assembly evidence, game validity and disposition, channel availability, chronological discontinuities, and distance-supported coverage. Keep recording losses, recording-observer losses, replay losses, game validity, lap disposition, and metric support as separate evidence domains. Validate footer statuses and loss counters before exposing them; malformed and missing evidence remain distinguishable.
+
+Use the existing checksum-verified trace loader and shared distance-resampling rules. Share the existing float32-tolerant session-time continuity rule. Show channel support across the observed distance range separately from support across the track length reported in attempt context. An unobserved capture tail is unknown coverage, not evidence of dropped packets. Schema-v1 traces report Motion as unavailable in that schema; missing counters remain unavailable rather than defaulting to zero. This report supports any recorded gameplay mode without changing reference-selection eligibility.
+
+Defer aggregate quality scores, confidence values, score-based reference thresholds, geometry inference, ranking, diagnosis, and coaching until representative captures support those claims. No storage migration is needed.
+
 ## Data flow
 
 ```text

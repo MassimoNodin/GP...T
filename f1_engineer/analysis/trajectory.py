@@ -3,11 +3,12 @@ from __future__ import annotations
 import math
 from typing import Mapping, Sequence
 
+from .continuity import MAX_SESSION_TIME_GAP_S, float32_ulp, session_time_discontinuity
+
 
 TRAJECTORY_SCHEMA_VERSION = 1
 _FRAME_MASK = 0xFFFFFFFF
 _SERIAL_HALF_RANGE = 0x80000000
-_MAX_SESSION_TIME_GAP_S = 0.100
 _MAX_WORLD_POSITION_STEP_M = 25.0
 _LAP_TIME_REGRESSION_TOLERANCE_S = 0.020
 _LAP_DISTANCE_REGRESSION_TOLERANCE_M = 0.01
@@ -130,7 +131,7 @@ def build_observed_trajectory(
             "lap_time": "s",
         },
         "continuity_policy": {
-            "max_session_time_gap_s": _MAX_SESSION_TIME_GAP_S,
+            "max_session_time_gap_s": MAX_SESSION_TIME_GAP_S,
             "session_time_float32_tolerance": "one ULP at the larger endpoint magnitude",
             "max_world_position_step_m": _MAX_WORLD_POSITION_STEP_M,
             "world_position_float32_tolerance": "sqrt(3) times one ULP at the largest component magnitude",
@@ -237,11 +238,11 @@ def _continuity_break(
         return "frame_gap" if 1 < frame_delta < _SERIAL_HALF_RANGE else "frame_order_discontinuity"
     previous_time = float(previous["session_time_s"])
     current_time = float(current["session_time_s"])
-    session_time_tolerance = max(_float32_ulp(previous_time), _float32_ulp(current_time))
-    if current_time < previous_time - session_time_tolerance:
-        return "session_time_regression"
-    if current_time - previous_time > _MAX_SESSION_TIME_GAP_S + session_time_tolerance:
-        return "session_time_gap"
+    time_discontinuity = session_time_discontinuity(
+        previous_time, current_time, max_gap_s=MAX_SESSION_TIME_GAP_S
+    )
+    if time_discontinuity is not None:
+        return time_discontinuity
     previous_lap_time_ms = float(previous["lap_time_ms"])
     current_lap_time_ms = float(current["lap_time_ms"])
     if current_lap_time_ms < previous_lap_time_ms - _LAP_TIME_REGRESSION_TOLERANCE_S * 1000:
@@ -257,7 +258,7 @@ def _continuity_break(
         [float(current_position[axis]) for axis in ("x", "y", "z")],
     )
     max_position_ulp = max(
-        _float32_ulp(float(position[axis]))
+        float32_ulp(float(position[axis]))
         for position in (previous_position, current_position)
         for axis in ("x", "y", "z")
     )
@@ -296,10 +297,3 @@ def _finite_number(value: object) -> float | None:
         return None
     number = float(value)
     return number if math.isfinite(number) else None
-
-
-def _float32_ulp(value: float) -> float:
-    magnitude = abs(value)
-    if magnitude == 0 or magnitude < 2**-126:
-        return 2**-149
-    return 2 ** (math.floor(math.log2(magnitude)) - 23)

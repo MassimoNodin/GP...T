@@ -2,6 +2,7 @@ import {
   Comparison,
   CornerAnalysis,
   CornerRegion,
+  AttemptQualityReport,
   LapRecord,
   RegionEvent,
   ReferenceSelection,
@@ -11,6 +12,7 @@ import {
   requestApi,
 } from "@/lib/api";
 import RecordingInbox from "./RecordingInbox";
+import AttemptQualityPanel from "./AttemptQualityPanel";
 import type { ImportJobRecord, RecordingSourceRecord } from "@/lib/api";
 
 type SearchParams = {
@@ -121,16 +123,24 @@ export default async function Home({
         `/api/v1/references/session-best?${new URLSearchParams({ target_attempt_key: target.attempt_key })}`,
       )
     : Promise.resolve(null);
+  const attemptQualityRequest = target
+    ? requestApi<AttemptQualityReport>(
+        `/api/v1/attempts/${encodeURIComponent(target.attempt_key)}/quality`,
+      )
+    : Promise.resolve(null);
   const manualComparisonRequest =
     target && manualReference
       ? requestApi<Comparison>(
           `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, manualReference.attempt_key, selectedModel)}`,
         )
       : Promise.resolve(null);
-  const [selectionResponse, manualComparisonResponse] = await Promise.all([
+  const [selectionResponse, manualComparisonResponse, qualityResponse] = await Promise.all([
     selectionRequest,
     manualComparisonRequest,
+    attemptQualityRequest,
   ]);
+  const attemptQuality =
+    qualityResponse?.status === "ok" ? qualityResponse.data : null;
   const selection = selectionResponse?.data ?? null;
   const referenceKey = autoReference
     ? String(selection?.selected_reference?.attempt_key ?? "") || null
@@ -461,6 +471,16 @@ export default async function Home({
               </aside>
 
               <section className="analysis-column">
+                {target ? (
+                  <AttemptQualityPanel
+                    report={attemptQuality}
+                    unavailableReason={
+                      qualityResponse?.status === "unavailable"
+                        ? qualityResponse.reason
+                        : null
+                    }
+                  />
+                ) : null}
                 <section className="panel compare-panel">
                   <div className="compare-header">
                     <div>
