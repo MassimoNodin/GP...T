@@ -4,6 +4,7 @@ from f1_engineer.pipeline import TelemetryPipeline
 from f1_engineer.telemetry.frames import FrameAssembler
 from f1_engineer.udp.decoder import PacketDecoder
 from tests.helpers import make_datagram
+from tests.test_lap_tracking import SESSION_UID, _lap_packet
 
 
 def test_pipeline_reports_session_transitions_and_ignores_retired_uid() -> None:
@@ -33,6 +34,45 @@ def test_pipeline_flushes_frames_when_a_session_ends() -> None:
         (frame.session_uid, frame.overall_frame_identifier)
         for frame in second.completed_frames
     ] == [(100, 10)]
+
+
+def test_completion_reset_sample_belongs_to_incoming_lap_attempt() -> None:
+    pipeline = TelemetryPipeline(reorder_window_frames=1)
+    pipeline.process(
+        _lap_packet(
+            frame=10,
+            lap_number=1,
+            distance_m=100,
+            session_time=1,
+            current_lap_time_ms=1_000,
+            sequence=1,
+        )
+    )
+    pipeline.process(
+        _lap_packet(
+            frame=11,
+            lap_number=2,
+            distance_m=0,
+            session_time=2,
+            current_lap_time_ms=0,
+            last_lap_time_ms=80_000,
+            sequence=2,
+        )
+    )
+
+    result = pipeline.process(
+        make_datagram(
+            packet_id=255,
+            session_uid=SESSION_UID,
+            frame=12,
+            sequence=3,
+        )
+    )
+
+    assert len(result.car_samples) == 1
+    assert result.car_samples[0].frame_identifier == 11
+    assert result.car_samples[0].attempt_id == f"{SESSION_UID}:0:2"
+    assert result.car_samples[0].car_telemetry_available is False
 
 
 def test_frame_assembler_evicts_old_session_watermarks() -> None:

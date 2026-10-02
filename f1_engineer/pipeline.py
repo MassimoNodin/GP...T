@@ -9,11 +9,14 @@ from .sessions.lap_tracker import (
     SessionContextSegment,
 )
 from .sessions.context import SessionContext
-from .sessions.manager import SessionTracker
+from .sessions.manager import ContextHistoryChange, SessionTracker
+from .telemetry.canonical import CarSample, make_car_sample
 from .telemetry.frames import FrameAssembler
+from .udp.car_telemetry import CarTelemetryDecoder
 from .udp.decoder import PacketDecoder
 from .udp.models import DecodedPacket, PacketFrame, PacketId, RawDatagram, SessionEvent
 from .udp.lap_data import LapDataDecoder
+from .udp.participants import ParticipantsDecoder, ParticipantsPacket
 from .udp.session_context import SessionContextDecoder
 
 
@@ -26,6 +29,20 @@ class PipelineResult:
     session_context_error: str | None = None
     lap_attempts: tuple[LapAttempt, ...] = ()
     lap_data_errors: tuple[str, ...] = ()
+    car_samples: tuple[CarSample, ...] = ()
+    car_telemetry_errors: tuple[str, ...] = ()
+    participants: ParticipantsPacket | None = None
+    participants_error: str | None = None
+    context_history_changes: tuple[ContextHistoryChange, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineFlushResult:
+    completed_frames: tuple[PacketFrame, ...]
+    lap_attempts: tuple[LapAttempt, ...]
+    car_samples: tuple[CarSample, ...]
+    lap_data_errors: tuple[str, ...]
+    car_telemetry_errors: tuple[str, ...]
 
 
 class TelemetryPipeline:
@@ -42,16 +59,41 @@ class TelemetryPipeline:
             reorder_window_frames=reorder_window_frames,
         )
         self.lap_data_decoder = LapDataDecoder()
+        self.car_telemetry_decoder = CarTelemetryDecoder()
+        self.participants_decoder = ParticipantsDecoder()
         self.laps = LapTracker()
         self.lap_data_packets_decoded = 0
         self.lap_data_decode_errors: list[str] = []
+        self.car_telemetry_packets_decoded = 0
+        self.car_telemetry_decode_errors: list[str] = []
+        self.participants_packets_decoded = 0
+        self.participants_decode_errors: list[str] = []
+        self.missing_car_telemetry_frame_count = 0
+        self.missing_car_telemetry_frame_examples: list[tuple[int, int]] = []
 
     def _process_frames(
         self, frames: tuple[PacketFrame, ...]
-    ) -> tuple[tuple[LapAttempt, ...], tuple[str, ...]]:
+    ) -> tuple[tuple[LapAttempt, ...], tuple[str, ...], tuple[CarSample, ...], tuple[str, ...]]:
         attempts: list[LapAttempt] = []
         errors: list[str] = []
+        samples: list[CarSample] = []
+        telemetry_errors: list[str] = []
         for frame in frames:
+            telemetry_by_car: dict[int, object] = {}
+            missing_telemetry_for_frame = False
+            for packet in frame.packets:
+                if packet.packet_kind is not PacketId.CAR_TELEMETRY:
+                    continue
+                decoded_telemetry = self.car_telemetry_decoder.decode(packet)
+                if decoded_telemetry.error is not None:
+                    telemetry_errors.append(decoded_telemetry.error)
+                    self.car_telemetry_decode_errors.append(decoded_telemetry.error)
+                elif decoded_telemetry.telemetry is not None:
+                    self.car_telemetry_packets_decoded += 1
+                    for car_index, car in enumerate(decoded_telemetry.telemetry.cars):
+                        telemetry_by_car[car_index] = car
+            if frame.session_uid == 0:
+                continue
             for packet in frame.packets:
                 if packet.packet_kind is not PacketId.LAP_DATA:
                     continue
@@ -70,6 +112,8 @@ class TelemetryPipeline:
                     self.lap_data_decode_errors.append(error)
                     continue
                 frame_identifier = frame.overall_frame_identifier
+                if car_index not in telemetry_by_car:
+                    missing_telemetry_for_frame = True
                 context, _ = self.sessions.context_at(
                     frame_identifier, session_uid=frame.session_uid
                 )
@@ -95,7 +139,26 @@ class TelemetryPipeline:
                         )
                     )
                 )
-        return tuple(attempts), tuple(errors)
+                attempt_id = self.laps.active_attempt_id(car_index)
+                if attempt_id is not None:
+                    samples.append(
+                        make_car_sample(
+                            session_uid=frame.session_uid,
+                            frame_identifier=frame_identifier,
+                            session_time_s=packet.header.session_time,
+                            car_index=car_index,
+                            attempt_id=attempt_id,
+                            lap=result.lap_data.cars[car_index],
+                            telemetry=telemetry_by_car.get(car_index),
+                        )
+                    )
+            if missing_telemetry_for_frame:
+                self.missing_car_telemetry_frame_count += 1
+                if len(self.missing_car_telemetry_frame_examples) < 128:
+                    self.missing_car_telemetry_frame_examples.append(
+                        (frame.session_uid, frame.overall_frame_identifier)
+                    )
+        return tuple(attempts), tuple(errors), tuple(samples), tuple(telemetry_errors)
 
     def process(self, raw: RawDatagram) -> PipelineResult:
         packet = self.decoder.decode(raw)
@@ -109,22 +172,34 @@ class TelemetryPipeline:
         completed_frames: list[PacketFrame] = []
         lap_attempts: list[LapAttempt] = []
         lap_data_errors: list[str] = []
+        car_samples: list[CarSample] = []
+        car_telemetry_errors: list[str] = []
+        participant_result = self.participants_decoder.decode(packet)
+        participants = participant_result.participants
+        if participant_result.error is not None:
+            self.participants_decode_errors.append(participant_result.error)
+        elif participants is not None:
+            self.participants_packets_decoded += 1
         for event in session_events:
             if event.kind == "session_ended":
                 retired_frames = self.frames.retire_session(event.session_uid)
                 completed_frames.extend(retired_frames)
-                attempts, errors = self._process_frames(retired_frames)
+                attempts, errors, samples, telemetry_errors = self._process_frames(retired_frames)
                 lap_attempts.extend(attempts)
                 lap_data_errors.extend(errors)
+                car_samples.extend(samples)
+                car_telemetry_errors.extend(telemetry_errors)
                 lap_attempts.extend(self.laps.end_session(event.session_uid))
             elif event.kind == "session_started":
                 self.laps.start_session(event.session_uid)
             elif event.kind == "session_context_invalidated":
                 old_format_frames = self.frames.flush_session(event.session_uid)
                 completed_frames.extend(old_format_frames)
-                attempts, errors = self._process_frames(old_format_frames)
+                attempts, errors, samples, telemetry_errors = self._process_frames(old_format_frames)
                 lap_attempts.extend(attempts)
                 lap_data_errors.extend(errors)
+                car_samples.extend(samples)
+                car_telemetry_errors.extend(telemetry_errors)
                 lap_attempts.extend(
                     self.laps.close_segment(
                         event.session_uid, reason="packet_format_changed"
@@ -139,9 +214,11 @@ class TelemetryPipeline:
         else:
             ready_frames = self.frames.add(packet)
             completed_frames.extend(ready_frames)
-            attempts, errors = self._process_frames(ready_frames)
+            attempts, errors, samples, telemetry_errors = self._process_frames(ready_frames)
             lap_attempts.extend(attempts)
             lap_data_errors.extend(errors)
+            car_samples.extend(samples)
+            car_telemetry_errors.extend(telemetry_errors)
         return PipelineResult(
             packet=packet,
             session_events=session_events,
@@ -150,10 +227,26 @@ class TelemetryPipeline:
             session_context_error=context_result.error,
             lap_attempts=tuple(lap_attempts),
             lap_data_errors=tuple(lap_data_errors),
+            car_samples=tuple(car_samples),
+            car_telemetry_errors=tuple(car_telemetry_errors),
+            participants=participants,
+            participants_error=participant_result.error,
+            context_history_changes=self.sessions.drain_context_history_changes(),
         )
 
     def finish(self) -> tuple[PacketFrame, ...]:
+        return self.finish_with_outputs().completed_frames
+
+    def finish_with_outputs(self) -> PipelineFlushResult:
         frames = self.frames.flush()
-        self._process_frames(frames)
+        attempts, errors, samples, telemetry_errors = self._process_frames(frames)
+        start_attempt_count = len(self.laps.attempts)
         self.laps.finish()
-        return frames
+        attempts = (*attempts, *self.laps.attempts[start_attempt_count:])
+        return PipelineFlushResult(
+            completed_frames=frames,
+            lap_attempts=tuple(attempts),
+            car_samples=samples,
+            lap_data_errors=errors,
+            car_telemetry_errors=telemetry_errors,
+        )

@@ -111,6 +111,18 @@ class LapTracker:
         active = self._active.get(car_index)
         return active.start_frame_identifier if active is not None else None
 
+    def active_attempt_id(self, car_index: int) -> str | None:
+        active = self._active.get(car_index)
+        if active is None or self.current_session_uid is None:
+            return None
+        return f"{self.current_session_uid}:{car_index}:{active.attempt_number}"
+
+    def drain_attempts(self) -> tuple[LapAttempt, ...]:
+        """Release finalized metadata after an importer has consumed it."""
+        attempts = tuple(self.attempts)
+        self.attempts.clear()
+        return attempts
+
     def start_session(self, session_uid: int) -> None:
         if self.current_session_uid == session_uid:
             return

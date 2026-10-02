@@ -4,16 +4,16 @@ A local-first race engineer for F1 25 and its 2026 Season Pack. The system is be
 
 ## Current slice
 
-The initial foundation can capture raw UDP datagrams, inspect a capture, and replay it through the same packet-header and session pipeline. Captures retain unknown and malformed datagrams that reach the recorder; the bounded UDP receive queue reports any packets it had to drop.
+The foundation captures raw UDP datagrams, inspects captures, and replays them through the same packet-header and session pipeline. Captures retain unknown and malformed datagrams that reach the recorder; the bounded UDP receive queue reports any packets it had to drop.
 
-The envelope decoder recognizes the two EA UDP format identifiers and normalizes their common packet header. F1 25 Session v1 is decoded into session type, game mode, track, weather, and selected settings. F1 25 Lap Data v1 is decoded for all 22 cars, then used to build a player lap-attempt inventory with validity, completion state, context segments, and Time Trial reference eligibility. Most other packet bodies remain opaque. `inspect` reports the decoded session context and lap attempts; the full capture is not required for inspection or replay.
+F1 25 Session v1, Lap Data v1, Participants v1, and Car Telemetry v1 are decoded. Importing a capture synchronizes player input samples to Lap Data frames, retains missing packet families as null values, stores session/lap metadata in SQLite, and writes one checksummed Parquet trace for every completed, invalid, partial, or abandoned attempt. Race and Time Trial captures share this pipeline; automatic reference eligibility remains conservative and currently permits only known, valid Time Trial laps.
 
 ## Requirements
 
 - Python 3.11 or newer
 - Windows for the initial F1 25 UDP target; the capture and replay code is platform independent
 
-The application currently uses only the Python standard library.
+PyArrow is used for Parquet traces. SQLite and other capture tools use the Python standard library.
 
 ## Commands
 
@@ -23,11 +23,16 @@ Run from the repository root:
 python -m f1_engineer record --output recordings/session.f1ecap
 python -m f1_engineer inspect recordings/session.f1ecap
 python -m f1_engineer replay recordings/session.f1ecap --speed 0
+python -m f1_engineer import recordings/session.f1ecap
+python -m f1_engineer sessions
+python -m f1_engineer laps
+python -m f1_engineer lap RUN_ID:SESSION_UID:CAR_INDEX:ATTEMPT_NUMBER
 ```
 
 `record` listens on `0.0.0.0:20777` by default. Set the game's UDP telemetry destination to the computer's local address and port 20777. Use `Ctrl+C` to stop recording. `--speed 0` replays as fast as possible; positive values replay relative packet timing at that multiplier.
 
 Capture paths are created exclusively by default. Pass `--overwrite` only when you intend to replace an existing capture.
+`import` defaults to `data/f1-engineer.sqlite3` and stores Parquet traces beneath `data/f1-engineer.sqlite3.traces/`. Pass `--database path.sqlite3` to choose another database; its traces are stored in a database-specific sibling directory. Importing the same capture with the same pipeline version and configuration is idempotent. If a run was interrupted, rerunning `import` resumes it by rebuilding that run's traces from the raw capture. Simultaneous imports of the same run into one database are rejected while the active OS lock is held.
 
 Install the package to use the `f1-engineer` command:
 
@@ -36,7 +41,7 @@ python -m pip install -e .
 f1-engineer --help
 ```
 
-Install the development extra and run the foundation tests with:
+Install the development extra and run the tests with:
 
 ```powershell
 python -m pip install -e ".[dev]"

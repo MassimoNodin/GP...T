@@ -2,9 +2,9 @@
 
 The current EA F1 25 / 2026 Season Pack specification post provides separate UDP modes for the original F1 25 format and the 2026 Season Pack format. EA labels the documentation revision **Version 11.0**; that value is distinct from the per-packet `packetVersion` in the 29-byte header.
 
-The post was checked on 2026-10-02. For the current F1 25 Session and Lap Data packet decoders, the implementation also references EA's [F1 25 UDP data output v3 PDF](https://forums.ea.com/t5/s/tghpe58374/attachments/tghpe58374/f1-games-game-info-hub-en/61/4/Data%20Output%20from%20F1%2025%20v3.pdf), retrieved on 2026-10-02. The full specification and 2026 attachments have not been copied into the repository or pinned with checksums; implementation support remains limited to the two documented packets below.
+The post was checked on 2026-10-02. For the current F1 25 Session, Lap Data, Participants, and Car Telemetry decoders, the implementation also references EA's [F1 25 UDP data output v3 PDF](https://forums.ea.com/t5/s/tghpe58374/attachments/tghpe58374/f1-games-game-info-hub-en/61/4/Data%20Output%20from%20F1%2025%20v3.pdf), retrieved on 2026-10-02. The full specification and 2026 attachments have not been copied into the repository or pinned with checksums; support remains explicitly versioned per packet adapter.
 
-The envelope decoder recognizes `packetFormat` 2025 and 2026. The shared header fields are decoded little-endian. Packet 15 (`LapPositions`) is present in both formats; packet 16 (`CarTelemetry2`) is specific to the 2026 format. Unknown packet IDs and unsupported packet bodies are retained without interpretation. Typed body support currently consists of F1 25 (`packetFormat=2025`) Session packet (`packetId=1`, `packetVersion=1`) and Lap Data packet (`packetId=2`, `packetVersion=1`).
+The envelope decoder recognizes `packetFormat` 2025 and 2026. The shared header fields are decoded little-endian. Packet 15 (`LapPositions`) is present in both formats; packet 16 (`CarTelemetry2`) is specific to the 2026 format. Unknown packet IDs and unsupported packet bodies are retained without interpretation. Typed body support currently consists of F1 25 (`packetFormat=2025`) Session (`packetId=1`), Lap Data (`packetId=2`), Participants (`packetId=4`), and Car Telemetry (`packetId=6`), each at `packetVersion=1`.
 
 ## F1 25 Session packet v1
 
@@ -26,4 +26,4 @@ The EA post currently links these primary references:
 - [F1 25 and 2026 Season Pack UDP specification](https://forums.ea.com/blog/f1-games-game-info-hub-en/ea-sports%E2%84%A2-f1%C2%AE25-2026-season-pack-udp-specification/12187347)
 - [EA F1 25 UDP specification discussion](https://forums.ea.com/discussions/f1-25-general-discussion-en/discussion-f1%C2%AE-25-udp-specification/12187351)
 
-The remaining structures and any attached PDFs need to be pinned by retrieval date and checksum before claiming complete packet support. The current decoder validates the common header for every packet, F1 25 Session v1, and F1 25 Lap Data v1; it does not claim full packet parsing or race-mode lap eligibility.
+The remaining structures and any attached PDFs need to be pinned by retrieval date and checksum before claiming complete packet support. The current decoder validates the common header for every packet and decodes F1 25 Session, Lap Data, Participants, and Car Telemetry v1; it does not claim full packet parsing or race-mode lap eligibility.

@@ -9,6 +9,8 @@ dist/
 .mypy_cache/
 recordings/
 data/
+*.traces/
+.*.locks/
 .env
 .env.*
 !.env.example

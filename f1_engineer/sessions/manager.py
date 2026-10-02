@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from dataclasses import dataclass
 from functools import cmp_to_key
 
 from ..udp.models import DecodedPacket, PacketFormat, SessionEvent
@@ -8,6 +9,14 @@ from .context import SessionContext
 
 _FRAME_MASK = 0xFFFFFFFF
 _SERIAL_HALF_RANGE = 0x80000000
+
+
+@dataclass(frozen=True, slots=True)
+class ContextHistoryChange:
+    session_uid: int
+    frame_identifier: int
+    context: SessionContext | None
+    removed: bool = False
 
 
 class SessionTracker:
@@ -24,6 +33,7 @@ class SessionTracker:
         self._context_history_by_uid: OrderedDict[
             int, list[tuple[int, SessionContext | None]]
         ] = OrderedDict()
+        self._pending_context_history_changes: list[ContextHistoryChange] = []
         self._retired_uids: OrderedDict[int, None] = OrderedDict()
 
     def observe(self, packet: DecodedPacket) -> tuple[SessionEvent, ...]:
@@ -66,9 +76,11 @@ class SessionTracker:
         self._format_change_frame_identifier = None
         self._current_context = None
         self._current_context_frame_identifier = None
-        self._context_history_by_uid[uid] = [
-            (packet.header.overall_frame_identifier & _FRAME_MASK, None)
-        ]
+        start_frame = packet.header.overall_frame_identifier & _FRAME_MASK
+        self._context_history_by_uid[uid] = [(start_frame, None)]
+        self._pending_context_history_changes.append(
+            ContextHistoryChange(uid, start_frame, None)
+        )
         self._context_history_by_uid.move_to_end(uid)
         while len(self._context_history_by_uid) > 128:
             self._context_history_by_uid.popitem(last=False)
@@ -117,6 +129,17 @@ class SessionTracker:
             context = update_context
             context_frame = update_frame if update_context is not None else None
         return context, context_frame
+
+    def context_history(
+        self, session_uid: int
+    ) -> tuple[tuple[int, SessionContext | None], ...]:
+        """Return accepted context checkpoints, including unknown/invalidation markers."""
+        return tuple(self._context_history_by_uid.get(session_uid, ()))
+
+    def drain_context_history_changes(self) -> tuple[ContextHistoryChange, ...]:
+        changes = tuple(self._pending_context_history_changes)
+        self._pending_context_history_changes.clear()
+        return changes
 
     def context_timeline(
         self,
@@ -198,8 +221,15 @@ class SessionTracker:
             # A delayed first Session packet can predate the packet that caused
             # this UID to be noticed. That initial unknown marker is only a
             # baseline and must not erase the earlier decoded context afterward.
+            baseline_frame = history[0][0]
             history.clear()
+            self._pending_context_history_changes.append(
+                ContextHistoryChange(session_uid, baseline_frame, None, removed=True)
+            )
         history.append((frame_identifier, context))
+        self._pending_context_history_changes.append(
+            ContextHistoryChange(session_uid, frame_identifier, context)
+        )
 
         def compare(
             left: tuple[int, SessionContext | None],

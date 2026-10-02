@@ -199,6 +199,24 @@ def test_first_session_context_can_arrive_before_a_later_session_start_packet() 
     assert context_frame == 50
     assert context_after_session_start == result.session_context
     assert context_after_frame == 50
+    assert [(change.frame_identifier, change.removed) for change in result.context_history_changes] == [
+        (51, True),
+        (50, False),
+    ]
+
+
+def test_pipeline_emits_only_new_context_history_changes() -> None:
+    pipeline = TelemetryPipeline()
+    first = pipeline.process(_recorded_packet())
+    repeated = pipeline.process(_packet_with_body(_recorded_packet().payload[29:], frame=48))
+
+    assert [(change.frame_identifier, change.context) for change in first.context_history_changes] == [
+        (47, None),
+        (47, first.session_context),
+    ]
+    assert len(repeated.context_history_changes) == 1
+    assert repeated.context_history_changes[0].frame_identifier == 48
+    assert repeated.context_history_changes[0].context == first.session_context
 
 
 def test_reordered_session_update_can_follow_a_newer_motion_packet() -> None:

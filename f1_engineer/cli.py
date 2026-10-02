@@ -16,6 +16,13 @@ from .errors import F1EngineerError, ProtocolError
 from .pipeline import PipelineResult, TelemetryPipeline
 from .recording.capture import CaptureReader, CaptureWriter
 from .sessions.context import SessionContext
+from .storage.importer import (
+    DEFAULT_DATABASE,
+    get_lap,
+    import_capture,
+    list_laps,
+    list_sessions,
+)
 from .udp.models import DecodedPacket, RawDatagram
 from .udp.source import ReplaySource, UDPSource
 
@@ -368,6 +375,39 @@ def _inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+def _import_capture(args: argparse.Namespace) -> int:
+    result = import_capture(args.capture, args.database)
+    _json_line(result.to_dict())
+    return 0
+
+
+def _sessions(args: argparse.Namespace) -> int:
+    _json_line({"sessions": list_sessions(args.database)})
+    return 0
+
+
+def _laps(args: argparse.Namespace) -> int:
+    _json_line(
+        {
+            "laps": list_laps(
+                args.database,
+                run_id=args.run_id,
+                session_uid=args.session_uid,
+            )
+        }
+    )
+    return 0
+
+
+def _lap(args: argparse.Namespace) -> int:
+    result = get_lap(args.database, args.attempt_key)
+    if result is None:
+        print("error: lap attempt not found or its trace is not ready", file=sys.stderr)
+        return 2
+    _json_line(result)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="f1-engineer", description="F1 telemetry capture and replay")
     parser.add_argument("--version", action="version", version=f"f1-engineer {__version__}")
@@ -395,6 +435,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="relative to recorded timing; use 0 for maximum processing speed",
     )
     replay.set_defaults(handler=_replay)
+
+    import_command = commands.add_parser("import", help="import a capture into SQLite and Parquet")
+    import_command.add_argument("capture", help="source .f1ecap capture")
+    import_command.add_argument(
+        "--database", default=str(DEFAULT_DATABASE), help="SQLite database path"
+    )
+    import_command.set_defaults(handler=_import_capture)
+
+    sessions = commands.add_parser("sessions", help="list imported sessions")
+    sessions.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
+    sessions.set_defaults(handler=_sessions)
+
+    laps = commands.add_parser("laps", help="list imported lap attempts")
+    laps.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
+    laps.add_argument("--run-id", help="filter to one processing run")
+    laps.add_argument("--session-uid", help="filter by EA session UID")
+    laps.set_defaults(handler=_laps)
+
+    lap = commands.add_parser("lap", help="inspect a lap attempt and its trace")
+    lap.add_argument("attempt_key", help="attempt key printed by the laps command")
+    lap.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
+    lap.set_defaults(handler=_lap)
     return parser
 
 
