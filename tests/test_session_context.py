@@ -7,6 +7,7 @@ from pathlib import Path
 from f1_engineer.cli import _inspect
 from f1_engineer.pipeline import TelemetryPipeline
 from f1_engineer.recording.capture import CaptureWriter
+from f1_engineer.recording.service import _AcquisitionObserver
 from f1_engineer.sessions.context import GameMode, RuleSet, SessionType
 from f1_engineer.udp.decoder import PacketDecoder
 from f1_engineer.udp.models import RawDatagram
@@ -29,7 +30,9 @@ def _recorded_packet() -> RawDatagram:
     )
 
 
-def _packet_with_body(body: bytes, *, frame: int = 47, version: int = 1) -> RawDatagram:
+def _packet_with_body(
+    body: bytes, *, frame: int = 47, version: int = 1, sequence: int = 0
+) -> RawDatagram:
     return make_datagram(
         packet_format=2025,
         packet_id=1,
@@ -37,6 +40,7 @@ def _packet_with_body(body: bytes, *, frame: int = 47, version: int = 1) -> RawD
         session_uid=RECORDED_SESSION_UID,
         frame=frame,
         body=body,
+        sequence=sequence,
     )
 
 
@@ -217,6 +221,36 @@ def test_pipeline_emits_only_new_context_history_changes() -> None:
     assert len(repeated.context_history_changes) == 1
     assert repeated.context_history_changes[0].frame_identifier == 48
     assert repeated.context_history_changes[0].context == first.session_context
+
+
+def test_managed_acquisition_observer_keeps_only_bounded_state() -> None:
+    observer = _AcquisitionObserver()
+    body = FIXTURE.read_bytes()[29:]
+    for frame in range(1, 1025):
+        observer.process(_packet_with_body(body, frame=frame, sequence=frame))
+        observer.process(
+            RawDatagram(
+                sequence=frame + 1024,
+                captured_at_ns=frame,
+                monotonic_ns=frame,
+                source_host="127.0.0.1",
+                source_port=20777,
+                payload=b"malformed",
+            )
+        )
+
+    observer.finish()
+
+    assert observer.latest_context is not None
+    assert observer.latest_context["session_uid"] == RECORDED_SESSION_UID
+    assert observer.sessions.context_history(RECORDED_SESSION_UID) == ()
+    assert len(observer.sessions._context_history_by_uid) == 0
+    assert observer.sessions.drain_context_history_changes() == ()
+    assert len(observer.frames._open) <= observer.frames.max_open_frames
+    assert len(observer.frames._closed) <= observer.frames._max_closed_keys
+    assert observer.counts["unrecognized_or_malformed"] == 1024
+    assert "completed_lap_attempts" not in observer.counts
+    assert "lap_attempts" not in observer.counts
 
 
 def test_reordered_session_update_can_follow_a_newer_motion_packet() -> None:

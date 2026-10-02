@@ -37,6 +37,38 @@ export interface ImportJobRecord {
   progress: ImportProgressRecord | null;
 }
 
+export interface RecordingProgressRecord {
+  state: string;
+  elapsed_ms: number;
+  received: number;
+  queued: number;
+  recorded: number;
+  queue_dropped: number;
+  socket_errors: number;
+  latest_context: SessionContext | null;
+}
+
+export interface RecordingJobRecord {
+  recording_id: string;
+  status:
+    | "starting"
+    | "recording"
+    | "stopping"
+    | "complete"
+    | "failed"
+    | "interrupted";
+  bind_host: string;
+  bind_port: number;
+  created_at_utc: string;
+  updated_at_utc: string;
+  started_at_utc: string | null;
+  finished_at_utc: string | null;
+  summary: Record<string, unknown> | null;
+  failure_reason: string | null;
+  published: boolean;
+  progress: RecordingProgressRecord | null;
+}
+
 export interface SessionContext {
   session_uid?: string;
   track_name?: string | null;

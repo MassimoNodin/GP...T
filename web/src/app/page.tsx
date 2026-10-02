@@ -5,6 +5,7 @@ import {
   LapRecord,
   RegionEvent,
   ReferenceSelection,
+  RecordingJobRecord,
   SessionRecord,
   TrackModelRecord,
   requestApi,
@@ -42,12 +43,17 @@ export default async function Home({
     import_job_id: firstParam(rawParams.import_job_id),
     import_error: firstParam(rawParams.import_error),
   };
-  const [sessionResponse, trackModelsResponse, recordingSourcesResponse] =
-    await Promise.all([
-      requestApi<SessionRecord[]>("/api/v1/sessions"),
-      requestApi<TrackModelRecord[]>("/api/v1/track-models"),
-      requestApi<RecordingSourceRecord[]>("/api/v1/recording-sources"),
-    ]);
+  const [
+    sessionResponse,
+    trackModelsResponse,
+    recordingSourcesResponse,
+    recordingResponse,
+  ] = await Promise.all([
+    requestApi<SessionRecord[]>("/api/v1/sessions"),
+    requestApi<TrackModelRecord[]>("/api/v1/track-models"),
+    requestApi<RecordingSourceRecord[]>("/api/v1/recording-sources"),
+    requestApi<RecordingJobRecord>("/api/v1/recordings/current"),
+  ]);
   const jobResponse =
     params.import_job_id && /^[a-f0-9]{32}$/.test(params.import_job_id)
       ? await requestApi<ImportJobRecord>(
@@ -307,6 +313,7 @@ export default async function Home({
 
         <RecordingInbox
           sourcesResponse={recordingSourcesResponse}
+          recordingResponse={recordingResponse}
           jobResponse={jobResponse}
           importError={params.import_error}
         />

@@ -35,6 +35,9 @@ class ImportController:
         self._owns_lock = False
         self._executor: ThreadPoolExecutor | None = None
         self._progress_lock = threading.Lock()
+        self._operation_lock = threading.Lock()
+        self._active_operation: str | None = None
+        self._active_import_job_id: str | None = None
         self._progress: dict[str, dict[str, Any]] = {}
         self.unavailable_reason: str | None = None
 
@@ -78,9 +81,35 @@ class ImportController:
         )
         if source is None:
             raise ValueError("capture_id_unavailable")
-        job, created = create_import_job(self.database_path, capture_id)
-        if created:
-            self._submit_worker(job["job_id"], capture_id, source)
+        with self._operation_lock:
+            if self._active_operation == "import":
+                active_job = (
+                    get_import_job(self.database_path, self._active_import_job_id)
+                    if self._active_import_job_id is not None
+                    else None
+                )
+                if (
+                    active_job is not None
+                    and active_job["status"] in {"queued", "running"}
+                    and active_job["capture_id"] == capture_id
+                ):
+                    return self.get(active_job["job_id"])
+                raise ValueError("another_local_operation_is_in_progress")
+            if self._active_operation is not None:
+                raise ValueError("another_local_operation_is_in_progress")
+            self._active_operation = "import"
+            try:
+                job, created = create_import_job(self.database_path, capture_id)
+                if created:
+                    self._active_import_job_id = job["job_id"]
+                    self._submit_worker(job["job_id"], capture_id, source)
+                else:
+                    self._active_operation = None
+                    self._active_import_job_id = None
+            except Exception:
+                self._active_operation = None
+                self._active_import_job_id = None
+                raise
         return self.get(job["job_id"])
 
     def retry(self, job_id: str) -> dict[str, Any]:
@@ -93,9 +122,37 @@ class ImportController:
         )
         if source is None:
             raise ValueError("capture_id_unavailable")
-        queued = retry_import_job(self.database_path, job_id)
-        self._submit_worker(job_id, job["capture_id"], source)
+        with self._operation_lock:
+            if self._active_operation is not None:
+                raise ValueError("another_local_operation_is_in_progress")
+            self._active_operation = "import"
+            self._active_import_job_id = job_id
+            try:
+                queued = retry_import_job(self.database_path, job_id)
+                self._submit_worker(job_id, job["capture_id"], source)
+            except Exception:
+                self._active_operation = None
+                self._active_import_job_id = None
+                raise
         return self.get(queued["job_id"])
+
+    def reserve_operation(self, operation: str) -> bool:
+        """Reserve the local controller for one durable mutation workflow."""
+        self._ensure_ready()
+        if operation not in {"import", "recording"}:
+            raise ValueError("unsupported_local_operation")
+        with self._operation_lock:
+            if self._active_operation is not None:
+                return False
+            self._active_operation = operation
+            return True
+
+    def release_operation(self, operation: str) -> None:
+        with self._operation_lock:
+            if self._active_operation == operation:
+                self._active_operation = None
+                if operation == "import":
+                    self._active_import_job_id = None
 
     def get(self, job_id: str) -> dict[str, Any] | None:
         job = get_import_job(self.database_path, job_id)
@@ -222,6 +279,7 @@ class ImportController:
         finally:
             with self._progress_lock:
                 self._progress.pop(job_id, None)
+            self.release_operation("import")
 
     def _ensure_ready(self) -> None:
         if not self.ready:

@@ -35,7 +35,7 @@ python -m f1_engineer reference TARGET_ATTEMPT_KEY
 python -m f1_engineer trajectory ATTEMPT_KEY --output data/trajectory.json
 ```
 
-Run the local API and dashboard in separate terminals. Copy a finished `.f1ecap` recording into the configured recordings folder (default `recordings/`) to import it from the dashboard:
+Run the local API and dashboard in separate terminals. The dashboard can start and stop UDP recording directly; finalized captures appear in the inbox for explicit import:
 
 ```powershell
 uv sync --extra app
@@ -45,7 +45,9 @@ npm ci
 npm run dev
 ```
 
-The API binds to `127.0.0.1:8765`; Next.js uses it from the server and serves the dashboard at `http://127.0.0.1:3000`. Set `F1_ENGINEER_API_URL` only if the local API uses a different loopback URL. The API's database path and recording root are selected at server startup and are never accepted from a request. The API creates a random control token at the configured token-file path; the Next server reads it for same-origin import actions, and it is never sent to browser code. If you choose a different token-file path, set `F1_ENGINEER_CONTROL_TOKEN_FILE` for the Next server to that same path.
+The API binds to `127.0.0.1:8765`; its managed UDP recorder listens on `0.0.0.0:20777` by default so the game can send telemetry to the PC. Set `--udp-host`, `--udp-port`, or `--udp-queue-size` on the API command to change those recording settings. Next.js serves the dashboard at `http://127.0.0.1:3000`. Set `F1_ENGINEER_API_URL` only if the local API uses a different loopback URL. The API's database path and recording root are selected at server startup and are never accepted from a request. The API creates a random control token at the configured token-file path; the Next server reads it for same-origin recording and import actions, and it is never sent to browser code. If you choose a different token-file path, set `F1_ENGINEER_CONTROL_TOKEN_FILE` for the Next server to that same path.
+
+Start recording from the dashboard before driving and stop it after the session. Stop drains queued datagrams, writes and syncs the capture footer, then publishes the `.f1ecap` file into the inbox. A finalized capture can still have packet drops or invalid laps; inspect its capture-quality and lap evidence before treating it as a reference. Starting a capture while an import is running, or importing while recording, is rejected until the current operation finishes. If the API exits unexpectedly, its `.part` file is retained and marked interrupted; it is not resumed or imported automatically.
 
 `record` listens on `0.0.0.0:20777` by default. Set the game's UDP telemetry destination to the computer's local address and port 20777. Use `Ctrl+C` to stop recording. `--speed 0` replays as fast as possible; positive values replay relative packet timing at that multiplier.
 

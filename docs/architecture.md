@@ -164,6 +164,24 @@ Protect local mutation endpoints with server-held authorization and same-origin 
 
 The Melbourne recording validates ingestion, retry and unchanged diagnostic analysis. This workflow does not establish positive reference eligibility, race policy, opponent coverage, geometry or coaching.
 
+## Decision 0013: record UDP telemetry through the local application
+
+**Status:** accepted
+
+**Date:** 2026-10-03
+
+Add explicit Start, Stop and status controls for UDP recording, completing the application's capture → inbox → import → review workflow. Recording is mode-independent: Time Trial, Race, unknown modes and unsupported packets remain capturable. This increment adds acquisition controls and diagnostic status; it does not add live comparison, reference selection or coaching.
+
+Extract a reusable recording service from `cli._record` and preserve the CLI's current arguments, output, overwrite policy, and capture semantics. Configure the API's UDP bind address, port, queue limit, and recordings root at server startup. Browser requests carry opaque recording IDs; the server generates output names and paths. Protect mutations with the existing server-held token and same-origin proxy.
+
+Persist the recording lifecycle in SQLite and acquire controller ownership before recovery. Serialize managed imports and recordings through the app controller. Make repeated Start and Stop requests idempotent. Persist every accepted raw datagram before decoding; malformed and unsupported packets must not stop capture. Expose bounded status snapshots with elapsed time, packet/write/drop counts, receive state, and latest known session context. Keep session UIDs as strings. Managed recording uses a bounded acquisition observer that tracks packet/frame loss and current session context without retaining lap attempts, decode-error strings, or context history. The CLI keeps its full inventory collector; historical lap analysis and detailed metrics remain the importer's responsibility, and managed capture summaries omit metrics that have not been computed.
+
+Use `starting → recording → stopping → complete`, with terminal `failed` and `interrupted` states. Record to an exclusively created staging file outside the inbox's `.f1ecap` discovery pattern. Stop closes reception, drains accepted queued datagrams, finishes pending writes, writes the capture footer, flushes and fsyncs, closes the file, then publishes it atomically without replacement. Only a published finalized capture enters the inbox; importing remains explicit. Reconcile a completed file only after the live recorder no longer owns its job, so a destination collision cannot stop an active capture prematurely.
+
+A complete recording means orderly finalization, not zero receive losses, valid laps, or reference eligibility. Preserve the existing loss metrics and eligibility checks, and never substitute fabricated zero counters for unavailable evidence. On startup, mark abandoned recordings interrupted after controller ownership is acquired. Preserve staging artifacts for inspection, require an explicit new recording, and never resume or append automatically. API shutdown follows the same graceful Stop path. Disk, bind, and publication failures retain accurate failure state and must not advertise successful publication.
+
+Validate CLI compatibility, start/stop idempotency, controller ownership, import/record serialization, stop while waiting and during queued writes, malformed packets, queue overflow, socket and disk errors, publication collisions and staging cleanup failures, restart recovery, path containment, authorization, same-origin proxying, and mode-independent acquisition with synthetic Time Trial, Race, and unknown-context streams. Replay the Melbourne capture through the extracted service and preserve payload ordering, lap inventory, diagnostic comparison, and reference abstention. A clean valid Time Trial capture is still required to validate positive reference selection; race and opponent policies and geometry keep their separate evidence gates.
+
 ## Data flow
 
 ```text
@@ -199,11 +217,12 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - An observed-trajectory export preserves source attempt/run/checksum/context, units, frame/distance/time anchors, quality, and discontinuity segments. It is a diagnostic driven path and is never identified as a track centreline.
 - Replay timing is based only on the monotonic intervals stored in the capture; maximum-speed replay skips sleeps.
 - The capture format has a magic value and schema version. Unknown packet IDs remain inspectable.
+- App-managed recording uses a server-generated staging file and the shared raw-first recorder. Stop finalizes and fsyncs the footer before no-replacement publication into the configured recordings root; import and recording operations are serialized by the controller.
 
 ## Deferred decisions
 
 - Remaining packet-body parsers are added from EA's official structure files, with their source and revision recorded. Support is explicit per `(packet_format, packet_id, packet_version)`. Current typed body support covers F1 25 Session, Lap Data, Participants, Car Telemetry, and Motion packet v1; Session packet adapters populate canonical gameplay context independently of the wire format.
 - Add canonical traces for additional cars only when validated multi-car capture coverage justifies them. Slower packet families will use freshness windows rather than being required in every frame.
 - Distance comparison, run-scoped Time Trial reference selection, and the read-only local historical explorer are implemented for diagnostics. Validated circuit geometry, race reference policy, and actionable coaching remain deferred until their supporting evidence and interfaces are ready.
-- The local recording inbox imports existing `.f1ecap` files through durable single-worker jobs. Live UDP recording controls in the dashboard remain deferred.
+- The local dashboard starts and stops mode-independent UDP capture and imports finalized `.f1ecap` files through durable jobs. Race reference policy, live analysis/coaching, and opponent coverage remain deferred.
 - Voice, LLM, and frontend work remain above deterministic analysis; no LLM is needed to capture or inspect telemetry.

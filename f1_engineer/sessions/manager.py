@@ -20,10 +20,16 @@ class ContextHistoryChange:
 
 
 class SessionTracker:
-    def __init__(self, reorder_window_frames: int = 3) -> None:
+    def __init__(
+        self,
+        reorder_window_frames: int = 3,
+        *,
+        retain_context_history: bool = True,
+    ) -> None:
         if not 1 <= reorder_window_frames < _SERIAL_HALF_RANGE:
             raise ValueError("reorder_window_frames must be a positive 32-bit frame distance")
         self.reorder_window_frames = reorder_window_frames
+        self.retain_context_history = retain_context_history
         self.current_session_uid: int | None = None
         self.current_packet_format: PacketFormat | None = None
         self._current_packet_frame_identifier: int | None = None
@@ -77,13 +83,14 @@ class SessionTracker:
         self._current_context = None
         self._current_context_frame_identifier = None
         start_frame = packet.header.overall_frame_identifier & _FRAME_MASK
-        self._context_history_by_uid[uid] = [(start_frame, None)]
-        self._pending_context_history_changes.append(
-            ContextHistoryChange(uid, start_frame, None)
-        )
-        self._context_history_by_uid.move_to_end(uid)
-        while len(self._context_history_by_uid) > 128:
-            self._context_history_by_uid.popitem(last=False)
+        if self.retain_context_history:
+            self._context_history_by_uid[uid] = [(start_frame, None)]
+            self._pending_context_history_changes.append(
+                ContextHistoryChange(uid, start_frame, None)
+            )
+            self._context_history_by_uid.move_to_end(uid)
+            while len(self._context_history_by_uid) > 128:
+                self._context_history_by_uid.popitem(last=False)
         events: list[SessionEvent] = []
         if previous is not None:
             self._retired_uids[previous] = None
@@ -121,6 +128,16 @@ class SessionTracker:
         """Return the newest known context at or before an overall frame."""
         frame_identifier &= _FRAME_MASK
         uid = self.current_session_uid if session_uid is None else session_uid
+        if not self.retain_context_history:
+            if (
+                uid == self.current_session_uid
+                and self._current_context_frame_identifier is not None
+                and self._is_not_older(
+                    frame_identifier, self._current_context_frame_identifier
+                )
+            ):
+                return self._current_context, self._current_context_frame_identifier
+            return None, None
         context: SessionContext | None = None
         context_frame: int | None = None
         for update_frame, update_context in self._context_history_by_uid.get(uid or 0, ()):
@@ -208,6 +225,8 @@ class SessionTracker:
         frame_identifier: int,
         context: SessionContext | None,
     ) -> None:
+        if not self.retain_context_history:
+            return
         history = self._context_history_by_uid.setdefault(session_uid, [])
         event = (frame_identifier, context)
         if event in history:

@@ -1,9 +1,11 @@
 import type {
   ApiResponse,
   ImportJobRecord,
+  RecordingJobRecord,
   RecordingSourceRecord,
 } from "@/lib/api";
 import ImportJobStatus from "./ImportJobStatus";
+import RecordingControls from "./RecordingControls";
 
 const importErrorText: Record<string, string> = {
   busy: "Another recording is importing. Wait for it to finish, then try again.",
@@ -17,10 +19,12 @@ const importErrorText: Record<string, string> = {
 
 export default function RecordingInbox({
   sourcesResponse,
+  recordingResponse,
   jobResponse,
   importError,
 }: {
   sourcesResponse: ApiResponse<RecordingSourceRecord[]> | null;
+  recordingResponse: ApiResponse<RecordingJobRecord> | null;
   jobResponse: ApiResponse<ImportJobRecord> | null;
   importError?: string;
 }) {
@@ -41,6 +45,11 @@ export default function RecordingInbox({
         </div>
         <span className="count-pill">{available ? sources.length : "—"}</span>
       </div>
+
+      <RecordingControls
+        initialRecording={recordingResponse?.data ?? null}
+        initialError={!recordingResponse || recordingResponse.status !== "ok"}
+      />
 
       {importError && (
         <p className="import-alert" role="alert">

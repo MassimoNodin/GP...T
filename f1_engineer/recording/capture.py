@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import struct
 from datetime import datetime, timezone
 from pathlib import Path
@@ -102,6 +103,7 @@ class CaptureWriter:
                 self._stream.write(_FILE_PREFIX.pack(len(encoded)))
                 self._stream.write(encoded)
                 self._stream.flush()
+                os.fsync(self._stream.fileno())
             finally:
                 self._stream.close()
                 self._closed = True

@@ -1,15 +1,12 @@
 import { NextResponse } from "next/server";
-import {
-  forwardImportRequest,
-  isTrustedImportRequest,
-} from "@/lib/import-proxy";
+import { forwardLocalRequest, isTrustedLocalMutation } from "@/lib/local-proxy";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ job_id: string }> },
 ) {
   const { job_id } = await params;
-  if (!isTrustedImportRequest(request)) {
+  if (!isTrustedLocalMutation(request)) {
     return NextResponse.json(
       { error: "same_origin_request_required" },
       { status: 403 },
@@ -22,7 +19,7 @@ export async function POST(
     );
   }
   try {
-    const response = await forwardImportRequest(
+    const response = await forwardLocalRequest(
       `/api/v1/import-jobs/${job_id}/retry`,
       { method: "POST" },
       true,

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-export function isTrustedImportRequest(request: Request) {
+export function isTrustedLocalMutation(request: Request) {
   const configuredOrigin = process.env.F1_ENGINEER_WEB_ORIGIN;
   const allowedOrigins = new Set([
     "http://127.0.0.1:3000",
@@ -28,7 +28,7 @@ export function isTrustedImportRequest(request: Request) {
   );
 }
 
-export async function forwardImportRequest(
+export async function forwardLocalRequest(
   path: string,
   init: RequestInit = {},
   needsControlToken = false,
@@ -40,7 +40,7 @@ export async function forwardImportRequest(
     parsed.protocol !== "http:" ||
     !["127.0.0.1", "localhost", "::1"].includes(hostname)
   ) {
-    throw new Error("The import proxy only accepts a loopback API URL.");
+    throw new Error("The local proxy only accepts a loopback API URL.");
   }
   const headers = new Headers(init.headers);
   if (needsControlToken) {
@@ -51,7 +51,7 @@ export async function forwardImportRequest(
       await readFile(/*turbopackIgnore: true*/ tokenPath, "utf8")
     ).trim();
     if (token.length < 32)
-      throw new Error("Local import control is unavailable.");
+      throw new Error("Local recording control is unavailable.");
     headers.set("authorization", `Bearer ${token}`);
   }
   return fetch(`${parsed.origin}${path}`, {

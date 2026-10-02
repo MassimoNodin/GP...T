@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import {
-  forwardImportRequest,
-  isTrustedImportRequest,
-} from "@/lib/import-proxy";
+import { forwardLocalRequest, isTrustedLocalMutation } from "@/lib/local-proxy";
 
 function redirectWith(request: Request, params: Record<string, string>) {
   const destination = new URL("/", request.url);
@@ -13,7 +10,7 @@ function redirectWith(request: Request, params: Record<string, string>) {
 }
 
 export async function POST(request: Request) {
-  if (!isTrustedImportRequest(request)) {
+  if (!isTrustedLocalMutation(request)) {
     return NextResponse.json(
       { error: "same_origin_request_required" },
       { status: 403 },
@@ -25,7 +22,7 @@ export async function POST(request: Request) {
     return redirectWith(request, { import_error: "capture_unavailable" });
   }
   try {
-    const response = await forwardImportRequest(
+    const response = await forwardLocalRequest(
       "/api/v1/import-jobs",
       {
         method: "POST",

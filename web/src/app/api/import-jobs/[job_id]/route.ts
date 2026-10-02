@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { forwardImportRequest } from "@/lib/import-proxy";
+import { forwardLocalRequest } from "@/lib/local-proxy";
 
 export async function GET(
   _request: Request,
@@ -13,9 +13,7 @@ export async function GET(
     );
   }
   try {
-    const response = await forwardImportRequest(
-      `/api/v1/import-jobs/${job_id}`,
-    );
+    const response = await forwardLocalRequest(`/api/v1/import-jobs/${job_id}`);
     return new NextResponse(await response.text(), {
       status: response.status,
       headers: { "content-type": "application/json" },

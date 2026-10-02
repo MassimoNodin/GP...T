@@ -1,8 +1,9 @@
 # Historical dashboard
 
 This Next.js app renders the local F1 Engineer archive and calls the FastAPI
-service from the server. Both servers bind to loopback; the database path and
-recording root are configured only on the API process.
+service from the server. The API binds to loopback; its UDP telemetry listener
+uses the configured bind address and defaults to `0.0.0.0:20777`. The database
+path and recording root are configured only on the API process.
 
 From the repository root, start the API:
 
@@ -19,10 +20,11 @@ npm ci
 npm run dev
 ```
 
-Open [http://127.0.0.1:3000](http://127.0.0.1:3000). Copy finished `.f1ecap`
-files into `recordings/`, refresh, and start an import from the inbox. The API
-creates the local control token file; the Next server reads it for same-origin
-import actions. The token is not sent to the browser. For data import, supported
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000). Use the recording panel to
+start and stop UDP capture. Finalized `.f1ecap` files appear in the inbox; import
+them explicitly for historical analysis. The API creates the local control
+token file; the Next server reads it for same-origin recording and import
+actions. The token is not sent to the browser. For data import, supported
 analysis, and privacy details, see the repository [README](../README.md).
 
 The dashboard loads a model catalog from `GET /api/v1/track-models`. Select a

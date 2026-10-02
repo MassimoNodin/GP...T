@@ -5,16 +5,15 @@ import asyncio
 import json
 import math
 import sys
-import time
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
 from . import __version__
 from .errors import F1EngineerError, ProtocolError
 from .pipeline import PipelineResult, TelemetryPipeline
-from .recording.capture import CaptureReader, CaptureWriter
+from .recording.capture import CaptureReader
+from .recording.service import record_udp_capture
 from .sessions.context import SessionContext
 from .analysis.resampling import ResamplingConfig
 from .analysis.service import compare_attempts
@@ -33,7 +32,7 @@ from .storage.importer import (
     list_sessions,
 )
 from .storage.query import TRAJECTORY_TRACE_COLUMNS, load_attempt_trace
-from .udp.models import DecodedPacket, RawDatagram
+from .udp.models import DecodedPacket
 from .udp.source import ReplaySource, UDPSource
 
 
@@ -114,157 +113,20 @@ def _collect_session_context(
 
 
 async def _record(args: argparse.Namespace) -> int:
-    output = Path(args.output)
-    source = UDPSource(host=args.host, port=args.port, queue_size=args.queue_size)
-    pipeline = TelemetryPipeline()
-    counts: Counter[str] = Counter()
-    counts["completed_frames"] = 0
-    session_contexts: dict[int, SessionContext] = {}
-    started = time.monotonic()
-    writer: CaptureWriter | None = None
-    writer_executor: ThreadPoolExecutor | None = None
-    operation_error: Exception | None = None
-    loop = asyncio.get_running_loop()
-    deadline = started + args.duration if args.duration is not None else None
-
-    try:
-        await source.open()
-        writer = CaptureWriter(
-            output,
-            metadata={
-                "application": "f1-race-engineer",
-                "application_version": __version__,
-                "bind_host": args.host,
-                "bind_port": args.port,
-            },
-            overwrite=args.overwrite,
-        )
-        writer_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="f1-capture")
-        print(f"Recording UDP {args.host}:{args.port} to {output}. Press Ctrl+C to stop.")
-
-        async def persist(raw: RawDatagram) -> None:
-            assert writer is not None and writer_executor is not None
-            pending_write = loop.run_in_executor(writer_executor, writer.write, raw)
-            try:
-                await asyncio.shield(pending_write)
-            except asyncio.CancelledError:
-                # Do not lose a datagram already removed from the receive queue.
-                await pending_write
-                counts["recorded"] += 1
-                raise
-            counts["recorded"] += 1
-
-        packet_iterator = source.packets().__aiter__()
-        while True:
-            try:
-                if deadline is None:
-                    raw = await packet_iterator.__anext__()
-                else:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        break
-                    raw = await asyncio.wait_for(packet_iterator.__anext__(), timeout=remaining)
-            except (StopAsyncIteration, asyncio.TimeoutError):
-                break
-
-            # Persist first: malformed or unsupported packets remain available for later decoders.
-            await persist(raw)
-            try:
-                result = pipeline.process(raw)
-            except ProtocolError:
-                counts["unrecognized_or_malformed"] += 1
-                continue
-            counts[f"format_{result.packet.packet_format.value}"] += 1
-            counts["completed_frames"] += len(result.completed_frames)
-            for event in result.session_events:
-                _json_line(
-                    {
-                        "event": event.kind,
-                        "session_uid": event.session_uid,
-                        "previous_session_uid": event.previous_session_uid,
-                    }
-                )
-            context_update = _collect_session_context(counts, session_contexts, result)
-            if context_update is not None:
-                _json_line(
-                    {
-                        "event": "session_context_updated",
-                        "context": context_update.to_dict(),
-                    }
-                )
-    except asyncio.CancelledError:
-        pass
-    except Exception as exc:
-        operation_error = exc
-    finally:
-        source.close()
-        pending = source.drain_pending()
-        if writer is not None and writer_executor is not None:
-            for raw in pending:
-                pending_write = loop.run_in_executor(writer_executor, writer.write, raw)
-                try:
-                    await asyncio.shield(pending_write)
-                except Exception as exc:
-                    operation_error = operation_error or exc
-                    break
-                counts["recorded"] += 1
-                try:
-                    result = pipeline.process(raw)
-                except ProtocolError:
-                    counts["unrecognized_or_malformed"] += 1
-                else:
-                    counts[f"format_{result.packet.packet_format.value}"] += 1
-                    counts["completed_frames"] += len(result.completed_frames)
-                    _collect_session_context(counts, session_contexts, result)
-            counts["unpersisted_on_shutdown"] = max(
-                0, source.stats.queued - counts["recorded"]
-            )
-            counts["received"] = source.stats.received
-            counts["queue_dropped"] = source.stats.dropped
-            counts["socket_errors"] = source.stats.socket_errors
-            counts["open_frames_flushed"] = len(pipeline.finish())
-            _add_frame_stats(counts, pipeline)
-            _add_lap_stats(counts, pipeline)
-            counts["elapsed_ms"] = int((time.monotonic() - started) * 1000)
-            capture_status = (
-                "complete"
-                if operation_error is None and counts["unpersisted_on_shutdown"] == 0
-                else "incomplete"
-            )
-            footer = {"status": capture_status, **dict(counts)}
-            try:
-                pending_close = loop.run_in_executor(writer_executor, writer.close, footer)
-                await asyncio.shield(pending_close)
-            except Exception as exc:
-                operation_error = operation_error or exc
-            finally:
-                writer_executor.shutdown(wait=True)
-        elif writer is not None:
-            try:
-                writer.close({"status": "incomplete", "reason": "capture worker unavailable"})
-            except Exception as exc:
-                operation_error = operation_error or exc
-
-    counts["received"] = source.stats.received
-    counts.setdefault("queue_dropped", source.stats.dropped)
-    counts.setdefault("socket_errors", source.stats.socket_errors)
-    counts.setdefault("unpersisted_on_shutdown", 0)
-    counts.setdefault("open_frames_flushed", len(pipeline.finish()))
-    _add_frame_stats(counts, pipeline)
-    _add_lap_stats(counts, pipeline)
-    counts.setdefault("elapsed_ms", int((time.monotonic() - started) * 1000))
-    _json_line(
-        {
-            "capture": str(output),
-            "summary": dict(counts),
-            "session_contexts": [
-                session_contexts[uid].to_dict() for uid in sorted(session_contexts)
-            ],
-            "lap_attempts": _lap_attempts(pipeline),
-        }
+    print(
+        f"Recording UDP {args.host}:{args.port} to {args.output}. Press Ctrl+C to stop."
     )
-    if operation_error is not None:
-        raise operation_error
+    result = await record_udp_capture(
+        args.output,
+        host=args.host,
+        port=args.port,
+        queue_size=args.queue_size,
+        collect_inventory=True,
+        duration=args.duration,
+        overwrite=args.overwrite,
+        on_event=_json_line,
+    )
+    _json_line(result.to_dict())
     return 0
 
 
@@ -488,6 +350,9 @@ def _api(args: argparse.Namespace) -> int:
             args.database,
             recordings_root=args.recordings_root,
             control_token=load_or_create_control_token(args.control_token_file),
+            recording_host=args.udp_host,
+            recording_port=args.udp_port,
+            recording_queue_size=args.udp_queue_size,
         ),
         host="127.0.0.1",
         port=args.port,
@@ -622,6 +487,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--control-token-file",
         default=str(Path("data") / ".f1-engineer-control-token"),
         help="server-only authorization token file for local import actions",
+    )
+    api.add_argument(
+        "--udp-host",
+        default="0.0.0.0",
+        help="local address for app-managed F1 telemetry recording",
+    )
+    api.add_argument(
+        "--udp-port",
+        type=int,
+        default=20777,
+        help="local UDP telemetry port for app-managed recording",
+    )
+    api.add_argument(
+        "--udp-queue-size",
+        type=int,
+        default=8192,
+        help="bounded UDP receive queue size for app-managed recording",
     )
     api.add_argument("--port", type=int, default=8765, help="loopback port (default: 8765)")
     api.set_defaults(handler=_api)

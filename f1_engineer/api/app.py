@@ -21,6 +21,7 @@ from ..tracks.registry import (
     resolve_track_model,
 )
 from .import_controller import ImportController
+from .recording_controller import RecordingController
 
 
 PayloadT = TypeVar("PayloadT")
@@ -99,6 +100,34 @@ class ImportJobRequest(BaseModel):
     capture_id: str = Field(pattern=r"^[a-f0-9]{32}$")
 
 
+class RecordingProgressRecord(BaseModel):
+    state: str
+    elapsed_ms: int
+    received: int
+    queued: int
+    recorded: int
+    queue_dropped: int
+    socket_errors: int
+    latest_context: dict[str, Any] | None
+
+
+class RecordingJobRecord(BaseModel):
+    recording_id: str
+    status: Literal[
+        "starting", "recording", "stopping", "complete", "failed", "interrupted"
+    ]
+    bind_host: str
+    bind_port: int
+    created_at_utc: str
+    updated_at_utc: str
+    started_at_utc: str | None
+    finished_at_utc: str | None
+    summary: dict[str, Any] | None
+    failure_reason: str | None
+    published: bool
+    progress: RecordingProgressRecord | None = None
+
+
 class LapRecord(BaseModel):
     attempt_key: str
     run_id: str
@@ -147,6 +176,9 @@ def create_app(
     *,
     recordings_root: str | Path = "recordings",
     control_token: str | None = None,
+    recording_host: str = "0.0.0.0",
+    recording_port: int = 20777,
+    recording_queue_size: int = 8192,
 ) -> FastAPI:
     """Create a local API bound to operator-configured storage and recording roots."""
     configured_database_path = Path(database_path).expanduser().resolve()
@@ -154,18 +186,31 @@ def create_app(
     import_controller = ImportController(
         configured_database_path, configured_recordings_root
     )
+    recording_controller = RecordingController(
+        configured_database_path,
+        configured_recordings_root,
+        import_controller,
+        host=recording_host,
+        port=recording_port,
+        queue_size=recording_queue_size,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         import_controller.start()
+        recording_controller.start()
         app.state.import_controller = import_controller
-        yield
-        import_controller.close()
+        app.state.recording_controller = recording_controller
+        try:
+            yield
+        finally:
+            recording_controller.close()
+            import_controller.close()
 
     app = FastAPI(
         title="F1 Race Engineer API",
         version="1.0.0",
-        description="Local historical telemetry, analysis, and explicit capture imports.",
+        description="Local telemetry recording, historical analysis, and explicit capture imports.",
         lifespan=lifespan,
     )
 
@@ -224,6 +269,62 @@ def create_app(
             )
         )
 
+    @app.get(
+        "/api/v1/recordings/current",
+        response_model=APIResponse[RecordingJobRecord],
+    )
+    def current_recording() -> APIResponse[RecordingJobRecord] | JSONResponse:
+        try:
+            job = recording_controller.current()
+        except ValueError as exc:
+            return _api_error(503, str(exc))
+        return APIResponse[RecordingJobRecord](data=job)
+
+    @app.post(
+        "/api/v1/recordings/start",
+        response_model=APIResponse[RecordingJobRecord],
+        status_code=202,
+    )
+    def start_recording(
+        authorization: str | None = Header(default=None),
+    ) -> APIResponse[RecordingJobRecord] | JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "recording_control_not_authorized")
+        try:
+            job = recording_controller.start_recording()
+        except ValueError as exc:
+            reason = str(exc)
+            status_code = (
+                409
+                if reason
+                in {
+                    "another_local_operation_is_in_progress",
+                    "recording_controller_busy",
+                }
+                else 503
+            )
+            return _api_error(status_code, reason)
+        return APIResponse[RecordingJobRecord](data=job)
+
+    @app.post(
+        "/api/v1/recordings/{recording_id}/stop",
+        response_model=APIResponse[RecordingJobRecord],
+        status_code=202,
+    )
+    def stop_recording(
+        recording_id: str,
+        authorization: str | None = Header(default=None),
+    ) -> APIResponse[RecordingJobRecord] | JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "recording_control_not_authorized")
+        try:
+            job = recording_controller.stop_recording(recording_id)
+        except ValueError as exc:
+            reason = str(exc)
+            status_code = 404 if reason == "recording_unavailable" else 503
+            return _api_error(status_code, reason)
+        return APIResponse[RecordingJobRecord](data=job)
+
     @app.post(
         "/api/v1/import-jobs",
         response_model=APIResponse[ImportJobRecord],
@@ -239,7 +340,15 @@ def create_app(
             job = import_controller.submit(request.capture_id)
         except ValueError as exc:
             reason = str(exc)
-            status_code = 409 if reason == "another_import_is_in_progress" else 503
+            status_code = (
+                409
+                if reason
+                in {
+                    "another_import_is_in_progress",
+                    "another_local_operation_is_in_progress",
+                }
+                else 503
+            )
             return _api_error(status_code, reason)
         return APIResponse[ImportJobRecord](data=job)
 
@@ -271,7 +380,11 @@ def create_app(
             status_code = (
                 409
                 if reason
-                in {"another_import_is_in_progress", "import_job_not_retryable"}
+                in {
+                    "another_import_is_in_progress",
+                    "another_local_operation_is_in_progress",
+                    "import_job_not_retryable",
+                }
                 else 503
             )
             return _api_error(status_code, reason)
