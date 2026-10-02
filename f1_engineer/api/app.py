@@ -12,6 +12,11 @@ from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, sele
 from ..analysis.service import compare_attempts
 from ..storage.importer import DEFAULT_DATABASE, list_laps, list_sessions
 from ..storage.database import DatabaseSchemaError
+from ..tracks.model import TrackModel
+from ..tracks.registry import (
+    list_track_models as list_registered_track_models,
+    resolve_track_model,
+)
 
 
 PayloadT = TypeVar("PayloadT")
@@ -37,6 +42,19 @@ class SessionRecord(BaseModel):
     started_at_utc: str
     finished_at_utc: str | None
     lap_attempts: int
+
+
+class TrackModelRecord(BaseModel):
+    model_id: str
+    revision: int
+    packet_format: int
+    track_id: int
+    track_name: str
+    layout_id: str
+    track_length_m: float
+    validation_status: str
+    provenance: str
+    region_count: int
 
 
 class LapRecord(BaseModel):
@@ -126,16 +144,38 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE) -> FastAPI:
             )
         )
 
+    @app.get(
+        "/api/v1/track-models",
+        response_model=APIResponse[list[TrackModelRecord]],
+    )
+    def track_models() -> APIResponse[list[TrackModelRecord]]:
+        return APIResponse[list[TrackModelRecord]](
+            data=list_registered_track_models()
+        )
+
     @app.get("/api/v1/compare/laps", response_model=APIResponse[dict[str, Any]])
     def compare_laps(
         target_attempt_key: str = Query(min_length=1),
         reference_attempt_key: str = Query(min_length=1),
+        track_model_id: str | None = Query(default=None, min_length=1),
+        track_model_revision: int | None = Query(default=None, ge=1),
     ) -> APIResponse[dict[str, Any]]:
+        if (track_model_id is None) != (track_model_revision is None):
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason="track_model_id_and_revision_must_be_selected_together",
+            )
         try:
+            track_model: TrackModel | None = (
+                resolve_track_model(track_model_id, track_model_revision)
+                if track_model_id is not None and track_model_revision is not None
+                else None
+            )
             result = compare_attempts(
                 configured_database_path,
                 target_attempt_key,
                 reference_attempt_key,
+                track_model=track_model,
             )
         except DatabaseSchemaError:
             raise

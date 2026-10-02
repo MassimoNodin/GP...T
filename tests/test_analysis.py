@@ -278,6 +278,7 @@ def _stored_attempt(
     context: dict[str, object] | None = None,
     speed_mps: float = 30.0,
     throttle: float = 0.75,
+    distances_m: tuple[float, float, float] = (0.0, 10.0, 20.0),
 ) -> StoredAttemptTrace:
     if context is None:
         context = {
@@ -309,7 +310,7 @@ def _stored_attempt(
             "gear": 4,
             "drs_active": False,
         }
-        for frame, distance, time_ms in zip((10, 20, 30), (0.0, 10.0, 20.0), times_ms)
+        for frame, distance, time_ms in zip((10, 20, 30), distances_m, times_ms)
     )
     return StoredAttemptTrace(
         attempt_key=attempt_key,
@@ -431,7 +432,19 @@ def test_corner_region_analysis_keeps_draft_and_invalid_laps_diagnostic(monkeypa
     assert region["diagnostic_only"] is True
     assert region["target"]["minimum_speed"]["status"] == "observed_minimum_complete_window"
     assert region["target"]["track_apex"]["status"] == "draft_metadata_anchor"
-    assert region["target"]["driver_apex"]["reason"] == "trajectory_position_not_stored"
+    assert (
+        region["target"]["driver_apex"]["reason"]
+        == "validated_track_relative_geometry_unavailable"
+    )
+    assert region["target"]["event_channel_coverage"] == {
+        "brake": 1.0,
+        "steering": 1.0,
+        "throttle": 1.0,
+    }
+    assert (
+        region["target"]["turn_in_proxy"]["interpretation"]
+        == "absolute steering threshold; calibrated track-relative geometry unavailable"
+    )
     assert region["target"]["throttle_pickup"]["0.5"]["status"] == "left_censored"
     assert region["delta_change"]["delta_change_s"] == pytest.approx(0.1)
 
@@ -452,4 +465,26 @@ def test_corner_region_analysis_keeps_draft_and_invalid_laps_diagnostic(monkeypa
     assert (
         eligible_result["corner_analysis"]["regions"][0]["delta_change"]["status"]
         == "diagnostic_region_delta_change"
+    )
+
+    attempts[target.attempt_key] = _stored_attempt(
+        "target-attempt", (100, 200, 300), game_valid=False
+    )
+    attempts[reference.attempt_key] = _stored_attempt(
+        "reference-attempt",
+        (100, 200, 300),
+        game_valid=False,
+        distances_m=(0.0, 5.0, 10.0),
+    )
+    tail_unsupported = service_module.compare_attempts(
+        "test.sqlite3",
+        "target-attempt",
+        "reference-attempt",
+        track_model=model,
+    )
+    assert (
+        tail_unsupported["corner_analysis"]["regions"][0]["reference"][
+            "event_channel_coverage"
+        ]["brake"]
+        == pytest.approx(0.5)
     )

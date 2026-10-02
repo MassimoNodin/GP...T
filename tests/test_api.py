@@ -69,6 +69,86 @@ def test_compare_api_reports_unsupported_pair_without_losing_status(monkeypatch,
     assert response.json()["reason"] == "attempts have incompatible track, format, or Time Trial settings"
 
 
+def test_track_model_catalog_exposes_draft_revision_and_provenance(tmp_path) -> None:
+    response = _get(create_app(tmp_path / "unused.sqlite3"), "/api/v1/track-models")
+
+    assert response.status_code == 200
+    model = response.json()["data"][0]
+    assert model["model_id"] == "melbourne-f1-25-time-trial-draft-v1"
+    assert model["revision"] == 1
+    assert model["validation_status"] == "draft"
+    assert model["region_count"] == 6
+    assert "not been validated" in model["provenance"]
+    assert "path" not in model
+
+
+def test_compare_api_resolves_explicit_model_id_and_revision(monkeypatch, tmp_path) -> None:
+    resolved_model = object()
+    calls: dict[str, object] = {}
+
+    def resolve(model_id: str, revision: int):
+        calls["resolved"] = (model_id, revision)
+        return resolved_model
+
+    def compare(*_args, track_model=None, **_kwargs):
+        calls["model"] = track_model
+        return {"corner_analysis": {"diagnostic_only": True, "regions": []}}
+
+    monkeypatch.setattr(api_module, "resolve_track_model", resolve)
+    monkeypatch.setattr(api_module, "compare_attempts", compare)
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/compare/laps",
+        params={
+            "target_attempt_key": "run:42:0:2",
+            "reference_attempt_key": "run:42:0:1",
+            "track_model_id": "melbourne-f1-25-time-trial-draft-v1",
+            "track_model_revision": "1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert calls["resolved"] == ("melbourne-f1-25-time-trial-draft-v1", 1)
+    assert calls["model"] is resolved_model
+    assert response.json()["data"]["corner_analysis"]["diagnostic_only"] is True
+
+
+def test_compare_api_rejects_unknown_or_incomplete_track_model_identity(
+    monkeypatch, tmp_path
+) -> None:
+    def unknown(_model_id: str, _revision: int):
+        raise ValueError("unknown_track_model_revision")
+
+    monkeypatch.setattr(api_module, "resolve_track_model", unknown)
+    app = create_app(tmp_path / "unused.sqlite3")
+    common = {
+        "target_attempt_key": "run:42:0:2",
+        "reference_attempt_key": "run:42:0:1",
+    }
+    unknown_response = _get(
+        app,
+        "/api/v1/compare/laps",
+        params={
+            **common,
+            "track_model_id": "unknown",
+            "track_model_revision": "9",
+        },
+    )
+    incomplete_response = _get(
+        app,
+        "/api/v1/compare/laps",
+        params={**common, "track_model_id": "melbourne-f1-25-time-trial-draft-v1"},
+    )
+
+    assert unknown_response.json()["status"] == "unavailable"
+    assert unknown_response.json()["reason"] == "unknown_track_model_revision"
+    assert incomplete_response.json()["status"] == "unavailable"
+    assert (
+        incomplete_response.json()["reason"]
+        == "track_model_id_and_revision_must_be_selected_together"
+    )
+
+
 def test_sessions_api_returns_503_without_creating_a_database(tmp_path) -> None:
     database_path = tmp_path / "not-created.sqlite3"
     response = _get(create_app(database_path), "/api/v1/sessions")

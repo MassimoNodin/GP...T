@@ -29,6 +29,19 @@ export interface SessionRecord {
   lap_attempts: number;
 }
 
+export interface TrackModelRecord {
+  model_id: string;
+  revision: number;
+  packet_format: number;
+  track_id: number;
+  track_name: string;
+  layout_id: string;
+  track_length_m: number;
+  validation_status: "draft" | "validated";
+  provenance: string;
+  region_count?: number;
+}
+
 export interface LapRecord {
   attempt_key: string;
   run_id: string;
@@ -92,6 +105,85 @@ export interface ResampledTrace {
   }>;
 }
 
+export interface RegionEventEpisode {
+  start_distance_m: number;
+  start_distance_bracket_m: number[] | null;
+  end_distance_m: number;
+  end_distance_bracket_m: number[] | null;
+  duration_s: number;
+  peak_value: number;
+  left_censored: boolean;
+  right_censored: boolean;
+}
+
+export interface RegionEvent {
+  status: string;
+  distance_m: number | null;
+  distance_bracket_m: number[] | null;
+  reason?: string;
+  events: RegionEventEpisode[];
+}
+
+export interface RegionAttempt {
+  braking: RegionEvent;
+  event_channel_coverage: {
+    brake: number;
+    steering: number;
+    throttle: number;
+  };
+  minimum_speed: {
+    status: string;
+    speed_kph: number | null;
+    distance_m: number | null;
+    supported_grid_coverage: number;
+    observed_sample_count?: number;
+  };
+  turn_in_proxy: RegionEvent & { interpretation: string };
+  driver_apex: { status: string; reason: string };
+  throttle_pickup: Record<string, RegionEvent>;
+  exit_speeds: Array<{
+    offset_m: number;
+    distance_m: number;
+    status: string;
+    speed_kph: number | null;
+  }>;
+}
+
+export interface CornerRegion {
+  identifier: string;
+  label: string;
+  analysis_window_m: [number, number];
+  diagnostic_only: boolean;
+  target: RegionAttempt;
+  reference: RegionAttempt;
+  differences: {
+    minimum_speed_kph: number | null;
+    region_delta_change_s: number | null;
+    exit_speed_kph: Array<{
+      offset_m: number;
+      target_minus_reference: number | null;
+    }>;
+    braking_onset_distance_m: number | null;
+    throttle_50_distance_m: number | null;
+  };
+  delta_change: {
+    status: string;
+    entry_delta_s: number | null;
+    exit_delta_s: number | null;
+    delta_change_s: number | null;
+    direction: string;
+  };
+}
+
+export interface CornerAnalysis {
+  analysis_version: string;
+  model: TrackModelRecord;
+  layout_validation_status: string;
+  attempts_reference_eligible: { target: boolean; reference: boolean };
+  diagnostic_only: boolean;
+  regions: CornerRegion[];
+}
+
 export interface Comparison {
   analysis_version: string;
   config: { max_bracket_time_s: number; [key: string]: number };
@@ -125,6 +217,7 @@ export interface Comparison {
     target_excluded_spans: unknown[];
     reference_excluded_spans: unknown[];
   };
+  corner_analysis?: CornerAnalysis;
 }
 
 export async function requestApi<T>(

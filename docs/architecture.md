@@ -135,6 +135,19 @@ The available Melbourne recording validates the session explorer, diagnostic com
 
 The dashboard collapses repeated imports of the same capture/session to the most recently completed processing run while preserving separate recordings with different capture checksums. Its page is server-rendered and calls the loopback API with caching disabled; browser requests carry opaque session and attempt keys only.
 
+## Decision 0011: expose diagnostic distance-region analysis
+
+**Status:** accepted
+**Date:** 2026-10-02
+
+Bring the existing deterministic distance-region analysis into the historical explorer. This advances the planned corner inspection interface using implemented, capture-backed measurements while verified geometry and actionable coaching remain deferred.
+
+Register immutable packaged track models by model ID and revision. Expose their metadata, provenance, and validation status through the read-only local API. Require explicit model selection and retain comparison-service compatibility checks; requests must never supply model filesystem paths. Session telemetry does not independently establish circuit layout.
+
+Reuse the existing Python comparison and region-analysis services. Display regions in distance order with local trace plots, regional delta change, observed minimum speed, braking/throttle event brackets, exit speeds, full requested-window channel coverage, and unsupported statuses. Compute coverage in Python from the requested region bounds and excluded spans; do not derive it from only the shared chart grid. Preserve censoring, multiple events, and missing data. Draft models always produce diagnostic presentation. Steering-derived turn-in remains a proxy; driver apex and calibrated track-relative geometry remain unavailable even though world-position samples are stored.
+
+The Melbourne recording validates six draft analysis windows and diagnostic comparisons between game-invalid laps. It does not validate official corner numbering, geometry, reference eligibility, or coaching. Do not rank these regions as actionable opportunities or generate diagnoses, confidence scores, theoretical-best laps, or advice. Preserve the existing Time Trial policy boundaries and explicit unsupported results for other modes.
+
 ## Data flow
 
 ```text

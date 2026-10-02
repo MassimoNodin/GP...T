@@ -291,7 +291,9 @@ def _analyze_attempt_region(
         }
     )
     turn_in = _onset(turn_in_detection, "steering_onset_proxy")
-    turn_in["interpretation"] = "absolute steering threshold; trajectory not available"
+    turn_in["interpretation"] = (
+        "absolute steering threshold; calibrated track-relative geometry unavailable"
+    )
 
     return {
         "braking": _onset(brake_detection, "brake_onset"),
@@ -300,7 +302,17 @@ def _analyze_attempt_region(
         "track_apex": apex,
         "driver_apex": {
             "status": "unavailable",
-            "reason": "trajectory_position_not_stored",
+            "reason": "validated_track_relative_geometry_unavailable",
+        },
+        "event_channel_coverage": {
+            channel: _requested_window_coverage(
+                resampled,
+                start_m,
+                end_m,
+                config.grid_step_m,
+                channel=channel,
+            )
+            for channel in ("brake", "steering", "throttle")
         },
         "throttle_pickup": {
             threshold: _onset(detection, f"throttle_{threshold}_onset")

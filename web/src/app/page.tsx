@@ -1,15 +1,20 @@
 import {
   Comparison,
+  CornerAnalysis,
+  CornerRegion,
   LapRecord,
+  RegionEvent,
   ReferenceSelection,
   SessionRecord,
+  TrackModelRecord,
   requestApi,
 } from "@/lib/api";
 
 type SearchParams = {
-  session_key?: string;
-  target_attempt_key?: string;
-  reference_choice?: string;
+  session_key?: string | string[];
+  target_attempt_key?: string | string[];
+  reference_choice?: string | string[];
+  track_model_key?: string | string[];
 };
 
 type Series = {
@@ -24,8 +29,22 @@ export default async function Home({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  const params = await searchParams;
-  const sessionResponse = await requestApi<SessionRecord[]>("/api/v1/sessions");
+  const rawParams = await searchParams;
+  const params = {
+    session_key: firstParam(rawParams.session_key),
+    target_attempt_key: firstParam(rawParams.target_attempt_key),
+    reference_choice: firstParam(rawParams.reference_choice),
+    track_model_key: firstParam(rawParams.track_model_key),
+  };
+  const [sessionResponse, trackModelsResponse] = await Promise.all([
+    requestApi<SessionRecord[]>("/api/v1/sessions"),
+    requestApi<TrackModelRecord[]>("/api/v1/track-models"),
+  ]);
+  const trackModels = trackModelsResponse?.data ?? [];
+  const selectedModel =
+    trackModels.find((item) => modelKey(item) === params.track_model_key) ??
+    null;
+  const staleModelChoice = Boolean(params.track_model_key) && !selectedModel;
   const importedSessions = (sessionResponse?.data ?? []).filter(
     (item) => item.run_status === "complete",
   );
@@ -54,6 +73,9 @@ export default async function Home({
     sessions.find((item) => item.session_key === params.session_key) ??
     sessions.at(-1) ??
     null;
+  const isTimeTrial = session?.context?.session_type === "time_trial";
+  const trackModelCatalogUnavailable =
+    !trackModelsResponse || trackModelsResponse.status === "unavailable";
   const lapResponse = session
     ? await requestApi<LapRecord[]>(
         `/api/v1/laps?${new URLSearchParams({ run_id: session.run_id, session_uid: session.session_uid })}`,
@@ -82,7 +104,7 @@ export default async function Home({
   const manualComparisonRequest =
     target && manualReference
       ? requestApi<Comparison>(
-          `/api/v1/compare/laps?${new URLSearchParams({ target_attempt_key: target.attempt_key, reference_attempt_key: manualReference.attempt_key })}`,
+          `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, manualReference.attempt_key, selectedModel)}`,
         )
       : Promise.resolve(null);
   const [selectionResponse, manualComparisonResponse] = await Promise.all([
@@ -96,7 +118,7 @@ export default async function Home({
   const comparisonResponse =
     autoReference && target && referenceKey
       ? await requestApi<Comparison>(
-          `/api/v1/compare/laps?${new URLSearchParams({ target_attempt_key: target.attempt_key, reference_attempt_key: referenceKey })}`,
+          `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, referenceKey, selectedModel)}`,
         )
       : manualComparisonResponse;
   const comparison =
@@ -218,6 +240,11 @@ export default async function Home({
                           title: "Comparison evidence could not be loaded.",
                           body: "The local API did not return a comparison. Check that it is running, then reload.",
                         };
+  const urlFor = (values: Record<string, string>) => {
+    const query = new URLSearchParams(values);
+    if (selectedModel) query.set("track_model_key", modelKey(selectedModel));
+    return `/?${query.toString()}`;
+  };
 
   return (
     <main className="app-shell">
@@ -343,7 +370,7 @@ export default async function Home({
                     {[...sessions].reverse().map((item, index) => (
                       <a
                         className={`recording-item ${item.session_key === session?.session_key ? "selected" : ""}`}
-                        href={`/?${new URLSearchParams({ session_key: item.session_key })}`}
+                        href={urlFor({ session_key: item.session_key })}
                         key={item.session_key}
                       >
                         <span className="recording-index">
@@ -375,7 +402,10 @@ export default async function Home({
                     {laps.map((lap) => (
                       <a
                         className={`attempt-item ${lap.attempt_key === target?.attempt_key ? "active" : ""}`}
-                        href={`/?${new URLSearchParams({ session_key: session!.session_key, target_attempt_key: lap.attempt_key })}`}
+                        href={urlFor({
+                          session_key: session!.session_key,
+                          target_attempt_key: lap.attempt_key,
+                        })}
                         key={lap.attempt_key}
                       >
                         <span className="attempt-number">
@@ -481,10 +511,54 @@ export default async function Home({
                           ))}
                       </select>
                     </label>
+                    <label>
+                      <span>DIAGNOSTIC REGION MODEL</span>
+                      <select
+                        name="track_model_key"
+                        defaultValue={
+                          selectedModel ? modelKey(selectedModel) : ""
+                        }
+                        disabled={!isTimeTrial || trackModelCatalogUnavailable}
+                      >
+                        <option value="">No region analysis</option>
+                        {trackModels.map((model) => (
+                          <option value={modelKey(model)} key={modelKey(model)}>
+                            {model.track_name} · {model.validation_status} · rev{" "}
+                            {model.revision} · {model.region_count ?? 0} regions
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                     <button className="compare-button" type="submit">
                       Compare laps <span>↗</span>
                     </button>
                   </form>
+                  {trackModelCatalogUnavailable ? (
+                    <p className="model-note model-warning">
+                      Track model metadata could not be loaded from the local
+                      API.
+                    </p>
+                  ) : staleModelChoice ? (
+                    <p className="model-note model-warning">
+                      The selected model revision is no longer available. The
+                      regular lap comparison remains available.
+                    </p>
+                  ) : !isTimeTrial ? (
+                    <p className="model-note">
+                      Diagnostic region comparison currently requires a Time
+                      Trial session.
+                    </p>
+                  ) : selectedModel ? (
+                    <p className="model-note">
+                      Explicit revision selected. Draft windows remain
+                      diagnostic and do not represent validated circuit corners.
+                    </p>
+                  ) : (
+                    <p className="model-note">
+                      Select a packaged model revision to add its distance
+                      regions to this comparison.
+                    </p>
+                  )}
                   {target?.disposition !== "completed" && target ? (
                     <div className="diagnostic-banner">
                       <b>i</b>
@@ -736,6 +810,42 @@ export default async function Home({
                       Lines stop where a channel is unsupported. Missing
                       telemetry is not interpolated across.
                     </p>
+                    {comparison.corner_analysis ? (
+                      <RegionAnalysisPanel
+                        analysis={comparison.corner_analysis}
+                        comparison={comparison}
+                      />
+                    ) : (
+                      <section className="region-prompt panel">
+                        <div className="eyebrow">
+                          {selectedModel
+                            ? "REGION ANALYSIS UNAVAILABLE"
+                            : trackModelCatalogUnavailable
+                              ? "REGION MODEL CATALOG UNAVAILABLE"
+                              : isTimeTrial
+                                ? "NO REGION MODEL SELECTED"
+                                : "REGION POLICY UNSUPPORTED"}
+                        </div>
+                        <h3>
+                          {selectedModel
+                            ? "The selected model returned no region analysis."
+                            : trackModelCatalogUnavailable
+                              ? "Track model metadata could not be loaded."
+                              : isTimeTrial
+                                ? "Choose an explicit model to inspect distance regions."
+                                : "Diagnostic region analysis currently requires Time Trial."}
+                        </h3>
+                        <p>
+                          {selectedModel
+                            ? "The API returned the lap comparison without region evidence. Reload or choose another registered revision."
+                            : trackModelCatalogUnavailable
+                              ? "The local API did not provide the model catalog. Reload after the API is available to select a registered revision."
+                              : isTimeTrial
+                                ? "No circuit geometry is inferred from session telemetry. Models are versioned and selected explicitly."
+                                : "This comparison keeps the mode boundary explicit; no region results are inferred for this session."}
+                        </p>
+                      </section>
+                    )}
                   </>
                 ) : (
                   <section className="empty-state panel">
@@ -777,6 +887,378 @@ function Metric({
       <small>{detail}</small>
     </div>
   );
+}
+
+function RegionAnalysisPanel({
+  analysis,
+  comparison,
+}: {
+  analysis: CornerAnalysis;
+  comparison: Comparison;
+}) {
+  return (
+    <section className="region-analysis">
+      <header className="region-overview panel">
+        <div>
+          <div className="eyebrow">
+            {label(analysis.model.validation_status)} DISTANCE REGIONS ·{" "}
+            {analysis.regions.length} WINDOWS
+          </div>
+          <h2>{analysis.model.track_name} region inspection</h2>
+          <p>{analysis.model.provenance}</p>
+        </div>
+        <span className="region-state">
+          {analysis.diagnostic_only ? "DIAGNOSTIC ONLY" : "MEASURED"}
+        </span>
+      </header>
+      <p className="region-caveat">
+        {label(analysis.layout_validation_status)}. Regions are not verified
+        corner numbers. Steering turn-in is a proxy; driver apex and
+        track-relative geometry are unavailable. No coaching is generated.
+      </p>
+      <div className="region-grid">
+        {analysis.regions.map((region, index) => (
+          <RegionCard
+            key={region.identifier}
+            region={region}
+            index={index}
+            comparison={comparison}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RegionCard({
+  region,
+  index,
+  comparison,
+}: {
+  region: CornerRegion;
+  index: number;
+  comparison: Comparison;
+}) {
+  const [start, end] = region.analysis_window_m;
+  const plotIndices = comparison.distance_m.flatMap((distance, sampleIndex) =>
+    distance >= start && distance <= end ? [sampleIndex] : [],
+  );
+  const plotDistance = plotIndices.map(
+    (sampleIndex) => comparison.distance_m[sampleIndex],
+  );
+  const valueSlice = <T extends number | boolean | null>(values: T[]) =>
+    plotIndices.map((sampleIndex) => values[sampleIndex] ?? null);
+  const maskSlice = (values: boolean[]) =>
+    plotIndices.map((sampleIndex) => values[sampleIndex] ?? false);
+  const targetSpeed = region.target.minimum_speed;
+  const referenceSpeed = region.reference.minimum_speed;
+  const speedDifference = region.differences.minimum_speed_kph;
+
+  return (
+    <article className="region-card panel">
+      <header className="region-card-header">
+        <div>
+          <div className="region-index">
+            WINDOW {String(index + 1).padStart(2, "0")} · {Math.round(start)}–
+            {Math.round(end)} M
+          </div>
+          <h3>{region.label}</h3>
+        </div>
+        <span className="region-state region-state-draft">
+          {region.diagnostic_only ? "DIAGNOSTIC" : "SUPPORTED"}
+        </span>
+      </header>
+
+      <div className="region-stat-grid">
+        <RegionStat
+          title="REGION DELTA CHANGE"
+          value={seconds(region.delta_change.delta_change_s)}
+          detail={`${label(region.delta_change.status)} · target minus reference from entry to exit`}
+        />
+        <RegionStat
+          title="TARGET OBSERVED MINIMUM"
+          value={speedValue(targetSpeed.speed_kph)}
+          detail={`${label(targetSpeed.status)} · ${percent(targetSpeed.supported_grid_coverage)} speed coverage`}
+        />
+        <RegionStat
+          title="REFERENCE OBSERVED MINIMUM"
+          value={speedValue(referenceSpeed.speed_kph)}
+          detail={`${label(referenceSpeed.status)} · ${percent(referenceSpeed.supported_grid_coverage)} speed coverage`}
+        />
+        <RegionStat
+          title="MINIMUM SPEED DIFFERENCE"
+          value={signedValue(speedDifference, "km/h")}
+          detail="Target minus reference"
+        />
+        <RegionStat
+          title="BRAKING ONSET SHIFT"
+          value={signedValue(region.differences.braking_onset_distance_m, "m")}
+          detail="Target minus reference · event evidence below"
+        />
+        <RegionStat
+          title="50% THROTTLE SHIFT"
+          value={signedValue(region.differences.throttle_50_distance_m, "m")}
+          detail="Target minus reference · event evidence below"
+        />
+      </div>
+
+      <div className="region-event-grid">
+        <RegionEventEvidence
+          title="Braking onset"
+          target={region.target.braking}
+          reference={region.reference.braking}
+          targetCoverage={region.target.event_channel_coverage.brake}
+          referenceCoverage={region.reference.event_channel_coverage.brake}
+        />
+        <RegionEventEvidence
+          title="Turn-in proxy"
+          target={region.target.turn_in_proxy}
+          reference={region.reference.turn_in_proxy}
+          targetCoverage={region.target.event_channel_coverage.steering}
+          referenceCoverage={region.reference.event_channel_coverage.steering}
+          note="Absolute steering threshold; not a geometric turn-in point."
+        />
+        <RegionEventEvidence
+          title="50% throttle pickup"
+          target={region.target.throttle_pickup["0.5"]}
+          reference={region.reference.throttle_pickup["0.5"]}
+          targetCoverage={region.target.event_channel_coverage.throttle}
+          referenceCoverage={region.reference.event_channel_coverage.throttle}
+        />
+      </div>
+
+      <div className="region-exits">
+        <div className="region-subhead">
+          <strong>Exit speed observations</strong>
+          <span>Measured at configured window offsets</span>
+        </div>
+        <div className="region-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>OFFSET</th>
+                <th>TARGET</th>
+                <th>REFERENCE</th>
+                <th>SUPPORT</th>
+              </tr>
+            </thead>
+            <tbody>
+              {region.target.exit_speeds.map((targetExit, exitIndex) => {
+                const referenceExit = region.reference.exit_speeds[exitIndex];
+                return (
+                  <tr key={targetExit.offset_m}>
+                    <td>+{targetExit.offset_m} m</td>
+                    <td>{speedValue(targetExit.speed_kph)}</td>
+                    <td>{speedValue(referenceExit?.speed_kph ?? null)}</td>
+                    <td>
+                      {label(targetExit.status)} /{" "}
+                      {label(referenceExit?.status)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <p className="region-apex-note">
+        Driver apex: {label(region.target.driver_apex.status)} ·{" "}
+        {label(region.target.driver_apex.reason)}. The saved traces do not
+        include calibrated track-relative geometry; stored world positions
+        remain in world coordinates.
+      </p>
+
+      <details className="region-traces">
+        <summary>Open local speed, delta and input traces</summary>
+        {plotDistance.length ? (
+          <div className="chart-stack">
+            <Chart
+              title={`${region.label} speed`}
+              subtitle={`${Math.round(start)}–${Math.round(end)} m · km/h`}
+              unit="KM/H"
+              distance={plotDistance}
+              series={[
+                {
+                  label: "Target",
+                  color: "#f06a4f",
+                  values: speed(
+                    valueSlice(comparison.target_trace.values.speed_mps),
+                  ),
+                  mask: maskSlice(comparison.target_trace.masks.speed_mps),
+                },
+                {
+                  label: "Reference",
+                  color: "#71c7b5",
+                  values: speed(
+                    valueSlice(comparison.reference_trace.values.speed_mps),
+                  ),
+                  mask: maskSlice(comparison.reference_trace.masks.speed_mps),
+                },
+              ]}
+            />
+            <Chart
+              title={`${region.label} delta`}
+              subtitle="Target minus reference · seconds"
+              unit="SECONDS"
+              distance={plotDistance}
+              zero
+              series={[
+                {
+                  label: "Target − reference",
+                  color: "#f0b45c",
+                  values: valueSlice(comparison.delta_s),
+                  mask: maskSlice(comparison.delta_mask),
+                },
+              ]}
+            />
+            <Chart
+              title={`${region.label} driver inputs`}
+              subtitle="Brake and throttle · percent"
+              unit="%"
+              distance={plotDistance}
+              range={[0, 1]}
+              percentAxis
+              series={[
+                {
+                  label: "Target brake",
+                  color: "#f06a4f",
+                  values: numeric(
+                    valueSlice(comparison.target_trace.values.brake),
+                  ),
+                  mask: maskSlice(comparison.target_trace.masks.brake),
+                },
+                {
+                  label: "Target throttle",
+                  color: "#71c7b5",
+                  values: numeric(
+                    valueSlice(comparison.target_trace.values.throttle),
+                  ),
+                  mask: maskSlice(comparison.target_trace.masks.throttle),
+                },
+                {
+                  label: "Reference brake",
+                  color: "#d89079",
+                  values: numeric(
+                    valueSlice(comparison.reference_trace.values.brake),
+                  ),
+                  mask: maskSlice(comparison.reference_trace.masks.brake),
+                },
+                {
+                  label: "Reference throttle",
+                  color: "#97b2a9",
+                  values: numeric(
+                    valueSlice(comparison.reference_trace.values.throttle),
+                  ),
+                  mask: maskSlice(comparison.reference_trace.masks.throttle),
+                },
+              ]}
+            />
+          </div>
+        ) : (
+          <p className="region-empty-trace">
+            No shared distance-grid samples fall inside this analysis window.
+          </p>
+        )}
+      </details>
+    </article>
+  );
+}
+
+function RegionStat({
+  title,
+  value,
+  detail,
+}: {
+  title: string;
+  value: string;
+  detail: string;
+}) {
+  return (
+    <div className="region-stat">
+      <span>{title}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </div>
+  );
+}
+
+function RegionEventEvidence({
+  title,
+  target,
+  reference,
+  targetCoverage,
+  referenceCoverage,
+  note,
+}: {
+  title: string;
+  target: RegionEvent;
+  reference: RegionEvent;
+  targetCoverage: number | null;
+  referenceCoverage: number | null;
+  note?: string;
+}) {
+  return (
+    <section className="region-event">
+      <div className="region-subhead">
+        <strong>{title}</strong>
+        <span>
+          Coverage {percent(targetCoverage)} / {percent(referenceCoverage)}
+        </span>
+      </div>
+      <RegionEventLine label="TARGET" event={target} />
+      <RegionEventLine label="REFERENCE" event={reference} />
+      {note ? <p>{note}</p> : null}
+    </section>
+  );
+}
+
+function RegionEventLine({
+  label: title,
+  event,
+}: {
+  label: string;
+  event: RegionEvent;
+}) {
+  return (
+    <div className="region-event-line">
+      <span>
+        {title} · {label(event.status)}
+      </span>
+      {event.events.length ? (
+        <ul>
+          {event.events.map((item, index) => (
+            <li key={`${item.start_distance_m}-${index}`}>
+              {item.start_distance_bracket_m
+                ? `${formatDistance(item.start_distance_bracket_m[0])}–${formatDistance(item.start_distance_bracket_m[1])} m onset bracket`
+                : `${formatDistance(item.start_distance_m)} m onset; unbracketed`}
+              {` · ${item.duration_s.toFixed(2)} s`}
+              {item.left_censored ? " · left-censored" : ""}
+              {item.right_censored ? " · right-censored" : ""}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <small>
+          {event.reason ? label(event.reason) : "No supported event"}
+        </small>
+      )}
+    </div>
+  );
+}
+
+function formatDistance(value: number) {
+  return value.toFixed(1);
+}
+
+function speedValue(value: number | null) {
+  return value == null ? "—" : `${value.toFixed(1)} km/h`;
+}
+
+function signedValue(value: number | null, unit: string) {
+  if (value == null) return "—";
+  const sign = value > 0 ? "+" : value < 0 ? "−" : "";
+  return `${sign}${Math.abs(value).toFixed(1)} ${unit}`;
 }
 
 function Chart({
@@ -977,6 +1459,25 @@ function displayIndices(line: Series, length: number) {
 
 const speed = (values: Array<number | boolean | null>) =>
   values.map((value) => (typeof value === "number" ? value * 3.6 : null));
+const firstParam = (value: string | string[] | undefined) =>
+  Array.isArray(value) ? value[0] : value;
+const modelKey = (model: TrackModelRecord) =>
+  `${model.model_id}@${model.revision}`;
+function comparisonQuery(
+  targetAttemptKey: string,
+  referenceAttemptKey: string,
+  model: TrackModelRecord | null,
+) {
+  const query = new URLSearchParams({
+    target_attempt_key: targetAttemptKey,
+    reference_attempt_key: referenceAttemptKey,
+  });
+  if (model) {
+    query.set("track_model_id", model.model_id);
+    query.set("track_model_revision", String(model.revision));
+  }
+  return query.toString();
+}
 const numeric = (values: Array<number | boolean | null>) =>
   values.map((value) => (typeof value === "number" ? value : null));
 const label = (value: unknown) =>
