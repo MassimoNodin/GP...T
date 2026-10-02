@@ -283,7 +283,7 @@ def test_live_monitor_resets_on_player_and_session_change():
     assert "player_car_index" not in live
 
 
-def test_live_monitor_reports_unsupported_packet_format_and_rejects_old_session():
+def test_live_monitor_reports_unsupported_packet_version_and_rejects_old_format():
     observer = _AcquisitionObserver(reorder_window_frames=1)
     _publish_frame(observer, frame=100)
 
@@ -292,6 +292,7 @@ def test_live_monitor_reports_unsupported_packet_format_and_rejects_old_session(
             frame=110,
             sequence=20,
             packet_format=2026,
+            packet_version=2,
         )
     )
     _process(observer, _advance(111, 21, packet_format=2026))

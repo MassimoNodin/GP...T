@@ -126,7 +126,7 @@ def test_unsupported_or_malformed_session_packets_have_no_context() -> None:
     assert unsupported_version.context is None
     assert "unsupported session packet adapter" in unsupported_version.error
     assert unsupported_format.context is None
-    assert "unsupported session packet adapter" in unsupported_format.error
+    assert "body must be 897 bytes" in unsupported_format.error
 
 
 def test_pipeline_emits_only_new_non_stale_session_context() -> None:

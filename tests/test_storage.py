@@ -20,7 +20,7 @@ from f1_engineer.storage.query import (
     load_reference_inventory,
 )
 from f1_engineer.storage.parquet import TRACE_SCHEMA_V1, TRACE_SCHEMA_VERSION, read_trace
-from f1_engineer.udp.car_telemetry import _CAR_TELEMETRY_V1_CAR
+from f1_engineer.udp.car_telemetry import _F1_25_CAR_TELEMETRY_V1_CAR
 from f1_engineer.udp.participants import _PARTICIPANT_PREFIX
 from tests.helpers import make_datagram
 from tests.test_lap_tracking import SESSION_UID, _lap_body
@@ -41,7 +41,7 @@ def _participants_body() -> bytes:
 
 
 def _telemetry_body() -> bytes:
-    car = _CAR_TELEMETRY_V1_CAR.pack(
+    car = _F1_25_CAR_TELEMETRY_V1_CAR.pack(
         200, 0.8, -0.25, 0.1, 20, 5, 12_000, 1, 90, 0x1234,
         *(400 + index for index in range(4)),
         91, 92, 93, 94,

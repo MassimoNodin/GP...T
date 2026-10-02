@@ -16,7 +16,7 @@ from .lock import ImportRunLock
 from .parquet import ParquetTraceWriter, TRACE_SCHEMA_VERSION, sha256_file
 
 
-PIPELINE_VERSION = "player-traces-v8-reference-quality"
+PIPELINE_VERSION = "player-traces-v9-2026-player-trace"
 DEFAULT_DATABASE = Path("data") / "f1-engineer.sqlite3"
 IMPORT_CONFIG = {"max_open_frames": 256, "reorder_window_frames": 3}
 

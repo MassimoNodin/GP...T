@@ -7,9 +7,13 @@ from typing import Callable
 from .models import DecodedPacket, PacketFormat, PacketId
 
 
-_CAR_COUNT = 22
-_F1_25_LAP_DATA_V1_CAR = struct.Struct("<IIHBHBHBHBfff15BHHBfB")
-_F1_25_LAP_DATA_V1_BODY_SIZE = _CAR_COUNT * _F1_25_LAP_DATA_V1_CAR.size + 2
+_F1_25_CAR_COUNT = 22
+_SEASON_PACK_2026_CAR_COUNT = 24
+_LAP_DATA_V1_CAR = struct.Struct("<IIHBHBHBHBfff15BHHBfB")
+_F1_25_LAP_DATA_V1_BODY_SIZE = _F1_25_CAR_COUNT * _LAP_DATA_V1_CAR.size + 2
+_SEASON_PACK_2026_LAP_DATA_V1_BODY_SIZE = (
+    _SEASON_PACK_2026_CAR_COUNT * _LAP_DATA_V1_CAR.size + 2
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +71,15 @@ class LapDataDecoder:
     def __init__(self) -> None:
         self._parsers: dict[tuple[PacketFormat, PacketId, int], LapDataParser] = {
             (PacketFormat.F1_25, PacketId.LAP_DATA, 1): _decode_f1_25_lap_data_v1,
+            (PacketFormat.SEASON_PACK_2026, PacketId.LAP_DATA, 1): (
+                _decode_season_pack_2026_lap_data_v1
+            ),
         }
+
+    def supports(
+        self, packet_format: PacketFormat, packet_id: PacketId, packet_version: int
+    ) -> bool:
+        return (packet_format, packet_id, packet_version) in self._parsers
 
     def decode(self, packet: DecodedPacket) -> LapDataDecodeResult:
         if packet.packet_kind is not PacketId.LAP_DATA:
@@ -90,16 +102,35 @@ class LapDataDecoder:
 
 
 def _decode_f1_25_lap_data_v1(packet: DecodedPacket) -> LapDataPacket:
+    return _decode_lap_data_v1(
+        packet,
+        car_count=_F1_25_CAR_COUNT,
+        body_size=_F1_25_LAP_DATA_V1_BODY_SIZE,
+        format_name="F1 25",
+    )
+
+
+def _decode_season_pack_2026_lap_data_v1(packet: DecodedPacket) -> LapDataPacket:
+    return _decode_lap_data_v1(
+        packet,
+        car_count=_SEASON_PACK_2026_CAR_COUNT,
+        body_size=_SEASON_PACK_2026_LAP_DATA_V1_BODY_SIZE,
+        format_name="2026 Season Pack",
+    )
+
+
+def _decode_lap_data_v1(
+    packet: DecodedPacket, *, car_count: int, body_size: int, format_name: str
+) -> LapDataPacket:
     body = packet.body
-    if len(body) != _F1_25_LAP_DATA_V1_BODY_SIZE:
+    if len(body) != body_size:
         raise ValueError(
-            "F1 25 Lap Data v1 body must be "
-            f"{_F1_25_LAP_DATA_V1_BODY_SIZE} bytes, got {len(body)}"
+            f"{format_name} Lap Data v1 body must be {body_size} bytes, got {len(body)}"
         )
 
     cars = tuple(
-        _decode_car(_F1_25_LAP_DATA_V1_CAR.unpack_from(body, index * _F1_25_LAP_DATA_V1_CAR.size))
-        for index in range(_CAR_COUNT)
+        _decode_car(_LAP_DATA_V1_CAR.unpack_from(body, index * _LAP_DATA_V1_CAR.size))
+        for index in range(car_count)
     )
     return LapDataPacket(
         cars=cars,

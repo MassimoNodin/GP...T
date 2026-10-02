@@ -311,11 +311,7 @@ class _AcquisitionObserver:
                     packet
                     for packet in frame.packets
                     if packet.header.player_car_index == self._live_player_index
-                    and packet.packet_kind
-                    in {
-                        PacketId.CAR_TELEMETRY,
-                        PacketId.CAR_TELEMETRY_2,
-                    }
+                    and packet.packet_kind is PacketId.CAR_TELEMETRY
                     and self._is_unsupported_adapter(packet)
                 ),
                 None,
@@ -336,9 +332,6 @@ class _AcquisitionObserver:
         telemetry_errors: list[tuple[DecodedPacket, str]] = []
         for packet in frame.packets:
             if packet.packet_kind is PacketId.CAR_TELEMETRY_2:
-                telemetry_errors.append(
-                    (packet, "unsupported car telemetry packet family")
-                )
                 continue
             if packet.packet_kind is not PacketId.CAR_TELEMETRY:
                 continue
@@ -398,6 +391,8 @@ class _AcquisitionObserver:
             elif decoded_telemetry:
                 latest_reason = "player_index_mismatch_in_frame"
             for candidate, _error in telemetry_errors:
+                if candidate.header.player_car_index != car_index or telemetry is not None:
+                    continue
                 if self._is_unsupported_adapter(candidate):
                     latest_status = "unsupported"
                     latest_reason = "car_telemetry_adapter_unsupported"
@@ -475,11 +470,7 @@ class _AcquisitionObserver:
                     packet
                     for packet in frame.packets
                     if packet.header.player_car_index == self._live_player_index
-                    and packet.packet_kind
-                    in {
-                        PacketId.CAR_TELEMETRY,
-                        PacketId.CAR_TELEMETRY_2,
-                    }
+                    and packet.packet_kind is PacketId.CAR_TELEMETRY
                     and self._is_unsupported_adapter(packet)
                 ),
                 None,
@@ -565,13 +556,20 @@ class _AcquisitionObserver:
         distance = (candidate - current) & cls._FRAME_MASK
         return 0 < distance < cls._SERIAL_HALF_RANGE
 
-    @staticmethod
-    def _is_unsupported_adapter(packet: DecodedPacket) -> bool:
-        return not (
-            packet.packet_format is PacketFormat.F1_25
-            and packet.header.packet_version == 1
-            and packet.packet_kind in {PacketId.LAP_DATA, PacketId.CAR_TELEMETRY}
-        )
+    def _is_unsupported_adapter(self, packet: DecodedPacket) -> bool:
+        if packet.packet_kind is PacketId.LAP_DATA:
+            return not self.lap_data_decoder.supports(
+                packet.packet_format,
+                PacketId.LAP_DATA,
+                packet.header.packet_version,
+            )
+        if packet.packet_kind is PacketId.CAR_TELEMETRY:
+            return not self.car_telemetry_decoder.supports(
+                packet.packet_format,
+                PacketId.CAR_TELEMETRY,
+                packet.header.packet_version,
+            )
+        return False
 
 
     def _count_completed(self, frames: tuple[object, ...]) -> None:

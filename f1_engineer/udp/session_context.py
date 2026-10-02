@@ -9,6 +9,7 @@ from .models import DecodedPacket, PacketFormat, PacketId
 
 
 _F1_25_SESSION_V1_BODY_SIZE = 724
+_SEASON_PACK_2026_SESSION_V1_BODY_SIZE = 897
 _F1_25_SESSION_PREFIX = struct.Struct("<BbbBHBbBHHBBBBBB")
 _F1_25_NETWORK_GAME_OFFSET = 125
 _F1_25_WEATHER_SAMPLE_COUNT_OFFSET = 126
@@ -19,6 +20,9 @@ _F1_25_GAME_MODE_OFFSET = 665
 _F1_25_RULE_SET_OFFSET = 666
 _F1_25_EQUAL_CAR_PERFORMANCE_OFFSET = 679
 _F1_25_NUM_WEEKEND_SESSIONS_OFFSET = 703
+_SEASON_PACK_2026_FULL_ACTIVE_AERO_COUNT_OFFSET = 725
+_SEASON_PACK_2026_PARTIAL_ACTIVE_AERO_COUNT_OFFSET = 790
+_SEASON_PACK_2026_DRS_ZONE_COUNT_OFFSET = 855
 
 _SESSION_TYPES: dict[int, SessionType] = {
     0: SessionType.UNKNOWN,
@@ -103,6 +107,11 @@ _F1_25_TRACK_NAMES = {
     41: "Zandvoort (Reverse)",
 }
 
+_SEASON_PACK_2026_TRACK_NAMES = {
+    **_F1_25_TRACK_NAMES,
+    42: "Madrid",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class SessionContextDecodeResult:
@@ -119,6 +128,9 @@ class SessionContextDecoder:
     def __init__(self) -> None:
         self._parsers: dict[tuple[PacketFormat, PacketId, int], SessionParser] = {
             (PacketFormat.F1_25, PacketId.SESSION, 1): _decode_f1_25_session_v1,
+            (PacketFormat.SEASON_PACK_2026, PacketId.SESSION, 1): (
+                _decode_season_pack_2026_session_v1
+            ),
         }
 
     def decode(self, packet: DecodedPacket) -> SessionContextDecodeResult:
@@ -142,11 +154,40 @@ class SessionContextDecoder:
 
 
 def _decode_f1_25_session_v1(packet: DecodedPacket) -> SessionContext:
+    return _decode_session_context(
+        packet,
+        body_size=_F1_25_SESSION_V1_BODY_SIZE,
+        format_name="F1 25",
+        track_names=_F1_25_TRACK_NAMES,
+    )
+
+
+def _decode_season_pack_2026_session_v1(packet: DecodedPacket) -> SessionContext:
+    return _decode_session_context(
+        packet,
+        body_size=_SEASON_PACK_2026_SESSION_V1_BODY_SIZE,
+        format_name="2026 Season Pack",
+        track_names=_SEASON_PACK_2026_TRACK_NAMES,
+        extra_count_offsets=(
+            (_SEASON_PACK_2026_FULL_ACTIVE_AERO_COUNT_OFFSET, 8, "full active aero zone"),
+            (_SEASON_PACK_2026_PARTIAL_ACTIVE_AERO_COUNT_OFFSET, 8, "partial active aero zone"),
+            (_SEASON_PACK_2026_DRS_ZONE_COUNT_OFFSET, 4, "DRS zone"),
+        ),
+    )
+
+
+def _decode_session_context(
+    packet: DecodedPacket,
+    *,
+    body_size: int,
+    format_name: str,
+    track_names: dict[int, str],
+    extra_count_offsets: tuple[tuple[int, int, str], ...] = (),
+) -> SessionContext:
     body = packet.body
-    if len(body) != _F1_25_SESSION_V1_BODY_SIZE:
+    if len(body) != body_size:
         raise ValueError(
-            "F1 25 Session v1 body must be "
-            f"{_F1_25_SESSION_V1_BODY_SIZE} bytes, got {len(body)}"
+            f"{format_name} Session v1 body must be {body_size} bytes, got {len(body)}"
         )
 
     fields = _F1_25_SESSION_PREFIX.unpack_from(body)
@@ -175,6 +216,9 @@ def _decode_f1_25_session_v1(packet: DecodedPacket) -> SessionContext:
         raise ValueError("invalid weather forecast sample count")
     if body[_F1_25_NUM_WEEKEND_SESSIONS_OFFSET] > 12:
         raise ValueError("invalid weekend session count")
+    for offset, maximum, label in extra_count_offsets:
+        if body[offset] > maximum:
+            raise ValueError(f"invalid {label} count {body[offset]}")
 
     game_mode_id = body[_F1_25_GAME_MODE_OFFSET]
     rule_set_id = body[_F1_25_RULE_SET_OFFSET]
@@ -191,7 +235,7 @@ def _decode_f1_25_session_v1(packet: DecodedPacket) -> SessionContext:
         session_type_id=session_type_id,
         session_type=_SESSION_TYPES.get(session_type_id),
         track_id=track_id,
-        track_name=_F1_25_TRACK_NAMES.get(track_id),
+        track_name=track_names.get(track_id),
         formula_id=formula_id,
         network_game_id=body[_F1_25_NETWORK_GAME_OFFSET],
         game_mode_id=game_mode_id,

@@ -7,9 +7,18 @@ from typing import Callable
 from .models import DecodedPacket, PacketFormat, PacketId
 
 
-CAR_COUNT = 22
-_CAR_TELEMETRY_V1_CAR = struct.Struct("<HfffBbHBBH4H4B4BH4f4B")
-_F1_25_CAR_TELEMETRY_V1_BODY_SIZE = CAR_COUNT * _CAR_TELEMETRY_V1_CAR.size + 3
+_F1_25_CAR_COUNT = 22
+_SEASON_PACK_2026_CAR_COUNT = 24
+_F1_25_CAR_TELEMETRY_V1_CAR = struct.Struct("<HfffBbHBBH4H4B4BH4f4B")
+_SEASON_PACK_2026_CAR_TELEMETRY_V1_CAR = struct.Struct(
+    "<HfffBbHBBH4H4B4BB4f4B"
+)
+_F1_25_CAR_TELEMETRY_V1_BODY_SIZE = (
+    _F1_25_CAR_COUNT * _F1_25_CAR_TELEMETRY_V1_CAR.size + 3
+)
+_SEASON_PACK_2026_CAR_TELEMETRY_V1_BODY_SIZE = (
+    _SEASON_PACK_2026_CAR_COUNT * _SEASON_PACK_2026_CAR_TELEMETRY_V1_CAR.size + 3
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,7 +64,15 @@ class CarTelemetryDecoder:
     def __init__(self) -> None:
         self._parsers: dict[tuple[PacketFormat, PacketId, int], CarTelemetryParser] = {
             (PacketFormat.F1_25, PacketId.CAR_TELEMETRY, 1): _decode_f1_25_v1,
+            (PacketFormat.SEASON_PACK_2026, PacketId.CAR_TELEMETRY, 1): (
+                _decode_season_pack_2026_v1
+            ),
         }
+
+    def supports(
+        self, packet_format: PacketFormat, packet_id: PacketId, packet_version: int
+    ) -> bool:
+        return (packet_format, packet_id, packet_version) in self._parsers
 
     def decode(self, packet: DecodedPacket) -> CarTelemetryDecodeResult:
         if packet.packet_kind is not PacketId.CAR_TELEMETRY:
@@ -78,17 +95,43 @@ class CarTelemetryDecoder:
 
 
 def _decode_f1_25_v1(packet: DecodedPacket) -> CarTelemetryPacket:
+    return _decode_car_telemetry_v1(
+        packet,
+        car_count=_F1_25_CAR_COUNT,
+        record=_F1_25_CAR_TELEMETRY_V1_CAR,
+        body_size=_F1_25_CAR_TELEMETRY_V1_BODY_SIZE,
+        format_name="F1 25",
+    )
+
+
+def _decode_season_pack_2026_v1(packet: DecodedPacket) -> CarTelemetryPacket:
+    return _decode_car_telemetry_v1(
+        packet,
+        car_count=_SEASON_PACK_2026_CAR_COUNT,
+        record=_SEASON_PACK_2026_CAR_TELEMETRY_V1_CAR,
+        body_size=_SEASON_PACK_2026_CAR_TELEMETRY_V1_BODY_SIZE,
+        format_name="2026 Season Pack",
+    )
+
+
+def _decode_car_telemetry_v1(
+    packet: DecodedPacket,
+    *,
+    car_count: int,
+    record: struct.Struct,
+    body_size: int,
+    format_name: str,
+) -> CarTelemetryPacket:
     body = packet.body
-    if len(body) != _F1_25_CAR_TELEMETRY_V1_BODY_SIZE:
+    if len(body) != body_size:
         raise ValueError(
-            "F1 25 Car Telemetry v1 body must be "
-            f"{_F1_25_CAR_TELEMETRY_V1_BODY_SIZE} bytes, got {len(body)}"
+            f"{format_name} Car Telemetry v1 body must be {body_size} bytes, got {len(body)}"
         )
     cars = tuple(
-        _decode_car(_CAR_TELEMETRY_V1_CAR.unpack_from(body, index * _CAR_TELEMETRY_V1_CAR.size))
-        for index in range(CAR_COUNT)
+        _decode_car(record.unpack_from(body, index * record.size))
+        for index in range(car_count)
     )
-    trailer = body[CAR_COUNT * _CAR_TELEMETRY_V1_CAR.size :]
+    trailer = body[car_count * record.size :]
     return CarTelemetryPacket(cars, trailer[0], trailer[1], struct.unpack("<b", trailer[2:])[0])
 
 
