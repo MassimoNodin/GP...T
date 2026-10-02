@@ -46,6 +46,27 @@ export interface RecordingProgressRecord {
   queue_dropped: number;
   socket_errors: number;
   latest_context: SessionContext | null;
+  live_telemetry: LiveTelemetryRecord;
+}
+
+export interface LiveTelemetryRecord {
+  status: "waiting" | "fresh" | "stale" | "unsupported" | "unavailable";
+  reason: string | null;
+  age_ms: number | null;
+  session_uid?: string | null;
+  frame_identifier?: number | null;
+  packet_format?: number | null;
+  player_car_index?: number | null;
+  lap_number?: number | null;
+  lap_time_ms?: number | null;
+  game_invalid?: boolean | null;
+  pit_status_id?: number | null;
+  driver_status_id?: number | null;
+  speed_kph?: number | null;
+  gear?: number | null;
+  engine_rpm?: number | null;
+  throttle?: number | null;
+  brake?: number | null;
 }
 
 export interface RecordingJobRecord {

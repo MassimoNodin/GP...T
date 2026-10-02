@@ -1123,6 +1123,74 @@ h1 span {
   flex: 1 0 100%;
   color: #edb59a !important;
 }
+.live-telemetry {
+  flex: 1 0 100%;
+  min-width: 0;
+  padding-top: 13px;
+  border-top: 1px solid #293532;
+}
+.live-telemetry-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.live-telemetry-heading p {
+  margin: 5px 0 0;
+  color: #929e9b;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.live-telemetry-state {
+  flex: none;
+  padding: 5px 7px;
+  border-radius: 2px;
+  background: #222b29;
+  color: #9ba6a2;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.1em;
+}
+.live-telemetry-state.state-fresh {
+  background: rgba(113, 199, 181, 0.1);
+  color: var(--mint);
+}
+.live-telemetry-state.state-stale,
+.live-telemetry-state.state-unavailable {
+  background: rgba(240, 180, 92, 0.11);
+  color: var(--gold);
+}
+.live-telemetry-state.state-unsupported {
+  background: rgba(240, 106, 79, 0.1);
+  color: #ee9b83;
+}
+.live-telemetry-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 12px;
+  background: #293532;
+  border: 1px solid #293532;
+}
+.live-telemetry-metric {
+  min-width: 0;
+  padding: 9px 10px;
+  background: #111716;
+}
+.live-telemetry-metric span {
+  display: block;
+  color: #71807c;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.12em;
+}
+.live-telemetry-metric strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 6px;
+  color: #e2eae5;
+  font: 12px var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .inbox-heading,
 .import-job-heading {
   display: flex;
@@ -1362,6 +1430,9 @@ h1 span {
   }
   .recording-control-actions .import-button {
     flex: 1;
+  }
+  .live-telemetry-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .inbox-item {
     align-items: flex-start;

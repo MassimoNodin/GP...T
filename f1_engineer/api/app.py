@@ -101,6 +101,26 @@ class ImportJobRequest(BaseModel):
     capture_id: str = Field(pattern=r"^[a-f0-9]{32}$")
 
 
+class LiveTelemetryRecord(BaseModel):
+    status: Literal["waiting", "fresh", "stale", "unsupported", "unavailable"]
+    reason: str | None
+    age_ms: int | None
+    session_uid: str | None = None
+    frame_identifier: int | None = None
+    packet_format: int | None = None
+    player_car_index: int | None = None
+    lap_number: int | None = None
+    lap_time_ms: int | None = None
+    game_invalid: bool | None = None
+    pit_status_id: int | None = None
+    driver_status_id: int | None = None
+    speed_kph: float | None = None
+    gear: int | None = None
+    engine_rpm: int | None = None
+    throttle: float | None = None
+    brake: float | None = None
+
+
 class RecordingProgressRecord(BaseModel):
     state: str
     elapsed_ms: int
@@ -110,6 +130,7 @@ class RecordingProgressRecord(BaseModel):
     queue_dropped: int
     socket_errors: int
     latest_context: dict[str, Any] | None
+    live_telemetry: LiveTelemetryRecord
 
 
 class RecordingJobRecord(BaseModel):

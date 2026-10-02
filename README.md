@@ -4,7 +4,7 @@ A local-first race engineer for F1 25 and its 2026 Season Pack. The system is be
 
 ## Current slice
 
-The foundation captures raw UDP datagrams, inspects captures, and replays them through the same packet-header and session pipeline. Captures retain unknown and malformed datagrams that reach the recorder; the bounded UDP receive queue reports any packets it had to drop.
+The foundation captures raw UDP datagrams, inspects captures, and replays them through the same packet-header and session pipeline. During app-managed recording, the dashboard also shows the latest synchronized player lap state, validity, pit/driver status, speed, gear, RPM, throttle, and brake with an explicit freshness state. Captures retain unknown and malformed datagrams that reach the recorder; the bounded UDP receive queue reports any packets it had to drop.
 
 F1 25 Session v1, Lap Data v1, Participants v1, Car Telemetry v1, and Motion v1 are decoded. Importing a capture synchronizes player input and Motion samples to Lap Data frames, retains missing packet families as null values, stores session/lap metadata in SQLite, and writes one checksummed Parquet trace for every completed, invalid, partial, or abandoned attempt. New traces use schema v2; schema-v1 traces remain readable and report Motion fields as unavailable. Race and Time Trial captures share this pipeline; automatic reference eligibility remains conservative and currently permits only known, valid Time Trial laps.
 

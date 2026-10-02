@@ -4,13 +4,18 @@ import asyncio
 import logging
 import os
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from ..recording.capture import CaptureReader
-from ..recording.service import RecordingSnapshot, record_udp_capture
+from ..recording.service import (
+    LIVE_TELEMETRY_FRESHNESS_LIMIT_MS,
+    RecordingSnapshot,
+    record_udp_capture,
+)
 from ..storage.import_jobs import list_recording_sources
 from ..storage.recordings import (
     create_recording_job,
@@ -129,6 +134,11 @@ class RecordingController:
                     "queue_dropped": 0,
                     "socket_errors": 0,
                     "latest_context": None,
+                    "live_telemetry": {
+                        "status": "waiting",
+                        "reason": None,
+                        "age_ms": None,
+                    },
                 }
                 self._thread = threading.Thread(
                     target=self._run_recording,
@@ -432,7 +442,29 @@ class RecordingController:
         result = dict(job)
         with self._lock:
             progress = self._snapshots.get(str(job["recording_id"]))
-        result["progress"] = progress if job["status"] in _ACTIVE else None
+        if progress is None or job["status"] not in _ACTIVE:
+            result["progress"] = None
+            return result
+
+        progress_response = dict(progress)
+        live = progress.get("live_telemetry")
+        if isinstance(live, dict):
+            live_response = dict(live)
+            observed_ns = live_response.pop("_observed_monotonic_ns", None)
+            age_ms = (
+                max(0, (time.monotonic_ns() - observed_ns) // 1_000_000)
+                if isinstance(observed_ns, int) and not isinstance(observed_ns, bool)
+                else None
+            )
+            live_response["age_ms"] = age_ms
+            if (
+                age_ms is not None
+                and age_ms > LIVE_TELEMETRY_FRESHNESS_LIMIT_MS
+                and live_response.get("status") in {"fresh", "unavailable"}
+            ):
+                live_response["status"] = "stale"
+            progress_response["live_telemetry"] = live_response
+        result["progress"] = progress_response
         return result
 
     def _ensure_ready(self) -> None:

@@ -193,6 +193,22 @@ Use the existing checksum-verified trace loader and shared distance-resampling r
 
 Defer aggregate quality scores, confidence values, score-based reference thresholds, geometry inference, ranking, diagnosis, and coaching until representative captures support those claims. No storage migration is needed.
 
+## Decision 0015: monitor player telemetry during recording
+
+**Status:** accepted
+
+**Date:** 2026-10-03
+
+Extend the bounded app-managed acquisition observer to expose one current player telemetry snapshot while recording. This helps the driver verify UDP acquisition and collect the clean Time Trial evidence still needed by the historical reference workflow.
+
+Build the snapshot only from assembled frames. Use the player car index in the Lap Data header and join Car Telemetry from the same session and overall frame. Reuse canonical channel validation; absent, malformed, mismatched, or out-of-range values remain unavailable rather than becoming zero. Preserve source session UID, frame identifier, packet format, player index, and monotonic receive-time provenance. Keep a single latest snapshot with explicit `waiting`, `fresh`, `stale`, `unsupported`, or `unavailable` state. Start with a 500 ms player-snapshot freshness limit, evaluated server-side from the monotonic receive timestamp. Reset snapshot and player-selection state at session, wire-format, or player changes; reject delayed updates that no longer match active provenance. Session context continues to use the session tracker's own lifecycle, separately from player-snapshot freshness.
+
+Advance player identity only after the frame assembler admits an envelope. Record the frame where a player change takes effect and reject older buffered snapshots with wrap-safe frame ordering. Bind receive timestamps to accepted wire fingerprints so a duplicate or rejected envelope cannot refresh the sample. Calculate age only from the selected valid Lap Data and Car Telemetry packets; malformed packets cannot refresh values decoded from another envelope. Require receive-time provenance for every selected packet and age from the oldest selected receive time. If required provenance was evicted before frame assembly completes, report the frame as unavailable instead of fresh. Reject frames containing packets from an inactive wire format, including frames flushed during a format transition. A selected-player Lap Data decode failure publishes an unavailable snapshot with that frame's provenance and clears values from the prior frame. These rules keep status, identity, and freshness aligned with the same admitted source evidence.
+
+Expose the monitor through the existing local recording-status response and same-origin dashboard proxy, using faster bounded polling while capture is active. Raw datagram persistence remains first and authoritative. Keep observer memory bounded and retain no lap inventory or telemetry history; add no database migration. The monitor is available across supported F1 25 Time Trial and Race contexts, and unknown contexts remain recordable. It does not add live comparison, lap completion, reference selection, opponent state, trajectory projection, diagnosis, or coaching; those policies remain unchanged.
+
+Synthetic streams validate mode-independent state display, same-frame joins, missing channels, ordering, player/session/format resets, unsupported variants, and freshness expiry. The Melbourne capture validates that live values can be decoded from the existing source; its invalid laps remain explicitly invalid and it does not establish positive reference eligibility. Preserve capture payload ordering, loss accounting, shutdown, and publication behavior.
+
 ## Data flow
 
 ```text
@@ -229,6 +245,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - Replay timing is based only on the monotonic intervals stored in the capture; maximum-speed replay skips sleeps.
 - The capture format has a magic value and schema version. Unknown packet IDs remain inspectable.
 - App-managed recording uses a server-generated staging file and the shared raw-first recorder. Stop finalizes and fsyncs the footer before no-replacement publication into the configured recordings root; import and recording operations are serialized by the controller.
+- The app-managed acquisition observer retains only one latest same-frame player telemetry snapshot for the active session. Recording status calculates freshness from monotonic receive time; telemetry history remains the importer's responsibility.
 
 ## Deferred decisions
 

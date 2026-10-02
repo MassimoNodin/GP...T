@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ApiResponse, RecordingJobRecord } from "@/lib/api";
+import type {
+  ApiResponse,
+  LiveTelemetryRecord,
+  RecordingJobRecord,
+} from "@/lib/api";
 
 const activeStatuses = new Set(["starting", "recording", "stopping"]);
 
@@ -44,7 +48,7 @@ export default function RecordingControls({
       } catch {
         if (mounted) setError("Recording status is temporarily unavailable.");
       }
-      if (mounted) timer = setTimeout(poll, 1000);
+      if (mounted) timer = setTimeout(poll, 250);
     };
 
     timer = setTimeout(poll, 400);
@@ -98,13 +102,15 @@ export default function RecordingControls({
   const isReceiving = (progress?.received ?? 0) > 0;
 
   return (
-    <div className="recording-controls" aria-live="polite">
+    <div className="recording-controls">
       <div className="recording-control-copy">
         <div className="recording-state-line">
           <span
             className={`recording-light ${active ? "recording-light-active" : ""}`}
           />
-          <strong>{recordingStatus(recording, isReceiving)}</strong>
+          <strong aria-live="polite">
+            {recordingStatus(recording, isReceiving)}
+          </strong>
           {recording && (
             <span className="recording-port">UDP {recording.bind_port}</span>
           )}
@@ -185,6 +191,91 @@ export default function RecordingControls({
           {recording.failure_reason.replaceAll("_", " ")}
         </p>
       )}
+      {active && progress && (
+        <LiveTelemetryPanel telemetry={progress.live_telemetry} />
+      )}
+    </div>
+  );
+}
+
+function LiveTelemetryPanel({ telemetry }: { telemetry: LiveTelemetryRecord }) {
+  const statusCopy: Record<LiveTelemetryRecord["status"], string> = {
+    waiting: "Waiting for a synchronized player frame.",
+    fresh: "Player telemetry is updating from the current recording.",
+    stale: `Last player frame was ${formatAge(telemetry.age_ms)} ago.`,
+    unsupported:
+      "Recording continues. The live view does not support this packet format yet.",
+    unavailable: liveUnavailableReason(telemetry.reason),
+  };
+
+  return (
+    <section
+      className="live-telemetry"
+      data-state={telemetry.status}
+      aria-label="Live player telemetry"
+    >
+      <div className="live-telemetry-heading">
+        <div>
+          <div className="eyebrow">LIVE PLAYER TELEMETRY</div>
+          <p>{statusCopy[telemetry.status]}</p>
+        </div>
+        <span className={`live-telemetry-state state-${telemetry.status}`}>
+          {telemetry.status.toUpperCase()}
+        </span>
+      </div>
+      {telemetry.status !== "waiting" && (
+        <div className="live-telemetry-grid">
+          <LiveMetric label="LAP" value={display(telemetry.lap_number)} />
+          <LiveMetric label="CLOCK" value={formatLapClock(telemetry.lap_time_ms)} />
+          <LiveMetric
+            label="VALIDITY"
+            value={
+              telemetry.game_invalid === null ||
+              telemetry.game_invalid === undefined
+                ? "—"
+                : telemetry.game_invalid
+                  ? "INVALID"
+                  : "CLEAN"
+            }
+          />
+          <LiveMetric
+            label="SPEED"
+            value={withUnit(telemetry.speed_kph, "km/h")}
+          />
+          <LiveMetric label="GEAR" value={display(telemetry.gear)} />
+          <LiveMetric
+            label="RPM"
+            value={
+              telemetry.engine_rpm === null ||
+              telemetry.engine_rpm === undefined
+                ? "—"
+                : telemetry.engine_rpm.toLocaleString()
+            }
+          />
+          <LiveMetric
+            label="THROTTLE"
+            value={withUnit(telemetry.throttle, "%", 0, 100)}
+          />
+          <LiveMetric
+            label="BRAKE"
+            value={withUnit(telemetry.brake, "%", 0, 100)}
+          />
+          <LiveMetric label="PIT" value={pitStatus(telemetry.pit_status_id)} />
+          <LiveMetric
+            label="DRIVER"
+            value={driverStatus(telemetry.driver_status_id)}
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function LiveMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="live-telemetry-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
@@ -217,4 +308,62 @@ function numeric(values: Record<string, unknown>, key: string) {
 function label(value: unknown) {
   if (typeof value !== "string" || !value) return "mode unknown";
   return value.replaceAll("_", " ").toUpperCase();
+}
+
+function display(value: number | null | undefined) {
+  return value === null || value === undefined ? "—" : String(value);
+}
+
+function withUnit(
+  value: number | null | undefined,
+  unit: string,
+  digits = 0,
+  multiplier = 1,
+) {
+  return value === null || value === undefined
+    ? "—"
+    : `${(value * multiplier).toFixed(digits)} ${unit}`;
+}
+
+function formatLapClock(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value))
+    return "—";
+  const wholeSeconds = Math.floor(value / 1000);
+  return `${Math.floor(wholeSeconds / 60)}:${String(wholeSeconds % 60).padStart(2, "0")}.${String(Math.floor(value % 1000)).padStart(3, "0")}`;
+}
+
+function formatAge(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "an unknown time";
+  return `${(value / 1000).toFixed(1)} seconds`;
+}
+
+function pitStatus(value: number | null | undefined) {
+  const labels = ["NONE", "PITTING", "PIT AREA"];
+  return statusCode(value, labels);
+}
+
+function driverStatus(value: number | null | undefined) {
+  const labels = ["GARAGE", "FLYING LAP", "IN LAP", "OUT LAP", "ON TRACK"];
+  return statusCode(value, labels);
+}
+
+function statusCode(value: number | null | undefined, labels: string[]) {
+  if (value === null || value === undefined) return "—";
+  return `${value} · ${labels[value] ?? "UNKNOWN"}`;
+}
+
+function liveUnavailableReason(reason: string | null) {
+  if (reason === "same_frame_car_telemetry_unavailable")
+    return "Lap data is present, but matching player inputs are unavailable in this frame.";
+  if (reason === "player_index_mismatch_in_frame")
+    return "The player index differs between packets in this frame.";
+  if (reason === "player_car_index_out_of_range")
+    return "The packet identifies a player car index outside the supported range.";
+  if (reason === "player_identity_conflicted_within_frame")
+    return "Waiting for packets with a consistent player index.";
+  if (reason === "car_telemetry_decode_failed")
+    return "Car telemetry was malformed for this frame.";
+  if (reason === "lap_data_decode_failed")
+    return "Lap data was malformed for this frame.";
+  return "The current player telemetry is unavailable.";
 }

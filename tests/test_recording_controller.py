@@ -66,6 +66,7 @@ def test_recording_start_stop_is_idempotent_and_publishes_to_inbox(tmp_path):
                 first_job = started.json()["data"]
                 assert first_job["status"] in {"starting", "recording"}
                 assert first_job["published"] is False
+                assert first_job["progress"]["live_telemetry"]["status"] == "waiting"
 
                 repeated = await client.post("/api/v1/recordings/start", headers=_auth())
                 assert repeated.status_code == 202
@@ -118,6 +119,7 @@ def test_recording_start_stop_is_idempotent_and_publishes_to_inbox(tmp_path):
                 assert completed["published"] is True
                 assert completed["summary"]["received"] == 2
                 assert completed["summary"]["recorded"] == 2
+                assert completed["progress"] is None
                 assert "completed_lap_attempts" not in completed["summary"]
                 assert "lap_attempts" not in completed["summary"]
 
