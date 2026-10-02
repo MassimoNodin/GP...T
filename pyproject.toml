@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "f1-race-engineer"
+version = "0.1.0"
+description = "A local-first telemetry foundation for an AI F1 race engineer."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<9"]
+
+[project.scripts]
+f1-engineer = "f1_engineer.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["f1_engineer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
