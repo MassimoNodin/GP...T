@@ -109,6 +109,19 @@ Defer track projection, centreline calibration, racing-line comparisons, and dri
 
 Acceptance requires strict packet size/version checks; synthetic tests for layout, signed direction conversion, malformed/non-finite values; frame-join tests for ordering, missing Motion, player-index changes, and lap boundaries; a replay of the supplied capture with 13,950 successful Motion decodes and same-frame canonical enrichment; unchanged lap inventory/reference eligibility/distance comparison; idempotent v2 imports plus v1 trace reads; and trajectory export that records provenance, validity, coverage, and unsupported discontinuities.
 
+## Decision 0009: select recorded Time Trial references before generating coaching
+
+**Status:** accepted
+**Date:** 2026-10-02
+
+Begin Phase E with a deterministic `SESSION_BEST` selector for a chosen Time Trial attempt. Select the fastest eligible earlier attempt within the same processing run, session UID, and player car index. This is the best eligible lap recorded before the target in that import, not necessarily the game's full-session personal best. Exclude the target and later attempts; break equal-time ties by earlier attempt ordinal.
+
+Keep reference policy separate from storage and comparison mathematics. Storage returns completed-run inventories and verified trace snapshots. A Time Trial policy checks completed, game-valid, start-observed, non-pit attempts, positive official timing, the persisted reference-eligibility decision, stable known Time Trial context, matching track/formula/performance/assists, and known matching weather/temperature. The result includes the selected identity, lap time, trace checksum, policy version, scope, and every candidate's exclusion reasons. Use only finalized recordings with zero reported recording losses and zero replay frame-assembly losses. Persist the replay assembler's late-packet and overflow counters with the import's capture-quality metrics; an older run without those metrics is insufficient evidence and must abstain until reimported. If no candidate qualifies, abstain instead of choosing an invalid or incompatible lap.
+
+An invalid target may use a selected valid reference for manual diagnostic comparison, but never becomes an automatic reference itself. Keep reference eligibility separate from metric support: older schema-v1 traces can be selected for distance analysis even without Motion, while per-channel gaps stay visible in comparison masks. `SESSION_BEST` is a reference kind, not a gameplay mode. Unknown context and race modes return explicit unavailable/unsupported-policy results. Keep canonical data and comparison math shared; race reference policy waits for validated pit/stint, tyre, fuel, traffic, damage, and interruption context.
+
+Defer all-time personal bests until persistent player identity and cross-session comparability are established. Defer theoretical-best laps, corner opportunity rankings, diagnoses, confidence scoring, and actionable coaching until track regions and reference evidence are validated. The supplied Melbourne capture exercises abstention because both completed laps are game-invalid; synthetic clean laps validate deterministic positive selection. Positive integration evidence remains pending until a clean Time Trial capture is available.
+
 ## Data flow
 
 ```text
@@ -149,5 +162,5 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 
 - Remaining packet-body parsers are added from EA's official structure files, with their source and revision recorded. Support is explicit per `(packet_format, packet_id, packet_version)`. Current typed body support covers F1 25 Session, Lap Data, Participants, Car Telemetry, and Motion packet v1; Session packet adapters populate canonical gameplay context independently of the wire format.
 - Add canonical traces for additional cars only when validated multi-car capture coverage justifies them. Slower packet families will use freshness windows rather than being required in every frame.
-- Distance resampling, comparison metrics, and the API/frontend follow this durable player-trace slice.
+- Distance comparison and run-scoped Time Trial reference selection are implemented for diagnostics. Validated circuit geometry, race reference policy, actionable coaching, and the API/frontend remain deferred until their supporting evidence and interfaces are ready.
 - Voice, LLM, and frontend work remain above deterministic analysis; no LLM is needed to capture or inspect telemetry.

@@ -18,6 +18,12 @@ from .recording.capture import CaptureReader, CaptureWriter
 from .sessions.context import SessionContext
 from .analysis.resampling import ResamplingConfig
 from .analysis.service import compare_attempts
+from .analysis.reference_selection import (
+    ReferenceKind,
+    ReferenceSelectionStatus,
+    ReferenceRequest,
+    select_reference,
+)
 from .analysis.trajectory import build_observed_trajectory
 from .storage.importer import (
     DEFAULT_DATABASE,
@@ -434,6 +440,39 @@ def _compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _reference(args: argparse.Namespace) -> int:
+    selection = select_reference(
+        args.database,
+        ReferenceRequest(
+            target_attempt_key=args.target_attempt_key,
+            reference_kind=ReferenceKind.SESSION_BEST,
+        ),
+    )
+    document = selection.to_dict()
+    if selection.selected_reference is not None:
+        reference_attempt_key = selection.selected_reference["attempt_key"]
+        try:
+            comparison = compare_attempts(
+                args.database,
+                args.target_attempt_key,
+                str(reference_attempt_key),
+            )
+        except ValueError as exc:
+            document["comparison"] = {"status": "unavailable", "reason": str(exc)}
+        else:
+            document["comparison"] = {"status": "available", "result": comparison}
+    _json_line(document)
+    return (
+        2
+        if selection.status
+        in {
+            ReferenceSelectionStatus.TARGET_UNAVAILABLE,
+            ReferenceSelectionStatus.TARGET_NOT_COMPLETED,
+        }
+        else 0
+    )
+
+
 def _trajectory(args: argparse.Namespace) -> int:
     attempt = load_attempt_trace(
         args.database,
@@ -545,6 +584,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="versioned JSON track model; adds diagnostic corner-region analysis",
     )
     compare.set_defaults(handler=_compare)
+
+    reference = commands.add_parser(
+        "reference", help="select the best eligible prior Time Trial lap and compare it"
+    )
+    reference.add_argument("target_attempt_key", help="target attempt from the laps command")
+    reference.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
+    reference.set_defaults(handler=_reference)
 
     trajectory = commands.add_parser(
         "trajectory", help="export an observed world-space lap trajectory"

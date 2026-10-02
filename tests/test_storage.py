@@ -13,7 +13,11 @@ from f1_engineer.storage import importer as importer_module
 from f1_engineer.storage import query as query_module
 from f1_engineer.storage.importer import get_lap, import_capture, list_laps, list_sessions
 from f1_engineer.storage.lock import ImportRunLock
-from f1_engineer.storage.query import TRAJECTORY_TRACE_COLUMNS, load_attempt_trace
+from f1_engineer.storage.query import (
+    TRAJECTORY_TRACE_COLUMNS,
+    load_attempt_trace,
+    load_reference_inventory,
+)
 from f1_engineer.storage.parquet import TRACE_SCHEMA_V1, TRACE_SCHEMA_VERSION, read_trace
 from f1_engineer.udp.car_telemetry import _CAR_TELEMETRY_V1_CAR
 from f1_engineer.udp.participants import _PARTICIPANT_PREFIX
@@ -108,6 +112,8 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert imported.already_imported is False
     assert imported.attempts == 1
     assert imported.samples == 3
+    assert imported.import_late_packets_ignored == 0
+    assert imported.import_frame_overflow_packets_dropped == 0
     assert imported.missing_car_telemetry_samples == 1
     assert imported.missing_car_telemetry_frames == ((SESSION_UID, 13),)
     assert imported.participant_packets == 1
@@ -124,9 +130,22 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     stored_attempt = load_attempt_trace(database_path, laps[0]["attempt_key"])
     assert stored_attempt is not None
     assert len(stored_attempt.samples) == 3
+    assert stored_attempt.attempt_number == 1
+    assert stored_attempt.start_observed is False
+    assert stored_attempt.pit_encountered is False
     assert stored_attempt.trace_sha256
     assert stored_attempt.trace_schema_version == TRACE_SCHEMA_VERSION == 2
     assert stored_attempt.context_segments[0][1]["game_mode"] == "time_trial"
+    inventory = load_reference_inventory(database_path, laps[0]["attempt_key"])
+    assert inventory is not None
+    assert inventory.run_id == imported.run_id
+    assert inventory.target_attempt_number == 1
+    assert inventory.capture_complete is True
+    assert inventory.capture_completion == {"status": "complete"}
+    assert inventory.processing_quality["import_late_packets_ignored"] == 0
+    assert inventory.processing_quality["import_frame_overflow_packets_dropped"] == 0
+    assert len(inventory.attempts) == 1
+    assert inventory.attempts[0].trace_row_count == 3
     trajectory_attempt = load_attempt_trace(
         database_path,
         laps[0]["attempt_key"],

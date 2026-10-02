@@ -62,6 +62,45 @@ class StoredAttemptTrace:
     quality: Mapping[str, object]
     context_segments: tuple[tuple[int, Mapping[str, object] | None], ...]
     samples: tuple[Mapping[str, object], ...]
+    attempt_number: int = 1
+    start_observed: bool = True
+    pit_encountered: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class StoredAttemptInventoryEntry:
+    attempt_key: str
+    run_id: str
+    session_uid: str
+    car_index: int
+    attempt_number: int
+    disposition: str
+    lap_time_ms: int | None
+    game_valid: bool | None
+    reference_eligible: bool
+    start_observed: bool
+    pit_encountered: bool
+    sample_count: int
+    exclusion_reasons: tuple[str, ...]
+    trace_ready: bool
+    trace_row_count: int | None
+    trace_sha256: str | None
+    trace_schema_version: int | None
+    quality: Mapping[str, object]
+    context_segments: tuple[tuple[int, Mapping[str, object] | None], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class StoredReferenceInventory:
+    target_attempt_key: str
+    run_id: str
+    session_uid: str
+    car_index: int
+    target_attempt_number: int
+    capture_complete: bool
+    capture_completion: Mapping[str, object] | None
+    processing_quality: Mapping[str, object]
+    attempts: tuple[StoredAttemptInventoryEntry, ...]
 
 
 def load_attempt_trace(
@@ -74,7 +113,8 @@ def load_attempt_trace(
     database_path = Path(database_path)
     with Database(database_path) as db:
         row = db.connection.execute(
-            """SELECT l.attempt_key, l.car_index, l.disposition, l.lap_time_ms,
+            """SELECT l.attempt_key, l.car_index, l.attempt_number,
+                      l.disposition, l.lap_time_ms, l.start_observed, l.pit_encountered,
                       l.game_valid, l.reference_eligible, l.exclusion_reasons_json,
                       s.session_uid, s.run_id, t.relative_path, t.row_count,
                       t.sha256, t.quality_json, t.schema_version
@@ -139,4 +179,109 @@ def load_attempt_trace(
         quality=json.loads(row["quality_json"]),
         context_segments=contexts,
         samples=tuple(table.to_pylist()),
+        attempt_number=row["attempt_number"],
+        start_observed=bool(row["start_observed"]),
+        pit_encountered=bool(row["pit_encountered"]),
+    )
+
+
+def load_reference_inventory(
+    database_path: str | Path, attempt_key: str
+) -> StoredReferenceInventory | None:
+    """Read run-scoped attempt/context metadata for deterministic reference selection."""
+    database_path = Path(database_path)
+    with Database(database_path) as db:
+        target = db.connection.execute(
+            """SELECT l.attempt_key, l.attempt_number, l.car_index,
+                      s.run_id, s.session_uid
+                 FROM lap_attempts l JOIN sessions s USING(session_key)
+                 JOIN processing_runs r USING(run_id)
+                WHERE l.attempt_key = ? AND r.status = 'complete'""",
+            (attempt_key,),
+        ).fetchone()
+        if target is None:
+            return None
+        rows = db.connection.execute(
+            """SELECT l.attempt_key, l.attempt_number, l.car_index, l.disposition,
+                      l.lap_time_ms, l.game_valid, l.reference_eligible,
+                      l.start_observed, l.pit_encountered, l.sample_count,
+                      l.exclusion_reasons_json,
+                      s.run_id, s.session_uid, t.ready, t.row_count, t.sha256, t.schema_version,
+                      t.quality_json
+                 FROM lap_attempts l JOIN sessions s USING(session_key)
+                 JOIN processing_runs r USING(run_id)
+                 LEFT JOIN telemetry_files t USING(attempt_key)
+                WHERE s.run_id = ? AND s.session_uid = ? AND l.car_index = ?
+                  AND r.status = 'complete'
+                ORDER BY l.attempt_number""",
+            (target["run_id"], target["session_uid"], target["car_index"]),
+        ).fetchall()
+        capture = db.connection.execute(
+            """SELECT c.complete, c.completion_json, r.metrics_json
+                 FROM processing_runs r JOIN captures c USING(capture_sha256)
+                WHERE r.run_id = ?""",
+            (target["run_id"],),
+        ).fetchone()
+        context_rows = db.connection.execute(
+            """SELECT c.attempt_key, c.from_frame_identifier, c.context_json
+                 FROM lap_context_segments c JOIN lap_attempts l USING(attempt_key)
+                 JOIN sessions s USING(session_key)
+                WHERE s.run_id = ? AND s.session_uid = ? AND l.car_index = ?
+                ORDER BY c.attempt_key, c.ordinal""",
+            (target["run_id"], target["session_uid"], target["car_index"]),
+        ).fetchall()
+
+    contexts_by_attempt: dict[str, list[tuple[int, Mapping[str, object] | None]]] = {}
+    for context_row in context_rows:
+        raw_context = (
+            json.loads(context_row["context_json"])
+            if context_row["context_json"] is not None
+            else None
+        )
+        contexts_by_attempt.setdefault(context_row["attempt_key"], []).append(
+            (int(context_row["from_frame_identifier"]), raw_context)
+        )
+    attempts = tuple(
+        StoredAttemptInventoryEntry(
+            attempt_key=row["attempt_key"],
+            run_id=row["run_id"],
+            session_uid=row["session_uid"],
+            car_index=row["car_index"],
+            attempt_number=row["attempt_number"],
+            disposition=row["disposition"],
+            lap_time_ms=row["lap_time_ms"],
+            game_valid=None if row["game_valid"] is None else bool(row["game_valid"]),
+            reference_eligible=bool(row["reference_eligible"]),
+            start_observed=bool(row["start_observed"]),
+            pit_encountered=bool(row["pit_encountered"]),
+            sample_count=row["sample_count"],
+            exclusion_reasons=tuple(json.loads(row["exclusion_reasons_json"])),
+            trace_ready=bool(row["ready"]),
+            trace_row_count=row["row_count"],
+            trace_sha256=row["sha256"],
+            trace_schema_version=row["schema_version"],
+            quality=json.loads(row["quality_json"]) if row["quality_json"] else {},
+            context_segments=tuple(contexts_by_attempt.get(row["attempt_key"], ())),
+        )
+        for row in rows
+    )
+    completion = (
+        json.loads(capture["completion_json"])
+        if capture is not None and capture["completion_json"]
+        else None
+    )
+    metrics = json.loads(capture["metrics_json"]) if capture is not None and capture["metrics_json"] else {}
+    processing_quality = metrics.get("capture_quality", {})
+    return StoredReferenceInventory(
+        target_attempt_key=target["attempt_key"],
+        run_id=target["run_id"],
+        session_uid=target["session_uid"],
+        car_index=target["car_index"],
+        target_attempt_number=target["attempt_number"],
+        capture_complete=bool(capture["complete"]) if capture is not None else False,
+        capture_completion=completion,
+        processing_quality=(
+            processing_quality if isinstance(processing_quality, Mapping) else {}
+        ),
+        attempts=attempts,
     )

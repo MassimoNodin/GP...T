@@ -32,6 +32,18 @@ _COMPATIBILITY_FIELDS = (
     "braking_assist_id",
     "gearbox_assist_id",
 )
+_AUTO_REFERENCE_CONDITION_FIELDS = (
+    "weather_id",
+    "weather_name",
+    "track_temperature_c",
+    "air_temperature_c",
+)
+
+
+class TimeTrialContextError(ValueError):
+    def __init__(self, reason_code: str, message: str) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
 
 
 def compare_attempts(
@@ -55,8 +67,12 @@ def compare_attempts(
         )
     _require_completed(target)
     _require_completed(reference)
-    target_context, target_signature = _stable_time_trial_context(target)
-    reference_context, reference_signature = _stable_time_trial_context(reference)
+    target_context, target_signature = stable_time_trial_context(
+        target.context_segments, target.attempt_key
+    )
+    reference_context, reference_signature = stable_time_trial_context(
+        reference.context_segments, reference.attempt_key
+    )
     if target_signature != reference_signature:
         raise ValueError("attempts have incompatible track, format, or Time Trial settings")
 
@@ -153,45 +169,79 @@ def _require_completed(attempt: StoredAttemptTrace) -> None:
 def _stable_time_trial_context(
     attempt: StoredAttemptTrace,
 ) -> tuple[Mapping[str, object], tuple[object, ...]]:
-    if not attempt.context_segments:
-        raise ValueError(f"attempt {attempt.attempt_key!r} has no recorded session context")
+    return stable_time_trial_context(attempt.context_segments, attempt.attempt_key)
+
+
+def stable_time_trial_context(
+    context_segments: tuple[tuple[int, Mapping[str, object] | None], ...],
+    attempt_key: str,
+    *,
+    require_conditions: bool = False,
+) -> tuple[Mapping[str, object], tuple[object, ...]]:
+    if not context_segments:
+        raise TimeTrialContextError(
+            "unknown_context", f"attempt {attempt_key!r} has no recorded session context"
+        )
     contexts: list[Mapping[str, object]] = []
-    for _, context in attempt.context_segments:
+    for _, context in context_segments:
         if context is None:
-            raise ValueError(
-                f"attempt {attempt.attempt_key!r} has unknown context; comparison is unavailable"
+            raise TimeTrialContextError(
+                "unknown_context",
+                f"attempt {attempt_key!r} has unknown context; comparison is unavailable",
             )
         mode_fields = ("session_type", "game_mode", "rule_set")
         if any(context.get(field) in (None, "unknown") for field in mode_fields):
-            raise ValueError(
-                f"attempt {attempt.attempt_key!r} has unknown or unfamiliar session mode"
+            raise TimeTrialContextError(
+                "unknown_mode", f"attempt {attempt_key!r} has unknown or unfamiliar session mode"
             )
         if (
             context["session_type"] != "time_trial"
             or context["game_mode"] != "time_trial"
             or context["rule_set"] != "time_trial"
         ):
-            raise ValueError(
-                f"attempt {attempt.attempt_key!r} is not a known Time Trial attempt"
+            raise TimeTrialContextError(
+                "unsupported_mode", f"attempt {attempt_key!r} is not a known Time Trial attempt"
             )
-        if any(context.get(field) is None for field in _COMPATIBILITY_FIELDS):
-            raise ValueError(
-                f"attempt {attempt.attempt_key!r} has incomplete track or mode context"
+        required_fields = (
+            *_COMPATIBILITY_FIELDS,
+            *(_AUTO_REFERENCE_CONDITION_FIELDS if require_conditions else ()),
+        )
+        if any(context.get(field) is None for field in required_fields):
+            missing_conditions = require_conditions and any(
+                context.get(field) is None for field in _AUTO_REFERENCE_CONDITION_FIELDS
+            )
+            reason = "unknown_conditions" if missing_conditions else "incomplete_context"
+            message = (
+                "unknown weather or temperature conditions"
+                if missing_conditions
+                else "incomplete track or mode context"
+            )
+            raise TimeTrialContextError(
+                reason, f"attempt {attempt_key!r} has {message}"
             )
         track_length = context["track_length_m"]
         if not isinstance(track_length, (int, float)) or not math.isfinite(track_length) or track_length <= 0:
-            raise ValueError(f"attempt {attempt.attempt_key!r} has an invalid track length")
+            raise TimeTrialContextError(
+                "invalid_track_length", f"attempt {attempt_key!r} has an invalid track length"
+            )
         if not isinstance(context["track_name"], str) or not context["track_name"].strip():
-            raise ValueError(f"attempt {attempt.attempt_key!r} has an unknown track")
+            raise TimeTrialContextError(
+                "unknown_track", f"attempt {attempt_key!r} has an unknown track"
+            )
         contexts.append(context)
 
-    signature = tuple(contexts[0][field] for field in _COMPATIBILITY_FIELDS)
+    signature_fields = (
+        *_COMPATIBILITY_FIELDS,
+        *(_AUTO_REFERENCE_CONDITION_FIELDS if require_conditions else ()),
+    )
+    signature = tuple(contexts[0][field] for field in signature_fields)
     if any(
-        tuple(context[field] for field in _COMPATIBILITY_FIELDS) != signature
+        tuple(context[field] for field in signature_fields) != signature
         for context in contexts[1:]
     ):
-        raise ValueError(
-            f"attempt {attempt.attempt_key!r} changes track or Time Trial settings during the lap"
+        raise TimeTrialContextError(
+            "context_changed",
+            f"attempt {attempt_key!r} changes track or Time Trial settings during the lap",
         )
     return contexts[-1], signature
 

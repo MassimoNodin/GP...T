@@ -16,7 +16,7 @@ from .lock import ImportRunLock
 from .parquet import ParquetTraceWriter, TRACE_SCHEMA_VERSION, sha256_file
 
 
-PIPELINE_VERSION = "player-traces-v7-motion"
+PIPELINE_VERSION = "player-traces-v8-reference-quality"
 DEFAULT_DATABASE = Path("data") / "f1-engineer.sqlite3"
 IMPORT_CONFIG = {"max_open_frames": 256, "reorder_window_frames": 3}
 
@@ -43,6 +43,8 @@ class ImportSummary:
     motion_decode_errors: int = 0
     player_motion_samples: int = 0
     missing_player_motion_samples: int = 0
+    import_late_packets_ignored: int = 0
+    import_frame_overflow_packets_dropped: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -412,6 +414,8 @@ def import_capture(capture_path: str | Path, database_path: str | Path = DEFAULT
                 "motion_decode_errors": motion_error_count,
                 "player_motion_sample_count": pipeline.player_motion_samples,
                 "missing_player_motion_sample_count": pipeline.missing_player_motion_samples,
+                "import_late_packets_ignored": pipeline.frames.late_packets_ignored,
+                "import_frame_overflow_packets_dropped": pipeline.frames.overflow_packets_dropped,
             }
 
             import_summary = ImportSummary(
@@ -435,6 +439,8 @@ def import_capture(capture_path: str | Path, database_path: str | Path = DEFAULT
                 motion_decode_errors=motion_error_count,
                 player_motion_samples=pipeline.player_motion_samples,
                 missing_player_motion_samples=pipeline.missing_player_motion_samples,
+                import_late_packets_ignored=pipeline.frames.late_packets_ignored,
+                import_frame_overflow_packets_dropped=pipeline.frames.overflow_packets_dropped,
             )
             metrics_json = _json(
                 {"capture_quality": capture_quality, "summary": import_summary.to_dict()}

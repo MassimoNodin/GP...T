@@ -8,7 +8,7 @@ The foundation captures raw UDP datagrams, inspects captures, and replays them t
 
 F1 25 Session v1, Lap Data v1, Participants v1, Car Telemetry v1, and Motion v1 are decoded. Importing a capture synchronizes player input and Motion samples to Lap Data frames, retains missing packet families as null values, stores session/lap metadata in SQLite, and writes one checksummed Parquet trace for every completed, invalid, partial, or abandoned attempt. New traces use schema v2; schema-v1 traces remain readable and report Motion fields as unavailable. Race and Time Trial captures share this pipeline; automatic reference eligibility remains conservative and currently permits only known, valid Time Trial laps.
 
-The analysis CLI compares two explicitly selected, completed Time Trial attempts on a shared distance grid. It reports the delta curve, per-channel coverage and gaps, and the official lap-time difference separately. Invalid laps can be compared for diagnosis, with their exclusion reasons included in the result.
+The analysis CLI compares two explicitly selected, completed Time Trial attempts on a shared distance grid. It reports the delta curve, per-channel coverage and gaps, and the official lap-time difference separately. Invalid laps can be compared for diagnosis, with their exclusion reasons included in the result. `reference` selects the fastest eligible prior Time Trial attempt from the same imported run/session/player and includes that comparison; it abstains when no reference qualifies.
 
 ## Requirements
 
@@ -30,6 +30,7 @@ python -m f1_engineer sessions
 python -m f1_engineer laps
 python -m f1_engineer lap RUN_ID:SESSION_UID:CAR_INDEX:ATTEMPT_NUMBER
 python -m f1_engineer compare TARGET_ATTEMPT_KEY REFERENCE_ATTEMPT_KEY
+python -m f1_engineer reference TARGET_ATTEMPT_KEY
 python -m f1_engineer trajectory ATTEMPT_KEY --output data/trajectory.json
 ```
 
@@ -38,6 +39,7 @@ python -m f1_engineer trajectory ATTEMPT_KEY --output data/trajectory.json
 Capture paths are created exclusively by default. Pass `--overwrite` only when you intend to replace an existing capture.
 `import` defaults to `data/f1-engineer.sqlite3` and stores Parquet traces beneath `data/f1-engineer.sqlite3.traces/`. Pass `--database path.sqlite3` to choose another database; its traces are stored in a database-specific sibling directory. Importing the same capture with the same pipeline version and configuration is idempotent. If a run was interrupted, rerunning `import` resumes it by rebuilding that run's traces from the raw capture. Simultaneous imports of the same run into one database are rejected while the active OS lock is held.
 `compare` uses `lap_distance_m` and the lap clock from the stored traces, defaults to a 1 m grid, and does not extrapolate over unsupported gaps. Both attempts must be completed laps with known, compatible Time Trial context. The command takes an explicit target and reference; it does not choose a personal best automatically.
+`reference` currently implements `session_best`: it selects the fastest eligible prior lap from the same processing run, session, and player, then runs the distance comparison. It requires matching known Time Trial settings and weather/temperature, plus a finalized capture with no recorded receive losses or replay frame-assembly losses. It lists why each candidate was excluded and returns `no_eligible_reference` when none pass. Comparison may be reported as unavailable if the selected laps do not have a supported overlapping distance range. Race reference policy and all-time personal-best selection remain unsupported.
 
 `trajectory` exports a versioned JSON record of observed world-space samples, with frame/distance/time anchors, trace checksum and session-context provenance. Missing Motion, frame gaps, distance/time regressions, session-time gaps over 100 ms, lap-clock rewinds over 20 ms, and position jumps over 25 m split the output into separate segments. The artifact includes those continuity limits, keeps G-forces in lateral/longitudinal/vertical vehicle-relative axes, and is explicitly diagnostic rather than a track centreline; use `--overwrite` to replace an existing output.
 
