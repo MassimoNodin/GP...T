@@ -135,14 +135,20 @@ class ParquetTraceWriter:
             self._closed = True
 
 
-def _sha256(path: Path) -> str:
+def sha256_file(path: str | Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
+    with Path(path).open("rb") as stream:
         while chunk := stream.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
 
 
-def read_trace(path: str | Path) -> tuple[pq.FileMetaData, pa.Table]:
-    parquet = pq.ParquetFile(path)
-    return parquet.metadata, parquet.read()
+_sha256 = sha256_file
+
+
+def read_trace(
+    path: str | Path | bytes, *, columns: list[str] | None = None
+) -> tuple[pq.FileMetaData, pa.Table]:
+    source = pa.BufferReader(path) if isinstance(path, bytes) else path
+    parquet = pq.ParquetFile(source)
+    return parquet.metadata, parquet.read(columns=columns)

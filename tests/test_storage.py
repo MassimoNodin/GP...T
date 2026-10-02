@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import sqlite3
+from io import BytesIO
 from pathlib import Path
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from f1_engineer.recording.capture import CaptureWriter
 from f1_engineer.storage import importer as importer_module
+from f1_engineer.storage import query as query_module
 from f1_engineer.storage.importer import get_lap, import_capture, list_laps, list_sessions
 from f1_engineer.storage.lock import ImportRunLock
+from f1_engineer.storage.query import load_attempt_trace
 from f1_engineer.udp.car_telemetry import _CAR_TELEMETRY_V1_CAR
 from f1_engineer.udp.participants import _PARTICIPANT_PREFIX
 from tests.helpers import make_datagram
@@ -53,7 +58,9 @@ def _lap_datagram(frame: int, sequence: int, distance: float):
     )
 
 
-def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(tmp_path) -> None:
+def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
+    tmp_path, monkeypatch
+) -> None:
     capture_path = tmp_path / "synthetic.f1ecap"
     database_path = tmp_path / "state" / "f1.sqlite3"
     session_body = SESSION_FIXTURE.read_bytes()[29:]
@@ -109,8 +116,41 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(tmp_path) -
     assert laps[0]["disposition"] == "partial"
     assert laps[0]["quality"]["missing_car_telemetry_count"] == 1
 
+    stored_attempt = load_attempt_trace(database_path, laps[0]["attempt_key"])
+    assert stored_attempt is not None
+    assert len(stored_attempt.samples) == 3
+    assert stored_attempt.trace_sha256
+    assert stored_attempt.context_segments[0][1]["game_mode"] == "time_trial"
+
     details = get_lap(database_path, laps[0]["attempt_key"])
     assert details is not None
+    trace_path = database_path.parent / details["trace_path"]
+    original_bytes = trace_path.read_bytes()
+    _, original_table = query_module.read_trace(original_bytes)
+    speed_column = original_table.schema.get_field_index("speed_mps")
+    altered_table = original_table.set_column(
+        speed_column,
+        original_table.schema.field(speed_column),
+        pa.array([999.0] * original_table.num_rows, type=pa.float32()),
+    )
+    altered_buffer = BytesIO()
+    pq.write_table(altered_table, altered_buffer, compression="zstd")
+    altered_bytes = altered_buffer.getvalue()
+    actual_read_trace = query_module.read_trace
+
+    def replace_trace_before_parsing(snapshot, *, columns=None):
+        trace_path.write_bytes(altered_bytes)
+        return actual_read_trace(snapshot, columns=columns)
+
+    monkeypatch.setattr(query_module, "read_trace", replace_trace_before_parsing)
+    try:
+        raced_attempt = load_attempt_trace(database_path, laps[0]["attempt_key"])
+    finally:
+        trace_path.write_bytes(original_bytes)
+    assert raced_attempt is not None
+    assert raced_attempt.samples == stored_attempt.samples
+    monkeypatch.setattr(query_module, "read_trace", actual_read_trace)
+
     assert details["trace_checksum_valid"] is True
     assert details["parquet_rows"] == 3
     assert details["first_sample"][0]["session_uid"] == str(SESSION_UID)

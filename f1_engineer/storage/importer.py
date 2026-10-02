@@ -13,7 +13,7 @@ from ..recording.capture import CaptureReader
 from ..telemetry.canonical import CarSample
 from .database import Database
 from .lock import ImportRunLock
-from .parquet import ParquetTraceWriter, TRACE_SCHEMA_VERSION
+from .parquet import ParquetTraceWriter, TRACE_SCHEMA_VERSION, sha256_file
 
 
 PIPELINE_VERSION = "player-traces-v6"
@@ -637,8 +637,14 @@ def get_lap(database_path: str | Path, attempt_key: str) -> dict[str, object] | 
             return None
         from .parquet import read_trace
 
-        path = Path(database_path).parent / row["relative_path"]
-        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != row["sha256"]:
+        relative_path = Path(row["relative_path"])
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            raise ValueError("stored trace path is invalid")
+        root = Path(database_path).parent.resolve()
+        path = (Path(database_path).parent / relative_path).resolve()
+        if not path.is_relative_to(root):
+            raise ValueError("stored trace path escapes the database directory")
+        if not path.is_file() or sha256_file(path) != row["sha256"]:
             raise ValueError("trace file is missing or its checksum does not match SQLite")
         metadata, table = read_trace(path)
         return {

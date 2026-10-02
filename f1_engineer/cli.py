@@ -16,6 +16,8 @@ from .errors import F1EngineerError, ProtocolError
 from .pipeline import PipelineResult, TelemetryPipeline
 from .recording.capture import CaptureReader, CaptureWriter
 from .sessions.context import SessionContext
+from .analysis.resampling import ResamplingConfig
+from .analysis.service import compare_attempts
 from .storage.importer import (
     DEFAULT_DATABASE,
     get_lap,
@@ -408,6 +410,23 @@ def _lap(args: argparse.Namespace) -> int:
     return 0
 
 
+def _compare(args: argparse.Namespace) -> int:
+    config = ResamplingConfig(
+        grid_step_m=args.grid_step_m,
+        max_bracket_time_s=args.max_gap_s,
+        max_bracket_distance_m=args.max_gap_m,
+    )
+    _json_line(
+        compare_attempts(
+            args.database,
+            args.target_attempt_key,
+            args.reference_attempt_key,
+            config=config,
+        )
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="f1-engineer", description="F1 telemetry capture and replay")
     parser.add_argument("--version", action="version", version=f"f1-engineer {__version__}")
@@ -457,6 +476,17 @@ def build_parser() -> argparse.ArgumentParser:
     lap.add_argument("attempt_key", help="attempt key printed by the laps command")
     lap.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
     lap.set_defaults(handler=_lap)
+
+    compare = commands.add_parser(
+        "compare", help="compare two completed Time Trial laps by distance"
+    )
+    compare.add_argument("target_attempt_key", help="target attempt key from the laps command")
+    compare.add_argument("reference_attempt_key", help="reference attempt key from the laps command")
+    compare.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
+    compare.add_argument("--grid-step-m", type=float, default=1.0, help="distance grid step (default: %(default)s)")
+    compare.add_argument("--max-gap-s", type=float, default=0.1, help="maximum interpolation time gap in seconds")
+    compare.add_argument("--max-gap-m", type=float, default=25.0, help="maximum interpolation distance gap in metres")
+    compare.set_defaults(handler=_compare)
     return parser
 
 

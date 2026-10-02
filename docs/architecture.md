@@ -62,6 +62,21 @@ Expose accepted SessionContext history as changes emitted by the shared pipeline
 
 An import is complete only when its SQLite inventory and every ready Parquet output agree. Recheck the source capture's size and SHA-256 after replay so an active recorder cannot append bytes under an identity computed from an earlier prefix. If the source changed, fail and retry after recording stops. If a trace is missing or its checksum fails, replay the source capture and rebuild the run's outputs. Version changes to the import semantics receive a new deterministic run identity. The full source capture stays local; database-specific trace directories and lock files are generated data and are not committed.
 
+## Decision 0006: compare stored laps by distance
+
+**Status:** accepted
+**Date:** 2026-10-02
+
+Start Phase C with explicit comparison of two stored, completed Time Trial attempts. A caller may manually compare game-invalid laps for diagnosis; the result must show their game and capture-quality exclusions. This comparison does not select a personal best. Automatic reference selection remains a separate service and only uses eligible laps.
+
+Keep storage responsible for locating complete runs, verifying trace checksums, and loading trace columns plus attempt/context metadata. Put validation and distance resampling in `analysis.resampling`, delta and quality summaries in `analysis.comparison`, and orchestration in a comparison service. The CLI is the first caller; an API and chart can later use that same service without owning analysis rules.
+
+Use `lap_distance_m` and `current_lap_time_ms` from each sample. Resample onto a configurable 1 m grid anchored at the lap start, limited to the shared observed distance range and known track length. Do not extrapolate or subtract the first captured timestamp. Interpolate time, speed, and continuous controls linearly; hold gear and DRS from the preceding observation. Preserve frame chronology, collapse exact duplicate observations deterministically, split on distance or lap-clock regressions, and leave unsupported spans null. Initially require each interpolation bracket to span no more than 100 ms or 25 m; enforce availability per channel and report coverage, gaps, and exclusions.
+
+Require every context segment to have a known, stable track and compatible Time Trial context. Compare the same wire format, track ID and length, formula, car-performance setting, and driving assists. Weather differences remain visible context but do not block comparison. Race comparison, cross-mode references, 2026 adapters, and population selection remain later work.
+
+Return the sampled traces, per-channel masks and coverage, excluded spans, full delta curve, official lap-time difference, observed-range delta change, source trace checksums, and analysis/configuration versions. Define positive delta as the target being slower than its reference. Synthetic traces validate math and exclusions; the available Melbourne capture validates import/replay and diagnostic comparison of two invalid completed attempts but cannot prove automatic PB selection. A clean Time Trial capture is still needed for positive reference validation.
+
 ## Data flow
 
 ```text
