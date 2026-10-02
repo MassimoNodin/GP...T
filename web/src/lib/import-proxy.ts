@@ -1,0 +1,62 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+
+export function isTrustedImportRequest(request: Request) {
+  const configuredOrigin = process.env.F1_ENGINEER_WEB_ORIGIN;
+  const allowedOrigins = new Set([
+    "http://127.0.0.1:3000",
+    "http://localhost:3000",
+  ]);
+  if (configuredOrigin) {
+    try {
+      const configured = new URL(configuredOrigin);
+      allowedOrigins.add(configured.origin);
+      if (["127.0.0.1", "localhost", "[::1]"].includes(configured.hostname)) {
+        for (const hostname of ["127.0.0.1", "localhost", "[::1]"]) {
+          const alias = new URL(configured.origin);
+          alias.hostname = hostname;
+          allowedOrigins.add(alias.origin);
+        }
+      }
+    } catch {
+      return false;
+    }
+  }
+  return (
+    allowedOrigins.has(request.headers.get("origin") ?? "") &&
+    request.headers.get("sec-fetch-site") === "same-origin"
+  );
+}
+
+export async function forwardImportRequest(
+  path: string,
+  init: RequestInit = {},
+  needsControlToken = false,
+) {
+  const apiBase = process.env.F1_ENGINEER_API_URL ?? "http://127.0.0.1:8765";
+  const parsed = new URL(apiBase);
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
+  if (
+    parsed.protocol !== "http:" ||
+    !["127.0.0.1", "localhost", "::1"].includes(hostname)
+  ) {
+    throw new Error("The import proxy only accepts a loopback API URL.");
+  }
+  const headers = new Headers(init.headers);
+  if (needsControlToken) {
+    const tokenPath =
+      process.env.F1_ENGINEER_CONTROL_TOKEN_FILE ??
+      resolve(process.cwd(), "..", "data", ".f1-engineer-control-token");
+    const token = (
+      await readFile(/*turbopackIgnore: true*/ tokenPath, "utf8")
+    ).trim();
+    if (token.length < 32)
+      throw new Error("Local import control is unavailable.");
+    headers.set("authorization", `Bearer ${token}`);
+  }
+  return fetch(`${parsed.origin}${path}`, {
+    ...init,
+    headers,
+    cache: "no-store",
+  });
+}

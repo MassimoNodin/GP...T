@@ -481,9 +481,14 @@ def _api(args: argparse.Namespace) -> int:
         return 2
 
     from .api.app import create_app
+    from .api.security import load_or_create_control_token
 
     uvicorn.run(
-        create_app(args.database),
+        create_app(
+            args.database,
+            recordings_root=args.recordings_root,
+            control_token=load_or_create_control_token(args.control_token_file),
+        ),
         host="127.0.0.1",
         port=args.port,
         log_level="info",
@@ -610,8 +615,14 @@ def build_parser() -> argparse.ArgumentParser:
     reference.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
     reference.set_defaults(handler=_reference)
 
-    api = commands.add_parser("api", help="serve the read-only local analysis API")
+    api = commands.add_parser("api", help="serve the local telemetry API and import inbox")
     api.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
+    api.add_argument("--recordings-root", default="recordings", help="folder containing local .f1ecap files")
+    api.add_argument(
+        "--control-token-file",
+        default=str(Path("data") / ".f1-engineer-control-token"),
+        help="server-only authorization token file for local import actions",
+    )
     api.add_argument("--port", type=int, default=8765, help="loopback port (default: 8765)")
     api.set_defaults(handler=_api)
 

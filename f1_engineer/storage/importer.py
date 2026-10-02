@@ -5,7 +5,7 @@ import json
 import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ..errors import ProtocolError
 from ..pipeline import TelemetryPipeline
@@ -224,7 +224,12 @@ def _valid_trace_file(root: Path, relative_path: str, expected_hash: str) -> boo
     return actual_hash == expected_hash
 
 
-def import_capture(capture_path: str | Path, database_path: str | Path = DEFAULT_DATABASE) -> ImportSummary:
+def import_capture(
+    capture_path: str | Path,
+    database_path: str | Path = DEFAULT_DATABASE,
+    *,
+    progress_callback: Callable[[str, int, int, int], None] | None = None,
+) -> ImportSummary:
     capture_path = Path(capture_path)
     if not capture_path.is_file():
         raise FileNotFoundError(capture_path)
@@ -303,8 +308,17 @@ def import_capture(capture_path: str | Path, database_path: str | Path = DEFAULT
 
             with CaptureReader(capture_path) as capture:
                 capture_metadata = capture.metadata
+                if progress_callback is not None:
+                    progress_callback("reading_packets", 0, capture.bytes_read, byte_size)
                 for raw in capture:
                     packet_count += 1
+                    if progress_callback is not None and packet_count % 512 == 0:
+                        progress_callback(
+                            "reading_packets",
+                            packet_count,
+                            capture.bytes_read,
+                            byte_size,
+                        )
                     try:
                         result = pipeline.process(raw)
                     except ProtocolError:
@@ -382,6 +396,10 @@ def import_capture(capture_path: str | Path, database_path: str | Path = DEFAULT
                 trace_manager.finish_all(tuple(attempts))
                 capture_complete = capture.complete
                 capture_completion = capture.completion
+                if progress_callback is not None:
+                    progress_callback(
+                        "writing_traces", packet_count, byte_size, byte_size
+                    )
 
             # A recorder can append a datagram or completion footer while replay
             # runs. Do not associate that changing byte stream with the hash taken

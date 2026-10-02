@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-from pathlib import Path
+import hmac
 import sqlite3
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Generic, Literal, TypeVar
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Header, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, select_reference
 from ..analysis.service import compare_attempts
+from ..storage.import_jobs import list_recording_sources
 from ..storage.importer import DEFAULT_DATABASE, list_laps, list_sessions
 from ..storage.database import DatabaseSchemaError
 from ..tracks.model import TrackModel
@@ -17,6 +20,7 @@ from ..tracks.registry import (
     list_track_models as list_registered_track_models,
     resolve_track_model,
 )
+from .import_controller import ImportController
 
 
 PayloadT = TypeVar("PayloadT")
@@ -55,6 +59,44 @@ class TrackModelRecord(BaseModel):
     validation_status: str
     provenance: str
     region_count: int
+
+
+class RecordingSourceRecord(BaseModel):
+    capture_id: str
+    display_name: str
+    byte_size: int
+    modified_at_utc: str
+    latest_job_id: str | None
+    latest_job_status: str | None
+    available: bool
+
+
+class ImportProgressRecord(BaseModel):
+    phase: str
+    packets_processed: int
+    bytes_read: int
+    total_bytes: int
+
+
+class ImportJobRecord(BaseModel):
+    job_id: str
+    capture_id: str
+    status: Literal["queued", "running", "complete", "failed", "interrupted"]
+    phase: str
+    attempt_count: int
+    created_at_utc: str
+    updated_at_utc: str
+    started_at_utc: str | None
+    finished_at_utc: str | None
+    result: dict[str, Any] | None
+    failure_reason: str | None
+    progress: ImportProgressRecord | None = None
+
+
+class ImportJobRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    capture_id: str = Field(pattern=r"^[a-f0-9]{32}$")
 
 
 class LapRecord(BaseModel):
@@ -100,13 +142,31 @@ class ReferenceSelectionData(BaseModel):
     reasons: list[str]
 
 
-def create_app(database_path: str | Path = DEFAULT_DATABASE) -> FastAPI:
-    """Create an API bound to one operator-configured database file."""
+def create_app(
+    database_path: str | Path = DEFAULT_DATABASE,
+    *,
+    recordings_root: str | Path = "recordings",
+    control_token: str | None = None,
+) -> FastAPI:
+    """Create a local API bound to operator-configured storage and recording roots."""
     configured_database_path = Path(database_path).expanduser().resolve()
+    configured_recordings_root = Path(recordings_root).expanduser().resolve()
+    import_controller = ImportController(
+        configured_database_path, configured_recordings_root
+    )
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        import_controller.start()
+        app.state.import_controller = import_controller
+        yield
+        import_controller.close()
+
     app = FastAPI(
         title="F1 Race Engineer API",
         version="1.0.0",
-        description="Read-only historical F1 telemetry and lap analysis.",
+        description="Local historical telemetry, analysis, and explicit capture imports.",
+        lifespan=lifespan,
     )
 
     @app.exception_handler(FileNotFoundError)
@@ -152,6 +212,70 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE) -> FastAPI:
         return APIResponse[list[TrackModelRecord]](
             data=list_registered_track_models()
         )
+
+    @app.get(
+        "/api/v1/recording-sources",
+        response_model=APIResponse[list[RecordingSourceRecord]],
+    )
+    def recording_sources() -> APIResponse[list[RecordingSourceRecord]]:
+        return APIResponse[list[RecordingSourceRecord]](
+            data=list_recording_sources(
+                configured_database_path, configured_recordings_root
+            )
+        )
+
+    @app.post(
+        "/api/v1/import-jobs",
+        response_model=APIResponse[ImportJobRecord],
+        status_code=202,
+    )
+    def create_import(
+        request: ImportJobRequest,
+        authorization: str | None = Header(default=None),
+    ) -> APIResponse[ImportJobRecord] | JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "import_control_not_authorized")
+        try:
+            job = import_controller.submit(request.capture_id)
+        except ValueError as exc:
+            reason = str(exc)
+            status_code = 409 if reason == "another_import_is_in_progress" else 503
+            return _api_error(status_code, reason)
+        return APIResponse[ImportJobRecord](data=job)
+
+    @app.get(
+        "/api/v1/import-jobs/{job_id}",
+        response_model=APIResponse[ImportJobRecord],
+    )
+    def import_job(job_id: str) -> APIResponse[ImportJobRecord] | JSONResponse:
+        job = import_controller.get(job_id)
+        if job is None:
+            return _api_error(404, "import_job_unavailable")
+        return APIResponse[ImportJobRecord](data=job)
+
+    @app.post(
+        "/api/v1/import-jobs/{job_id}/retry",
+        response_model=APIResponse[ImportJobRecord],
+        status_code=202,
+    )
+    def retry_import(
+        job_id: str,
+        authorization: str | None = Header(default=None),
+    ) -> APIResponse[ImportJobRecord] | JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "import_control_not_authorized")
+        try:
+            job = import_controller.retry(job_id)
+        except ValueError as exc:
+            reason = str(exc)
+            status_code = (
+                409
+                if reason
+                in {"another_import_is_in_progress", "import_job_not_retryable"}
+                else 503
+            )
+            return _api_error(status_code, reason)
+        return APIResponse[ImportJobRecord](data=job)
 
     @app.get("/api/v1/compare/laps", response_model=APIResponse[dict[str, Any]])
     def compare_laps(
@@ -205,6 +329,29 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE) -> FastAPI:
         )
 
     return app
+
+
+def _authorized(authorization: str | None, control_token: str | None) -> bool:
+    if not authorization or not control_token:
+        return False
+    scheme, separator, supplied = authorization.partition(" ")
+    return bool(
+        separator
+        and scheme.lower() == "bearer"
+        and hmac.compare_digest(supplied, control_token)
+    )
+
+
+def _api_error(status_code: int, reason: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "api_version": "v1",
+            "status": "unavailable",
+            "data": None,
+            "reason": reason,
+        },
+    )
 
 
 def _stringify_session_uids(value: Any) -> Any:

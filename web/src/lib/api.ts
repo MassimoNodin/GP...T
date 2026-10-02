@@ -5,6 +5,38 @@ export interface ApiResponse<T> {
   reason: string | null;
 }
 
+export interface RecordingSourceRecord {
+  capture_id: string;
+  display_name: string;
+  byte_size: number;
+  modified_at_utc: string;
+  latest_job_id: string | null;
+  latest_job_status: string | null;
+  available: boolean;
+}
+
+export interface ImportProgressRecord {
+  phase: string;
+  packets_processed: number;
+  bytes_read: number;
+  total_bytes: number;
+}
+
+export interface ImportJobRecord {
+  job_id: string;
+  capture_id: string;
+  status: "queued" | "running" | "complete" | "failed" | "interrupted";
+  phase: string;
+  attempt_count: number;
+  created_at_utc: string;
+  updated_at_utc: string;
+  started_at_utc: string | null;
+  finished_at_utc: string | null;
+  result: Record<string, unknown> | null;
+  failure_reason: string | null;
+  progress: ImportProgressRecord | null;
+}
+
 export interface SessionContext {
   session_uid?: string;
   track_name?: string | null;

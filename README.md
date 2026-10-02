@@ -8,7 +8,7 @@ The foundation captures raw UDP datagrams, inspects captures, and replays them t
 
 F1 25 Session v1, Lap Data v1, Participants v1, Car Telemetry v1, and Motion v1 are decoded. Importing a capture synchronizes player input and Motion samples to Lap Data frames, retains missing packet families as null values, stores session/lap metadata in SQLite, and writes one checksummed Parquet trace for every completed, invalid, partial, or abandoned attempt. New traces use schema v2; schema-v1 traces remain readable and report Motion fields as unavailable. Race and Time Trial captures share this pipeline; automatic reference eligibility remains conservative and currently permits only known, valid Time Trial laps.
 
-The analysis CLI compares two explicitly selected, completed Time Trial attempts on a shared distance grid. It reports the delta curve, per-channel coverage and gaps, and the official lap-time difference separately. Invalid laps can be compared for diagnosis, with their exclusion reasons included in the result. `reference` selects the fastest eligible prior Time Trial attempt from the same imported run/session/player and includes that comparison; it abstains when no reference qualifies. A versioned, read-only FastAPI service exposes session browsing, explicit comparison, reference evidence, and the packaged track-model catalog to the Next.js historical lap explorer. Selecting a model ID and revision adds diagnostic distance-region evidence to a comparison; requests cannot provide model paths.
+The analysis CLI compares two explicitly selected, completed Time Trial attempts on a shared distance grid. It reports the delta curve, per-channel coverage and gaps, and the official lap-time difference separately. Invalid laps can be compared for diagnosis, with their exclusion reasons included in the result. `reference` selects the fastest eligible prior Time Trial attempt from the same imported run/session/player and includes that comparison; it abstains when no reference qualifies. The local FastAPI service exposes session browsing, explicit comparison, reference evidence, the packaged track-model catalog, and a recording inbox to the Next.js historical lap explorer. The inbox imports existing `.f1ecap` files through durable jobs; it does not start or stop UDP recording. Selecting a model ID and revision adds diagnostic distance-region evidence to a comparison; requests cannot provide model paths.
 
 ## Requirements
 
@@ -35,17 +35,17 @@ python -m f1_engineer reference TARGET_ATTEMPT_KEY
 python -m f1_engineer trajectory ATTEMPT_KEY --output data/trajectory.json
 ```
 
-Run the local API and dashboard in separate terminals after importing a capture:
+Run the local API and dashboard in separate terminals. Copy a finished `.f1ecap` recording into the configured recordings folder (default `recordings/`) to import it from the dashboard:
 
 ```powershell
 uv sync --extra app
-uv run --extra app f1-engineer api --database data/f1-engineer.sqlite3
+uv run --extra app f1-engineer api --database data/f1-engineer.sqlite3 --recordings-root recordings --control-token-file data/.f1-engineer-control-token
 cd web
 npm ci
 npm run dev
 ```
 
-The API binds to `127.0.0.1:8765`; Next.js uses it from the server and serves the dashboard at `http://localhost:3000`. Set `F1_ENGINEER_API_URL` only if the local API uses a different loopback URL. The API's database path is selected at server startup and is never accepted from a request.
+The API binds to `127.0.0.1:8765`; Next.js uses it from the server and serves the dashboard at `http://127.0.0.1:3000`. Set `F1_ENGINEER_API_URL` only if the local API uses a different loopback URL. The API's database path and recording root are selected at server startup and are never accepted from a request. The API creates a random control token at the configured token-file path; the Next server reads it for same-origin import actions, and it is never sent to browser code. If you choose a different token-file path, set `F1_ENGINEER_CONTROL_TOKEN_FILE` for the Next server to that same path.
 
 `record` listens on `0.0.0.0:20777` by default. Set the game's UDP telemetry destination to the computer's local address and port 20777. Use `Ctrl+C` to stop recording. `--speed 0` replays as fast as possible; positive values replay relative packet timing at that multiplier.
 

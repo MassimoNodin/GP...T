@@ -148,6 +148,22 @@ Reuse the existing Python comparison and region-analysis services. Display regio
 
 The Melbourne recording validates six draft analysis windows and diagnostic comparisons between game-invalid laps. It does not validate official corner numbering, geometry, reference eligibility, or coaching. Do not rank these regions as actionable opportunities or generate diagnoses, confidence scores, theoretical-best laps, or advice. Preserve the existing Time Trial policy boundaries and explicit unsupported results for other modes.
 
+## Decision 0012: ingest existing local recordings through durable import jobs
+
+**Status:** accepted
+
+**Date:** 2026-10-03
+
+Add a local recording inbox and background import workflow so existing captures can enter the historical library through the application. Keep this increment limited to existing-capture ingestion.
+
+Persist opaque capture identities and import-job lifecycle in SQLite. Map each capture ID to a configured-root namespace and relative capture path; re-resolve and enforce root containment before execution. Requests supply opaque IDs, never filesystem paths. Imported content identity remains the existing SHA-256.
+
+Use one bounded application import worker. Persist coarse phases, terminal state, creation/update timestamps, result identity and failure reason; keep worker handles and high-frequency counters transient. Order inbox job links by their persisted update timestamp so retries remain discoverable. Coordinate the controller with a database-scoped OS lock. After acquiring that lock on restart, mark abandoned jobs interrupted and require explicit retry. Revalidate source identity and root containment when the worker executes. Reuse the existing importer’s locking, checksum verification, idempotency and recovery.
+
+Protect local mutation endpoints with server-held authorization and same-origin frontend handling. Preserve read-only browsing and analysis. Keep current captures selectable, hide stale entries without jobs, and retain missing-file entries that have jobs as unavailable so their durable status remains visible. Report success only after durable import completion; interrupted or failed jobs must never appear successful.
+
+The Melbourne recording validates ingestion, retry and unchanged diagnostic analysis. This workflow does not establish positive reference eligibility, race policy, opponent coverage, geometry or coaching.
+
 ## Data flow
 
 ```text
@@ -189,4 +205,5 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - Remaining packet-body parsers are added from EA's official structure files, with their source and revision recorded. Support is explicit per `(packet_format, packet_id, packet_version)`. Current typed body support covers F1 25 Session, Lap Data, Participants, Car Telemetry, and Motion packet v1; Session packet adapters populate canonical gameplay context independently of the wire format.
 - Add canonical traces for additional cars only when validated multi-car capture coverage justifies them. Slower packet families will use freshness windows rather than being required in every frame.
 - Distance comparison, run-scoped Time Trial reference selection, and the read-only local historical explorer are implemented for diagnostics. Validated circuit geometry, race reference policy, and actionable coaching remain deferred until their supporting evidence and interfaces are ready.
+- The local recording inbox imports existing `.f1ecap` files through durable single-worker jobs. Live UDP recording controls in the dashboard remain deferred.
 - Voice, LLM, and frontend work remain above deterministic analysis; no LLM is needed to capture or inspect telemetry.

@@ -9,12 +9,16 @@ import {
   TrackModelRecord,
   requestApi,
 } from "@/lib/api";
+import RecordingInbox from "./RecordingInbox";
+import type { ImportJobRecord, RecordingSourceRecord } from "@/lib/api";
 
 type SearchParams = {
   session_key?: string | string[];
   target_attempt_key?: string | string[];
   reference_choice?: string | string[];
   track_model_key?: string | string[];
+  import_job_id?: string | string[];
+  import_error?: string | string[];
 };
 
 type Series = {
@@ -35,11 +39,21 @@ export default async function Home({
     target_attempt_key: firstParam(rawParams.target_attempt_key),
     reference_choice: firstParam(rawParams.reference_choice),
     track_model_key: firstParam(rawParams.track_model_key),
+    import_job_id: firstParam(rawParams.import_job_id),
+    import_error: firstParam(rawParams.import_error),
   };
-  const [sessionResponse, trackModelsResponse] = await Promise.all([
-    requestApi<SessionRecord[]>("/api/v1/sessions"),
-    requestApi<TrackModelRecord[]>("/api/v1/track-models"),
-  ]);
+  const [sessionResponse, trackModelsResponse, recordingSourcesResponse] =
+    await Promise.all([
+      requestApi<SessionRecord[]>("/api/v1/sessions"),
+      requestApi<TrackModelRecord[]>("/api/v1/track-models"),
+      requestApi<RecordingSourceRecord[]>("/api/v1/recording-sources"),
+    ]);
+  const jobResponse =
+    params.import_job_id && /^[a-f0-9]{32}$/.test(params.import_job_id)
+      ? await requestApi<ImportJobRecord>(
+          `/api/v1/import-jobs/${params.import_job_id}`,
+        )
+      : null;
   const trackModels = trackModelsResponse?.data ?? [];
   const selectedModel =
     trackModels.find((item) => modelKey(item) === params.track_model_key) ??
@@ -290,6 +304,12 @@ export default async function Home({
             </span>
           </div>
         </section>
+
+        <RecordingInbox
+          sourcesResponse={recordingSourcesResponse}
+          jobResponse={jobResponse}
+          importError={params.import_error}
+        />
 
         {apiUnavailable ? (
           <section className="connection-state panel">

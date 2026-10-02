@@ -147,6 +147,10 @@ class CaptureReader:
             self._stream.close()
             raise
 
+    @property
+    def bytes_read(self) -> int:
+        return self._stream.tell()
+
     def __iter__(self) -> Iterator[RawDatagram]:
         while True:
             entry_bytes = _read_exact(self._stream, _ENTRY_TYPE.size, allow_eof=True)

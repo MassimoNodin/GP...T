@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 
 
 class DatabaseSchemaError(ValueError):
@@ -16,7 +17,7 @@ CREATE TABLE IF NOT EXISTS schema_info (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     version INTEGER NOT NULL
 );
-INSERT OR IGNORE INTO schema_info(singleton, version) VALUES (1, 3);
+INSERT OR IGNORE INTO schema_info(singleton, version) VALUES (1, 5);
 
 CREATE TABLE IF NOT EXISTS captures (
     capture_sha256 TEXT PRIMARY KEY,
@@ -113,6 +114,36 @@ CREATE TABLE IF NOT EXISTS telemetry_files (
     ready INTEGER NOT NULL CHECK (ready IN (0, 1))
 );
 
+CREATE TABLE IF NOT EXISTS recording_sources (
+    capture_id TEXT PRIMARY KEY,
+    root_namespace TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+    modified_ns INTEGER NOT NULL,
+    discovered_at_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(root_namespace, relative_path)
+);
+
+CREATE TABLE IF NOT EXISTS import_jobs (
+    job_id TEXT PRIMARY KEY,
+    capture_id TEXT NOT NULL REFERENCES recording_sources(capture_id),
+    status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'complete', 'failed', 'interrupted')),
+    phase TEXT NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 1 CHECK (attempt_count > 0),
+    created_at_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at_utc TEXT,
+    finished_at_utc TEXT,
+    result_json TEXT,
+    failure_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_import_jobs_capture ON import_jobs(capture_id, created_at_utc);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_import_job
+    ON import_jobs((1)) WHERE status IN ('queued', 'running');
+
 CREATE INDEX IF NOT EXISTS idx_processing_runs_capture ON processing_runs(capture_sha256);
 CREATE INDEX IF NOT EXISTS idx_sessions_uid ON sessions(session_uid);
 CREATE INDEX IF NOT EXISTS idx_lap_attempts_session ON lap_attempts(session_key, attempt_number);
@@ -170,9 +201,51 @@ class Database:
             self.connection.execute("UPDATE schema_info SET version = 3 WHERE singleton = 1")
             self.connection.commit()
             version = 3
+        if version == 3:
+            self.connection.execute("UPDATE schema_info SET version = 4 WHERE singleton = 1")
+            self.connection.commit()
+            version = 4
+        if version == 4:
+            columns = {
+                row["name"]
+                for row in self.connection.execute("PRAGMA table_info(import_jobs)")
+            }
+            if "updated_at_utc" not in columns:
+                self.connection.execute(
+                    "ALTER TABLE import_jobs ADD COLUMN updated_at_utc TEXT"
+                )
+            legacy_jobs = self.connection.execute(
+                "SELECT job_id, COALESCE(finished_at_utc, started_at_utc, created_at_utc) AS timestamp FROM import_jobs WHERE updated_at_utc IS NULL"
+            ).fetchall()
+            for row in legacy_jobs:
+                raw_timestamp = str(row["timestamp"])
+                try:
+                    timestamp = datetime.fromisoformat(
+                        raw_timestamp.replace("Z", "+00:00")
+                    )
+                except ValueError:
+                    timestamp = datetime.now(timezone.utc)
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=timezone.utc)
+                self.connection.execute(
+                    "UPDATE import_jobs SET updated_at_utc=? WHERE job_id=?",
+                    (
+                        timestamp.astimezone(timezone.utc).isoformat(
+                            timespec="microseconds"
+                        ),
+                        row["job_id"],
+                    ),
+                )
+            self.connection.execute("UPDATE schema_info SET version = 5 WHERE singleton = 1")
+            self.connection.commit()
+            version = 5
         if version != SCHEMA_VERSION:
             self.connection.close()
             raise ValueError(f"database schema {version} is not supported")
+        self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_import_jobs_latest ON import_jobs(capture_id, updated_at_utc DESC)"
+        )
+        self.connection.commit()
 
     def close(self) -> None:
         self.connection.close()
