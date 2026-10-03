@@ -9,6 +9,7 @@ from .comparison import calculate_channel_differences, calculate_delta_time
 from .comparison_brief import build_comparison_brief
 from .comparison_window import DistanceWindow, analyze_comparison_window
 from .corners import analyze_corner_regions
+from .interval_delta import reserve_interval_evaluation_work
 from .quality import OBSERVED_CONDITION_TRACE_COLUMNS, summarize_observed_conditions
 from .resampling import (
     ANALYSIS_VERSION,
@@ -26,7 +27,7 @@ from ..storage.query import (
 )
 from ..storage.run_summaries import get_processing_run_summary
 from ..tracks.loader import load_track_model
-from ..tracks.model import TrackModel
+from ..tracks.model import MAX_TRACK_MODEL_REGIONS, TrackModel
 from .source_limits import (
     ANALYSIS_SOURCE_CONTEXT_BYTE_LIMIT,
     ANALYSIS_SOURCE_CONTEXT_SEGMENT_LIMIT,
@@ -110,11 +111,27 @@ def compare_attempts(
         raise ValueError(
             "track_model_region_analysis_unsupported_for_practice_qualifying"
         )
-    if policy is ComparisonPolicy.PRACTICE_QUALIFYING or distance_window is not None:
+    model = (
+        track_model
+        if isinstance(track_model, TrackModel)
+        else load_track_model(track_model)
+        if track_model is not None
+        else None
+    )
+    if model is not None and len(model.corners) > MAX_TRACK_MODEL_REGIONS:
+        raise ValueError("region_count_limit_exceeded")
+
+    if (
+        policy is ComparisonPolicy.PRACTICE_QUALIFYING
+        or distance_window is not None
+        or model is not None
+    ):
         source_reason_prefix = (
             "practice_qualifying_source"
             if policy is ComparisonPolicy.PRACTICE_QUALIFYING
             else "comparison_window_source"
+            if distance_window is not None
+            else "corner_analysis_source"
         )
         target = _load_bounded_attempt_trace(
             database_path, target_attempt_key, reason_prefix=source_reason_prefix
@@ -165,17 +182,23 @@ def compare_attempts(
         )
     if target_signature != reference_signature:
         raise ValueError("attempts have incompatible track, format, or Time Trial settings")
+    if model is not None:
+        require_track_model_compatible(model, target_context)
 
     target_samples = tuple(TraceSample.from_record(row) for row in target.samples)
     reference_samples = tuple(TraceSample.from_record(row) for row in reference.samples)
     if distance_window is not None:
         distance_window.validate_track_length(target_context["track_length_m"])
-        if policy is ComparisonPolicy.TIME_TRIAL:
-            _require_bounded_grid(
-                target_context["track_length_m"],
-                config.grid_step_m,
-                reason_prefix="comparison_window",
-            )
+    if policy is ComparisonPolicy.TIME_TRIAL and (
+        distance_window is not None or model is not None
+    ):
+        _require_bounded_grid(
+            target_context["track_length_m"],
+            config.grid_step_m,
+            reason_prefix=(
+                "comparison_window" if distance_window is not None else "corner_analysis"
+            ),
+        )
     track_length_m = float(target_context["track_length_m"])
     distance_grid = common_distance_grid(
         target_samples,
@@ -190,6 +213,18 @@ def compare_attempts(
         reference_samples, distance_grid, config, track_length_m=track_length_m
     )
     delta = calculate_delta_time(target_resampled, reference_resampled)
+    interval_count = (1 if distance_window is not None else 0) + (
+        len(model.corners) if model is not None else 0
+    )
+    if interval_count:
+        reserve_interval_evaluation_work(
+            interval_count,
+            target_samples,
+            reference_samples,
+            target_resampled,
+            reference_resampled,
+            delta,
+        )
     channel_differences = calculate_channel_differences(
         target_resampled, reference_resampled
     )
@@ -298,14 +333,8 @@ def compare_attempts(
             distance_window,
             config=config,
         )
-    if track_model is not None:
-        model = (
-            track_model
-            if isinstance(track_model, TrackModel)
-            else load_track_model(track_model)
-        )
-        require_track_model_compatible(model, target_context)
-        result["corner_analysis"] = analyze_corner_regions(
+    if model is not None:
+        corner_analysis = analyze_corner_regions(
             target_samples,
             reference_samples,
             target_resampled,
@@ -316,6 +345,19 @@ def compare_attempts(
             target_reference_eligible=target.reference_eligible,
             reference_reference_eligible=reference.reference_eligible,
         )
+        corner_analysis["source"] = {
+            "target": {
+                "attempt_key": target.attempt_key,
+                "run_id": target.run_id,
+                "trace_sha256": target.trace_sha256,
+            },
+            "reference": {
+                "attempt_key": reference.attempt_key,
+                "run_id": reference.run_id,
+                "trace_sha256": reference.trace_sha256,
+            },
+        }
+        result["corner_analysis"] = corner_analysis
     result["comparison_brief"] = build_comparison_brief(result)
     return result
 

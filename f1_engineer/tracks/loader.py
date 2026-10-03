@@ -5,14 +5,21 @@ import math
 from pathlib import Path
 from typing import Any
 
-from .model import CornerDefinition, TrackModel
+from .model import CornerDefinition, MAX_TRACK_MODEL_REGIONS, TrackModel
+
+
+MAX_TRACK_MODEL_JSON_BYTES = 1024 * 1024
 
 
 def load_track_model(path: str | Path) -> TrackModel:
     source = Path(path)
     try:
-        value = json.loads(source.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        with source.open("rb") as file:
+            content = file.read(MAX_TRACK_MODEL_JSON_BYTES + 1)
+        if len(content) > MAX_TRACK_MODEL_JSON_BYTES:
+            raise ValueError("track_model_file_size_limit_exceeded")
+        value = json.loads(content.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"could not load track model {source}: {exc}") from exc
     if not isinstance(value, dict):
         raise ValueError("track model root must be an object")
@@ -21,6 +28,8 @@ def load_track_model(path: str | Path) -> TrackModel:
     corners_value = value.get("corners")
     if not isinstance(corners_value, list):
         raise ValueError("track model corners must be an array")
+    if len(corners_value) > MAX_TRACK_MODEL_REGIONS:
+        raise ValueError("region_count_limit_exceeded")
     corners = tuple(_corner(item) for item in corners_value)
     try:
         return TrackModel(

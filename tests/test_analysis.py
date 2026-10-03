@@ -895,10 +895,17 @@ def test_corner_region_analysis_keeps_draft_and_invalid_laps_diagnostic(monkeypa
     target = _stored_attempt("target-attempt", (100, 200, 300), game_valid=False)
     reference = _stored_attempt("reference-attempt", (100, 150, 200), game_valid=False)
     attempts = {target.attempt_key: target, reference.attempt_key: reference}
+
+    load_calls: list[dict[str, object]] = []
+
+    def load(_database, key, **kwargs):
+        load_calls.append(kwargs)
+        return attempts.get(key)
+
     monkeypatch.setattr(
         service_module,
         "load_attempt_trace",
-        lambda _database, key, **_kwargs: attempts.get(key),
+        load,
     )
     model = TrackModel(
         model_id="melbourne-draft-test",
@@ -934,6 +941,21 @@ def test_corner_region_analysis_keeps_draft_and_invalid_laps_diagnostic(monkeypa
     )
 
     corner_analysis = result["corner_analysis"]
+    assert len(load_calls) == 2
+    assert all(call["max_trace_rows"] == 100_000 for call in load_calls)
+    assert all(call["max_trace_bytes"] == 64 * 1024 * 1024 for call in load_calls)
+    assert corner_analysis["source"] == {
+        "target": {
+            "attempt_key": target.attempt_key,
+            "run_id": target.run_id,
+            "trace_sha256": target.trace_sha256,
+        },
+        "reference": {
+            "attempt_key": reference.attempt_key,
+            "run_id": reference.run_id,
+            "trace_sha256": reference.trace_sha256,
+        },
+    }
     assert corner_analysis["diagnostic_only"] is True
     assert corner_analysis["model"]["validation_status"] == "draft"
     region = corner_analysis["regions"][0]
@@ -1010,3 +1032,50 @@ def test_corner_region_analysis_keeps_draft_and_invalid_laps_diagnostic(monkeypa
         ]["brake"]
         == pytest.approx(0.5)
     )
+
+
+def test_comparison_reserves_all_interval_work_before_reporting_any_interval(monkeypatch) -> None:
+    target = _stored_attempt("target-attempt", (100, 200, 300))
+    reference = _stored_attempt("reference-attempt", (100, 150, 200))
+    attempts = {target.attempt_key: target, reference.attempt_key: reference}
+    monkeypatch.setattr(
+        service_module,
+        "load_attempt_trace",
+        lambda _database, key, **_kwargs: attempts.get(key),
+    )
+    model = TrackModel(
+        model_id="bounded-work-test",
+        revision=1,
+        packet_format=2025,
+        track_id=0,
+        track_name="Melbourne",
+        layout_id="default",
+        track_length_m=20,
+        distance_origin_m=0,
+        provenance="synthetic bounded-work fixture",
+        validation_status="draft",
+        corners=(CornerDefinition("region-1", "Region 1", 0, 20),),
+    )
+    reservations: list[int] = []
+
+    def reject_reservation(interval_count, *_args, **_kwargs):
+        reservations.append(interval_count)
+        raise ValueError("interval_evaluation_work_limit_exceeded")
+
+    def must_not_evaluate(*_args, **_kwargs):
+        raise AssertionError("an interval was evaluated before its total work was reserved")
+
+    monkeypatch.setattr(service_module, "reserve_interval_evaluation_work", reject_reservation)
+    monkeypatch.setattr(service_module, "analyze_comparison_window", must_not_evaluate)
+    monkeypatch.setattr(service_module, "analyze_corner_regions", must_not_evaluate)
+
+    with pytest.raises(ValueError, match="interval_evaluation_work_limit_exceeded"):
+        service_module.compare_attempts(
+            "test.sqlite3",
+            target.attempt_key,
+            reference.attempt_key,
+            track_model=model,
+            distance_window=DistanceWindow(5.0, 15.0),
+        )
+
+    assert reservations == [2]

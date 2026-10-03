@@ -7,6 +7,7 @@ from typing import Literal
 
 ValidationStatus = Literal["draft", "validated"]
 CornerDirection = Literal["left", "right"]
+MAX_TRACK_MODEL_REGIONS = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +78,8 @@ class TrackModel:
     corners: tuple[CornerDefinition, ...]
 
     def __post_init__(self) -> None:
+        if len(self.corners) > MAX_TRACK_MODEL_REGIONS:
+            raise ValueError("region_count_limit_exceeded")
         if not self.model_id.strip() or not self.track_name.strip() or not self.layout_id.strip():
             raise ValueError("track model identity fields must not be empty")
         if self.revision < 1:

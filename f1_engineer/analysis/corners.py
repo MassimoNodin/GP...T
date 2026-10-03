@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from typing import Sequence
 
-from ..tracks.model import CornerDefinition, TrackModel
+from ..tracks.model import CornerDefinition, MAX_TRACK_MODEL_REGIONS, TrackModel
 from .comparison import DeltaTime
 from .distance_support import (
     requested_window_coverage as _requested_window_coverage,
@@ -14,10 +14,11 @@ from .events import (
     bounded_threshold_event_examples,
     detect_sustained_threshold_events,
 )
+from .interval_delta import evaluate_interval_delta
 from .resampling import ResampledTrace, ResamplingConfig, TraceSample
 
 
-CORNER_ANALYSIS_VERSION = "distance-regions-v1"
+CORNER_ANALYSIS_VERSION = "distance-regions-v2"
 REGION_EVENT_EXAMPLE_LIMIT = 20
 _EVENT_MINIMUM_DURATION_S = 0.1
 _EVENT_THRESHOLDS = {
@@ -39,6 +40,8 @@ def analyze_attempt_regions(
     event_example_limit: int = REGION_EVENT_EXAMPLE_LIMIT,
 ) -> dict[str, object]:
     """Report observations in configured distance windows for one attempt."""
+    if len(track_model.corners) > MAX_TRACK_MODEL_REGIONS:
+        raise ValueError("region_count_limit_exceeded")
     if event_example_limit < 0:
         raise ValueError("event_example_limit must not be negative")
     regions = []
@@ -95,6 +98,8 @@ def analyze_corner_regions(
     target_reference_eligible: bool,
     reference_reference_eligible: bool,
 ) -> dict[str, object]:
+    if len(track_model.corners) > MAX_TRACK_MODEL_REGIONS:
+        raise ValueError("region_count_limit_exceeded")
     attempts_eligible = target_reference_eligible and reference_reference_eligible
     diagnostic_only = (
         track_model.validation_status != "validated" or not attempts_eligible
@@ -182,37 +187,27 @@ def _compare_region(
         model.distance_origin_m,
         model.track_length_m,
     )
-    entry_delta = _grid_value(
-        target_resampled.distance_m,
-        delta.values_s,
-        delta.mask,
+    interval = evaluate_interval_delta(
+        target_samples,
+        reference_samples,
+        target_resampled,
+        reference_resampled,
+        delta,
         start_m,
-        step_m=config.grid_step_m,
-        channel="time_s",
-        excluded_spans=(
-            *target_resampled.excluded_spans,
-            *reference_resampled.excluded_spans,
-        ),
-    )
-    exit_delta = _grid_value(
-        target_resampled.distance_m,
-        delta.values_s,
-        delta.mask,
         end_m,
-        step_m=config.grid_step_m,
-        channel="time_s",
-        excluded_spans=(
-            *target_resampled.excluded_spans,
-            *reference_resampled.excluded_spans,
-        ),
+        config=config,
     )
-    delta_change = None
-    delta_status = "unsupported_entry_or_exit"
-    if entry_delta is not None and exit_delta is not None:
-        delta_change = exit_delta - entry_delta
+    delta_change = interval.delta_change_s
+    if interval.status == "supported":
         delta_status = "diagnostic_region_delta_change"
         if model.validation_status == "validated" and not diagnostic_only:
             delta_status = "supported_region_delta_change"
+    elif interval.status == "unsupported_boundary":
+        delta_status = "unsupported_entry_or_exit"
+    elif interval.status == "unsupported_source_chronology":
+        delta_status = "unsupported_source_chronology"
+    else:
+        delta_status = "unsupported_interior"
     target_minimum = target["minimum_speed"]
     reference_minimum = reference["minimum_speed"]
     target_exit_speeds = target["exit_speeds"]
@@ -254,10 +249,21 @@ def _compare_region(
         "differences": differences,
         "delta_change": {
             "status": delta_status,
-            "entry_delta_s": entry_delta,
-            "exit_delta_s": exit_delta,
+            "entry_delta_s": interval.start_delta_s,
+            "exit_delta_s": interval.end_delta_s,
             "delta_change_s": delta_change,
             "direction": "target_minus_reference_delta_at_exit_minus_entry",
+            "target_time_coverage": interval.target_time_coverage,
+            "reference_time_coverage": interval.reference_time_coverage,
+            "shared_time_coverage": interval.shared_time_coverage,
+            "target_resampled_time_connected": interval.target_resampled_time_connected,
+            "reference_resampled_time_connected": interval.reference_resampled_time_connected,
+            "shared_delta_time_connected": interval.shared_delta_time_connected,
+            "target_source_session_time_connected": interval.target_source_session_time_connected,
+            "reference_source_session_time_connected": interval.reference_source_session_time_connected,
+            "interval_connected_supported_time": interval.interval_connected_supported_time,
+            "unavailable_reason": interval.unavailable_reason,
+            "unavailable_reasons": list(interval.unavailable_reasons),
         },
     }
 

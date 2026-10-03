@@ -711,6 +711,17 @@ export interface CornerRegion {
     exit_delta_s: number | null;
     delta_change_s: number | null;
     direction: string;
+    target_time_coverage: number;
+    reference_time_coverage: number;
+    shared_time_coverage: number;
+    target_resampled_time_connected: boolean;
+    reference_resampled_time_connected: boolean;
+    shared_delta_time_connected: boolean;
+    target_source_session_time_connected: boolean;
+    reference_source_session_time_connected: boolean;
+    interval_connected_supported_time: boolean;
+    unavailable_reason: string | null;
+    unavailable_reasons: string[];
   };
 }
 
@@ -720,6 +731,10 @@ export interface CornerAnalysis {
   layout_validation_status: string;
   attempts_reference_eligible: { target: boolean; reference: boolean };
   diagnostic_only: boolean;
+  source: {
+    target: { attempt_key: string; run_id: string; trace_sha256: string };
+    reference: { attempt_key: string; run_id: string; trace_sha256: string };
+  };
   regions: CornerRegion[];
 }
 
@@ -1005,10 +1020,14 @@ export interface ComparisonWindow {
     shared_time_coverage: number;
     target_source_session_time_connected: boolean;
     reference_source_session_time_connected: boolean;
+    target_resampled_time_connected: boolean;
+    reference_resampled_time_connected: boolean;
+    shared_delta_time_connected: boolean;
     interval_connected_supported_time: boolean;
     delta_change_s: number | null;
     direction: string;
     unavailable_reason: string | null;
+    unavailable_reasons: string[];
   };
 }
 

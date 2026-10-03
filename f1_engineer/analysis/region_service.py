@@ -10,7 +10,7 @@ from ..storage.query import (
     StoredAttemptTrace,
     load_attempt_trace,
 )
-from ..tracks.model import TrackModel
+from ..tracks.model import MAX_TRACK_MODEL_REGIONS, TrackModel
 from .corners import REGION_EVENT_EXAMPLE_LIMIT, analyze_attempt_regions
 from .resampling import ResampledTrace, ResamplingConfig, TraceSample, resample_trace
 from .service import TimeTrialContextError, require_track_model_compatible, stable_time_trial_context
@@ -52,6 +52,12 @@ def load_attempt_region_report(
     config: ResamplingConfig = ResamplingConfig(),
 ) -> dict[str, object] | None:
     """Load bounded, single-attempt observations for an explicitly selected model."""
+    if len(track_model.corners) > MAX_TRACK_MODEL_REGIONS:
+        raise RegionReportUnavailable("region_count_limit_exceeded")
+    distance_grid = _bounded_track_grid(
+        track_model.track_length_m,
+        config.grid_step_m,
+    )
     try:
         attempt = load_attempt_trace(
             database_path,
@@ -78,10 +84,6 @@ def load_attempt_region_report(
     except ValueError as exc:
         raise RegionReportUnavailable("track_model_incompatible") from exc
 
-    distance_grid = _bounded_track_grid(
-        track_model.track_length_m,
-        config.grid_step_m,
-    )
     samples = tuple(TraceSample.from_record(row) for row in attempt.samples)
     resampled = resample_trace(
         samples,

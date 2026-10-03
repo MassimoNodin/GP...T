@@ -1855,6 +1855,13 @@ function RegionCard({
   const targetSpeed = region.target.minimum_speed;
   const referenceSpeed = region.reference.minimum_speed;
   const speedDifference = region.differences.minimum_speed_kph;
+  const intervalSupport = region.delta_change;
+  const intervalDetail = [
+    `${percent(intervalSupport.shared_time_coverage)} shared time coverage`,
+    `target ${percent(intervalSupport.target_time_coverage)}`,
+    `reference ${percent(intervalSupport.reference_time_coverage)}`,
+    ...intervalSupport.unavailable_reasons.map(label),
+  ].join(" · ");
 
   return (
     <article className="region-card panel">
@@ -1874,8 +1881,8 @@ function RegionCard({
       <div className="region-stat-grid">
         <RegionStat
           title="REGION DELTA CHANGE"
-          value={seconds(region.delta_change.delta_change_s)}
-          detail={`${label(region.delta_change.status)} · target minus reference from entry to exit`}
+          value={seconds(intervalSupport.delta_change_s)}
+          detail={`${label(intervalSupport.status)} · target minus reference from entry to exit · ${intervalDetail}`}
         />
         <RegionStat
           title="TARGET OBSERVED MINIMUM"

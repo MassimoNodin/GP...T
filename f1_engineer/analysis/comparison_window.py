@@ -5,18 +5,15 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from .comparison import DeltaTime
-from .continuity import session_time_discontinuity
-from .distance_support import (
-    has_connected_window_support,
-    has_connected_window_support_arrays,
-    requested_window_coverage,
-    requested_window_coverage_arrays,
-    sample_at_distance,
-)
+from .distance_support import requested_window_coverage
 from .events import (
     EventChannel,
     bounded_threshold_event_examples,
     detect_sustained_threshold_events,
+)
+from .interval_delta import (
+    evaluate_interval_delta,
+    has_connected_source_session_time,
 )
 from .resampling import ExcludedSpan, ResampledTrace, ResamplingConfig, TraceSample
 
@@ -103,91 +100,22 @@ def analyze_comparison_window(
     reference = _attempt_window_summary(
         reference_samples, reference_resampled, window, config
     )
-    shared_excluded_spans = (
-        *target_resampled.excluded_spans,
-        *reference_resampled.excluded_spans,
-    )
-    delta_start_s = sample_at_distance(
-        target_resampled.distance_m,
-        delta.values_s,
-        delta.mask,
-        start_m,
-        step_m=config.grid_step_m,
-        channel="time_s",
-        excluded_spans=shared_excluded_spans,
-    )
-    delta_end_s = sample_at_distance(
-        target_resampled.distance_m,
-        delta.values_s,
-        delta.mask,
-        end_m,
-        step_m=config.grid_step_m,
-        channel="time_s",
-        excluded_spans=shared_excluded_spans,
-    )
-    shared_time_coverage = requested_window_coverage_arrays(
-        target_resampled.distance_m,
-        delta.values_s,
-        delta.mask,
-        shared_excluded_spans,
-        start_m,
-        end_m,
-        config.grid_step_m,
-        channel="time_s",
-    )
-    target_source_session_time_connected = has_connected_source_session_time(
+    interval = evaluate_interval_delta(
         target_samples,
-        start_m,
-        end_m,
-        max_gap_s=config.max_bracket_time_s,
-    )
-    reference_source_session_time_connected = has_connected_source_session_time(
         reference_samples,
+        target_resampled,
+        reference_resampled,
+        delta,
         start_m,
         end_m,
-        max_gap_s=config.max_bracket_time_s,
+        config=config,
     )
-    interval_connected = (
-        has_connected_window_support(
-            target_resampled,
-            start_m,
-            end_m,
-            config.grid_step_m,
-            channel="time_s",
-        )
-        and has_connected_window_support(
-            reference_resampled,
-            start_m,
-            end_m,
-            config.grid_step_m,
-            channel="time_s",
-        )
-        and has_connected_window_support_arrays(
-            target_resampled.distance_m,
-            delta.values_s,
-            delta.mask,
-            shared_excluded_spans,
-            start_m,
-            end_m,
-            config.grid_step_m,
-            channel="time_s",
-        )
-        and target_source_session_time_connected
-        and reference_source_session_time_connected
-    )
-    boundary_start = _delta_boundary(start_m, delta_start_s)
-    boundary_end = _delta_boundary(end_m, delta_end_s)
-    delta_change_s = (
-        delta_end_s - delta_start_s
-        if interval_connected and delta_start_s is not None and delta_end_s is not None
-        else None
-    )
+    boundary_start = _delta_boundary(start_m, interval.start_delta_s)
+    boundary_end = _delta_boundary(end_m, interval.end_delta_s)
     delta_status = (
-        "supported"
-        if delta_change_s is not None
-        else "unsupported_boundary"
-        if delta_start_s is None or delta_end_s is None
-        else "unsupported_interior"
+        "unsupported_interior"
+        if interval.status == "unsupported_source_chronology"
+        else interval.status
     )
     return {
         "schema_version": 1,
@@ -214,33 +142,19 @@ def analyze_comparison_window(
             "status": delta_status,
             "start_boundary": boundary_start,
             "end_boundary": boundary_end,
-            "target_time_coverage": requested_window_coverage(
-                target_resampled,
-                start_m,
-                end_m,
-                config.grid_step_m,
-                channel="time_s",
-            ),
-            "reference_time_coverage": requested_window_coverage(
-                reference_resampled,
-                start_m,
-                end_m,
-                config.grid_step_m,
-                channel="time_s",
-            ),
-            "shared_time_coverage": shared_time_coverage,
-            "target_source_session_time_connected": target_source_session_time_connected,
-            "reference_source_session_time_connected": reference_source_session_time_connected,
-            "interval_connected_supported_time": interval_connected,
-            "delta_change_s": delta_change_s,
+            "target_time_coverage": interval.target_time_coverage,
+            "reference_time_coverage": interval.reference_time_coverage,
+            "shared_time_coverage": interval.shared_time_coverage,
+            "target_resampled_time_connected": interval.target_resampled_time_connected,
+            "reference_resampled_time_connected": interval.reference_resampled_time_connected,
+            "shared_delta_time_connected": interval.shared_delta_time_connected,
+            "target_source_session_time_connected": interval.target_source_session_time_connected,
+            "reference_source_session_time_connected": interval.reference_source_session_time_connected,
+            "interval_connected_supported_time": interval.interval_connected_supported_time,
+            "delta_change_s": interval.delta_change_s,
             "direction": "target_minus_reference_end_delta_minus_start_delta",
-            "unavailable_reason": (
-                None
-                if delta_change_s is not None
-                else "unsupported_boundary_evidence"
-                if delta_status == "unsupported_boundary"
-                else "unsupported_or_disconnected_interior_time_evidence"
-            ),
+            "unavailable_reason": interval.unavailable_reason,
+            "unavailable_reasons": list(interval.unavailable_reasons),
         },
     }
 
@@ -356,50 +270,6 @@ def _source_anchor(sample: TraceSample) -> dict[str, object | None]:
         "session_time_s": sample.session_time_s,
         "lap_distance_m": sample.distance_m,
     }
-
-
-def has_connected_source_session_time(
-    samples: Sequence[TraceSample],
-    start_m: float,
-    end_m: float,
-    *,
-    max_gap_s: float,
-) -> bool:
-    """Require continuous source session time across every raw edge in a window."""
-    overlapping_edges = 0
-    for previous, current in zip(samples, samples[1:]):
-        previous_distance = previous.distance_m
-        current_distance = current.distance_m
-        if (
-            previous_distance is None
-            or current_distance is None
-            or not math.isfinite(previous_distance)
-            or not math.isfinite(current_distance)
-        ):
-            continue
-        edge_start = min(previous_distance, current_distance)
-        edge_end = max(previous_distance, current_distance)
-        if edge_end <= start_m or edge_start >= end_m:
-            continue
-        overlapping_edges += 1
-        previous_time = previous.session_time_s
-        current_time = current.session_time_s
-        if (
-            previous_time is None
-            or current_time is None
-            or not math.isfinite(previous_time)
-            or not math.isfinite(current_time)
-            or previous_time < 0
-            or current_time < 0
-            or session_time_discontinuity(
-                previous_time,
-                current_time,
-                max_gap_s=max_gap_s,
-            )
-            is not None
-        ):
-            return False
-    return overlapping_edges > 0
 
 
 def _delta_boundary(distance_m: float, value_s: float | None) -> dict[str, object]:

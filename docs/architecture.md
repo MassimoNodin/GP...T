@@ -421,6 +421,20 @@ Keep the kernel independent of database, importer, trace schema, API, dashboard,
 
 Acceptance uses synthetic straight, curved, and closed-path fixtures with known offsets and numerical tolerances; coordinate/sign convention and distance-origin cases; segment gaps/seams, duplicate/out-of-order distances, degenerate tangents, nonfinite data, identity mismatch, and model/query resource bounds. Existing traces with missing Motion and legacy schemas remain distance-only and unavailable for geometry. Existing comparisons, reference selection, and deterministic briefs remain unchanged. No observed capture is elevated to validated geometry.
 
+## Decision 0031: require connected evidence for corner interval deltas
+
+**Status:** accepted
+
+**Date:** 2026-10-04
+
+Use one pure interval-delta evaluator for numeric distance windows and corner regions. Supported entry and exit values remain independently visible, but their difference is available only when both boundaries, all interior resampled time points, the shared delta, and raw session-time chronology are connected for both attempts. Preserve float32 clock tolerance, uint32 frame-wrap handling in resampling, and the existing half-open window convention. Return per-attempt and shared coverage, each support/continuity result, and bounded reason codes. Numeric windows retain their existing `supported`, `unsupported_boundary`, and `unsupported_interior` statuses; a disconnected raw chronology maps to `unsupported_interior` there. Corner deltas retain diagnostic/supported labels only after measurement support passes, and otherwise report unsupported boundary, source chronology, or interior status with a null change value.
+
+Bound model and comparison work before evaluation: accept at most 64 distance regions and 1 MiB of serialized model JSON; reuse the existing 100,000-row, 64 MiB trace, context and 100,000-point distance-grid limits for requests with windows or models; reserve at most 4,000,000 conservative interval-work units across all selected regions and an optional numeric window. The reservation is `interval_count × (target rows + reference rows + target grid + reference grid + shared delta grid + target excluded spans + reference excluded spans)`. Reject over-limit requests before evaluating any interval. These are execution limits; the persisted `TrackModel` JSON schema is unchanged.
+
+Version corner analysis as `distance-regions-v2`, keep source attempt/run/trace-checksum and model-revision provenance, and expose the added coverage and support reasons in the existing API, CLI result, and dashboard. Do not change single-attempt braking/speed/throttle observations, reference selection, mode gates, geometry validation, capture/import/storage schemas, or coaching permission. Measurement support, reviewed region definitions, reference eligibility, and coaching remain separate gates.
+
+Acceptance covers evaluator parity between numeric windows and regions; supported clean intervals; unsupported boundaries, interior gaps, clock gaps/rewinds, unsupported tails, and sub-grid missing brackets; float32 timing tolerance and half-open bounds; resource-limit rejection before partial region output; and draft Melbourne output remaining diagnostic. A read-only replay of recovered Shanghai Practice 3/2 over `[500 m, 1,200 m)` retained `unsupported_interior`, a null delta change, and target/reference/shared coverage of 0.957143/0.941629/0.906007, exactly matching the pre-refactor calculation. Race and unknown mode policy remains unchanged.
+
 ## Data flow
 
 ```text

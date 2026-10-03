@@ -92,6 +92,32 @@ def test_track_model_loader_rejects_overlapping_regions_without_shared_complex(t
         load_track_model(path)
 
 
+def test_track_model_loader_rejects_excessive_region_count_before_parsing_regions(tmp_path) -> None:
+    value = json.loads(MELBOURNE_DRAFT.read_text(encoding="utf-8"))
+    value["corners"] = [
+        {
+            "identifier": f"region-{index}",
+            "label": f"Region {index}",
+            "start_distance_m": index * 2,
+            "end_distance_m": index * 2 + 1,
+        }
+        for index in range(65)
+    ]
+    path = tmp_path / "too-many-regions.json"
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="region_count_limit_exceeded"):
+        load_track_model(path)
+
+
+def test_track_model_loader_rejects_oversized_json_before_decoding(tmp_path) -> None:
+    path = tmp_path / "oversized.json"
+    path.write_bytes(b" " * (1024 * 1024 + 1))
+
+    with pytest.raises(ValueError, match="track_model_file_size_limit_exceeded"):
+        load_track_model(path)
+
+
 def test_track_model_allows_explicit_overlapping_complex_members() -> None:
     model = TrackModel(
         model_id="complex-test",

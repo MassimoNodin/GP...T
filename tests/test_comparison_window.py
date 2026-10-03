@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import struct
+from dataclasses import replace
+
 import pytest
 
 from f1_engineer.analysis.comparison import calculate_delta_time
@@ -8,7 +11,11 @@ from f1_engineer.analysis.comparison_window import (
     analyze_comparison_window,
     optional_distance_window,
 )
-from f1_engineer.analysis.corners import analyze_attempt_regions
+from f1_engineer.analysis.corners import analyze_attempt_regions, analyze_corner_regions
+from f1_engineer.analysis.interval_delta import (
+    has_connected_source_session_time,
+    reserve_interval_evaluation_work,
+)
 from f1_engineer.analysis.resampling import ResamplingConfig, TraceSample, resample_trace
 from f1_engineer.tracks.model import CornerDefinition, TrackModel
 
@@ -82,6 +89,60 @@ def _analyze(
         window,
         config=config,
     )
+
+
+def _analyze_corner_interval(
+    start_m: float,
+    end_m: float,
+    *,
+    gap: bool = False,
+    session_discontinuity: str | None = None,
+    target_samples: tuple[TraceSample, ...] | None = None,
+    reference_samples: tuple[TraceSample, ...] | None = None,
+):
+    target_samples = target_samples or _samples(
+        gap=gap,
+        target=True,
+        session_discontinuity=session_discontinuity,
+    )
+    reference_samples = reference_samples or _samples(gap=gap, target=False)
+    config = ResamplingConfig(grid_step_m=1.0)
+    grid = tuple(float(value) for value in range(41))
+    target_resampled = resample_trace(target_samples, grid, config)
+    reference_resampled = resample_trace(reference_samples, grid, config)
+    delta = calculate_delta_time(target_resampled, reference_resampled)
+    model = TrackModel(
+        model_id="test-draft-interval",
+        revision=1,
+        packet_format=2025,
+        track_id=0,
+        track_name="Test",
+        layout_id="test-layout",
+        track_length_m=40.0,
+        distance_origin_m=0.0,
+        provenance="Synthetic connected-interval fixture",
+        validation_status="draft",
+        corners=(
+            CornerDefinition(
+                identifier="interval",
+                label="Draft interval",
+                start_distance_m=start_m,
+                end_distance_m=end_m,
+            ),
+        ),
+    )
+    report = analyze_corner_regions(
+        target_samples,
+        reference_samples,
+        target_resampled,
+        reference_resampled,
+        delta,
+        model,
+        config=config,
+        target_reference_eligible=True,
+        reference_reference_eligible=True,
+    )
+    return report["regions"][0]["delta_change"]
 
 
 def test_distance_window_reports_anchored_observations_and_connected_delta() -> None:
@@ -167,6 +228,154 @@ def test_sub_grid_window_keeps_boundary_values_when_one_supported_cell_connects_
     assert result["delta"]["shared_time_coverage"] == 0.0
     assert result["delta"]["interval_connected_supported_time"] is True
     assert result["delta"]["delta_change_s"] == pytest.approx(0.0012)
+
+
+def test_corner_interval_uses_the_same_connected_delta_evaluator_as_numeric_window() -> None:
+    result = _analyze(DistanceWindow(10.0, 30.0))
+    region = _analyze_corner_interval(10.0, 30.0)
+    wrapped_samples = _samples(target=True)
+
+    assert wrapped_samples[31].frame_identifier == 0xFFFFFFFF
+    assert wrapped_samples[32].frame_identifier == 0
+
+    assert region["entry_delta_s"] == result["delta"]["start_boundary"][
+        "target_minus_reference_s"
+    ]
+    assert region["exit_delta_s"] == result["delta"]["end_boundary"][
+        "target_minus_reference_s"
+    ]
+    assert region["delta_change_s"] == result["delta"]["delta_change_s"]
+    assert region["interval_connected_supported_time"] is True
+    assert region["shared_time_coverage"] == result["delta"]["shared_time_coverage"]
+    assert region["status"] == "diagnostic_region_delta_change"
+
+
+def test_source_session_time_accepts_float32_rounding_at_the_gap_limit() -> None:
+    float32 = lambda value: struct.unpack("<f", struct.pack("<f", value))[0]
+    samples = (
+        replace(_samples()[0], distance_m=0.0, session_time_s=float32(10.0)),
+        replace(_samples()[1], distance_m=1.0, session_time_s=float32(10.1)),
+    )
+
+    assert has_connected_source_session_time(
+        samples,
+        0.0,
+        1.0,
+        max_gap_s=0.1,
+    ) is True
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected_reason"),
+    [
+        ({"gap": True}, "shared_delta_time_disconnected"),
+        ({"session_discontinuity": "gap"}, "target_source_session_time_disconnected"),
+        ({"session_discontinuity": "rewind"}, "target_source_session_time_disconnected"),
+    ],
+)
+def test_corner_interval_withholds_change_across_disconnected_evidence(
+    kwargs, expected_reason
+) -> None:
+    region = _analyze_corner_interval(10.0, 30.0, **kwargs)
+
+    assert region["entry_delta_s"] is not None
+    assert region["exit_delta_s"] is not None
+    assert region["interval_connected_supported_time"] is False
+    assert region["delta_change_s"] is None
+    assert region["status"] in {
+        "unsupported_source_chronology",
+        "unsupported_interior",
+    }
+    assert expected_reason in region["unavailable_reasons"]
+
+
+def test_corner_interval_rejects_a_sub_grid_missing_clock_bracket() -> None:
+    base = _samples(target=True)
+    inserted = TraceSample(
+        frame_identifier=0,
+        distance_m=14.5,
+        time_s=None,
+        speed_mps=44.5,
+        throttle=0.0,
+        brake=0.0,
+        steering=0.0,
+        gear=4,
+        drs_active=False,
+        session_time_s=0.725,
+    )
+    samples = [*base[:15], inserted, *base[15:]]
+    target_samples = tuple(
+        replace(sample, frame_identifier=index + 1)
+        for index, sample in enumerate(samples)
+    )
+    region = _analyze_corner_interval(
+        10.0,
+        20.0,
+        target_samples=target_samples,
+        reference_samples=_samples(target=False),
+    )
+
+    assert region["entry_delta_s"] is not None
+    assert region["exit_delta_s"] is not None
+    assert region["interval_connected_supported_time"] is False
+    assert region["delta_change_s"] is None
+    assert "target_resampled_time_disconnected" in region["unavailable_reasons"]
+
+
+def test_corner_interval_reports_unsupported_exit_boundary_and_keeps_entry_value() -> None:
+    target_samples = _samples(target=True)[:26]
+    reference_samples = _samples(target=False)[:26]
+    region = _analyze_corner_interval(
+        20.0,
+        35.0,
+        target_samples=target_samples,
+        reference_samples=reference_samples,
+    )
+
+    assert region["entry_delta_s"] is not None
+    assert region["exit_delta_s"] is None
+    assert region["delta_change_s"] is None
+    assert region["status"] == "unsupported_entry_or_exit"
+    assert "exit_boundary_unsupported" in region["unavailable_reasons"]
+
+
+def test_interval_work_reservation_counts_sources_grids_and_excluded_spans() -> None:
+    target_samples = _samples(target=True)
+    reference_samples = _samples(target=False)
+    config = ResamplingConfig(grid_step_m=1.0)
+    grid = tuple(float(value) for value in range(41))
+    target_resampled = resample_trace(target_samples, grid, config)
+    reference_resampled = resample_trace(reference_samples, grid, config)
+    delta = calculate_delta_time(target_resampled, reference_resampled)
+    expected = (
+        len(target_samples)
+        + len(reference_samples)
+        + len(target_resampled.distance_m)
+        + len(reference_resampled.distance_m)
+        + len(delta.values_s)
+        + len(target_resampled.excluded_spans)
+        + len(reference_resampled.excluded_spans)
+    )
+
+    assert reserve_interval_evaluation_work(
+        1,
+        target_samples,
+        reference_samples,
+        target_resampled,
+        reference_resampled,
+        delta,
+        limit=expected,
+    ) == expected
+    with pytest.raises(ValueError, match="interval_evaluation_work_limit_exceeded"):
+        reserve_interval_evaluation_work(
+            1,
+            target_samples,
+            reference_samples,
+            target_resampled,
+            reference_resampled,
+            delta,
+            limit=expected - 1,
+        )
 
 
 def test_window_observations_match_shared_draft_region_measurements() -> None:
