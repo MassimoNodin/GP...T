@@ -554,6 +554,19 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                 )
                 assert started.status_code == 202
                 recording_id = started.json()["data"]["recording_id"]
+                for _ in range(200):
+                    current = (
+                        await client.get("/api/v1/recordings/current")
+                    ).json()["data"]
+                    if current["recording_id"] == recording_id:
+                        if current["status"] == "recording":
+                            break
+                        assert current["status"] not in {
+                            "failed",
+                            "interrupted",
+                        }
+                    await asyncio.sleep(0.01)
+                assert current["status"] == "recording"
 
                 payloads = [
                     _telemetry_packet(frame=100, sequence=10).payload,

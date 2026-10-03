@@ -285,7 +285,7 @@ function recordingStatus(
   receiving: boolean,
 ) {
   if (!recording) return "Recording idle";
-  if (recording.status === "starting") return "Starting UDP listener";
+  if (recording.status === "starting") return "Preparing UDP recording";
   if (recording.status === "recording")
     return receiving ? "Recording telemetry" : "Listening for telemetry";
   if (recording.status === "stopping") return "Finalizing capture";

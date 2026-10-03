@@ -178,6 +178,8 @@ Persist the recording lifecycle in SQLite and acquire controller ownership befor
 
 Use `starting → recording → stopping → complete`, with terminal `failed` and `interrupted` states. Record to an exclusively created staging file outside the inbox's `.f1ecap` discovery pattern. Stop closes reception, drains accepted queued datagrams, finishes pending writes, writes the capture footer, flushes and fsyncs, closes the file, then publishes it atomically without replacement. Only a published finalized capture enters the inbox; importing remains explicit. Reconcile a completed file only after the live recorder no longer owns its job, so a destination collision cannot stop an active capture prematurely.
 
+The Start endpoint's `202 Accepted` acknowledges durable job creation, not listener readiness. Clients wait for persisted `recording` status before assuming the UDP socket is bound and the capture writer is initialized; `starting` means acquisition setup is still in progress.
+
 A complete recording means orderly finalization, not zero receive losses, valid laps, or reference eligibility. Preserve the existing loss metrics and eligibility checks, and never substitute fabricated zero counters for unavailable evidence. On startup, mark abandoned recordings interrupted after controller ownership is acquired. Preserve staging artifacts for inspection, require an explicit new recording, and never resume or append automatically. API shutdown follows the same graceful Stop path. Disk, bind, and publication failures retain accurate failure state and must not advertise successful publication.
 
 Validate CLI compatibility, start/stop idempotency, controller ownership, import/record serialization, stop while waiting and during queued writes, malformed packets, queue overflow, socket and disk errors, publication collisions and staging cleanup failures, restart recovery, path containment, authorization, same-origin proxying, and mode-independent acquisition with synthetic Time Trial, Race, and unknown-context streams. Replay the Melbourne capture through the extracted service and preserve payload ordering, lap inventory, diagnostic comparison, and reference abstention. A clean valid Time Trial capture is still required to validate positive reference selection; race and opponent policies and geometry keep their separate evidence gates.
@@ -306,6 +308,20 @@ Expose a bounded single-attempt trace inspector for speed, throttle, brake and s
 Use stored session time as the chart coordinate and preserve original frame, time and distance anchors. Keep sample order; split output runs at frame/time discontinuities and missing channel values; never join gaps while thinning. Deterministically bound points and runs, preserve their endpoints, and report source counts and preview reduction separately. Reuse checksummed snapshot loading and existing source row, byte and context limits. Support trace schemas v1/v2/v3 and completed, invalid, partial and abandoned attempts.
 
 Keep outputs diagnostic-only and mode labels sourced from persisted context. Charts make no claim that attempts are comparable and calculate no loss, diagnosis, geometry or coaching. Add no trace migration, importer identity change or reference-policy expansion. Validate with existing captures and synthetic chronology, missing-channel, frame-wrap and cap cases; finalize the active Shanghai capture before using it as immutable acceptance evidence.
+
+## Decision 0023: summarize persisted capture evidence by processing run
+
+**Status:** accepted
+
+**Date:** 2026-10-03
+
+Expose a bounded, read-only run summary through the local dashboard and API so long captures with multiple sessions can be understood before individual attempts are opened. Read only persisted SQLite metadata and the existing import summary; do not reread the source capture or materialize Parquet traces.
+
+Keep capture hash/size, processing identity/status, and capture-footer completion separate from acquisition losses, replay assembly losses, decoder/join counts, session/attempt totals, disposition, game validity, and stored reference eligibility. Aggregate eligibility and exclusion reasons; never describe eligibility as a selected reference. Missing or legacy metrics remain unknown. Context labels must preserve unknown intervals and clearly name the snapshot they represent rather than implying that one context value covers the whole session.
+
+Bound run, session, and attempt result pages. Provide links from the recording inbox and session browser to run evidence and from session/attempt rows to existing history views. Do not add an overall "clean", "ready for coaching", or equivalent certification. Add no storage migration, importer identity change, source capture reread, reference-policy expansion, or trace loading.
+
+Validate summary counts against stored importer results and synthetic runs for multiple contexts, unknown contexts, failed/incomplete processing, absent metrics, pagination, and unsigned session UIDs. The recovered Shanghai career capture has an explicit incomplete footer because its final 46-byte record was truncated; it can validate the retained large multi-session ingestion, practice/qualifying transitions, lap lifecycle, exact-frame joins, and mode-independent inspection, but it cannot be described as an uninterrupted capture or establish positive Time Trial reference eligibility. A clean, game-valid Time Trial recording remains required for that gate. Geometry and coaching retain their independent evidence gates.
 
 ## Data flow
 

@@ -77,6 +77,7 @@ def list_recording_sources(
                 """SELECT s.capture_id, s.display_name, s.byte_size, s.modified_ns,
                           latest_job.job_id AS latest_job_id,
                           latest_job.status AS latest_job_status,
+                          latest_job.result_json AS latest_job_result,
                           s.relative_path
                      FROM recording_sources s
                 LEFT JOIN import_jobs latest_job
@@ -100,11 +101,33 @@ def list_recording_sources(
             ).isoformat(),
             "latest_job_id": row["latest_job_id"],
             "latest_job_status": row["latest_job_status"],
+            "latest_job_run_id": _completed_job_run_id(
+                row["latest_job_status"], row["latest_job_result"]
+            ),
             "available": row["relative_path"] in discovered_paths,
         }
         for row in rows
         if row["relative_path"] in discovered_paths or row["latest_job_id"] is not None
     ]
+
+
+def _completed_job_run_id(status: object, result_json: object) -> str | None:
+    if status != "complete" or not isinstance(result_json, str):
+        return None
+    try:
+        result = json.loads(result_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(result, dict):
+        return None
+    run_id = result.get("run_id")
+    if (
+        isinstance(run_id, str)
+        and len(run_id) == 64
+        and all(character in "0123456789abcdef" for character in run_id)
+    ):
+        return run_id
+    return None
 
 
 def resolve_recording_source(

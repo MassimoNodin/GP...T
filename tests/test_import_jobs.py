@@ -115,9 +115,11 @@ def test_recording_sources_have_stable_opaque_ids_and_never_expose_paths(tmp_pat
         "modified_at_utc",
         "latest_job_id",
         "latest_job_status",
+        "latest_job_run_id",
         "available",
     }
     assert first[0]["latest_job_id"] is None
+    assert first[0]["latest_job_run_id"] is None
     assert first[0]["available"] is True
     assert str(tmp_path) not in repr(first)
 
@@ -221,6 +223,29 @@ def test_inbox_chooses_the_job_with_latest_retry_timestamp(tmp_path):
     source = list_recording_sources(database, root)[0]
     assert source["latest_job_id"] == first["job_id"]
     assert source["latest_job_status"] == "queued"
+
+
+def test_recording_sources_expose_completed_job_run_id_for_evidence_link(tmp_path):
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    _capture(root / "one.f1ecap")
+    capture_id = list_recording_sources(database, root)[0]["capture_id"]
+    job, _ = create_import_job(database, capture_id)
+    run_id = "a" * 64
+    update_import_job(
+        database,
+        job["job_id"],
+        status="complete",
+        phase="complete",
+        result={"run_id": run_id},
+        finished=True,
+    )
+
+    source = list_recording_sources(database, root)[0]
+
+    assert source["latest_job_status"] == "complete"
+    assert source["latest_job_run_id"] == run_id
 
 
 def test_worker_revalidates_source_identity_before_import(tmp_path, monkeypatch):

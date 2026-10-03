@@ -50,6 +50,105 @@ def test_sessions_api_is_versioned_and_keeps_session_uid_as_text(monkeypatch, tm
     assert response.json()["data"][0]["capture_sha256"] == "a" * 64
 
 
+def test_processing_run_api_bounds_pages_and_preserves_unsigned_session_uids(
+    monkeypatch, tmp_path
+) -> None:
+    calls = {}
+    monkeypatch.setattr(
+        api_module,
+        "list_processing_run_summaries",
+        lambda _database, *, limit, offset: calls.update(limit=limit, offset=offset)
+        or {"items": [], "total": 12, "limit": limit, "offset": offset},
+    )
+    run_id = "a" * 64
+    monkeypatch.setattr(
+        api_module,
+        "get_processing_run_detail",
+        lambda _database, requested, **page: (
+            {
+                "summary": {"run_id": requested},
+                "sessions": {
+                    "items": [{"session_uid": "18446744073709550001"}],
+                    "total": 1,
+                    "limit": page["session_limit"],
+                    "offset": page["session_offset"],
+                },
+                "attempts": {"items": [], "total": 0, "limit": page["attempt_limit"], "offset": page["attempt_offset"]},
+            }
+            if requested == run_id
+            else None
+        ),
+    )
+    app = create_app(tmp_path / "unused.sqlite3")
+
+    page_response = _get(
+        app,
+        "/api/v1/processing-runs",
+        params={"limit": "3", "offset": "6"},
+    )
+    detail_response = _get(
+        app,
+        f"/api/v1/processing-runs/{run_id}",
+        params={
+            "session_limit": "4",
+            "session_offset": "8",
+            "attempt_limit": "5",
+            "attempt_offset": "10",
+        },
+    )
+    invalid_page_response = _get(
+        app, "/api/v1/processing-runs", params={"limit": "51"}
+    )
+    oversized_run_offset_response = _get(
+        app,
+        "/api/v1/processing-runs",
+        params={"offset": str(1 << 63)},
+    )
+    oversized_session_offset_response = _get(
+        app,
+        f"/api/v1/processing-runs/{run_id}",
+        params={"session_offset": str(1 << 63)},
+    )
+    oversized_attempt_offset_response = _get(
+        app,
+        f"/api/v1/processing-runs/{run_id}",
+        params={"attempt_offset": str(1 << 63)},
+    )
+
+    assert page_response.status_code == 200
+    assert calls == {"limit": 3, "offset": 6}
+    assert page_response.json()["data"]["total"] == 12
+    assert detail_response.status_code == 200
+    assert detail_response.json()["data"]["sessions"]["items"][0]["session_uid"] == "18446744073709550001"
+    assert detail_response.json()["data"]["attempts"]["offset"] == 10
+    assert invalid_page_response.status_code == 422
+    assert oversized_run_offset_response.status_code == 422
+    assert oversized_session_offset_response.status_code == 422
+    assert oversized_attempt_offset_response.status_code == 422
+
+
+def test_recording_sources_api_preserves_latest_completed_run_id(
+    monkeypatch, tmp_path
+) -> None:
+    run_id = "b" * 64
+    source = {
+        "capture_id": "c" * 32,
+        "display_name": "capture.f1ecap",
+        "byte_size": 123,
+        "modified_at_utc": "2026-10-03T00:00:00+00:00",
+        "latest_job_id": "d" * 32,
+        "latest_job_status": "complete",
+        "latest_job_run_id": run_id,
+        "available": True,
+    }
+    monkeypatch.setattr(api_module, "list_recording_sources", lambda *_args: [source])
+
+    response = _get(create_app(tmp_path / "unused.sqlite3"), "/api/v1/recording-sources")
+
+    assert response.status_code == 200
+    assert response.json()["data"][0]["latest_job_run_id"] == run_id
+
+
 def test_compare_api_reports_unsupported_pair_without_losing_status(monkeypatch, tmp_path) -> None:
     def reject_pair(*_args, **_kwargs):
         raise ValueError("attempts have incompatible track, format, or Time Trial settings")

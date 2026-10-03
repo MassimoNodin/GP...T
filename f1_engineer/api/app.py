@@ -22,6 +22,16 @@ from ..analysis.trace_chart_service import (
 )
 from ..storage.import_jobs import list_recording_sources
 from ..storage.importer import DEFAULT_DATABASE, list_laps, list_sessions
+from ..storage.run_summaries import (
+    DEFAULT_ATTEMPT_PAGE_SIZE,
+    DEFAULT_RUN_PAGE_SIZE,
+    DEFAULT_SESSION_PAGE_SIZE,
+    MAX_CHILD_PAGE_SIZE,
+    MAX_PAGE_OFFSET,
+    MAX_RUN_PAGE_SIZE,
+    get_processing_run_detail,
+    list_processing_run_summaries,
+)
 from ..storage.database import DatabaseSchemaError
 from ..tracks.model import TrackModel
 from ..tracks.registry import (
@@ -77,6 +87,7 @@ class RecordingSourceRecord(BaseModel):
     modified_at_utc: str
     latest_job_id: str | None
     latest_job_status: str | None
+    latest_job_run_id: str | None
     available: bool
 
 
@@ -261,6 +272,50 @@ def create_app(
     def sessions() -> APIResponse[list[SessionRecord]]:
         return APIResponse[list[SessionRecord]](
             data=_stringify_session_uids(list_sessions(configured_database_path))
+        )
+
+    @app.get("/api/v1/processing-runs", response_model=APIResponse[dict[str, Any]])
+    def processing_runs(
+        limit: int = Query(default=DEFAULT_RUN_PAGE_SIZE, ge=1, le=MAX_RUN_PAGE_SIZE),
+        offset: int = Query(default=0, ge=0, le=MAX_PAGE_OFFSET),
+    ) -> APIResponse[dict[str, Any]]:
+        return APIResponse[dict[str, Any]](
+            data=_stringify_session_uids(
+                list_processing_run_summaries(
+                    configured_database_path, limit=limit, offset=offset
+                )
+            )
+        )
+
+    @app.get(
+        "/api/v1/processing-runs/{run_id}",
+        response_model=APIResponse[dict[str, Any]],
+    )
+    def processing_run_detail(
+        run_id: str,
+        session_limit: int = Query(
+            default=DEFAULT_SESSION_PAGE_SIZE, ge=1, le=MAX_CHILD_PAGE_SIZE
+        ),
+        session_offset: int = Query(default=0, ge=0, le=MAX_PAGE_OFFSET),
+        attempt_limit: int = Query(
+            default=DEFAULT_ATTEMPT_PAGE_SIZE, ge=1, le=MAX_CHILD_PAGE_SIZE
+        ),
+        attempt_offset: int = Query(default=0, ge=0, le=MAX_PAGE_OFFSET),
+    ) -> APIResponse[dict[str, Any]]:
+        result = get_processing_run_detail(
+            configured_database_path,
+            run_id,
+            session_limit=session_limit,
+            session_offset=session_offset,
+            attempt_limit=attempt_limit,
+            attempt_offset=attempt_offset,
+        )
+        if result is None:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="processing_run_unavailable"
+            )
+        return APIResponse[dict[str, Any]](
+            data=_stringify_session_uids(result)
         )
 
     @app.get("/api/v1/laps", response_model=APIResponse[list[LapRecord]])

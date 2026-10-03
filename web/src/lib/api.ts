@@ -12,6 +12,7 @@ export interface RecordingSourceRecord {
   modified_at_utc: string;
   latest_job_id: string | null;
   latest_job_status: string | null;
+  latest_job_run_id: string | null;
   available: boolean;
 }
 
@@ -351,6 +352,80 @@ export interface AttemptTraceChartReport {
     missing_channel_values: string;
     coordinate: string;
   };
+}
+
+export interface ProcessingRunSummary {
+  run_id: string;
+  capture: {
+    sha256: string;
+    byte_size: number | null;
+    complete: boolean | null;
+    footer_status: string | null;
+    recording_counters: Record<string, number | null> | null;
+    recording_observer_counters: Record<string, number | null> | null;
+  };
+  processing: {
+    status: string;
+    pipeline_version: string;
+    config: Record<string, unknown> | null;
+    started_at_utc: string;
+    finished_at_utc: string | null;
+    error: string | null;
+    metrics_available: boolean;
+    import_counters: Record<string, number | null> | null;
+    replay_counters: Record<string, number | null> | null;
+    capture_quality_available: boolean;
+  };
+  totals: {
+    session_count: number;
+    attempt_count: number;
+    disposition_counts: Record<string, number>;
+    game_validity_counts: { valid: number; invalid: number; unknown: number };
+    stored_reference_eligible_count: number;
+    exclusion_reason_counts: Array<{ reason: string; attempt_count: number }>;
+    exclusion_reasons_complete: boolean;
+  };
+}
+
+export interface ProcessingRunPage<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface ProcessingRunSession {
+  session_key: string;
+  session_uid: string;
+  packet_format: number;
+  latest_context_snapshot: Record<string, unknown> | null;
+  context_snapshot_status: "complete" | "incomplete" | "missing";
+  context_update_count: number;
+  context_invalidation_count: number;
+  attempt_count: number;
+}
+
+export interface ProcessingRunAttempt {
+  attempt_key: string;
+  session_key: string;
+  session_uid: string;
+  car_index: number;
+  attempt_number: number;
+  disposition: string;
+  lap_time_ms: number | null;
+  game_valid: boolean | null;
+  reference_eligible: boolean;
+  sample_count: number;
+  exclusion_reasons: string[] | null;
+  first_context_snapshot: Record<string, unknown> | null;
+  context_segment_count: number;
+  missing_context_segment_count: number;
+}
+
+export interface ProcessingRunDetail {
+  summary: ProcessingRunSummary;
+  sessions: ProcessingRunPage<ProcessingRunSession>;
+  attempts: ProcessingRunPage<ProcessingRunAttempt>;
 }
 
 export interface AttemptQualityReport {

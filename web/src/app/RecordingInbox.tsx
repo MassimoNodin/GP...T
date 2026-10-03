@@ -97,6 +97,15 @@ export default function RecordingInbox({
                       : "View latest job"}
                   </a>
                 )}
+                {source.latest_job_status === "complete" &&
+                source.latest_job_run_id ? (
+                  <a
+                    className="import-button secondary-import-button"
+                    href={`/?run_id=${encodeURIComponent(source.latest_job_run_id)}`}
+                  >
+                    Run evidence ↗
+                  </a>
+                ) : null}
                 {source.available &&
                 source.latest_job_id &&
                 (source.latest_job_status === "failed" ||

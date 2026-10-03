@@ -7,6 +7,9 @@ import {
   AttemptQualityReport,
   AttemptTraceChartReport,
   LapRecord,
+  ProcessingRunDetail,
+  ProcessingRunPage,
+  ProcessingRunSummary,
   RegionEvent,
   ReferenceSelection,
   RecordingJobRecord,
@@ -18,6 +21,7 @@ import RecordingInbox from "./RecordingInbox";
 import AttemptQualityPanel from "./AttemptQualityPanel";
 import DiagnosticEvidencePanels from "./DiagnosticEvidencePanels";
 import AttemptTraceCharts from "./AttemptTraceCharts";
+import RunEvidencePanel from "./RunEvidencePanel";
 import type { ImportJobRecord, RecordingSourceRecord } from "@/lib/api";
 
 type SearchParams = {
@@ -27,6 +31,10 @@ type SearchParams = {
   track_model_key?: string | string[];
   import_job_id?: string | string[];
   import_error?: string | string[];
+  run_id?: string | string[];
+  run_offset?: string | string[];
+  session_offset?: string | string[];
+  attempt_offset?: string | string[];
 };
 
 type Series = {
@@ -49,17 +57,43 @@ export default async function Home({
     track_model_key: firstParam(rawParams.track_model_key),
     import_job_id: firstParam(rawParams.import_job_id),
     import_error: firstParam(rawParams.import_error),
+    run_id: firstParam(rawParams.run_id),
+    run_offset: firstParam(rawParams.run_offset),
+    session_offset: firstParam(rawParams.session_offset),
+    attempt_offset: firstParam(rawParams.attempt_offset),
   };
+  const runOffset = pageOffset(params.run_offset);
+  const sessionOffset = pageOffset(params.session_offset);
+  const attemptOffset = pageOffset(params.attempt_offset);
+  const selectedRunId = /^[a-f0-9]{64}$/.test(params.run_id ?? "")
+    ? params.run_id!
+    : null;
+  const runDetailQuery = new URLSearchParams({
+    session_limit: "20",
+    session_offset: String(sessionOffset),
+    attempt_limit: "20",
+    attempt_offset: String(attemptOffset),
+  });
   const [
     sessionResponse,
     trackModelsResponse,
     recordingSourcesResponse,
     recordingResponse,
+    processingRunsResponse,
+    processingRunDetailResponse,
   ] = await Promise.all([
     requestApi<SessionRecord[]>("/api/v1/sessions"),
     requestApi<TrackModelRecord[]>("/api/v1/track-models"),
     requestApi<RecordingSourceRecord[]>("/api/v1/recording-sources"),
     requestApi<RecordingJobRecord>("/api/v1/recordings/current"),
+    requestApi<ProcessingRunPage<ProcessingRunSummary>>(
+      `/api/v1/processing-runs?limit=10&offset=${runOffset}`,
+    ),
+    selectedRunId
+      ? requestApi<ProcessingRunDetail>(
+          `/api/v1/processing-runs/${encodeURIComponent(selectedRunId)}?${runDetailQuery}`,
+        )
+      : Promise.resolve(null),
   ]);
   const jobResponse =
     params.import_job_id && /^[a-f0-9]{32}$/.test(params.import_job_id)
@@ -72,7 +106,8 @@ export default async function Home({
     trackModels.find((item) => modelKey(item) === params.track_model_key) ??
     null;
   const staleModelChoice = Boolean(params.track_model_key) && !selectedModel;
-  const importedSessions = (sessionResponse?.data ?? []).filter(
+  const allSessions = sessionResponse?.data ?? [];
+  const importedSessions = allSessions.filter(
     (item) => item.run_status === "complete",
   );
   const latestRunByCapture = new Map<string, SessionRecord>();
@@ -96,10 +131,20 @@ export default async function Home({
       aFinishedAt.localeCompare(bFinishedAt) || a.run_id.localeCompare(b.run_id)
     );
   });
+  const requestedSession =
+    params.session_key === undefined
+      ? null
+      : importedSessions.find((item) => item.session_key === params.session_key) ?? null;
+  const sessionUnavailable =
+    params.session_key !== undefined && requestedSession === null;
   const session =
-    sessions.find((item) => item.session_key === params.session_key) ??
-    sessions.at(-1) ??
-    null;
+    params.session_key === undefined
+      ? sessions.at(-1) ?? null
+      : requestedSession;
+  const selectableSessions =
+    session && !sessions.some((item) => item.session_key === session.session_key)
+      ? [...sessions, session]
+      : sessions;
   const isTimeTrial = session?.context?.session_type === "time_trial";
   const trackModelCatalogUnavailable =
     !trackModelsResponse || trackModelsResponse.status === "unavailable";
@@ -110,10 +155,16 @@ export default async function Home({
     : null;
   const laps = lapResponse?.data ?? [];
   const completed = laps.filter((lap) => lap.disposition === "completed");
+  const requestedTarget =
+    params.target_attempt_key === undefined
+      ? null
+      : laps.find((lap) => lap.attempt_key === params.target_attempt_key) ?? null;
+  const targetAttemptUnavailable =
+    params.target_attempt_key !== undefined && requestedTarget === null;
   const target =
-    laps.find((lap) => lap.attempt_key === params.target_attempt_key) ??
-    laps.at(-1) ??
-    null;
+    params.target_attempt_key === undefined
+      ? laps.at(-1) ?? null
+      : requestedTarget;
   const defaultReference =
     completed.find((lap) => lap.attempt_key !== target?.attempt_key) ?? null;
   const referenceChoice =
@@ -356,6 +407,15 @@ export default async function Home({
           importError={params.import_error}
         />
 
+        <RunEvidencePanel
+          runsPage={processingRunsResponse?.status === "ok" ? processingRunsResponse.data : null}
+          detail={processingRunDetailResponse?.status === "ok" ? processingRunDetailResponse.data : null}
+          runId={selectedRunId}
+          runOffset={runOffset}
+          sessionOffset={sessionOffset}
+          attemptOffset={attemptOffset}
+        />
+
         {apiUnavailable ? (
           <section className="connection-state panel">
             <span className="state-icon">!</span>
@@ -365,6 +425,17 @@ export default async function Home({
               <code>
                 uv run --extra app f1-engineer api --database data/dev.sqlite3
               </code>
+            </div>
+          </section>
+        ) : sessionUnavailable ? (
+          <section className="connection-state panel">
+            <span className="state-icon">!</span>
+            <div>
+              <h2>Session unavailable</h2>
+              <p>
+                The requested session is missing or its processing run is not
+                complete. Choose a completed session from the archive.
+              </p>
             </div>
           </section>
         ) : sessions.length === 0 ? (
@@ -389,6 +460,18 @@ export default async function Home({
           </section>
         ) : (
           <>
+            {targetAttemptUnavailable ? (
+              <section className="connection-state panel">
+                <span className="state-icon">!</span>
+                <div>
+                  <h2>Attempt unavailable</h2>
+                  <p>
+                    The requested attempt is missing from this completed
+                    session. Choose an available attempt from its inventory.
+                  </p>
+                </div>
+              </section>
+            ) : null}
             <section className="session-strip panel">
               <div className="session-main">
                 <span className="strip-label">SELECTED RECORDING</span>
@@ -433,25 +516,33 @@ export default async function Home({
                   </div>
                   <div className="recording-list">
                     {[...sessions].reverse().map((item, index) => (
-                      <a
-                        className={`recording-item ${item.session_key === session?.session_key ? "selected" : ""}`}
-                        href={urlFor({ session_key: item.session_key })}
-                        key={item.session_key}
-                      >
-                        <span className="recording-index">
-                          {String(index + 1).padStart(2, "0")}
-                        </span>
-                        <span className="recording-copy">
-                          <strong>
-                            {item.context?.track_name ?? "Unknown circuit"}
-                          </strong>
-                          <small>
-                            {label(item.context?.session_type)} ·{" "}
-                            {item.run_id.slice(0, 8)}
-                          </small>
-                        </span>
-                        <span className="recording-chevron">↗</span>
-                      </a>
+                      <div className="recording-entry" key={item.session_key}>
+                        <a
+                          className={`recording-item ${item.session_key === session?.session_key ? "selected" : ""}`}
+                          href={urlFor({ session_key: item.session_key })}
+                        >
+                          <span className="recording-index">
+                            {String(index + 1).padStart(2, "0")}
+                          </span>
+                          <span className="recording-copy">
+                            <strong>
+                              {item.context?.track_name ?? "Unknown circuit"}
+                            </strong>
+                            <small>
+                              {label(item.context?.session_type)} ·{" "}
+                              {item.run_id.slice(0, 8)}
+                            </small>
+                          </span>
+                          <span className="recording-chevron">↗</span>
+                        </a>
+                        <a
+                          className="recording-evidence-link"
+                          href={`/?run_id=${encodeURIComponent(item.run_id)}&session_key=${encodeURIComponent(item.session_key)}`}
+                          aria-label={`Open run evidence for ${item.context?.track_name ?? "unknown circuit"}`}
+                        >
+                          Evidence
+                        </a>
+                      </div>
                     ))}
                   </div>
                   <div className="archive-note">
@@ -558,7 +649,7 @@ export default async function Home({
                         name="session_key"
                         defaultValue={session?.session_key}
                       >
-                        {sessions
+                        {selectableSessions
                           .slice()
                           .reverse()
                           .map((item) => (
@@ -1571,6 +1662,10 @@ const speed = (values: Array<number | boolean | null>) =>
   values.map((value) => (typeof value === "number" ? value * 3.6 : null));
 const firstParam = (value: string | string[] | undefined) =>
   Array.isArray(value) ? value[0] : value;
+const pageOffset = (value: string | undefined) => {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? Math.min(parsed, 1_000_000) : 0;
+};
 const modelKey = (model: TrackModelRecord) =>
   `${model.model_id}@${model.revision}`;
 function comparisonQuery(
