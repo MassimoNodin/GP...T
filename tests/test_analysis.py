@@ -374,6 +374,8 @@ def _stored_attempt(
         game_valid=game_valid,
         reference_eligible=game_valid is True,
         exclusion_reasons=("game_marked_invalid",) if game_valid is False else (),
+        superseded=False,
+        lifecycle_assessed=True,
         trace_sha256=("a" if attempt_key.startswith("target") else "b") * 64,
         trace_schema_version=1,
         quality={"sample_count": 3},
@@ -668,6 +670,75 @@ def test_comparison_reports_absolute_delta_and_keeps_invalid_attempt_visible(mon
     assert result["channel_differences"]["speed_mps"]["values"][10] == 2.0
     assert result["channel_differences"]["throttle"]["values"][10] == 0.25
     assert "comparison_window" not in result
+
+
+@pytest.mark.parametrize(
+    ("superseded", "lifecycle_assessed", "reason"),
+    [
+        (True, True, "superseded_by_flashback"),
+        (None, False, "lifecycle_evidence_unassessed"),
+    ],
+)
+def test_time_trial_comparison_keeps_lifecycle_exclusions_visible(
+    monkeypatch, superseded, lifecycle_assessed, reason
+) -> None:
+    target = _stored_attempt("target-attempt", (100, 200, 300))
+    target = replace(
+        target,
+        reference_eligible=False,
+        superseded=superseded,
+        lifecycle_assessed=lifecycle_assessed,
+        exclusion_reasons=(reason,) if superseded is True else (),
+    )
+    reference = _stored_attempt("reference-attempt", (100, 150, 200))
+    attempts = {target.attempt_key: target, reference.attempt_key: reference}
+    monkeypatch.setattr(
+        service_module,
+        "load_attempt_trace",
+        lambda _database, key, **_kwargs: attempts.get(key),
+    )
+
+    result = service_module.compare_attempts(
+        "unused.sqlite3", target.attempt_key, reference.attempt_key
+    )
+
+    assert result["diagnostic_only"] is True
+    assert result["target"]["reference_eligible"] is False
+    if superseded is True:
+        assert reason in result["target"]["exclusion_reasons"]
+    else:
+        assert result["target"]["exclusion_reasons"] == []
+    assert reason in result["target"]["lifecycle_exclusions"]
+
+
+def test_practice_qualifying_superseded_pair_keeps_target_reference_status(monkeypatch) -> None:
+    target = replace(
+        _stored_attempt("target-practice", (100, 200, 300), context=_practice_context()),
+        reference_eligible=False,
+        superseded=True,
+        lifecycle_assessed=True,
+        exclusion_reasons=("superseded_by_flashback",),
+    )
+    reference = _stored_attempt(
+        "reference-practice", (100, 150, 200), context=_practice_context()
+    )
+    attempts = {target.attempt_key: target, reference.attempt_key: reference}
+    monkeypatch.setattr(
+        service_module,
+        "load_attempt_trace",
+        lambda _database, key, **_kwargs: attempts.get(key),
+    )
+
+    result = service_module.compare_attempts(
+        "unused.sqlite3",
+        target.attempt_key,
+        reference.attempt_key,
+        policy="practice_qualifying",
+    )
+
+    assert result["diagnostic_only"] is True
+    assert result["target"]["lifecycle_exclusions"] == ["superseded_by_flashback"]
+    assert result["reference"]["lifecycle_exclusions"] == []
 
 
 def test_time_trial_window_uses_bounded_source_reads_and_preserves_policy(monkeypatch):

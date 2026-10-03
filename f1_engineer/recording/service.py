@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .. import __version__
+from ..analysis.continuity import session_time_discontinuity
 from ..errors import ProtocolError
 from ..pipeline import PipelineResult, TelemetryPipeline
 from ..sessions.context import SessionContext
@@ -17,6 +18,7 @@ from ..telemetry.canonical import make_car_sample
 from ..telemetry.frames import FrameAssembler
 from ..udp.car_telemetry import CarTelemetryDecoder
 from ..udp.decoder import PacketDecoder
+from ..udp.events import EventDecoder
 from ..udp.lap_data import LapDataDecoder
 from ..udp.models import DecodedPacket, PacketFormat, PacketFrame, PacketId, RawDatagram
 from ..udp.session_context import SessionContextDecoder
@@ -80,6 +82,7 @@ class _AcquisitionObserver:
     def __init__(self, *, reorder_window_frames: int = 3) -> None:
         self.decoder = PacketDecoder()
         self.session_context_decoder = SessionContextDecoder()
+        self.event_decoder = EventDecoder()
         self.sessions = SessionTracker(retain_context_history=False)
         self.frames = FrameAssembler(reorder_window_frames=reorder_window_frames)
         self.lap_data_decoder = LapDataDecoder()
@@ -95,6 +98,7 @@ class _AcquisitionObserver:
         self._live_player_index: int | None = None
         self._player_header_frame: int | None = None
         self._live_player_barrier_frame: int | None = None
+        self._live_last_session_time_s: float | None = None
         self._receive_times: OrderedDict[tuple[int, int, bytes], int] = OrderedDict()
         self._max_receive_time_entries = self.frames.max_open_frames * 4 + 4
         self._finished = False
@@ -227,6 +231,7 @@ class _AcquisitionObserver:
         self._live_player_index = None
         self._player_header_frame = None
         self._live_player_barrier_frame = None
+        self._live_last_session_time_s = None
         self._receive_times.clear()
 
     def _observe_player_identity(self, packet: DecodedPacket) -> None:
@@ -301,6 +306,67 @@ class _AcquisitionObserver:
         ):
             self._discard_frame_receive_times(frame)
             return
+
+        events = [
+            self.event_decoder.decode(packet)
+            for packet in frame.packets
+            if packet.packet_kind is PacketId.EVENT
+        ]
+        explicit_rewind = any(event.code == "FLBK" for event in events)
+        unknown_event = any(event.error is not None for event in events)
+        if explicit_rewind or unknown_event:
+            self._clear_live_sample()
+            self._live_snapshot = self._empty_live_snapshot(
+                frame, self._live_player_index
+            )
+            self._live_status = "unavailable"
+            self._live_reason = (
+                "flashback_boundary" if explicit_rewind else "event_evidence_unknown"
+            )
+            self._live_last_session_time_s = None
+            self._discard_frame_receive_times(frame)
+            return
+
+        valid_player_lap_packets: list[DecodedPacket] = []
+        for packet in frame.packets:
+            if (
+                packet.packet_kind is not PacketId.LAP_DATA
+                or packet.header.player_car_index != self._live_player_index
+            ):
+                continue
+            decoded_lap = self.lap_data_decoder.decode(packet)
+            if (
+                decoded_lap.error is None
+                and decoded_lap.lap_data is not None
+                and 0 <= self._live_player_index < len(decoded_lap.lap_data.cars)
+            ):
+                valid_player_lap_packets.append(packet)
+        if valid_player_lap_packets:
+            observed_times = [
+                packet.header.session_time for packet in valid_player_lap_packets
+            ]
+            current_session_time = observed_times[-1]
+            baseline_times = (
+                ([self._live_last_session_time_s] if self._live_last_session_time_s is not None else [])
+                + observed_times
+            )
+            clock_regression = any(
+                session_time_discontinuity(left, right) == "session_time_regression"
+                for left, right in zip(baseline_times, baseline_times[1:])
+            )
+            if clock_regression:
+                self._clear_live_sample()
+                self._live_snapshot = self._empty_live_snapshot(
+                    frame, self._live_player_index
+                )
+                self._live_status = "unavailable"
+                self._live_reason = "session_time_regression"
+                self._live_last_session_time_s = (
+                    None if len(valid_player_lap_packets) > 1 else current_session_time
+                )
+                self._discard_frame_receive_times(frame)
+                return
+            self._live_last_session_time_s = current_session_time
 
         lap_packets = [
             packet for packet in frame.packets if packet.packet_kind is PacketId.LAP_DATA

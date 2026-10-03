@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from argparse import Namespace
+from dataclasses import replace
 
 from f1_engineer import cli as cli_module
 from f1_engineer.analysis import reference_selection as selection_module
@@ -75,6 +76,8 @@ def _trace(
         attempt_number=attempt_number,
         start_observed=True,
         pit_encountered=False,
+        superseded=False,
+        lifecycle_assessed=True,
     )
 
 
@@ -86,6 +89,8 @@ def _entry(
     reference_eligible: bool = True,
     exclusion_reasons: tuple[str, ...] = (),
     context: dict[str, object] | None = None,
+    superseded: bool | None = False,
+    lifecycle_assessed: bool = True,
 ) -> StoredAttemptInventoryEntry:
     return StoredAttemptInventoryEntry(
         attempt_key=f"run:42:0:{attempt_number}",
@@ -107,6 +112,8 @@ def _entry(
         trace_schema_version=1,
         quality={"sample_count": 10},
         context_segments=((100, _CONTEXT if context is None else context),),
+        superseded=superseded,
+        lifecycle_assessed=lifecycle_assessed,
     )
 
 
@@ -332,6 +339,55 @@ def test_session_best_reports_race_policy_as_unsupported(monkeypatch) -> None:
     assert result.status is ReferenceSelectionStatus.UNSUPPORTED_POLICY
     assert result.reasons == ("target_unsupported_mode",)
     assert result.selected_reference is None
+
+
+def test_session_best_rejects_superseded_candidates_with_visible_reason(monkeypatch) -> None:
+    target = _trace(3)
+    attempts = (
+        _entry(1, lap_time_ms=78_000, superseded=True),
+        _entry(2, lap_time_ms=79_000),
+        _entry(3),
+    )
+    monkeypatch.setattr(
+        selection_module,
+        "load_attempt_trace",
+        lambda _db, key, **_: target if key == target.attempt_key else _trace(2),
+    )
+    monkeypatch.setattr(
+        selection_module,
+        "load_reference_inventory",
+        lambda _db, _key: _inventory(3, attempts),
+    )
+
+    result = selection_module.select_reference(
+        "telemetry.sqlite3", ReferenceRequest(target.attempt_key)
+    )
+
+    assert result.status is ReferenceSelectionStatus.SELECTED
+    assert result.selected_reference["attempt_number"] == 2
+    superseded = next(
+        candidate for candidate in result.candidates if candidate.attempt_number == 1
+    )
+    assert superseded.eligible is False
+    assert "superseded_by_flashback" in superseded.exclusion_reasons
+
+
+def test_session_best_rejects_unassessed_target_lifecycle(monkeypatch) -> None:
+    target = replace(_trace(2), lifecycle_assessed=False)
+    monkeypatch.setattr(selection_module, "load_attempt_trace", lambda *_args, **_kwargs: target)
+    monkeypatch.setattr(
+        selection_module,
+        "load_reference_inventory",
+        lambda _db, _key: _inventory(2, (_entry(1), _entry(2))),
+    )
+
+    result = selection_module.select_reference(
+        "telemetry.sqlite3", ReferenceRequest(target.attempt_key)
+    )
+
+    assert result.status is ReferenceSelectionStatus.NO_ELIGIBLE_REFERENCE
+    assert result.reasons == ("target_lifecycle_evidence_unassessed",)
+    assert result.diagnostic_only is True
 
 
 def test_reference_cli_runs_comparison_after_selection(monkeypatch, capsys) -> None:

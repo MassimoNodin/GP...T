@@ -35,6 +35,8 @@ class LapObservation:
     data: CarLapData
     session_context: SessionContext | None
     context_timeline: tuple[SessionContextSegment, ...]
+    frame_ordinal: int = 0
+    game_frame_identifier: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +59,10 @@ class LapAttempt:
     context_segments: tuple[SessionContextSegment, ...]
     exclusion_reasons: tuple[str, ...]
     reference_eligible: bool
+    start_frame_ordinal: int | None = None
+    end_frame_ordinal: int | None = None
+    superseded: bool | None = None
+    lifecycle_assessed: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -78,6 +84,10 @@ class LapAttempt:
             "context_segments": [segment.to_dict() for segment in self.context_segments],
             "exclusion_reasons": list(self.exclusion_reasons),
             "reference_eligible": self.reference_eligible,
+            "start_frame_ordinal": self.start_frame_ordinal,
+            "end_frame_ordinal": self.end_frame_ordinal,
+            "superseded": self.superseded,
+            "lifecycle_assessed": self.lifecycle_assessed,
         }
 
 
@@ -88,12 +98,14 @@ class _ActiveLap:
     start_frame_identifier: int
     start_session_time_s: float
     start_observed: bool
+    start_frame_ordinal: int
     sample_count: int = 0
     invalid_seen: bool = False
     pit_encountered: bool = False
     last_current_lap_time_ms: int = 0
     end_frame_identifier: int | None = None
     end_session_time_s: float | None = None
+    end_frame_ordinal: int | None = None
     context_segments: list[SessionContextSegment] = field(default_factory=list)
 
 
@@ -106,6 +118,8 @@ class LapTracker:
         self._attempt_number_by_car: dict[int, int] = {}
         self._previous: dict[int, LapObservation] = {}
         self._active: dict[int, _ActiveLap] = {}
+        self._post_boundary_pending_session = False
+        self._post_boundary_recovery_cars: set[int] = set()
 
     def active_start_frame(self, car_index: int) -> int | None:
         active = self._active.get(car_index)
@@ -132,6 +146,8 @@ class LapTracker:
         self._attempt_number_by_car.clear()
         self._previous.clear()
         self._active.clear()
+        self._post_boundary_pending_session = False
+        self._post_boundary_recovery_cars.clear()
 
     def end_session(
         self,
@@ -162,6 +178,20 @@ class LapTracker:
         self._previous.clear()
         return tuple(self.attempts[start:])
 
+    def close_lifecycle_boundary(
+        self, session_uid: int, *, reason: str
+    ) -> tuple[LapAttempt, ...]:
+        """Close active attempts at their last observation and reset lap history."""
+        if self.current_session_uid != session_uid:
+            return ()
+        start = len(self.attempts)
+        for car_index in tuple(self._active):
+            self._finalize(car_index, LapDisposition.ABANDONED, reason=reason)
+        self._previous.clear()
+        self._post_boundary_pending_session = True
+        self._post_boundary_recovery_cars.clear()
+        return tuple(self.attempts[start:])
+
     def observe(self, observation: LapObservation) -> tuple[LapAttempt, ...]:
         if self.current_session_uid != observation.session_uid:
             self.start_session(observation.session_uid)
@@ -179,6 +209,23 @@ class LapTracker:
             and observation.data.current_lap_number < previous.data.current_lap_number
         )
 
+        post_boundary_line_crossing = (
+            active is not None
+            and car_index in self._post_boundary_recovery_cars
+            and previous is not None
+            and previous.data.current_lap_number == observation.data.current_lap_number
+            and previous.data.lap_distance_m < 0 <= observation.data.lap_distance_m
+        )
+        if post_boundary_line_crossing:
+            self._finalize(
+                car_index,
+                LapDisposition.ABANDONED,
+                reason="post_rewind_lap_start_recovered",
+                ended_at=previous,
+            )
+            self._post_boundary_recovery_cars.discard(car_index)
+            active = None
+
         if active is not None:
             self._set_context_timeline(active, observation.context_timeline)
 
@@ -194,6 +241,7 @@ class LapTracker:
                     lap_time_ms=observation.data.last_lap_time_ms,
                     ended_at=observation,
                 )
+                self._post_boundary_recovery_cars.discard(car_index)
             else:
                 self._finalize(
                     car_index,
@@ -259,8 +307,12 @@ class LapTracker:
             start_frame_identifier=observation.frame_identifier,
             start_session_time_s=observation.session_time_s,
             start_observed=start_observed,
+            start_frame_ordinal=observation.frame_ordinal,
         )
         self._active[car_index] = active
+        if self._post_boundary_pending_session:
+            self._post_boundary_pending_session = False
+            self._post_boundary_recovery_cars.add(car_index)
         self._update_active(active, observation)
 
     @staticmethod
@@ -283,6 +335,7 @@ class LapTracker:
             )
         active.end_frame_identifier = observation.frame_identifier
         active.end_session_time_s = observation.session_time_s
+        active.end_frame_ordinal = observation.frame_ordinal
 
     @staticmethod
     def _set_context_timeline(
@@ -370,6 +423,8 @@ class LapTracker:
             context_segments=tuple(active.context_segments),
             exclusion_reasons=tuple(dict.fromkeys(reasons)),
             reference_eligible=eligible,
+            start_frame_ordinal=active.start_frame_ordinal,
+            end_frame_ordinal=active.end_frame_ordinal,
         )
         self.attempts.append(attempt)
 

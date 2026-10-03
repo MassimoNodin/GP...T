@@ -329,6 +329,7 @@ def test_unknown_context_segment_excludes_a_completed_lap() -> None:
             packet_id=1,
             session_uid=SESSION_UID,
             frame=61,
+            session_time=61 / 60,
             body=time_trial_body,
             sequence=61,
         )
@@ -340,6 +341,7 @@ def test_unknown_context_segment_excludes_a_completed_lap() -> None:
             packet_id=1,
             session_uid=SESSION_UID,
             frame=60,
+            session_time=60 / 60,
             body=bytes(unknown_body),
             sequence=60,
         )
@@ -366,6 +368,7 @@ def test_unknown_context_segment_excludes_a_completed_lap() -> None:
             packet_id=1,
             session_uid=SESSION_UID,
             frame=81,
+            session_time=81 / 60,
             body=bytes(unknown_body),
             sequence=81,
         )

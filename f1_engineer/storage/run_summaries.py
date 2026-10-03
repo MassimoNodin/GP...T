@@ -12,6 +12,7 @@ from .database import Database
 DEFAULT_RUN_PAGE_SIZE = 10
 DEFAULT_SESSION_PAGE_SIZE = 20
 DEFAULT_ATTEMPT_PAGE_SIZE = 20
+DEFAULT_LIFECYCLE_EVENT_PAGE_SIZE = 50
 MAX_RUN_PAGE_SIZE = 50
 MAX_CHILD_PAGE_SIZE = 100
 MAX_PAGE_OFFSET = (1 << 63) - 1
@@ -55,6 +56,10 @@ _IMPORT_SUMMARY_COUNTERS = (
     "missing_player_car_status_samples",
     "import_late_packets_ignored",
     "import_frame_overflow_packets_dropped",
+    "event_packets",
+    "event_decode_errors",
+    "lifecycle_events",
+    "lifecycle_events_dropped",
 )
 
 
@@ -93,10 +98,15 @@ def get_processing_run_detail(
     session_offset: int = 0,
     attempt_limit: int = DEFAULT_ATTEMPT_PAGE_SIZE,
     attempt_offset: int = 0,
+    lifecycle_event_limit: int = DEFAULT_LIFECYCLE_EVENT_PAGE_SIZE,
+    lifecycle_event_offset: int = 0,
 ) -> dict[str, object] | None:
     """Return a run summary and bounded session/attempt navigation pages."""
     _validate_page(session_limit, session_offset, maximum=MAX_CHILD_PAGE_SIZE)
     _validate_page(attempt_limit, attempt_offset, maximum=MAX_CHILD_PAGE_SIZE)
+    _validate_page(
+        lifecycle_event_limit, lifecycle_event_offset, maximum=MAX_CHILD_PAGE_SIZE
+    )
     with Database(database_path, read_only=True) as db:
         row = db.connection.execute(
             """SELECT r.run_id, r.capture_sha256, r.pipeline_version, r.config_json,
@@ -116,7 +126,18 @@ def get_processing_run_detail(
         attempts = _list_run_attempts(
             db.connection, run_id, limit=attempt_limit, offset=attempt_offset
         )
-    return {"summary": summary, "sessions": sessions, "attempts": attempts}
+        lifecycle_events = _list_run_lifecycle_events(
+            db.connection,
+            run_id,
+            limit=lifecycle_event_limit,
+            offset=lifecycle_event_offset,
+        )
+    return {
+        "summary": summary,
+        "sessions": sessions,
+        "attempts": attempts,
+        "lifecycle_events": lifecycle_events,
+    }
 
 
 def get_processing_run_summary(
@@ -136,6 +157,26 @@ def get_processing_run_summary(
         if row is None:
             return None
         return _build_run_summary(db.connection, row)
+
+
+def list_processing_run_lifecycle_events(
+    database_path: str | Path,
+    run_id: str,
+    *,
+    limit: int = DEFAULT_LIFECYCLE_EVENT_PAGE_SIZE,
+    offset: int = 0,
+) -> dict[str, object] | None:
+    """Return one bounded ordinal page of a run's persisted lifecycle evidence."""
+    _validate_page(limit, offset, maximum=MAX_CHILD_PAGE_SIZE)
+    with Database(database_path, read_only=True) as db:
+        exists = db.connection.execute(
+            "SELECT 1 FROM processing_runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if exists is None:
+            return None
+        return _list_run_lifecycle_events(
+            db.connection, run_id, limit=limit, offset=offset
+        )
 
 
 def _build_run_summary(
@@ -180,6 +221,7 @@ def _build_run_summary(
             "import_counters": _counter_subset(import_summary, _IMPORT_SUMMARY_COUNTERS),
             "replay_counters": _counter_subset(capture_quality, _REPLAY_COUNTERS),
             "capture_quality_available": isinstance(capture_quality, dict),
+            "lifecycle_evidence": _lifecycle_metrics(capture_quality),
         },
         "totals": totals,
     }
@@ -218,6 +260,15 @@ def _run_totals(connection: sqlite3.Connection, run_id: str) -> dict[str, object
     exclusion_counts, exclusions_complete = _run_exclusion_reason_counts(
         connection, run_id
     )
+    lifecycle_counts = connection.execute(
+        """SELECT COUNT(*) AS event_count,
+                  SUM(CASE WHEN cause='flashback' THEN 1 ELSE 0 END) AS flashback_count,
+                  SUM(CASE WHEN cause='session_time_regression' THEN 1 ELSE 0 END) AS regression_count,
+                  SUM(CASE WHEN evidence_status!='verified' THEN 1 ELSE 0 END) AS uncertain_count
+             FROM lifecycle_events e JOIN sessions s USING(session_key)
+            WHERE s.run_id = ?""",
+        (run_id,),
+    ).fetchone()
     return {
         "session_count": session_count,
         "attempt_count": attempt_count,
@@ -226,6 +277,10 @@ def _run_totals(connection: sqlite3.Connection, run_id: str) -> dict[str, object
         "stored_reference_eligible_count": eligible_count,
         "exclusion_reason_counts": exclusion_counts,
         "exclusion_reasons_complete": exclusions_complete,
+        "lifecycle_event_count": int(lifecycle_counts["event_count"] or 0),
+        "flashback_event_count": int(lifecycle_counts["flashback_count"] or 0),
+        "session_time_regression_count": int(lifecycle_counts["regression_count"] or 0),
+        "uncertain_lifecycle_event_count": int(lifecycle_counts["uncertain_count"] or 0),
     }
 
 
@@ -276,6 +331,8 @@ def _list_run_sessions(
                     WHERE i.session_key = s.session_key) AS context_invalidation_count,
                   (SELECT COUNT(*) FROM lap_attempts l
                     WHERE l.session_key = s.session_key) AS attempt_count
+                  ,(SELECT COUNT(*) FROM lifecycle_events e
+                    WHERE e.session_key = s.session_key) AS lifecycle_event_count
              FROM sessions s
             WHERE s.run_id = ?
             ORDER BY s.session_uid
@@ -295,6 +352,7 @@ def _list_run_sessions(
                 "context_update_count": int(row["context_update_count"]),
                 "context_invalidation_count": int(row["context_invalidation_count"]),
                 "attempt_count": int(row["attempt_count"]),
+                "lifecycle_event_count": int(row["lifecycle_event_count"]),
             }
         )
     return {"items": items, "total": total, "limit": limit, "offset": offset}
@@ -314,6 +372,8 @@ def _list_run_attempts(
         """SELECT l.attempt_key, l.session_key, s.session_uid, l.car_index,
                   l.attempt_number, l.disposition, l.lap_time_ms, l.game_valid,
                   l.reference_eligible, l.sample_count, l.exclusion_reasons_json,
+                  l.start_frame_ordinal, l.end_frame_ordinal, l.superseded,
+                  l.lifecycle_assessed,
                   (SELECT c.context_json FROM lap_context_segments c
                     WHERE c.attempt_key = l.attempt_key AND c.ordinal = 0) AS first_context_json,
                   (SELECT COUNT(*) FROM lap_context_segments c
@@ -350,6 +410,12 @@ def _list_run_attempts(
                 ),
                 "reference_eligible": bool(row["reference_eligible"]),
                 "sample_count": row["sample_count"],
+                "start_frame_ordinal": row["start_frame_ordinal"],
+                "end_frame_ordinal": row["end_frame_ordinal"],
+                "superseded": (
+                    None if row["superseded"] is None else bool(row["superseded"])
+                ),
+                "lifecycle_assessed": bool(row["lifecycle_assessed"]),
                 "exclusion_reasons": reasons,
                 "first_context_snapshot": _json_object(row["first_context_json"]),
                 "context_segment_count": int(row["context_segment_count"]),
@@ -359,10 +425,83 @@ def _list_run_attempts(
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
+def _list_run_lifecycle_events(
+    connection: sqlite3.Connection, run_id: str, *, limit: int, offset: int
+) -> dict[str, object]:
+    total = int(
+        connection.execute(
+            """SELECT COUNT(*) FROM lifecycle_events e
+                 JOIN sessions s USING(session_key) WHERE s.run_id = ?""",
+            (run_id,),
+        ).fetchone()[0]
+    )
+    rows = connection.execute(
+        """SELECT e.*, s.session_uid FROM lifecycle_events e
+                 JOIN sessions s USING(session_key)
+                WHERE s.run_id = ?
+                ORDER BY s.session_uid, e.event_ordinal
+                LIMIT ? OFFSET ?""",
+        (run_id, limit, offset),
+    ).fetchall()
+    items = [
+        {
+            "event_ordinal": int(row["event_ordinal"]),
+            "session_uid": row["session_uid"],
+            "frame_ordinal": int(row["frame_ordinal"]),
+            "current_frame_identifier": int(row["current_frame_identifier"]),
+            "current_overall_frame_identifier": int(
+                row["current_overall_frame_identifier"]
+            ),
+            "packet_format": int(row["packet_format"]),
+            "packet_version": row["packet_version"],
+            "event_code": row["event_code"],
+            "event_kind": row["event_kind"],
+            "session_time_s": float(row["session_time_s"]),
+            "target_game_frame_identifier": row["target_game_frame_identifier"],
+            "target_session_time_s": row["target_session_time_s"],
+            "prior_session_time_s": row["prior_session_time_s"],
+            "cause": row["cause"],
+            "evidence_status": row["evidence_status"],
+            "details_hex": row["details_hex"],
+            "details_length_bytes": int(row["details_length_bytes"]),
+            "details_truncated": bool(row["details_truncated"]),
+            "duplicate_count": int(row["duplicate_count"]),
+        }
+        for row in rows
+    ]
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
 def _counter_subset(value: object, keys: tuple[str, ...]) -> dict[str, int | None] | None:
     if not isinstance(value, dict):
         return None
     return {key: _nonnegative_integer(value.get(key)) for key in keys}
+
+
+def _lifecycle_metrics(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    raw_counts = value.get("event_code_counts")
+    counts: dict[str, int] = {}
+    if isinstance(raw_counts, dict):
+        for code, count in raw_counts.items():
+            if isinstance(code, str) and (parsed := _nonnegative_integer(count)) is not None:
+                counts[code] = parsed
+    version = value.get("lifecycle_analysis_version")
+    return {
+        "analysis_version": version if isinstance(version, str) else None,
+        "event_packets_decoded": _nonnegative_integer(value.get("event_packets_decoded")),
+        "event_decode_errors": _nonnegative_integer(value.get("event_decode_errors")),
+        "lifecycle_event_count": _nonnegative_integer(value.get("lifecycle_event_count")),
+        "lifecycle_events_dropped": _nonnegative_integer(value.get("lifecycle_events_dropped")),
+        "lifecycle_reconciliation_work": _nonnegative_integer(
+            value.get("lifecycle_reconciliation_work")
+        ),
+        "lifecycle_reconciliation_truncated_session_count": _nonnegative_integer(
+            value.get("lifecycle_reconciliation_truncated_session_count")
+        ),
+        "event_code_counts": counts,
+    }
 
 
 def _nonnegative_integer(value: object) -> int | None:

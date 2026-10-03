@@ -25,6 +25,7 @@ from ..storage.import_jobs import list_recording_sources
 from ..storage.importer import DEFAULT_DATABASE, list_laps, list_sessions
 from ..storage.run_summaries import (
     DEFAULT_ATTEMPT_PAGE_SIZE,
+    DEFAULT_LIFECYCLE_EVENT_PAGE_SIZE,
     DEFAULT_RUN_PAGE_SIZE,
     DEFAULT_SESSION_PAGE_SIZE,
     MAX_CHILD_PAGE_SIZE,
@@ -32,6 +33,7 @@ from ..storage.run_summaries import (
     MAX_RUN_PAGE_SIZE,
     get_processing_run_detail,
     list_processing_run_summaries,
+    list_processing_run_lifecycle_events,
 )
 from ..storage.database import DatabaseSchemaError
 from ..tracks.model import TrackModel
@@ -180,6 +182,10 @@ class LapRecord(BaseModel):
     lap_time_ms: int | None
     game_valid: bool | None
     reference_eligible: bool
+    start_frame_ordinal: int | None
+    end_frame_ordinal: int | None
+    superseded: bool | None
+    lifecycle_assessed: bool
     start_observed: bool
     pit_encountered: bool
     sample_count: int
@@ -302,6 +308,10 @@ def create_app(
             default=DEFAULT_ATTEMPT_PAGE_SIZE, ge=1, le=MAX_CHILD_PAGE_SIZE
         ),
         attempt_offset: int = Query(default=0, ge=0, le=MAX_PAGE_OFFSET),
+        lifecycle_event_limit: int = Query(
+            default=DEFAULT_LIFECYCLE_EVENT_PAGE_SIZE, ge=1, le=MAX_CHILD_PAGE_SIZE
+        ),
+        lifecycle_event_offset: int = Query(default=0, ge=0, le=MAX_PAGE_OFFSET),
     ) -> APIResponse[dict[str, Any]]:
         result = get_processing_run_detail(
             configured_database_path,
@@ -310,6 +320,8 @@ def create_app(
             session_offset=session_offset,
             attempt_limit=attempt_limit,
             attempt_offset=attempt_offset,
+            lifecycle_event_limit=lifecycle_event_limit,
+            lifecycle_event_offset=lifecycle_event_offset,
         )
         if result is None:
             return APIResponse[dict[str, Any]](
@@ -318,6 +330,24 @@ def create_app(
         return APIResponse[dict[str, Any]](
             data=_stringify_session_uids(result)
         )
+
+    @app.get(
+        "/api/v1/processing-runs/{run_id}/lifecycle-events",
+        response_model=APIResponse[dict[str, Any]],
+    )
+    def processing_run_lifecycle_events(
+        run_id: str,
+        limit: int = Query(default=DEFAULT_LIFECYCLE_EVENT_PAGE_SIZE, ge=1, le=MAX_CHILD_PAGE_SIZE),
+        offset: int = Query(default=0, ge=0, le=MAX_PAGE_OFFSET),
+    ) -> APIResponse[dict[str, Any]]:
+        result = list_processing_run_lifecycle_events(
+            configured_database_path, run_id, limit=limit, offset=offset
+        )
+        if result is None:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="processing_run_unavailable"
+            )
+        return APIResponse[dict[str, Any]](data=_stringify_session_uids(result))
 
     @app.get("/api/v1/laps", response_model=APIResponse[list[LapRecord]])
     def laps(

@@ -14,7 +14,7 @@ from ..storage.query import (
 from .service import TimeTrialContextError, stable_time_trial_context
 
 
-REFERENCE_SELECTION_POLICY_VERSION = "tt-session-best-v1"
+REFERENCE_SELECTION_POLICY_VERSION = "tt-session-best-v2-lifecycle"
 _TRACE_IDENTITY_COLUMNS = ["frame_identifier"]
 _CAPTURE_LOSS_FIELDS = {
     "queue_dropped": "capture_queue_drops",
@@ -146,6 +146,24 @@ def select_reference(
         "car_index": target.car_index,
         "before_attempt_number": target.attempt_number,
     }
+    if not target.lifecycle_assessed or target.superseded is None:
+        return _empty_result(
+            request,
+            ReferenceSelectionStatus.NO_ELIGIBLE_REFERENCE,
+            reason="target_lifecycle_evidence_unassessed",
+            scope=scope,
+            target_reference_eligible=target.reference_eligible,
+            diagnostic_only=True,
+        )
+    if target.superseded:
+        return _empty_result(
+            request,
+            ReferenceSelectionStatus.NO_ELIGIBLE_REFERENCE,
+            reason="target_superseded_by_flashback",
+            scope=scope,
+            target_reference_eligible=target.reference_eligible,
+            diagnostic_only=True,
+        )
     if target.disposition != "completed":
         return _empty_result(
             request,
@@ -283,6 +301,10 @@ def _candidate_exclusions(
         return ["recorded_after_target"]
 
     reasons: list[str] = []
+    if not entry.lifecycle_assessed or entry.superseded is None:
+        reasons.append("lifecycle_evidence_unassessed")
+    elif entry.superseded:
+        reasons.append("superseded_by_flashback")
     if entry.disposition != "completed":
         reasons.append("not_completed")
     if entry.game_valid is not True:

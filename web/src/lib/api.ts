@@ -139,6 +139,11 @@ export interface LapRecord {
   lap_time_ms: number | null;
   game_valid: boolean | null;
   reference_eligible: boolean;
+  start_frame_ordinal: number | null;
+  end_frame_ordinal: number | null;
+  superseded: boolean | null;
+  lifecycle_assessed: boolean;
+  lifecycle_exclusions?: string[];
   start_observed: boolean;
   pit_encountered: boolean;
   sample_count: number;
@@ -375,6 +380,16 @@ export interface ProcessingRunSummary {
     import_counters: Record<string, number | null> | null;
     replay_counters: Record<string, number | null> | null;
     capture_quality_available: boolean;
+    lifecycle_evidence: {
+      analysis_version: string | null;
+      event_packets_decoded: number | null;
+      event_decode_errors: number | null;
+      lifecycle_event_count: number | null;
+      lifecycle_events_dropped: number | null;
+      lifecycle_reconciliation_work: number | null;
+      lifecycle_reconciliation_truncated_session_count: number | null;
+      event_code_counts: Record<string, number>;
+    } | null;
   };
   totals: {
     session_count: number;
@@ -384,6 +399,10 @@ export interface ProcessingRunSummary {
     stored_reference_eligible_count: number;
     exclusion_reason_counts: Array<{ reason: string; attempt_count: number }>;
     exclusion_reasons_complete: boolean;
+    lifecycle_event_count: number;
+    flashback_event_count: number;
+    session_time_regression_count: number;
+    uncertain_lifecycle_event_count: number;
   };
 }
 
@@ -403,6 +422,7 @@ export interface ProcessingRunSession {
   context_update_count: number;
   context_invalidation_count: number;
   attempt_count: number;
+  lifecycle_event_count: number;
 }
 
 export interface ProcessingRunAttempt {
@@ -420,12 +440,39 @@ export interface ProcessingRunAttempt {
   first_context_snapshot: Record<string, unknown> | null;
   context_segment_count: number;
   missing_context_segment_count: number;
+  start_frame_ordinal: number | null;
+  end_frame_ordinal: number | null;
+  superseded: boolean | null;
+  lifecycle_assessed: boolean;
+}
+
+export interface ProcessingRunLifecycleEvent {
+  event_ordinal: number;
+  session_uid: string;
+  frame_ordinal: number;
+  current_frame_identifier: number;
+  current_overall_frame_identifier: number;
+  packet_format: number;
+  packet_version: number | null;
+  event_code: string | null;
+  event_kind: string;
+  session_time_s: number;
+  target_game_frame_identifier: number | null;
+  target_session_time_s: number | null;
+  prior_session_time_s: number | null;
+  cause: string;
+  evidence_status: string;
+  details_hex: string;
+  details_length_bytes: number;
+  details_truncated: boolean;
+  duplicate_count: number;
 }
 
 export interface ProcessingRunDetail {
   summary: ProcessingRunSummary;
   sessions: ProcessingRunPage<ProcessingRunSession>;
   attempts: ProcessingRunPage<ProcessingRunAttempt>;
+  lifecycle_events: ProcessingRunPage<ProcessingRunLifecycleEvent>;
 }
 
 export interface AttemptQualityReport {
@@ -746,12 +793,22 @@ export interface Comparison {
     attempt_key: string;
     lap_time_ms: number | null;
     game_valid: boolean | null;
+    reference_eligible?: boolean;
+    superseded?: boolean | null;
+    lifecycle_assessed?: boolean;
+    exclusion_reasons?: string[];
+    lifecycle_exclusions?: string[];
     [key: string]: unknown;
   };
   reference: {
     attempt_key: string;
     lap_time_ms: number | null;
     game_valid: boolean | null;
+    reference_eligible?: boolean;
+    superseded?: boolean | null;
+    lifecycle_assessed?: boolean;
+    exclusion_reasons?: string[];
+    lifecycle_exclusions?: string[];
     [key: string]: unknown;
   };
   processing_run_evidence?: {

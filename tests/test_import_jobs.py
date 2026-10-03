@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -68,7 +69,7 @@ def test_database_schema_v4_migrates_and_backfills_job_update_time(tmp_path):
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recording_jobs'"
         ).fetchone()
 
-    assert version == 6
+    assert version == 8
     assert recording_table is not None
     assert "updated_at_utc" in columns
     assert updated_at == "2026-10-01T01:02:03.000000+00:00"
@@ -89,8 +90,39 @@ def test_database_schema_v5_migrates_to_recording_jobs(tmp_path):
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recording_jobs'"
         ).fetchone()
 
-    assert version == 6
+    assert version == 8
     assert recording_table is not None
+
+
+def test_database_schema_v7_migrates_bounded_lifecycle_metadata(tmp_path):
+    database = tmp_path / "legacy-v7.sqlite3"
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        """
+        CREATE TABLE schema_info (singleton INTEGER PRIMARY KEY, version INTEGER NOT NULL);
+        INSERT INTO schema_info(singleton, version) VALUES (1, 7);
+        CREATE TABLE lifecycle_events (
+            event_key TEXT PRIMARY KEY,
+            session_key TEXT NOT NULL,
+            event_ordinal INTEGER NOT NULL,
+            frame_ordinal INTEGER NOT NULL,
+            details_hex TEXT NOT NULL
+        );
+        """
+    )
+    connection.close()
+
+    with Database(database) as db:
+        version = db.connection.execute(
+            "SELECT version FROM schema_info WHERE singleton=1"
+        ).fetchone()[0]
+        columns = {
+            row["name"]
+            for row in db.connection.execute("PRAGMA table_info(lifecycle_events)")
+        }
+
+    assert version == 8
+    assert {"details_length_bytes", "details_truncated"} <= columns
 
 
 def test_recording_sources_have_stable_opaque_ids_and_never_expose_paths(tmp_path):

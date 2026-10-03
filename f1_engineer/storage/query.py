@@ -65,6 +65,8 @@ class StoredAttemptTrace:
     attempt_number: int = 1
     start_observed: bool = True
     pit_encountered: bool = False
+    superseded: bool | None = None
+    lifecycle_assessed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +90,8 @@ class StoredAttemptInventoryEntry:
     trace_schema_version: int | None
     quality: Mapping[str, object]
     context_segments: tuple[tuple[int, Mapping[str, object] | None], ...]
+    superseded: bool | None = None
+    lifecycle_assessed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +132,7 @@ def load_attempt_trace(
             """SELECT l.attempt_key, l.car_index, l.attempt_number,
                       l.disposition, l.lap_time_ms, l.start_observed, l.pit_encountered,
                       l.game_valid, l.reference_eligible, l.exclusion_reasons_json,
+                      l.superseded, l.lifecycle_assessed,
                       s.session_uid, s.run_id, t.relative_path, t.row_count,
                       t.sha256, t.quality_json, t.schema_version
                  FROM lap_attempts l JOIN sessions s USING(session_key)
@@ -227,6 +232,8 @@ def load_attempt_trace(
         attempt_number=row["attempt_number"],
         start_observed=bool(row["start_observed"]),
         pit_encountered=bool(row["pit_encountered"]),
+        superseded=None if row["superseded"] is None else bool(row["superseded"]),
+        lifecycle_assessed=bool(row["lifecycle_assessed"]),
     )
 
 
@@ -250,7 +257,7 @@ def load_reference_inventory(
             """SELECT l.attempt_key, l.attempt_number, l.car_index, l.disposition,
                       l.lap_time_ms, l.game_valid, l.reference_eligible,
                       l.start_observed, l.pit_encountered, l.sample_count,
-                      l.exclusion_reasons_json,
+                      l.exclusion_reasons_json, l.superseded, l.lifecycle_assessed,
                       s.run_id, s.session_uid, t.ready, t.row_count, t.sha256, t.schema_version,
                       t.quality_json
                  FROM lap_attempts l JOIN sessions s USING(session_key)
@@ -307,6 +314,8 @@ def load_reference_inventory(
             trace_schema_version=row["schema_version"],
             quality=json.loads(row["quality_json"]) if row["quality_json"] else {},
             context_segments=tuple(contexts_by_attempt.get(row["attempt_key"], ())),
+            superseded=None if row["superseded"] is None else bool(row["superseded"]),
+            lifecycle_assessed=bool(row["lifecycle_assessed"]),
         )
         for row in rows
     )

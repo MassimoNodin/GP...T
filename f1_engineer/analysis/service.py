@@ -225,7 +225,11 @@ def compare_attempts(
         or target.game_valid is not True
         or reference.game_valid is not True
         or not target.reference_eligible
-        or not reference.reference_eligible,
+        or not reference.reference_eligible
+        or target.superseded is True
+        or reference.superseded is True
+        or not target.lifecycle_assessed
+        or not reference.lifecycle_assessed,
         "policy_limitations": (
             [
                 "fuel_load_uncontrolled",
@@ -548,6 +552,15 @@ def _attempt_summary(attempt: StoredAttemptTrace) -> dict[str, object]:
         "lap_time_ms": attempt.lap_time_ms,
         "game_valid": attempt.game_valid,
         "reference_eligible": attempt.reference_eligible,
+        "superseded": attempt.superseded,
+        "lifecycle_assessed": attempt.lifecycle_assessed,
+        "lifecycle_exclusions": (
+            ["superseded_by_flashback"]
+            if attempt.superseded is True
+            else ["lifecycle_evidence_unassessed"]
+            if not attempt.lifecycle_assessed or attempt.superseded is None
+            else []
+        ),
         "exclusion_reasons": list(attempt.exclusion_reasons),
         "trace_sha256": attempt.trace_sha256,
         "trace_schema_version": attempt.trace_schema_version,

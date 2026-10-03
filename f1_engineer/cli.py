@@ -37,6 +37,7 @@ from .storage.importer import (
     list_laps,
     list_sessions,
 )
+from .storage.run_summaries import list_processing_run_lifecycle_events
 from .udp.models import DecodedPacket
 from .udp.source import ReplaySource, UDPSource
 from .tracks.registry import resolve_track_model
@@ -307,6 +308,20 @@ def _laps(args: argparse.Namespace) -> int:
     return 0
 
 
+def _lifecycle(args: argparse.Namespace) -> int:
+    result = list_processing_run_lifecycle_events(
+        args.database,
+        args.run_id,
+        limit=args.limit,
+        offset=args.offset,
+    )
+    if result is None:
+        _json_line({"status": "unavailable", "reason": "processing_run_unavailable"})
+        return 1
+    _json_line(result)
+    return 0
+
+
 def _lap(args: argparse.Namespace) -> int:
     result = get_lap(args.database, args.attempt_key)
     if result is None:
@@ -523,6 +538,15 @@ def build_parser() -> argparse.ArgumentParser:
     laps.add_argument("--run-id", help="filter to one processing run")
     laps.add_argument("--session-uid", help="filter by EA session UID")
     laps.set_defaults(handler=_laps)
+
+    lifecycle = commands.add_parser(
+        "lifecycle", help="list persisted session and flashback lifecycle evidence"
+    )
+    lifecycle.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
+    lifecycle.add_argument("--run-id", required=True, help="processing run ID")
+    lifecycle.add_argument("--limit", type=int, default=50, help="page size (1-100)")
+    lifecycle.add_argument("--offset", type=int, default=0, help="event ordinal page offset")
+    lifecycle.set_defaults(handler=_lifecycle)
 
     lap = commands.add_parser("lap", help="inspect a lap attempt and its trace")
     lap.add_argument("attempt_key", help="attempt key printed by the laps command")

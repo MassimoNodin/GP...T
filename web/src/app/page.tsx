@@ -41,6 +41,7 @@ type SearchParams = {
   run_offset?: string | string[];
   session_offset?: string | string[];
   attempt_offset?: string | string[];
+  lifecycle_event_offset?: string | string[];
 };
 
 type Series = {
@@ -70,10 +71,12 @@ export default async function Home({
     run_offset: firstParam(rawParams.run_offset),
     session_offset: firstParam(rawParams.session_offset),
     attempt_offset: firstParam(rawParams.attempt_offset),
+    lifecycle_event_offset: firstParam(rawParams.lifecycle_event_offset),
   };
   const runOffset = pageOffset(params.run_offset);
   const sessionOffset = pageOffset(params.session_offset);
   const attemptOffset = pageOffset(params.attempt_offset);
+  const lifecycleEventOffset = pageOffset(params.lifecycle_event_offset);
   const selectedRunId = /^[a-f0-9]{64}$/.test(params.run_id ?? "")
     ? params.run_id!
     : null;
@@ -82,6 +85,8 @@ export default async function Home({
     session_offset: String(sessionOffset),
     attempt_limit: "20",
     attempt_offset: String(attemptOffset),
+    lifecycle_event_limit: "50",
+    lifecycle_event_offset: String(lifecycleEventOffset),
   });
   const [
     sessionResponse,
@@ -252,6 +257,39 @@ export default async function Home({
     comparisonResponse?.status === "ok" ? comparisonResponse.data : null;
   const reference =
     completed.find((lap) => lap.attempt_key === referenceKey) ?? null;
+  const lifecycleReasonsFor = (
+    ...sources: Array<{
+      exclusion_reasons?: string[];
+      lifecycle_exclusions?: string[];
+      superseded?: boolean | null;
+      lifecycle_assessed?: boolean;
+    } | null | undefined>
+  ) => {
+    const reasons: string[] = [];
+    for (const source of sources) {
+      reasons.push(
+        ...(source?.exclusion_reasons ?? []).filter((value) =>
+          value === "superseded_by_flashback" || value === "lifecycle_evidence_unassessed",
+        ),
+        ...(source?.lifecycle_exclusions ?? []),
+      );
+      if (source?.superseded === true) reasons.push("superseded_by_flashback");
+      if (source?.lifecycle_assessed === false || source?.superseded === null) {
+        reasons.push("lifecycle_evidence_unassessed");
+      }
+    }
+    return Array.from(new Set(reasons));
+  };
+  const lifecycleComparisonStatuses = [
+    {
+      side: "target",
+      reasons: lifecycleReasonsFor(target, comparison?.target),
+    },
+    {
+      side: "reference",
+      reasons: lifecycleReasonsFor(reference, comparison?.reference),
+    },
+  ].filter((item) => item.reasons.length > 0);
   const staleManualReference =
     Boolean(params.reference_choice) &&
     params.reference_choice !== "session_best" &&
@@ -439,6 +477,7 @@ export default async function Home({
           runOffset={runOffset}
           sessionOffset={sessionOffset}
           attemptOffset={attemptOffset}
+          lifecycleEventOffset={lifecycleEventOffset}
         />
 
         {apiUnavailable ? (
@@ -856,6 +895,14 @@ export default async function Home({
                         Diagnostic comparison · one or both laps are
                         game-invalid. This describes recorded telemetry and is
                         not coaching.
+                      </span>
+                    </div>
+                  ) : null}
+                  {lifecycleComparisonStatuses.length ? (
+                    <div className="diagnostic-banner">
+                      <b>i</b>
+                      <span>
+                        Diagnostic comparison only · lifecycle evidence excludes this pair from automatic reference selection: {lifecycleComparisonStatuses.map((item) => `${item.side}: ${item.reasons.map(reason).join(" · ")}`).join("; ")}.
                       </span>
                     </div>
                   ) : null}

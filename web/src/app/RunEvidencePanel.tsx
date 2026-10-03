@@ -3,6 +3,7 @@ import type {
   ProcessingRunAttempt,
   ProcessingRunDetail,
   ProcessingRunPage,
+  ProcessingRunLifecycleEvent,
   ProcessingRunSession,
   ProcessingRunSummary,
 } from "@/lib/api";
@@ -14,6 +15,7 @@ export default function RunEvidencePanel({
   runOffset,
   sessionOffset,
   attemptOffset,
+  lifecycleEventOffset,
 }: {
   runsPage: ProcessingRunPage<ProcessingRunSummary> | null;
   detail: ProcessingRunDetail | null;
@@ -21,6 +23,7 @@ export default function RunEvidencePanel({
   runOffset: number;
   sessionOffset: number;
   attemptOffset: number;
+  lifecycleEventOffset: number;
 }) {
   return (
     <section className="run-evidence panel" aria-labelledby="run-evidence-title">
@@ -94,6 +97,7 @@ export default function RunEvidencePanel({
           runOffset={runOffset}
           sessionOffset={sessionOffset}
           attemptOffset={attemptOffset}
+          lifecycleEventOffset={lifecycleEventOffset}
         />
       ) : null}
     </section>
@@ -105,18 +109,21 @@ function RunDetail({
   runOffset,
   sessionOffset,
   attemptOffset,
+  lifecycleEventOffset,
 }: {
   detail: ProcessingRunDetail;
   runOffset: number;
   sessionOffset: number;
   attemptOffset: number;
+  lifecycleEventOffset: number;
 }) {
-  const { summary, sessions, attempts } = detail;
+  const { summary, sessions, attempts, lifecycle_events: lifecycleEvents } = detail;
   const { capture, processing, totals } = summary;
   const recording = capture.recording_counters;
   const observer = capture.recording_observer_counters;
   const imported = processing.import_counters;
   const replay = processing.replay_counters;
+  const lifecycle = processing.lifecycle_evidence;
 
   return (
     <div className="run-detail">
@@ -160,6 +167,22 @@ function RunDetail({
           <EvidenceValue label="Car Status decode errors" value={imported?.car_status_decode_errors} />
           <EvidenceValue label="Telemetry join gaps" value={imported?.missing_car_telemetry_samples} />
         </EvidenceGroup>
+        <EvidenceGroup title="Event lifecycle decoding">
+          <EvidenceValue label="Event packets" value={lifecycle?.event_packets_decoded} />
+          <EvidenceValue label="Decode errors" value={lifecycle?.event_decode_errors} />
+          <EvidenceValue label="Persisted lifecycle records" value={lifecycle?.lifecycle_event_count} />
+          <EvidenceValue label="Dropped lifecycle records" value={lifecycle?.lifecycle_events_dropped} />
+          <EvidenceValue label="Reconciliation work" value={lifecycle?.lifecycle_reconciliation_work} />
+          <EvidenceValue label="Reconciliation truncated sessions" value={lifecycle?.lifecycle_reconciliation_truncated_session_count} />
+          <div>
+            <dt>Event codes</dt>
+            <dd>
+              {lifecycle?.event_code_counts && Object.keys(lifecycle.event_code_counts).length
+                ? Object.entries(lifecycle.event_code_counts).map(([code, count]) => `${code} ${count.toLocaleString()}`).join(" · ")
+                : "unknown"}
+            </dd>
+          </div>
+        </EvidenceGroup>
         <EvidenceGroup title="Stored lap evidence">
           <EvidenceValue label="Sessions" value={totals.session_count} />
           <EvidenceValue label="Attempts" value={totals.attempt_count} />
@@ -176,6 +199,10 @@ function RunDetail({
           <EvidenceValue label="Game invalid" value={totals.game_validity_counts.invalid} />
           <EvidenceValue label="Validity unknown" value={totals.game_validity_counts.unknown} />
           <EvidenceValue label="Stored eligible flags" value={totals.stored_reference_eligible_count} />
+          <EvidenceValue label="Lifecycle events" value={totals.lifecycle_event_count} />
+          <EvidenceValue label="Flashback boundaries" value={totals.flashback_event_count} />
+          <EvidenceValue label="Time regressions" value={totals.session_time_regression_count} />
+          <EvidenceValue label="Uncertain events" value={totals.uncertain_lifecycle_event_count} />
         </EvidenceGroup>
       </div>
 
@@ -263,6 +290,34 @@ function RunDetail({
             }
           />
         </section>
+
+        <section className="run-page-group" aria-labelledby="run-lifecycle-title">
+          <div className="run-page-heading">
+            <div>
+              <h4 id="run-lifecycle-title">Session lifecycle evidence</h4>
+              <p>Event codes and rewind boundaries retain a bounded details prefix, original byte length, source frames, and monotonic frame ordinals.</p>
+            </div>
+            <span>{lifecycleEvents.total.toLocaleString()} total</span>
+          </div>
+          {lifecycleEvents.items.length === 0 ? (
+            <p className="run-evidence-empty">No lifecycle events or rewind boundaries were stored for this run.</p>
+          ) : (
+            <ul className="run-link-list">
+              {lifecycleEvents.items.map((event) => (
+                <LifecycleEventRow key={`${event.session_uid}:${event.event_ordinal}`} event={event} />
+              ))}
+            </ul>
+          )}
+          <PageNavigation
+            label="Lifecycle events"
+            offset={lifecycleEvents.offset}
+            limit={lifecycleEvents.limit}
+            total={lifecycleEvents.total}
+            hrefForOffset={(offset) =>
+              runUrl(summary.run_id, runOffset, sessionOffset, attemptOffset, offset)
+            }
+          />
+        </section>
       </div>
     </div>
   );
@@ -286,6 +341,11 @@ function SessionRow({ session }: { session: ProcessingRunSession }) {
 }
 
 function AttemptRow({ attempt }: { attempt: ProcessingRunAttempt }) {
+  const lifecycleStatus = !attempt.lifecycle_assessed || attempt.superseded === null
+    ? "lifecycle unassessed"
+    : attempt.superseded
+      ? "superseded by flashback"
+      : "lifecycle assessed";
   return (
     <li className="run-link-item">
       <div>
@@ -293,7 +353,7 @@ function AttemptRow({ attempt }: { attempt: ProcessingRunAttempt }) {
           Attempt {attempt.attempt_number} · {humanize(attempt.disposition)} · {formatLapTime(attempt.lap_time_ms)}
         </strong>
         <span>
-          Game {attempt.game_valid === true ? "valid" : attempt.game_valid === false ? "invalid" : "validity unknown"} · stored reference eligibility {attempt.reference_eligible ? "eligible" : "not eligible"}
+          Game {attempt.game_valid === true ? "valid" : attempt.game_valid === false ? "invalid" : "validity unknown"} · {lifecycleStatus} · stored reference eligibility {attempt.reference_eligible ? "eligible" : "not eligible"}
         </span>
         <small>
           {contextLabel(attempt.first_context_snapshot, "First context snapshot")} · {attempt.context_segment_count} context segments · {attempt.missing_context_segment_count} missing context segments
@@ -309,6 +369,27 @@ function AttemptRow({ attempt }: { attempt: ProcessingRunAttempt }) {
       >
         Open attempt ↗
       </a>
+    </li>
+  );
+}
+
+function LifecycleEventRow({ event }: { event: ProcessingRunLifecycleEvent }) {
+  const target = event.target_session_time_s === null
+    ? "target unavailable"
+    : `target ${event.target_session_time_s.toFixed(3)} s · game frame ${event.target_game_frame_identifier ?? "unknown"}`;
+  return (
+    <li className="run-link-item">
+      <div>
+        <strong>
+          {event.event_code ?? humanize(event.event_kind)} · {humanize(event.cause)} · session {event.session_uid}
+        </strong>
+        <span>
+          {humanize(event.evidence_status)} · header frame {event.current_frame_identifier} · overall frame {event.current_overall_frame_identifier} · ordinal {event.frame_ordinal} · session time {event.session_time_s.toFixed(3)} s
+        </span>
+        <small>
+          {target} · {event.duplicate_count > 1 ? `${event.duplicate_count} matching signals · ` : ""}raw details prefix {event.details_hex || "empty"} · {event.details_length_bytes} bytes{event.details_truncated ? " · truncated" : ""}
+        </small>
+      </div>
     </li>
   );
 }
@@ -364,12 +445,19 @@ function PageNavigation({
   );
 }
 
-function runUrl(runId: string, runOffset: number, sessionOffset: number, attemptOffset: number) {
+function runUrl(
+  runId: string,
+  runOffset: number,
+  sessionOffset: number,
+  attemptOffset: number,
+  lifecycleEventOffset = 0,
+) {
   const params = new URLSearchParams({
     run_id: runId,
     run_offset: String(runOffset),
     session_offset: String(sessionOffset),
     attempt_offset: String(attemptOffset),
+    lifecycle_event_offset: String(lifecycleEventOffset),
   });
   return `/?${params.toString()}`;
 }

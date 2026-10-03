@@ -741,7 +741,7 @@ def test_2026_import_persists_motion_and_wide_participant_snapshot(tmp_path) -> 
     assert imported.player_motion_samples == 2
     assert imported.missing_player_motion_samples == 0
     sessions = list_sessions(database_path)
-    assert sessions[0]["pipeline_version"] == "player-traces-v11-2026-car-status"
+    assert sessions[0]["pipeline_version"] == "player-traces-v12-event-lifecycle"
     attempts = list_laps(database_path)
     complete = next(attempt for attempt in attempts if attempt["disposition"] == "completed")
     stored = load_attempt_trace(
@@ -883,7 +883,7 @@ def test_2026_capture_import_query_and_reimport_are_stable(tmp_path) -> None:
     session = list_sessions(database_path)[0]
     assert session["packet_format"] == 2026
     assert session["context"]["track_name"] == "Madrid"
-    assert session["pipeline_version"] == "player-traces-v11-2026-car-status"
+    assert session["pipeline_version"] == "player-traces-v12-event-lifecycle"
     attempts = list_laps(database_path)
     complete = next(
         attempt for attempt in attempts if attempt["disposition"] == "completed"

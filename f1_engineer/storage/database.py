@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 8
 
 
 class DatabaseSchemaError(ValueError):
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS schema_info (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     version INTEGER NOT NULL
 );
-INSERT OR IGNORE INTO schema_info(singleton, version) VALUES (1, 6);
+INSERT OR IGNORE INTO schema_info(singleton, version) VALUES (1, 8);
 
 CREATE TABLE IF NOT EXISTS captures (
     capture_sha256 TEXT PRIMARY KEY,
@@ -49,6 +49,30 @@ CREATE TABLE IF NOT EXISTS sessions (
     packet_format INTEGER NOT NULL,
     context_json TEXT,
     UNIQUE(run_id, session_uid)
+);
+
+CREATE TABLE IF NOT EXISTS lifecycle_events (
+    event_key TEXT PRIMARY KEY,
+    session_key TEXT NOT NULL REFERENCES sessions(session_key) ON DELETE CASCADE,
+    event_ordinal INTEGER NOT NULL,
+    frame_ordinal INTEGER NOT NULL,
+    current_frame_identifier INTEGER NOT NULL,
+    current_overall_frame_identifier INTEGER NOT NULL,
+    packet_format INTEGER NOT NULL,
+    packet_version INTEGER,
+    event_code TEXT,
+    event_kind TEXT NOT NULL,
+    session_time_s REAL NOT NULL,
+    target_game_frame_identifier INTEGER,
+    target_session_time_s REAL,
+    prior_session_time_s REAL,
+    cause TEXT NOT NULL,
+    evidence_status TEXT NOT NULL,
+    details_hex TEXT NOT NULL,
+    details_length_bytes INTEGER NOT NULL DEFAULT 0,
+    details_truncated INTEGER NOT NULL DEFAULT 0 CHECK (details_truncated IN (0, 1)),
+    duplicate_count INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(session_key, event_ordinal)
 );
 
 CREATE TABLE IF NOT EXISTS session_contexts (
@@ -93,7 +117,18 @@ CREATE TABLE IF NOT EXISTS lap_attempts (
     reference_eligible INTEGER NOT NULL,
     exclusion_reasons_json TEXT NOT NULL,
     attempt_json TEXT NOT NULL,
+    start_frame_ordinal INTEGER,
+    end_frame_ordinal INTEGER,
+    superseded INTEGER CHECK (superseded IN (0, 1) OR superseded IS NULL),
+    lifecycle_assessed INTEGER NOT NULL DEFAULT 0 CHECK (lifecycle_assessed IN (0, 1)),
     UNIQUE(session_key, car_index, attempt_number)
+);
+
+CREATE TABLE IF NOT EXISTS attempt_lifecycle_links (
+    attempt_key TEXT NOT NULL REFERENCES lap_attempts(attempt_key) ON DELETE CASCADE,
+    event_key TEXT NOT NULL REFERENCES lifecycle_events(event_key) ON DELETE CASCADE,
+    relation TEXT NOT NULL,
+    PRIMARY KEY(attempt_key, event_key, relation)
 );
 
 CREATE TABLE IF NOT EXISTS lap_context_segments (
@@ -164,6 +199,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_recording_job
 CREATE INDEX IF NOT EXISTS idx_processing_runs_capture ON processing_runs(capture_sha256);
 CREATE INDEX IF NOT EXISTS idx_sessions_uid ON sessions(session_uid);
 CREATE INDEX IF NOT EXISTS idx_lap_attempts_session ON lap_attempts(session_key, attempt_number);
+CREATE INDEX IF NOT EXISTS idx_lifecycle_events_session_ordinal
+    ON lifecycle_events(session_key, event_ordinal);
+CREATE INDEX IF NOT EXISTS idx_lifecycle_events_session_frame
+    ON lifecycle_events(session_key, frame_ordinal);
+CREATE INDEX IF NOT EXISTS idx_attempt_lifecycle_event ON attempt_lifecycle_links(event_key);
 """
 
 
@@ -263,6 +303,42 @@ class Database:
             self.connection.execute("UPDATE schema_info SET version = 6 WHERE singleton = 1")
             self.connection.commit()
             version = 6
+        if version == 6:
+            columns = {
+                row["name"]
+                for row in self.connection.execute("PRAGMA table_info(lap_attempts)")
+            }
+            additions = (
+                ("start_frame_ordinal", "INTEGER"),
+                ("end_frame_ordinal", "INTEGER"),
+                ("superseded", "INTEGER"),
+                ("lifecycle_assessed", "INTEGER NOT NULL DEFAULT 0"),
+            )
+            for name, declaration in additions:
+                if name not in columns:
+                    self.connection.execute(
+                        f"ALTER TABLE lap_attempts ADD COLUMN {name} {declaration}"
+                    )
+            self.connection.execute("UPDATE schema_info SET version = 7 WHERE singleton = 1")
+            self.connection.commit()
+            version = 7
+        if version == 7:
+            columns = {
+                row["name"]
+                for row in self.connection.execute("PRAGMA table_info(lifecycle_events)")
+            }
+            additions = (
+                ("details_length_bytes", "INTEGER NOT NULL DEFAULT 0"),
+                ("details_truncated", "INTEGER NOT NULL DEFAULT 0"),
+            )
+            for name, declaration in additions:
+                if name not in columns:
+                    self.connection.execute(
+                        f"ALTER TABLE lifecycle_events ADD COLUMN {name} {declaration}"
+                    )
+            self.connection.execute("UPDATE schema_info SET version = 8 WHERE singleton = 1")
+            self.connection.commit()
+            version = 8
         if version != SCHEMA_VERSION:
             self.connection.close()
             raise ValueError(f"database schema {version} is not supported")

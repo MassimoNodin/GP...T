@@ -76,6 +76,18 @@ def _advance(
     )
 
 
+def _flashback_packet(*, frame: int, sequence: int, session_time: float, target_time: float):
+    details = struct.pack("<If", frame - 5, target_time) + b"\x00" * 4
+    return make_datagram(
+        packet_id=3,
+        session_uid=SESSION_UID,
+        frame=frame,
+        session_time=session_time,
+        body=b"FLBK" + details,
+        sequence=sequence,
+    )
+
+
 def _process(observer: _AcquisitionObserver, raw):
     observer.process(replace(raw, monotonic_ns=time.monotonic_ns()))
 
@@ -243,6 +255,106 @@ def test_live_monitor_expires_sample_using_monotonic_receive_time():
     assert at_limit["age_ms"] == 500
     assert after_limit["status"] == "stale"
     assert after_limit["age_ms"] == 501
+
+
+def test_live_monitor_clears_and_quarantines_flashback_frame_then_recovers():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(observer, frame=100)
+    assert observer.live_telemetry_snapshot()["status"] == "fresh"
+
+    _process(observer, _telemetry_packet(frame=101, sequence=20))
+    _process(
+        observer,
+        _lap_packet(
+            frame=101,
+            lap_number=3,
+            distance_m=140.0,
+            session_time=12.1,
+            current_lap_time_ms=35_000,
+            sequence=21,
+        ),
+    )
+    _process(observer, _flashback_packet(frame=101, sequence=22, session_time=12.1, target_time=5.0))
+    _process(observer, _advance(102, 23))
+
+    live = observer.live_telemetry_snapshot()
+    assert live["status"] == "unavailable"
+    assert live["reason"] == "flashback_boundary"
+    assert live["speed_kph"] is None
+
+    _publish_frame(observer, frame=103, sequence=30)
+    assert observer.live_telemetry_snapshot()["status"] == "fresh"
+
+
+def test_live_monitor_regression_guard_ignores_event_only_frames():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(observer, frame=100)
+
+    _process(observer, _flashback_packet(frame=101, sequence=20, session_time=12.1, target_time=5.0))
+    _process(observer, make_datagram(
+        packet_id=3,
+        session_uid=SESSION_UID,
+        frame=102,
+        session_time=10.0,
+        body=b"SSTA" + b"\x00" * 12,
+        sequence=21,
+    ))
+    _process(observer, _advance(103, 22))
+    assert observer.live_telemetry_snapshot()["reason"] == "flashback_boundary"
+
+    _process(
+        observer,
+        _telemetry_packet(frame=104, sequence=23),
+    )
+    _process(
+        observer,
+        _lap_packet(
+            frame=104,
+            lap_number=3,
+            distance_m=150.0,
+            session_time=5.1,
+            current_lap_time_ms=200,
+            sequence=24,
+        ),
+    )
+    _process(observer, _advance(105, 25))
+
+    assert observer.live_telemetry_snapshot()["status"] == "fresh"
+
+
+def test_live_monitor_detects_clock_regression_between_same_frame_updates():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(observer, frame=100)
+
+    _process(observer, _telemetry_packet(frame=101, sequence=20))
+    _process(
+        observer,
+        _lap_packet(
+            frame=101,
+            lap_number=3,
+            distance_m=130.0,
+            session_time=12.1,
+            current_lap_time_ms=35_000,
+            sequence=21,
+        ),
+    )
+    _process(
+        observer,
+        _lap_packet(
+            frame=101,
+            lap_number=3,
+            distance_m=140.0,
+            session_time=11.9,
+            current_lap_time_ms=35_100,
+            sequence=22,
+        ),
+    )
+    _process(observer, _advance(102, 23))
+
+    live = observer.live_telemetry_snapshot()
+    assert live["status"] == "unavailable"
+    assert live["reason"] == "session_time_regression"
+    assert live["speed_kph"] is None
 
 
 def test_live_monitor_resets_on_player_and_session_change():

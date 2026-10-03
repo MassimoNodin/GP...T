@@ -10,13 +10,15 @@ from typing import Any, Callable
 from ..errors import ProtocolError
 from ..pipeline import TelemetryPipeline
 from ..recording.capture import CaptureReader
+from ..sessions.lifecycle import LifecycleEvent, reconcile_attempt_lifecycle
 from ..telemetry.canonical import CarSample
 from .database import Database
 from .lock import ImportRunLock
 from .parquet import ParquetTraceWriter, TRACE_SCHEMA_VERSION, sha256_file
 
 
-PIPELINE_VERSION = "player-traces-v11-2026-car-status"
+PIPELINE_VERSION = "player-traces-v12-event-lifecycle"
+MAX_STORED_LIFECYCLE_EVENTS = 100_000
 DEFAULT_DATABASE = Path("data") / "f1-engineer.sqlite3"
 IMPORT_CONFIG = {"max_open_frames": 256, "reorder_window_frames": 3}
 
@@ -49,6 +51,10 @@ class ImportSummary:
     missing_player_car_status_samples: int = 0
     import_late_packets_ignored: int = 0
     import_frame_overflow_packets_dropped: int = 0
+    event_packets: int = 0
+    event_decode_errors: int = 0
+    lifecycle_events: int = 0
+    lifecycle_events_dropped: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -300,6 +306,9 @@ def import_capture(
             context_invalidations: dict[tuple[int, int], str] = {}
             participant_updates: dict[tuple[int, int, int], tuple[int, dict[str, object]]] = {}
             attempts: list[Any] = []
+            lifecycle_events: list[LifecycleEvent] = []
+            truncated_lifecycle_sessions: set[int] = set()
+            importer_lifecycle_events_dropped = 0
             malformed_packets = 0
             packet_count = 0
             lap_data_error_count = 0
@@ -331,6 +340,12 @@ def import_capture(
                         continue
                     attempts.extend(result.lap_attempts)
                     trace_manager.consume(result.car_samples, result.lap_attempts)
+                    for lifecycle_event in result.lifecycle_events:
+                        if len(lifecycle_events) < MAX_STORED_LIFECYCLE_EVENTS:
+                            lifecycle_events.append(lifecycle_event)
+                        else:
+                            truncated_lifecycle_sessions.add(lifecycle_event.session_uid)
+                            importer_lifecycle_events_dropped += 1
                     lap_data_error_count += len(result.lap_data_errors)
                     car_telemetry_error_count += len(result.car_telemetry_errors)
                     participant_error_count += int(result.participants_error is not None)
@@ -397,6 +412,15 @@ def import_capture(
                 flushed = pipeline.finish_with_outputs()
                 attempts.extend(flushed.lap_attempts)
                 trace_manager.consume(flushed.car_samples, flushed.lap_attempts)
+                for lifecycle_event in flushed.lifecycle_events:
+                    if len(lifecycle_events) < MAX_STORED_LIFECYCLE_EVENTS:
+                        lifecycle_events.append(lifecycle_event)
+                    else:
+                        truncated_lifecycle_sessions.add(lifecycle_event.session_uid)
+                        importer_lifecycle_events_dropped += 1
+                truncated_lifecycle_sessions.update(
+                    pipeline.lifecycle_events_truncated_session_uids
+                )
                 pipeline.laps.drain_attempts()
                 lap_data_error_count += len(flushed.lap_data_errors)
                 car_telemetry_error_count += len(flushed.car_telemetry_errors)
@@ -417,13 +441,26 @@ def import_capture(
             # before replay.
             _assert_capture_unchanged(capture_path, capture_hash, byte_size)
 
-            attempts = tuple(attempts)
+            (
+                attempts,
+                lifecycle_links,
+                lifecycle_reconciliation_truncated_sessions,
+                lifecycle_reconciliation_work,
+            ) = reconcile_attempt_lifecycle(
+                tuple(attempts),
+                tuple(lifecycle_events),
+                truncated_session_uids=frozenset(truncated_lifecycle_sessions),
+            )
+            truncated_lifecycle_sessions.update(
+                lifecycle_reconciliation_truncated_sessions
+            )
             attempt_keys = {
                 attempt.attempt_id: _attempt_key(
                     run_id, attempt.session_uid, attempt.car_index, attempt.attempt_number
                 )
                 for attempt in attempts
             }
+            attempts_by_id = {attempt.attempt_id: attempt for attempt in attempts}
             trace_results = trace_manager.results
             sample_count = sum(result[1] for result in trace_results.values())
             missing_samples = sum(
@@ -449,6 +486,20 @@ def import_capture(
                 "missing_player_car_status_sample_count": pipeline.missing_player_car_status_samples,
                 "import_late_packets_ignored": pipeline.frames.late_packets_ignored,
                 "import_frame_overflow_packets_dropped": pipeline.frames.overflow_packets_dropped,
+                "lifecycle_analysis_version": "rewind-lifecycle-v1",
+                "event_packets_decoded": pipeline.event_packets_decoded,
+                "event_decode_errors": pipeline.event_decode_error_count,
+                "event_code_counts": dict(sorted(pipeline.event_code_counts.items())),
+                "lifecycle_event_count": len(lifecycle_events),
+                "lifecycle_events_dropped": pipeline.lifecycle_events_dropped
+                + importer_lifecycle_events_dropped,
+                "lifecycle_evidence_truncated_session_count": len(
+                    truncated_lifecycle_sessions
+                ),
+                "lifecycle_reconciliation_work": lifecycle_reconciliation_work,
+                "lifecycle_reconciliation_truncated_session_count": len(
+                    lifecycle_reconciliation_truncated_sessions
+                ),
             }
 
             import_summary = ImportSummary(
@@ -478,6 +529,11 @@ def import_capture(
                 missing_player_car_status_samples=pipeline.missing_player_car_status_samples,
                 import_late_packets_ignored=pipeline.frames.late_packets_ignored,
                 import_frame_overflow_packets_dropped=pipeline.frames.overflow_packets_dropped,
+                event_packets=pipeline.event_packets_decoded,
+                event_decode_errors=pipeline.event_decode_error_count,
+                lifecycle_events=len(lifecycle_events),
+                lifecycle_events_dropped=pipeline.lifecycle_events_dropped
+                + importer_lifecycle_events_dropped,
             )
             metrics_json = _json(
                 {"capture_quality": capture_quality, "summary": import_summary.to_dict()}
@@ -532,6 +588,47 @@ def import_capture(
                             _json(participant),
                         ),
                     )
+                lifecycle_event_keys: dict[tuple[int, int], str] = {}
+                for event in sorted(
+                    lifecycle_events,
+                    key=lambda item: (item.session_uid, item.event_ordinal),
+                ):
+                    if event.session_uid not in sessions:
+                        continue
+                    event_key = f"{run_id}:{event.session_uid}:event:{event.event_ordinal}"
+                    lifecycle_event_keys[(event.session_uid, event.event_ordinal)] = event_key
+                    connection.execute(
+                        """INSERT INTO lifecycle_events(event_key,session_key,event_ordinal,
+                                  frame_ordinal,current_frame_identifier,
+                                  current_overall_frame_identifier,packet_format,packet_version,
+                                  event_code,event_kind,session_time_s,
+                                  target_game_frame_identifier,target_session_time_s,
+                                  prior_session_time_s,cause,evidence_status,details_hex,
+                                  details_length_bytes,details_truncated,duplicate_count)
+                             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            event_key,
+                            f"{run_id}:{event.session_uid}",
+                            event.event_ordinal,
+                            event.frame_ordinal,
+                            event.current_frame_identifier,
+                            event.current_overall_frame_identifier,
+                            event.packet_format,
+                            event.packet_version,
+                            event.event_code,
+                            event.event_kind,
+                            event.session_time_s,
+                            event.target_game_frame_identifier,
+                            event.target_session_time_s,
+                            event.prior_session_time_s,
+                            event.cause,
+                            event.evidence_status,
+                            event.details_hex,
+                            event.details_length_bytes,
+                            int(event.details_truncated),
+                            event.duplicate_count,
+                        ),
+                    )
                 for attempt in attempts:
                     key = attempt_keys[attempt.attempt_id]
                     attempt_key = key
@@ -540,8 +637,9 @@ def import_capture(
                                   attempt_number,lap_number,disposition,start_frame_identifier,
                                   end_frame_identifier,start_session_time_s,end_session_time_s,
                                   lap_time_ms,game_valid,start_observed,pit_encountered,sample_count,
-                                  reference_eligible,exclusion_reasons_json,attempt_json)
-                             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                  reference_eligible,exclusion_reasons_json,attempt_json,
+                                  start_frame_ordinal,end_frame_ordinal,superseded,lifecycle_assessed)
+                             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             attempt_key,
                             f"{run_id}:{attempt.session_uid}",
@@ -561,6 +659,10 @@ def import_capture(
                             int(attempt.reference_eligible),
                             _json(attempt.exclusion_reasons),
                             _json(attempt.to_dict()),
+                            attempt.start_frame_ordinal,
+                            attempt.end_frame_ordinal,
+                            None if attempt.superseded is None else int(attempt.superseded),
+                            int(attempt.lifecycle_assessed),
                         ),
                     )
                     for ordinal, segment in enumerate(attempt.context_segments):
@@ -586,6 +688,20 @@ def import_capture(
                             digest,
                             _json(quality),
                         ),
+                    )
+                for attempt_id, event_ordinal, relation in lifecycle_links:
+                    attempt = attempts_by_id.get(attempt_id)
+                    if attempt is None:
+                        continue
+                    event_key = lifecycle_event_keys.get(
+                        (attempt.session_uid, event_ordinal)
+                    )
+                    if event_key is None:
+                        continue
+                    connection.execute(
+                        """INSERT OR IGNORE INTO attempt_lifecycle_links(
+                                  attempt_key,event_key,relation) VALUES (?,?,?)""",
+                        (attempt_keys[attempt_id], event_key, relation),
                     )
                 connection.execute(
                     """UPDATE processing_runs SET status='complete',
@@ -684,6 +800,12 @@ def list_laps(
                 "lap_time_ms": row["lap_time_ms"],
                 "game_valid": None if row["game_valid"] is None else bool(row["game_valid"]),
                 "reference_eligible": bool(row["reference_eligible"]),
+                "start_frame_ordinal": row["start_frame_ordinal"],
+                "end_frame_ordinal": row["end_frame_ordinal"],
+                "superseded": (
+                    None if row["superseded"] is None else bool(row["superseded"])
+                ),
+                "lifecycle_assessed": bool(row["lifecycle_assessed"]),
                 "start_observed": bool(row["start_observed"]),
                 "pit_encountered": bool(row["pit_encountered"]),
                 "sample_count": row["sample_count"],

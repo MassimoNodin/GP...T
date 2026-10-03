@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 from .sessions.lap_tracker import (
@@ -8,13 +9,16 @@ from .sessions.lap_tracker import (
     LapTracker,
     SessionContextSegment,
 )
+from .sessions.lifecycle import LifecycleEvent
 from .sessions.context import SessionContext
 from .sessions.manager import ContextHistoryChange, SessionTracker
+from .analysis.continuity import float32_ulp, session_time_discontinuity
 from .telemetry.canonical import CarSample, make_car_sample
 from .telemetry.frames import FrameAssembler
 from .udp.car_telemetry import CarTelemetryDecoder
 from .udp.car_status import CarStatusDecoder, CarStatusData, CarStatusPacket
 from .udp.decoder import PacketDecoder
+from .udp.events import EventData, EventDecoder
 from .udp.models import DecodedPacket, PacketFrame, PacketId, RawDatagram, SessionEvent
 from .udp.lap_data import LapDataDecoder
 from .udp.motion import CarMotionData, MotionDecoder
@@ -36,6 +40,7 @@ class PipelineResult:
     participants: ParticipantsPacket | None = None
     participants_error: str | None = None
     context_history_changes: tuple[ContextHistoryChange, ...] = ()
+    lifecycle_events: tuple[LifecycleEvent, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +50,7 @@ class PipelineFlushResult:
     car_samples: tuple[CarSample, ...]
     lap_data_errors: tuple[str, ...]
     car_telemetry_errors: tuple[str, ...]
+    lifecycle_events: tuple[LifecycleEvent, ...] = ()
 
 
 class TelemetryPipeline:
@@ -65,7 +71,19 @@ class TelemetryPipeline:
         self.motion_decoder = MotionDecoder()
         self.car_status_decoder = CarStatusDecoder()
         self.participants_decoder = ParticipantsDecoder()
+        self.event_decoder = EventDecoder()
         self.laps = LapTracker()
+        self._frame_ordinal_by_uid: dict[int, int] = {}
+        self._event_ordinal_by_uid: dict[int, int] = {}
+        self._last_session_time_by_uid: dict[int, float] = {}
+        self._lifecycle_events: list[LifecycleEvent] = []
+        self.max_buffered_lifecycle_events = 8192
+        self.lifecycle_events_dropped = 0
+        self.lifecycle_events_truncated_session_uids: set[int] = set()
+        self.event_packets_decoded = 0
+        self.event_decode_error_count = 0
+        self.event_code_counts: Counter[str] = Counter()
+        self._max_event_code_counts = 64
         self.lap_data_packets_decoded = 0
         self.lap_data_decode_errors: list[str] = []
         self.car_telemetry_packets_decoded = 0
@@ -91,6 +109,12 @@ class TelemetryPipeline:
         samples: list[CarSample] = []
         telemetry_errors: list[str] = []
         for frame in frames:
+            frame_ordinal = self._frame_ordinal_by_uid.get(frame.session_uid, 0) + 1
+            self._frame_ordinal_by_uid[frame.session_uid] = frame_ordinal
+            lifecycle_attempts, quarantine_lap_data = self._process_lifecycle(
+                frame, frame_ordinal
+            )
+            attempts.extend(lifecycle_attempts)
             telemetry_by_car: dict[int, object] = {}
             motion_by_car: tuple[CarMotionData, ...] | None = None
             conflicting_motion = False
@@ -135,6 +159,8 @@ class TelemetryPipeline:
                 )
             if frame.session_uid == 0:
                 continue
+            if quarantine_lap_data:
+                continue
             for packet in frame.packets:
                 if packet.packet_kind is not PacketId.LAP_DATA:
                     continue
@@ -177,6 +203,8 @@ class TelemetryPipeline:
                                 SessionContextSegment(event_frame, event_context)
                                 for event_frame, event_context in context_timeline
                             ),
+                            frame_ordinal=frame_ordinal,
+                            game_frame_identifier=packet.header.frame_identifier,
                         )
                     )
                 )
@@ -225,6 +253,324 @@ class TelemetryPipeline:
                         (frame.session_uid, frame.overall_frame_identifier)
                     )
         return tuple(attempts), tuple(errors), tuple(samples), tuple(telemetry_errors)
+
+    def _process_lifecycle(
+        self, frame: PacketFrame, frame_ordinal: int
+    ) -> tuple[tuple[LapAttempt, ...], bool]:
+        decoded: list[tuple[DecodedPacket, EventData]] = []
+        for packet in frame.packets:
+            if packet.packet_kind is not PacketId.EVENT:
+                continue
+            event = self.event_decoder.decode(packet)
+            self.event_packets_decoded += 1
+            if event.error is not None:
+                self.event_decode_error_count += 1
+            if event.code is not None:
+                if (
+                    event.code in self.event_code_counts
+                    or len(self.event_code_counts) < self._max_event_code_counts - 1
+                ):
+                    self.event_code_counts[event.code] += 1
+                else:
+                    self.event_code_counts["__other__"] += 1
+            decoded.append((packet, event))
+
+        uid = frame.session_uid
+        previous_time = self._last_session_time_by_uid.get(uid)
+        selected_lap_packets: list[DecodedPacket] = []
+        for packet in frame.packets:
+            if packet.packet_kind is not PacketId.LAP_DATA:
+                continue
+            decoded_lap = self.lap_data_decoder.decode(packet)
+            if (
+                decoded_lap.error is None
+                and decoded_lap.lap_data is not None
+                and 0 <= packet.header.player_car_index < len(decoded_lap.lap_data.cars)
+            ):
+                selected_lap_packets.append(packet)
+        selected_lap_packet = selected_lap_packets[-1] if selected_lap_packets else None
+        same_frame_clock_regression = False
+        same_frame_prior_time: float | None = None
+        same_frame_regression_packet: DecodedPacket | None = None
+        selected_times = [packet.header.session_time for packet in selected_lap_packets]
+        for left_packet, right_packet in zip(
+            selected_lap_packets, selected_lap_packets[1:]
+        ):
+            left = left_packet.header.session_time
+            right = right_packet.header.session_time
+            if session_time_discontinuity(left, right) == "session_time_regression":
+                same_frame_clock_regression = True
+                same_frame_prior_time = left
+                same_frame_regression_packet = right_packet
+                break
+        if (
+            len(selected_times) > 1
+            and previous_time is not None
+            and session_time_discontinuity(previous_time, selected_times[0])
+            == "session_time_regression"
+        ):
+            same_frame_clock_regression = True
+            same_frame_prior_time = previous_time
+            same_frame_regression_packet = selected_lap_packets[0]
+        clock_packet = selected_lap_packet or next(
+            (
+                packet
+                for packet in frame.packets
+                if packet.packet_kind is not PacketId.SESSION
+            ),
+            frame.packets[0] if frame.packets else None,
+        )
+        flashbacks = [(packet, event) for packet, event in decoded if event.code == "FLBK"]
+        untrusted = [
+            (packet, event)
+            for packet, event in decoded
+            if event.error is not None
+        ]
+        lifecycle_attempts: list[LapAttempt] = []
+        explicit_boundary = bool(flashbacks)
+        unknown_boundary = bool(untrusted)
+        regression_boundary = (
+            not explicit_boundary
+            and not unknown_boundary
+            and uid != 0
+            and selected_lap_packet is not None
+            and (
+                same_frame_clock_regression
+                or (
+                    len(selected_times) == 1
+                    and previous_time is not None
+                    and session_time_discontinuity(previous_time, selected_times[0])
+                    == "session_time_regression"
+                )
+            )
+        )
+
+        boundary_cause: str | None = None
+        boundary_reason: str | None = None
+        quarantine = False
+        if explicit_boundary:
+            boundary_cause = "flashback"
+            boundary_reason = "flashback"
+            quarantine = True
+        elif unknown_boundary:
+            boundary_cause = "event_evidence_unknown"
+            boundary_reason = "event_lifecycle_evidence_unknown"
+            quarantine = True
+        elif regression_boundary:
+            boundary_cause = "session_time_regression"
+            boundary_reason = "session_time_regression"
+            quarantine = same_frame_clock_regression
+
+        if boundary_cause is not None and uid != 0:
+            lifecycle_attempts.extend(
+                self.laps.close_lifecycle_boundary(uid, reason=boundary_reason or boundary_cause)
+            )
+
+        flashback_targets = {
+            (event.target_frame_identifier, event.target_session_time_s)
+            for _, event in flashbacks
+            if event.error is None
+        }
+        candidate_target = (
+            next(iter(flashback_targets)) if len(flashback_targets) == 1 else None
+        )
+        flashback_valid = (
+            bool(flashbacks)
+            and not unknown_boundary
+            and len(flashback_targets) == 1
+            and all(
+                event.target_frame_identifier is not None
+                and event.target_session_time_s is not None
+                and event.error is None
+                for _, event in flashbacks
+            )
+            and previous_time is not None
+            and candidate_target is not None
+            and candidate_target[1] is not None
+            and candidate_target[1]
+            <= previous_time
+            + max(float32_ulp(candidate_target[1]), float32_ulp(previous_time))
+        )
+        target = (
+            candidate_target
+            if flashback_valid and candidate_target is not None
+            else (None, None)
+        )
+
+        if uid != 0:
+            if explicit_boundary or unknown_boundary or same_frame_clock_regression:
+                # A lifecycle boundary invalidates the old timer baseline. The
+                # next valid player Lap Data observation establishes the branch.
+                self._last_session_time_by_uid.pop(uid, None)
+            elif selected_lap_packet is not None:
+                self._last_session_time_by_uid[uid] = (
+                    selected_lap_packet.header.session_time
+                )
+
+        if uid != 0:
+            for packet, event in decoded:
+                if event.error is not None:
+                    self._record_lifecycle_event(
+                        packet,
+                        frame_ordinal,
+                        event_code=event.code,
+                        event_kind="malformed_or_unsupported",
+                        cause="event_evidence_unknown",
+                        evidence_status=event.error,
+                        details=event.details,
+                        details_length_bytes=event.details_length_bytes,
+                        details_truncated=event.details_truncated,
+                        prior_session_time_s=previous_time,
+                    )
+                elif event.code in ("SSTA", "SEND"):
+                    self._record_lifecycle_event(
+                        packet,
+                        frame_ordinal,
+                        event_code=event.code,
+                        event_kind="session_start_annotation" if event.code == "SSTA" else "session_end_annotation",
+                        cause="event_annotation",
+                        evidence_status="verified",
+                        details=event.details,
+                        details_length_bytes=event.details_length_bytes,
+                        details_truncated=event.details_truncated,
+                    )
+                elif event.code == "FLBK":
+                    self._record_lifecycle_event(
+                        packet,
+                        frame_ordinal,
+                        event_code="FLBK",
+                        event_kind="flashback",
+                        cause="flashback",
+                        evidence_status="verified" if flashback_valid else "ambiguous",
+                        details=event.details,
+                        details_length_bytes=event.details_length_bytes,
+                        details_truncated=event.details_truncated,
+                        target_frame_identifier=target[0],
+                        target_session_time_s=target[1],
+                        prior_session_time_s=previous_time,
+                        duplicate_count=len(flashbacks),
+                    )
+
+        if regression_boundary and uid != 0:
+            boundary_clock_packet = same_frame_regression_packet or clock_packet
+            assert boundary_clock_packet is not None
+            self._record_synthetic_boundary(
+                frame,
+                frame_ordinal,
+                event_kind="session_time_regression",
+                cause="session_time_regression",
+                evidence_status=(
+                    "same_frame_clock_regression"
+                    if same_frame_clock_regression
+                    else "target_unavailable"
+                ),
+                prior_session_time_s=(
+                    same_frame_prior_time
+                    if same_frame_clock_regression
+                    else previous_time
+                ),
+                current_frame_identifier=boundary_clock_packet.header.frame_identifier,
+                session_time_s=boundary_clock_packet.header.session_time,
+                packet_format=int(boundary_clock_packet.packet_format),
+            )
+        return tuple(lifecycle_attempts), quarantine
+
+    def _record_lifecycle_event(
+        self,
+        packet: DecodedPacket,
+        frame_ordinal: int,
+        *,
+        event_code: str | None,
+        event_kind: str,
+        cause: str,
+        evidence_status: str,
+        details: bytes,
+        details_length_bytes: int = 0,
+        details_truncated: bool = False,
+        target_frame_identifier: int | None = None,
+        target_session_time_s: float | None = None,
+        prior_session_time_s: float | None = None,
+        duplicate_count: int = 1,
+    ) -> None:
+        self._append_lifecycle_event(
+            LifecycleEvent(
+                session_uid=packet.header.session_uid,
+                event_ordinal=self._next_event_ordinal(packet.header.session_uid),
+                frame_ordinal=frame_ordinal,
+                current_frame_identifier=packet.header.frame_identifier,
+                current_overall_frame_identifier=packet.header.overall_frame_identifier,
+                packet_format=int(packet.packet_format),
+                packet_version=packet.header.packet_version,
+                event_code=event_code,
+                event_kind=event_kind,
+                session_time_s=packet.header.session_time,
+                target_game_frame_identifier=target_frame_identifier,
+                target_session_time_s=target_session_time_s,
+                prior_session_time_s=prior_session_time_s,
+                cause=cause,
+                evidence_status=evidence_status,
+                details_hex=details[:12].hex(),
+                details_length_bytes=details_length_bytes,
+                details_truncated=details_truncated,
+                duplicate_count=duplicate_count,
+            )
+        )
+
+    def _record_synthetic_boundary(
+        self,
+        frame: PacketFrame,
+        frame_ordinal: int,
+        *,
+        event_kind: str,
+        cause: str,
+        evidence_status: str,
+        prior_session_time_s: float | None,
+        current_frame_identifier: int,
+        session_time_s: float,
+        packet_format: int,
+    ) -> None:
+        if not frame.packets:
+            return
+        packet = frame.packets[0]
+        self._append_lifecycle_event(
+            LifecycleEvent(
+                session_uid=frame.session_uid,
+                event_ordinal=self._next_event_ordinal(frame.session_uid),
+                frame_ordinal=frame_ordinal,
+                current_frame_identifier=current_frame_identifier,
+                current_overall_frame_identifier=frame.overall_frame_identifier,
+                packet_format=packet_format,
+                packet_version=None,
+                event_code=None,
+                event_kind=event_kind,
+                session_time_s=session_time_s,
+                target_game_frame_identifier=None,
+                target_session_time_s=None,
+                prior_session_time_s=prior_session_time_s,
+                cause=cause,
+                evidence_status=evidence_status,
+                details_hex="",
+                details_length_bytes=0,
+                details_truncated=False,
+            )
+        )
+
+    def _next_event_ordinal(self, session_uid: int) -> int:
+        ordinal = self._event_ordinal_by_uid.get(session_uid, 0) + 1
+        self._event_ordinal_by_uid[session_uid] = ordinal
+        return ordinal
+
+    def _append_lifecycle_event(self, event: LifecycleEvent) -> None:
+        if len(self._lifecycle_events) < self.max_buffered_lifecycle_events:
+            self._lifecycle_events.append(event)
+        else:
+            self.lifecycle_events_dropped += 1
+            self.lifecycle_events_truncated_session_uids.add(event.session_uid)
+
+    def drain_lifecycle_events(self) -> tuple[LifecycleEvent, ...]:
+        events = tuple(self._lifecycle_events)
+        self._lifecycle_events.clear()
+        return events
 
     def process(self, raw: RawDatagram) -> PipelineResult:
         packet = self.decoder.decode(raw)
@@ -298,6 +644,7 @@ class TelemetryPipeline:
             participants=participants,
             participants_error=participant_result.error,
             context_history_changes=self.sessions.drain_context_history_changes(),
+            lifecycle_events=self.drain_lifecycle_events(),
         )
 
     def finish(self) -> tuple[PacketFrame, ...]:
@@ -315,6 +662,7 @@ class TelemetryPipeline:
             car_samples=samples,
             lap_data_errors=errors,
             car_telemetry_errors=telemetry_errors,
+            lifecycle_events=self.drain_lifecycle_events(),
         )
 
 
