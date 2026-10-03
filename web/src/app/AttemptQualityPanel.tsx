@@ -40,6 +40,7 @@ export default function AttemptQualityPanel({
   const assembly = report.evidence.replay_assembly.counters;
   const speed = report.distance_support.channels.speed_mps;
   const observedRange = report.distance_support.observed_distance_range_m;
+  const status = report.observed_status;
   const validity =
     report.attempt.game_valid === true
       ? "GAME VALID"
@@ -118,7 +119,7 @@ export default function AttemptQualityPanel({
               : "COUNTERS UNAVAILABLE"}
           </strong>
           <small>
-            Motion missing {number(captureCounters.missing_player_motion_sample_count)} · telemetry packets {number(captureCounters.car_telemetry_packets_decoded)}
+            Motion missing {number(captureCounters.missing_player_motion_sample_count)} · Status packets {number(captureCounters.car_status_packets_decoded)}
           </small>
         </div>
         <div>
@@ -161,6 +162,89 @@ export default function AttemptQualityPanel({
           </tbody>
         </table>
       </div>
+      <section className="quality-status-evidence">
+        <div className="quality-panel-heading">
+          <div>
+            <span className="eyebrow">EXACT FRAME OBSERVATIONS</span>
+            <h3>Car Status</h3>
+          </div>
+          <span className="quality-state">
+            {status.status === "available" ? "DIAGNOSTIC" : "UNAVAILABLE"}
+          </span>
+        </div>
+        {status.status !== "available" ? (
+          <p className="quality-unavailable">
+            Car Status evidence is {status.status.replaceAll("_", " ")} for this trace.
+          </p>
+        ) : (
+          <>
+            <p className="quality-status-summary">
+              Matched {number(status.matched_sample_count)} / {status.sample_count.toLocaleString()} player samples
+              {Object.keys(status.unavailable_reason_counts ?? {}).length > 0 && (
+                <> · unavailable joins {Object.entries(status.unavailable_reason_counts ?? {})
+                  .map(([reason, count]) => `${reason.replaceAll("_", " ")}: ${number(count)}`)
+                  .join(" · ")}</>
+              )}
+            </p>
+            <div className="quality-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>FIELD</th>
+                    <th>VALID</th>
+                    <th>MISSING</th>
+                    <th>INVALID</th>
+                    <th>FIRST OBSERVED</th>
+                    <th>LAST OBSERVED</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(status.fields ?? {}).map(([field, counts]) => {
+                    const observed = status.first_last_observed?.[field];
+                    return (
+                      <tr key={field}>
+                        <td>{field.replaceAll("_", " ").toUpperCase()}</td>
+                        <td>{number(counts.valid_count)}</td>
+                        <td>{number(counts.missing_count)}</td>
+                        <td>{number(counts.invalid_count)}</td>
+                        <td>{observation(observed?.first ?? null)}</td>
+                        <td>{observation(observed?.last ?? null)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="quality-status-summary">
+              <strong>Observed compounds</strong>
+              <span>{compoundLabels(status.distinct_compounds?.actual ?? [])}</span>
+              <span>{compoundLabels(status.distinct_compounds?.visual ?? [])}</span>
+            </div>
+            <div className="quality-table-wrap">
+              <table>
+                <thead>
+                  <tr><th>SAMPLED CHANGE</th><th>FROM FRAME</th><th>TO FRAME</th><th>VALUE</th></tr>
+                </thead>
+                <tbody>
+                  {(status.discrete_changes ?? []).length === 0 ? (
+                    <tr><td colSpan={4}>No discrete changes between adjacent matched samples.</td></tr>
+                  ) : status.discrete_changes?.map((change, index) => (
+                    <tr key={`${change.field}-${change.to_frame_identifier}-${index}`}>
+                      <td>{change.field.replaceAll("_", " ").toUpperCase()}</td>
+                      <td>{number(change.from_frame_identifier)}</td>
+                      <td>{number(change.to_frame_identifier)}</td>
+                      <td>{displayValue(change.from_value)} → {displayValue(change.to_value)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {status.discrete_changes_truncated && (
+              <p className="quality-status-summary">Showing the first 20 sampled changes.</p>
+            )}
+          </>
+        )}
+      </section>
       <div className="quality-provenance">
         <span>
           {report.attempt.disposition.toUpperCase()} · {report.context.game_modes.join(" / ") || "MODE UNKNOWN"}
@@ -177,7 +261,7 @@ export default function AttemptQualityPanel({
         )}
       </div>
       <p className="quality-footnote">
-        Full-track support uses the track length reported in session context. Unobserved distance is unknown and does not establish packet loss.
+        Full-track support uses the track length reported in session context. Unobserved distance is unknown and does not establish packet loss. Car Status is joined only to its exact frame; fuel values are {status.fuel_quantity_unit_note}, and the report does not infer fuel consumption or unobserved tyre changes.
       </p>
     </section>
   );
@@ -195,4 +279,22 @@ function number(value: unknown): string {
 
 function range(value: [number, number] | null): string {
   return value == null ? "Unavailable" : `${Math.round(value[0])}–${Math.round(value[1])} m`;
+}
+
+function displayValue(value: unknown): string {
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "number") return Number.isFinite(value) ? value.toLocaleString() : "Unavailable";
+  return typeof value === "string" ? value : "Unavailable";
+}
+
+function observation(value: { value: unknown; frame_identifier: number } | null): string {
+  return value == null
+    ? "Unavailable"
+    : `${displayValue(value.value)} · frame ${number(value.frame_identifier)}`;
+}
+
+function compoundLabels(values: Array<{ raw_id: number; label: string | null }>): string {
+  if (values.length === 0) return "No compound values observed";
+  const names = values.map(({ raw_id, label }) => label ?? `unknown ID ${raw_id}`);
+  return [...new Set(names)].join(" · ");
 }

@@ -9,9 +9,10 @@ from .resampling import ResampledTrace, ResamplingConfig, TraceSample, resample_
 from ..storage.query import StoredAttemptTrace, load_attempt_trace, load_reference_inventory
 
 
-QUALITY_REPORT_VERSION = 1
-QUALITY_ANALYSIS_VERSION = "attempt-telemetry-quality-v1"
+QUALITY_REPORT_VERSION = 2
+QUALITY_ANALYSIS_VERSION = "attempt-telemetry-quality-v2-car-status"
 QUALITY_TRACE_COLUMNS = [
+    "validation_flags",
     "frame_identifier",
     "session_time_s",
     "lap_distance_m",
@@ -30,6 +31,23 @@ QUALITY_TRACE_COLUMNS = [
     "world_velocity_x_mps",
     "world_velocity_y_mps",
     "world_velocity_z_mps",
+    "car_status_available",
+    "car_status_unavailable_reason",
+    "traction_control",
+    "anti_lock_brakes",
+    "fuel_mix",
+    "front_brake_bias_percent",
+    "pit_limiter_active",
+    "fuel_in_tank_reported",
+    "fuel_capacity_reported",
+    "fuel_remaining_laps",
+    "actual_tyre_compound",
+    "visual_tyre_compound",
+    "tyre_age_laps",
+    "drs_allowed",
+    "drs_activation_distance_m",
+    "vehicle_fia_flag",
+    "network_paused",
 ]
 QUALITY_RESAMPLING = ResamplingConfig()
 _FRAME_MASK = 0xFFFFFFFF
@@ -53,6 +71,49 @@ _CHANNEL_FIELDS = {
     "steering": "steering",
     "gear": "gear",
     "drs_active": "drs_active",
+}
+_STATUS_FIELDS = (
+    "traction_control",
+    "anti_lock_brakes",
+    "fuel_mix",
+    "front_brake_bias_percent",
+    "pit_limiter_active",
+    "fuel_in_tank_reported",
+    "fuel_capacity_reported",
+    "fuel_remaining_laps",
+    "actual_tyre_compound",
+    "visual_tyre_compound",
+    "tyre_age_laps",
+    "drs_allowed",
+    "drs_activation_distance_m",
+    "vehicle_fia_flag",
+    "network_paused",
+)
+_STATUS_DISCRETE_FIELDS = (
+    "traction_control",
+    "anti_lock_brakes",
+    "fuel_mix",
+    "front_brake_bias_percent",
+    "pit_limiter_active",
+    "actual_tyre_compound",
+    "visual_tyre_compound",
+    "tyre_age_laps",
+    "drs_allowed",
+    "drs_activation_distance_m",
+    "vehicle_fia_flag",
+    "network_paused",
+)
+_COMPOUND_LABELS = {
+    "actual_tyre_compound": {
+        0: {16: "C5", 17: "C4", 18: "C3", 19: "C2", 20: "C1", 21: "C0", 22: "C6", 7: "intermediate", 8: "wet"},
+        1: {9: "dry", 10: "wet"},
+        2: {11: "super soft", 12: "soft", 13: "medium", 14: "hard", 15: "wet"},
+    },
+    "visual_tyre_compound": {
+        0: {16: "soft", 17: "medium", 18: "hard", 7: "intermediate", 8: "wet"},
+        1: {9: "dry", 10: "wet"},
+        2: {19: "super soft", 20: "soft", 21: "medium", 22: "hard", 15: "wet"},
+    },
 }
 
 
@@ -126,6 +187,11 @@ def inspect_attempt_quality(
         samples,
         ("world_velocity_x_mps", "world_velocity_y_mps", "world_velocity_z_mps"),
         schema_version=attempt.trace_schema_version,
+    )
+    observed_status = _observed_status(
+        samples,
+        trace_schema_version=attempt.trace_schema_version,
+        context_segments=attempt.context_segments,
     )
 
     distance_support = _distance_support(
@@ -248,6 +314,7 @@ def inspect_attempt_quality(
             "attempt_trace": _json_safe(attempt.quality),
         },
         "channels": channels,
+        "observed_status": observed_status,
         "continuity": continuity,
         "distance_support": {
             "resolution_m": QUALITY_RESAMPLING.grid_step_m,
@@ -263,6 +330,160 @@ def inspect_attempt_quality(
             **distance_support,
         },
     }
+
+
+def _observed_status(
+    samples: Sequence[Mapping[str, object]],
+    *,
+    trace_schema_version: int,
+    context_segments: Sequence[tuple[int, Mapping[str, object] | None]],
+) -> dict[str, object]:
+    if trace_schema_version < 3:
+        return {
+            "status": "unavailable_in_trace_schema",
+            "matched_sample_count": None,
+            "sample_count": len(samples),
+            "missing_join_sample_count": None,
+            "unavailable_reason_counts": None,
+            "fields": None,
+            "first_last_observed": None,
+            "discrete_changes": None,
+            "discrete_changes_truncated": None,
+            "distinct_compounds": None,
+            "fuel_quantity_unit_note": "reported quantity; unit unspecified",
+        }
+
+    matched = sum(sample.get("car_status_available") is True for sample in samples)
+    unavailable_reasons: dict[str, int] = {}
+    fields: dict[str, object] = {}
+    first_last: dict[str, object] = {}
+    for sample in samples:
+        if sample.get("car_status_available") is True:
+            continue
+        reason = sample.get("car_status_unavailable_reason")
+        key = reason if isinstance(reason, str) and reason else "status_reason_unavailable"
+        unavailable_reasons[key] = unavailable_reasons.get(key, 0) + 1
+
+    for field in _STATUS_FIELDS:
+        invalid_flag = f"invalid_car_status_{field}"
+        valid_count = 0
+        invalid_count = 0
+        first: dict[str, object] | None = None
+        last: dict[str, object] | None = None
+        for sample in samples:
+            value = sample.get(field)
+            flags = sample.get("validation_flags")
+            invalid = isinstance(flags, (tuple, list)) and invalid_flag in flags
+            if invalid:
+                invalid_count += 1
+            elif value is not None:
+                valid_count += 1
+            if value is not None:
+                observed = {
+                    "value": value,
+                    "frame_identifier": sample.get("frame_identifier"),
+                    "session_time_s": sample.get("session_time_s"),
+                }
+                if first is None:
+                    first = observed
+                last = observed
+        fields[field] = {
+            "valid_count": valid_count,
+            "missing_count": len(samples) - valid_count - invalid_count,
+            "invalid_count": invalid_count,
+        }
+        first_last[field] = {"first": first, "last": last}
+
+    changes: list[dict[str, object]] = []
+    for previous, current in zip(samples, samples[1:]):
+        if (
+            previous.get("car_status_available") is not True
+            or current.get("car_status_available") is not True
+        ):
+            continue
+        for field in _STATUS_DISCRETE_FIELDS:
+            previous_flags = previous.get("validation_flags")
+            current_flags = current.get("validation_flags")
+            invalid_flag = f"invalid_car_status_{field}"
+            if (
+                isinstance(previous_flags, (tuple, list))
+                and invalid_flag in previous_flags
+            ) or (
+                isinstance(current_flags, (tuple, list))
+                and invalid_flag in current_flags
+            ):
+                continue
+            before = previous.get(field)
+            after = current.get(field)
+            if before is None or after is None or before == after:
+                continue
+            changes.append({
+                "field": field,
+                "from_frame_identifier": previous.get("frame_identifier"),
+                "to_frame_identifier": current.get("frame_identifier"),
+                "from_value": before,
+                "to_value": after,
+            })
+            if len(changes) > _MAX_EXAMPLES:
+                break
+        if len(changes) > _MAX_EXAMPLES:
+            break
+
+    compounds = {"actual": {}, "visual": {}}
+    compound_fields = (
+        ("actual", "actual_tyre_compound"),
+        ("visual", "visual_tyre_compound"),
+    )
+    for sample in samples:
+        if sample.get("car_status_available") is not True:
+            continue
+        frame = sample.get("frame_identifier")
+        formula_id = _formula_at_frame(frame, context_segments)
+        for output_name, field in compound_fields:
+            raw_id = sample.get(field)
+            if not isinstance(raw_id, int) or isinstance(raw_id, bool):
+                continue
+            label = _COMPOUND_LABELS[field].get(formula_id, {}).get(raw_id)
+            key = f"{formula_id}:{raw_id}"
+            compounds[output_name][key] = {
+                "raw_id": raw_id,
+                "formula_id": formula_id,
+                "label": label,
+            }
+
+    return {
+        "status": "available",
+        "matched_sample_count": matched,
+        "sample_count": len(samples),
+        "missing_join_sample_count": len(samples) - matched,
+        "unavailable_reason_counts": unavailable_reasons,
+        "fields": fields,
+        "first_last_observed": first_last,
+        "discrete_changes": changes[:_MAX_EXAMPLES],
+        "discrete_changes_truncated": len(changes) > _MAX_EXAMPLES,
+        "distinct_compounds": {
+            key: list(value.values()) for key, value in compounds.items()
+        },
+        "fuel_quantity_unit_note": "reported quantity; unit unspecified",
+    }
+
+
+def _formula_at_frame(
+    frame: object,
+    context_segments: Sequence[tuple[int, Mapping[str, object] | None]],
+) -> int | None:
+    if not isinstance(frame, int):
+        return None
+    active_context: Mapping[str, object] | None = None
+    for effective_frame, context in context_segments:
+        if isinstance(effective_frame, int) and (
+            ((frame - effective_frame) & _FRAME_MASK) < _SERIAL_HALF_RANGE
+        ):
+            active_context = context
+        else:
+            break
+    formula_id = active_context.get("formula_id") if active_context is not None else None
+    return formula_id if isinstance(formula_id, int) and not isinstance(formula_id, bool) else None
 
 
 def _availability(

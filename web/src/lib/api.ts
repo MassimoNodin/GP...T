@@ -156,6 +156,36 @@ export interface AttemptQualityAvailability {
   missing_samples: number | null;
 }
 
+export interface AttemptObservedStatus {
+  status: string;
+  matched_sample_count: number | null;
+  sample_count: number;
+  missing_join_sample_count: number | null;
+  unavailable_reason_counts: Record<string, number> | null;
+  fields: Record<string, {
+    valid_count: number;
+    missing_count: number;
+    invalid_count: number;
+  }> | null;
+  first_last_observed: Record<string, {
+    first: { value: unknown; frame_identifier: number; session_time_s: number } | null;
+    last: { value: unknown; frame_identifier: number; session_time_s: number } | null;
+  }> | null;
+  discrete_changes: Array<{
+    field: string;
+    from_frame_identifier: number;
+    to_frame_identifier: number;
+    from_value: unknown;
+    to_value: unknown;
+  }> | null;
+  discrete_changes_truncated: boolean | null;
+  distinct_compounds: {
+    actual: Array<{ raw_id: number; formula_id: number | null; label: string | null }>;
+    visual: Array<{ raw_id: number; formula_id: number | null; label: string | null }>;
+  } | null;
+  fuel_quantity_unit_note: string;
+}
+
 export interface AttemptQualityReport {
   report_version: number;
   analysis_version: string;
@@ -216,6 +246,7 @@ export interface AttemptQualityReport {
     attempt_trace: Record<string, unknown>;
   };
   channels: Record<string, AttemptQualityAvailability>;
+  observed_status: AttemptObservedStatus;
   continuity: {
     frame_gaps: {
       count: number;

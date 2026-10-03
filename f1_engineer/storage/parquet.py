@@ -8,8 +8,8 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-TRACE_SCHEMA_VERSION = 2
-SUPPORTED_TRACE_SCHEMA_VERSIONS = (1, TRACE_SCHEMA_VERSION)
+TRACE_SCHEMA_VERSION = 3
+SUPPORTED_TRACE_SCHEMA_VERSIONS = (1, 2, TRACE_SCHEMA_VERSION)
 ROW_GROUP_SIZE = 4096
 
 
@@ -46,7 +46,7 @@ TRACE_SCHEMA_V1 = pa.schema(
     _TRACE_V1_FIELDS,
     metadata={b"trace_schema_version": b"1"},
 )
-TRACE_SCHEMA = pa.schema(
+TRACE_SCHEMA_V2 = pa.schema(
     [
         *_TRACE_V1_FIELDS,
         _field("motion_available", pa.bool_()),
@@ -69,7 +69,30 @@ TRACE_SCHEMA = pa.schema(
         _field("pitch_rad", pa.float32(), unit="rad"),
         _field("roll_rad", pa.float32(), unit="rad"),
     ],
-    metadata={b"trace_schema_version": str(TRACE_SCHEMA_VERSION).encode("ascii")},
+    metadata={b"trace_schema_version": b"2"},
+)
+TRACE_SCHEMA = pa.schema(
+    [
+        *TRACE_SCHEMA_V2,
+        _field("car_status_available", pa.bool_()),
+        _field("car_status_unavailable_reason", pa.string()),
+        _field("traction_control", pa.uint8()),
+        _field("anti_lock_brakes", pa.bool_()),
+        _field("fuel_mix", pa.uint8()),
+        _field("front_brake_bias_percent", pa.uint8(), unit="percent"),
+        _field("pit_limiter_active", pa.bool_()),
+        _field("fuel_in_tank_reported", pa.float32()),
+        _field("fuel_capacity_reported", pa.float32()),
+        _field("fuel_remaining_laps", pa.float32(), unit="laps"),
+        _field("actual_tyre_compound", pa.uint8()),
+        _field("visual_tyre_compound", pa.uint8()),
+        _field("tyre_age_laps", pa.uint8(), unit="laps"),
+        _field("drs_allowed", pa.bool_()),
+        _field("drs_activation_distance_m", pa.uint16(), unit="m"),
+        _field("vehicle_fia_flag", pa.int8()),
+        _field("network_paused", pa.bool_()),
+    ],
+    metadata={b"trace_schema_version": b"3"},
 )
 
 
@@ -93,6 +116,9 @@ class ParquetTraceWriter:
         self._sample_count = 0
         self._missing_telemetry_count = 0
         self._missing_motion_count = 0
+        self._matched_car_status_count = 0
+        self._missing_car_status_count = 0
+        self._car_status_unavailable_reasons: dict[str, int] = {}
         self._valid_position_count = 0
         self._largest_frame_gap = 0
         self._distance_discontinuities = 0
@@ -123,6 +149,15 @@ class ParquetTraceWriter:
             self._missing_telemetry_count += 1
         if not item.get("motion_available", False):
             self._missing_motion_count += 1
+        if item.get("car_status_available") is True:
+            self._matched_car_status_count += 1
+        else:
+            self._missing_car_status_count += 1
+            reason = item.get("car_status_unavailable_reason")
+            reason_key = reason if isinstance(reason, str) and reason else "status_reason_unavailable"
+            self._car_status_unavailable_reasons[reason_key] = (
+                self._car_status_unavailable_reasons.get(reason_key, 0) + 1
+            )
         if all(item.get(field) is not None for field in (
             "world_position_x_m", "world_position_y_m", "world_position_z_m"
         )):
@@ -139,7 +174,7 @@ class ParquetTraceWriter:
         self.writer.write_table(table, row_group_size=ROW_GROUP_SIZE)
         self._buffer.clear()
 
-    def close(self) -> tuple[int, str, dict[str, int]]:
+    def close(self) -> tuple[int, str, dict[str, Any]]:
         if self._closed:
             raise ValueError("Parquet trace writer is already closed")
         try:
@@ -153,6 +188,9 @@ class ParquetTraceWriter:
                 "sample_count": self._sample_count,
                 "missing_car_telemetry_count": self._missing_telemetry_count,
                 "missing_motion_count": self._missing_motion_count,
+                "matched_car_status_count": self._matched_car_status_count,
+                "missing_car_status_count": self._missing_car_status_count,
+                "car_status_unavailable_reason_counts": self._car_status_unavailable_reasons,
                 "valid_motion_position_count": self._valid_position_count,
                 "largest_frame_gap": self._largest_frame_gap,
                 "distance_discontinuities": self._distance_discontinuities,

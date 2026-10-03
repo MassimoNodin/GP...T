@@ -13,6 +13,7 @@ from .sessions.manager import ContextHistoryChange, SessionTracker
 from .telemetry.canonical import CarSample, make_car_sample
 from .telemetry.frames import FrameAssembler
 from .udp.car_telemetry import CarTelemetryDecoder
+from .udp.car_status import CarStatusDecoder, CarStatusData, CarStatusPacket
 from .udp.decoder import PacketDecoder
 from .udp.models import DecodedPacket, PacketFrame, PacketId, RawDatagram, SessionEvent
 from .udp.lap_data import LapDataDecoder
@@ -62,6 +63,7 @@ class TelemetryPipeline:
         self.lap_data_decoder = LapDataDecoder()
         self.car_telemetry_decoder = CarTelemetryDecoder()
         self.motion_decoder = MotionDecoder()
+        self.car_status_decoder = CarStatusDecoder()
         self.participants_decoder = ParticipantsDecoder()
         self.laps = LapTracker()
         self.lap_data_packets_decoded = 0
@@ -72,6 +74,10 @@ class TelemetryPipeline:
         self.motion_decode_errors: list[str] = []
         self.player_motion_samples = 0
         self.missing_player_motion_samples = 0
+        self.car_status_packets_decoded = 0
+        self.car_status_decode_errors: list[str] = []
+        self.player_car_status_samples = 0
+        self.missing_player_car_status_samples = 0
         self.participants_packets_decoded = 0
         self.participants_decode_errors: list[str] = []
         self.missing_car_telemetry_frame_count = 0
@@ -88,6 +94,9 @@ class TelemetryPipeline:
             telemetry_by_car: dict[int, object] = {}
             motion_by_car: tuple[CarMotionData, ...] | None = None
             conflicting_motion = False
+            car_status_candidates: list[
+                tuple[DecodedPacket, CarStatusPacket | None, str | None]
+            ] = []
             missing_telemetry_for_frame = False
             for packet in frame.packets:
                 if packet.packet_kind is PacketId.CAR_TELEMETRY:
@@ -109,6 +118,15 @@ class TelemetryPipeline:
                             motion_by_car = decoded_motion.motion.cars
                         elif motion_by_car != decoded_motion.motion.cars:
                             conflicting_motion = True
+                elif packet.packet_kind is PacketId.CAR_STATUS:
+                    decoded_status = self.car_status_decoder.decode(packet)
+                    if decoded_status.error is not None:
+                        self.car_status_decode_errors.append(decoded_status.error)
+                    elif decoded_status.car_status is not None:
+                        self.car_status_packets_decoded += 1
+                    car_status_candidates.append(
+                        (packet, decoded_status.car_status, decoded_status.error)
+                    )
             if conflicting_motion:
                 motion_by_car = None
                 self.motion_decode_errors.append(
@@ -176,6 +194,16 @@ class TelemetryPipeline:
                         self.player_motion_samples += 1
                         if motion is None:
                             self.missing_player_motion_samples += 1
+                    car_status, car_status_reason = _join_car_status(
+                        packet,
+                        car_index,
+                        car_status_candidates,
+                    )
+                    if car_index == player_car_index:
+                        if car_status is None:
+                            self.missing_player_car_status_samples += 1
+                        else:
+                            self.player_car_status_samples += 1
                     samples.append(
                         make_car_sample(
                             session_uid=frame.session_uid,
@@ -186,6 +214,8 @@ class TelemetryPipeline:
                             lap=result.lap_data.cars[car_index],
                             telemetry=telemetry_by_car.get(car_index),
                             motion=motion,
+                            car_status=car_status,
+                            car_status_unavailable_reason=car_status_reason,
                         )
                     )
             if missing_telemetry_for_frame:
@@ -286,3 +316,42 @@ class TelemetryPipeline:
             lap_data_errors=errors,
             car_telemetry_errors=telemetry_errors,
         )
+
+
+def _join_car_status(
+    lap_packet: DecodedPacket,
+    player_car_index: int,
+    candidates: list[tuple[DecodedPacket, CarStatusPacket | None, str | None]],
+) -> tuple[CarStatusData | None, str | None]:
+    if not candidates:
+        return None, "status_packet_missing"
+
+    if any(
+        status_packet.packet_format is not lap_packet.packet_format
+        for status_packet, _, _ in candidates
+    ):
+        return None, "wire_format_mismatch"
+
+    if any(error is not None for _, _, error in candidates):
+        return None, "status_packet_malformed_or_unsupported"
+
+    matching = [
+        (packet, decoded)
+        for packet, decoded, _ in candidates
+        if decoded is not None
+        and packet.header.player_car_index == lap_packet.header.player_car_index
+    ]
+    if not matching:
+        return None, "player_index_mismatch"
+    if len(matching) > 1:
+        first_packet, first_data = matching[0]
+        if any(
+            packet.header.player_car_index != first_packet.header.player_car_index
+            or data != first_data
+            for packet, data in matching[1:]
+        ):
+            return None, "conflicting_status_packets"
+    _, decoded = matching[0]
+    if decoded is None or not 0 <= player_car_index < len(decoded.cars):
+        return None, "player_index_mismatch"
+    return decoded.cars[player_car_index], None

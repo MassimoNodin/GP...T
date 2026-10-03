@@ -16,7 +16,7 @@ from .lock import ImportRunLock
 from .parquet import ParquetTraceWriter, TRACE_SCHEMA_VERSION, sha256_file
 
 
-PIPELINE_VERSION = "player-traces-v10-2026-motion-participants"
+PIPELINE_VERSION = "player-traces-v11-2026-car-status"
 DEFAULT_DATABASE = Path("data") / "f1-engineer.sqlite3"
 IMPORT_CONFIG = {"max_open_frames": 256, "reorder_window_frames": 3}
 
@@ -43,6 +43,10 @@ class ImportSummary:
     motion_decode_errors: int = 0
     player_motion_samples: int = 0
     missing_player_motion_samples: int = 0
+    car_status_packets: int = 0
+    car_status_decode_errors: int = 0
+    player_car_status_samples: int = 0
+    missing_player_car_status_samples: int = 0
     import_late_packets_ignored: int = 0
     import_frame_overflow_packets_dropped: int = 0
 
@@ -91,7 +95,7 @@ class _TraceWriterManager:
         self.run_id = run_id
         self.trace_namespace = trace_namespace
         self.writers: dict[str, ParquetTraceWriter] = {}
-        self.results: dict[str, tuple[str, int, str, dict[str, int]]] = {}
+        self.results: dict[str, tuple[str, int, str, dict[str, Any]]] = {}
         self.finished_attempt_ids: set[str] = set()
 
     def _identity(self, attempt_id: str) -> tuple[int, int, int]:
@@ -302,6 +306,7 @@ def import_capture(
             car_telemetry_error_count = 0
             participant_error_count = 0
             motion_error_count = 0
+            car_status_error_count = 0
             capture_metadata: dict[str, object]
             capture_completion: dict[str, object] | None = None
             capture_complete = False
@@ -330,11 +335,13 @@ def import_capture(
                     car_telemetry_error_count += len(result.car_telemetry_errors)
                     participant_error_count += int(result.participants_error is not None)
                     motion_error_count += len(pipeline.motion_decode_errors)
+                    car_status_error_count += len(pipeline.car_status_decode_errors)
                     pipeline.laps.drain_attempts()
                     pipeline.lap_data_decode_errors.clear()
                     pipeline.car_telemetry_decode_errors.clear()
                     pipeline.participants_decode_errors.clear()
                     pipeline.motion_decode_errors.clear()
+                    pipeline.car_status_decode_errors.clear()
                     uid = result.packet.header.session_uid
                     if (
                         uid != 0
@@ -395,6 +402,8 @@ def import_capture(
                 car_telemetry_error_count += len(flushed.car_telemetry_errors)
                 motion_error_count += len(pipeline.motion_decode_errors)
                 pipeline.motion_decode_errors.clear()
+                car_status_error_count += len(pipeline.car_status_decode_errors)
+                pipeline.car_status_decode_errors.clear()
                 trace_manager.finish_all(tuple(attempts))
                 capture_complete = capture.complete
                 capture_completion = capture.completion
@@ -434,6 +443,10 @@ def import_capture(
                 "motion_decode_errors": motion_error_count,
                 "player_motion_sample_count": pipeline.player_motion_samples,
                 "missing_player_motion_sample_count": pipeline.missing_player_motion_samples,
+                "car_status_packets_decoded": pipeline.car_status_packets_decoded,
+                "car_status_decode_errors": car_status_error_count,
+                "player_car_status_sample_count": pipeline.player_car_status_samples,
+                "missing_player_car_status_sample_count": pipeline.missing_player_car_status_samples,
                 "import_late_packets_ignored": pipeline.frames.late_packets_ignored,
                 "import_frame_overflow_packets_dropped": pipeline.frames.overflow_packets_dropped,
             }
@@ -459,6 +472,10 @@ def import_capture(
                 motion_decode_errors=motion_error_count,
                 player_motion_samples=pipeline.player_motion_samples,
                 missing_player_motion_samples=pipeline.missing_player_motion_samples,
+                car_status_packets=pipeline.car_status_packets_decoded,
+                car_status_decode_errors=car_status_error_count,
+                player_car_status_samples=pipeline.player_car_status_samples,
+                missing_player_car_status_samples=pipeline.missing_player_car_status_samples,
                 import_late_packets_ignored=pipeline.frames.late_packets_ignored,
                 import_frame_overflow_packets_dropped=pipeline.frames.overflow_packets_dropped,
             )

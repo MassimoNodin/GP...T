@@ -11,7 +11,7 @@ The EA post was checked on 2026-10-03 and labels its documentation revision **Ve
 
 The selected PDF is EA's current Season 8 document v1.2; it adds F2 driver IDs. The Session, Lap Data, and Car Telemetry sizes and consumed field widths described below match the structures attachment and the earlier v1.1 PDF. The complete attachments are not vendored. Keep exact supported adapters versioned by `(packet_format, packet_id, packet_version)` and derive layouts only from these EA sources.
 
-The envelope decoder recognizes `packetFormat` 2025 and 2026. The shared header fields are decoded little-endian. Packet 15 (`LapPositions`) is present in both formats; packet 16 (`CarTelemetry2`) is specific to 2026. Unknown packet IDs and unsupported packet bodies remain raw and uninterpreted. Typed body support is F1 25 (`packetFormat=2025`) Session (1), Lap Data (2), Participants (4), Car Telemetry (6), and Motion (0), plus 2026 Season Pack (`packetFormat=2026`) Session (1), Lap Data (2), Participants (4), Car Telemetry (6), and Motion (0); each supported packet version is v1.
+The envelope decoder recognizes `packetFormat` 2025 and 2026. The shared header fields are decoded little-endian. Packet 15 (`LapPositions`) is present in both formats; packet 16 (`CarTelemetry2`) is specific to 2026. Unknown packet IDs and unsupported packet bodies remain raw and uninterpreted. Typed body support is F1 25 (`packetFormat=2025`) Session (1), Lap Data (2), Participants (4), Car Telemetry (6), Car Status (7), and Motion (0), plus 2026 Season Pack (`packetFormat=2026`) Session (1), Lap Data (2), Participants (4), Car Telemetry (6), Car Status (7), and Motion (0); each supported packet version is v1.
 
 ## F1 25 Session packet v1
 
@@ -50,9 +50,19 @@ The decoder validates the full body size and independently retains valid vector 
 
 EA documents a 1,470-byte packet including the header. Its 1,441-byte body contains a one-byte active-car count and 24 packed 60-byte participant records. Driver, network, and team IDs are unsigned 16-bit values; the adapter preserves values above 255 and sentinel `65535` without truncation. Names are decoded as UTF-8, and participant metadata remains indexed by vehicle index and stored as session-scoped snapshots.
 
+## Car Status packet v1
+
+EA documents F1 25 Car Status as a 1,239-byte packet including the 29-byte header. Its 1,210-byte body contains 22 packed 55-byte vehicle records. The 2026 Season Pack packet is 1,445 bytes total; its 1,416-byte body contains 24 packed 59-byte records and inserts `m_ersHarvestLimitPerLap` before deployed-this-lap. Both adapters dispatch by format, packet ID 7, and packet version 1, then validate the exact body length.
+
+The canonical sample persists selected setup, fuel, tyre, DRS, FIA-flag, and network-pause fields. Fuel-in-tank and fuel-capacity values retain the reported float values without unit metadata; the EA field descriptions do not specify a unit. `fuel_remaining_laps` is in laps and finite negative values are retained. FIA flag `-1` remains the unknown/invalid sentinel; raw compound IDs remain intact if their formula-specific label is unknown. Individual malformed fields become null with validation flags while other fields in a matched Status packet remain available.
+
+Status joins only the header-designated player record from the same admitted session, wire format, assembled overall frame, and matching primary-player index as Lap Data. Missing, malformed/unsupported, format-mismatched, player-mismatched, or conflicting evidence has an explicit unavailable reason. Values are never carried forward or interpolated. New traces use schema v3; readers support schemas v1/v2 and mark their absent Status fields unavailable. The quality report shows exact matched counts, per-field valid/missing/invalid counts, first/last frame provenance, sampled discrete changes, and formula-context-dependent compound labels. It does not infer fuel consumption, tyre sets/stints, or reference eligibility from Status.
+
+The supplied Melbourne capture contains 13,949 Car Status v1 datagrams; all are 1,239 bytes and decode successfully. Their 13,949 unique session/format/frame/player keys match 13,949 of the 13,950 Lap Data keys; there are no Status-only keys, and Lap frame 2,793 has no Status key. Import persisted 10,247 player-attempt samples, all with exact-frame Status matches. The attempt inventory remains two game-invalid completed laps and one partial lap, with no eligible references. The 92 MB capture remains local and is not checked in.
+
 ## 2026 compatibility and validation status
 
-The 2026 Session, Lap Data, Car Telemetry, Motion, and Participants adapters are specification-derived and synthetic-fixture validated. Synthetic capture import, query, trace, and trajectory export cover Motion and participant evidence. No real 2026 capture has validated their end-to-end behavior. Session contexts and attempts are retained for Time Trial, Race, and unknown modes, but automatic reference eligibility remains restricted to validated F1 25 Time Trial. Car Telemetry 2 and all other 2026 packet bodies remain opaque; missing channels remain unavailable.
+The 2026 Session, Lap Data, Car Telemetry, Motion, Participants, and Car Status adapters are specification-derived and synthetic-fixture validated. Synthetic capture import, query, trace, and trajectory export cover Motion and participant evidence; Car Status has typed-layout and trace coverage. No real 2026 capture has validated their end-to-end behavior. Session contexts and attempts are retained for Time Trial, Race, and unknown modes, but automatic reference eligibility remains restricted to validated F1 25 Time Trial. Car Telemetry 2 and all other 2026 packet bodies remain opaque; missing channels remain unavailable.
 
 ## F1 25 Motion packet v1
 

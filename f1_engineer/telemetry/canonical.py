@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from ..udp.lap_data import CarLapData
 from ..udp.car_telemetry import CarTelemetryData
 from ..udp.motion import CarMotionData
+from ..udp.car_status import CarStatusData
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +51,23 @@ class CarSample:
     yaw_rad: float | None = None
     pitch_rad: float | None = None
     roll_rad: float | None = None
+    car_status_available: bool = False
+    car_status_unavailable_reason: str | None = None
+    traction_control: int | None = None
+    anti_lock_brakes: bool | None = None
+    fuel_mix: int | None = None
+    front_brake_bias_percent: int | None = None
+    pit_limiter_active: bool | None = None
+    fuel_in_tank_reported: float | None = None
+    fuel_capacity_reported: float | None = None
+    fuel_remaining_laps: float | None = None
+    actual_tyre_compound: int | None = None
+    visual_tyre_compound: int | None = None
+    tyre_age_laps: int | None = None
+    drs_allowed: bool | None = None
+    drs_activation_distance_m: int | None = None
+    vehicle_fia_flag: int | None = None
+    network_paused: bool | None = None
 
     def to_record(self) -> dict[str, object]:
         return {
@@ -93,6 +111,23 @@ class CarSample:
             "yaw_rad": self.yaw_rad,
             "pitch_rad": self.pitch_rad,
             "roll_rad": self.roll_rad,
+            "car_status_available": self.car_status_available,
+            "car_status_unavailable_reason": self.car_status_unavailable_reason,
+            "traction_control": self.traction_control,
+            "anti_lock_brakes": self.anti_lock_brakes,
+            "fuel_mix": self.fuel_mix,
+            "front_brake_bias_percent": self.front_brake_bias_percent,
+            "pit_limiter_active": self.pit_limiter_active,
+            "fuel_in_tank_reported": self.fuel_in_tank_reported,
+            "fuel_capacity_reported": self.fuel_capacity_reported,
+            "fuel_remaining_laps": self.fuel_remaining_laps,
+            "actual_tyre_compound": self.actual_tyre_compound,
+            "visual_tyre_compound": self.visual_tyre_compound,
+            "tyre_age_laps": self.tyre_age_laps,
+            "drs_allowed": self.drs_allowed,
+            "drs_activation_distance_m": self.drs_activation_distance_m,
+            "vehicle_fia_flag": self.vehicle_fia_flag,
+            "network_paused": self.network_paused,
         }
 
 
@@ -106,6 +141,8 @@ def make_car_sample(
     lap: CarLapData,
     telemetry: CarTelemetryData | None,
     motion: CarMotionData | None = None,
+    car_status: CarStatusData | None = None,
+    car_status_unavailable_reason: str | None = None,
 ) -> CarSample:
     flags: list[str] = []
     lap_distance = _finite(lap.lap_distance_m)
@@ -193,6 +230,10 @@ def make_car_sample(
         values["pitch_rad"] = motion.pitch_rad
         values["roll_rad"] = motion.roll_rad
 
+    if car_status is not None:
+        status_values = _canonical_car_status(car_status, flags)
+        values.update(status_values)
+
     return CarSample(
         session_uid=session_uid,
         frame_identifier=frame_identifier,
@@ -206,8 +247,80 @@ def make_car_sample(
         car_telemetry_available=telemetry is not None,
         validation_flags=tuple(flags),
         motion_available=motion is not None,
+        car_status_available=car_status is not None,
+        car_status_unavailable_reason=(
+            None if car_status is not None else car_status_unavailable_reason
+        ),
         **values,
     )
+
+
+def _canonical_car_status(
+    status: CarStatusData, flags: list[str]
+) -> dict[str, object]:
+    values: dict[str, object] = {
+        "traction_control": None,
+        "anti_lock_brakes": None,
+        "fuel_mix": None,
+        "front_brake_bias_percent": None,
+        "pit_limiter_active": None,
+        "fuel_in_tank_reported": None,
+        "fuel_capacity_reported": None,
+        "fuel_remaining_laps": None,
+        "actual_tyre_compound": status.actual_tyre_compound,
+        "visual_tyre_compound": status.visual_tyre_compound,
+        "tyre_age_laps": status.tyre_age_laps,
+        "drs_allowed": None,
+        "drs_activation_distance_m": status.drs_activation_distance_m,
+        "vehicle_fia_flag": status.vehicle_fia_flag,
+        "network_paused": None,
+    }
+
+    if 0 <= status.traction_control <= 2:
+        values["traction_control"] = status.traction_control
+    else:
+        flags.append("invalid_car_status_traction_control")
+    if status.anti_lock_brakes in (0, 1):
+        values["anti_lock_brakes"] = bool(status.anti_lock_brakes)
+    else:
+        flags.append("invalid_car_status_anti_lock_brakes")
+    if 0 <= status.fuel_mix <= 3:
+        values["fuel_mix"] = status.fuel_mix
+    else:
+        flags.append("invalid_car_status_fuel_mix")
+    if 0 <= status.front_brake_bias_percent <= 100:
+        values["front_brake_bias_percent"] = status.front_brake_bias_percent
+    else:
+        flags.append("invalid_car_status_front_brake_bias_percent")
+    if status.pit_limiter_active in (0, 1):
+        values["pit_limiter_active"] = bool(status.pit_limiter_active)
+    else:
+        flags.append("invalid_car_status_pit_limiter_active")
+
+    for field in ("fuel_in_tank_reported", "fuel_capacity_reported"):
+        value = getattr(status, field)
+        if math.isfinite(value) and value >= 0.0:
+            values[field] = value
+        else:
+            flags.append(f"invalid_car_status_{field}")
+    if math.isfinite(status.fuel_remaining_laps):
+        values["fuel_remaining_laps"] = status.fuel_remaining_laps
+    else:
+        flags.append("invalid_car_status_fuel_remaining_laps")
+
+    if status.vehicle_fia_flag == -1 or not 0 <= status.vehicle_fia_flag <= 3:
+        # Preserve the signed raw value, including the documented unknown sentinel.
+        flags.append("invalid_car_status_vehicle_fia_flag")
+
+    if status.drs_allowed in (0, 1):
+        values["drs_allowed"] = bool(status.drs_allowed)
+    else:
+        flags.append("invalid_car_status_drs_allowed")
+    if status.network_paused in (0, 1):
+        values["network_paused"] = bool(status.network_paused)
+    else:
+        flags.append("invalid_car_status_network_paused")
+    return values
 
 
 def _finite(value: float) -> float | None:

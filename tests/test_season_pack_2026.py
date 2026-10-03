@@ -35,6 +35,7 @@ _SESSION_BODY_SIZE = 897
 _LAP_RECORD = struct.Struct("<IIHBHBHBHBfff15BHHBfB")
 _TELEMETRY_RECORD = struct.Struct("<HfffBbHBBH4H4B4BB4f4B")
 _MOTION_RECORD = struct.Struct("<6f9h3f")
+_CAR_STATUS_RECORD = struct.Struct("<5B3f2H2BH3Bb3fB4fB")
 _PARTICIPANT_RECORD = struct.Struct("<BHHHBBB32sBBHBB12B")
 _F1_25_PARTICIPANT_RECORD = struct.Struct("<7B32s2BH14B")
 _SESSION_UID = 26_001
@@ -225,6 +226,22 @@ def _motion_body(*, invalid_player_groups: bool = False) -> bytes:
                 yaw,
                 0.5,
                 0.6,
+            )
+        )
+    return b"".join(records)
+
+
+def _car_status_body() -> bytes:
+    records = []
+    for car_index in range(24):
+        records.append(
+            _CAR_STATUS_RECORD.pack(
+                1, 0, 2, 54, 0,
+                12.5 + car_index, 100.0, -1.0,
+                15_000, 4_000, 8, 1, 0,
+                20, 17, 3, -1,
+                900.0, 160.0, 3.5, 2,
+                10.0, 5.0, 9.5, 7.0, 0,
             )
         )
     return b"".join(records)
@@ -548,6 +565,7 @@ def test_2026_stream_keeps_attempts_but_never_enables_references(
         _packet(6, _telemetry_body(), frame=10, sequence=3),
         _packet(2, _lap_body(distance_m=100.0), frame=11, sequence=4),
         _packet(6, _telemetry_body(), frame=11, sequence=5),
+        _packet(7, _car_status_body(), frame=11, sequence=8),
         _packet(
             2,
             _lap_body(
@@ -584,6 +602,7 @@ def test_2026_stream_keeps_attempts_but_never_enables_references(
     assert player_sample.drs_active is True
     assert player_sample.motion_available is False
     assert player_sample.world_position_x_m is None
+    assert player_sample.car_status_available is True
     assert pipeline.participants_packets_decoded == 0
 
 
@@ -649,6 +668,7 @@ def test_2026_pipeline_joins_motion_by_frame_and_player_without_carry_forward() 
         ),
         _packet(0, _motion_body(), frame=11, sequence=4),
         _packet(2, _lap_body(distance_m=100.0), frame=11, sequence=5),
+        _packet(7, _car_status_body(), frame=11, sequence=8),
         _packet(
             2,
             _lap_body(lap_number=2, distance_m=1.0, current_time_ms=100),
@@ -666,10 +686,17 @@ def test_2026_pipeline_joins_motion_by_frame_and_player_without_carry_forward() 
     assert by_frame[11].motion_available is True
     assert by_frame[11].world_position_x_m == 123.0
     assert by_frame[11].g_force_lateral == pytest.approx(1.25)
+    assert by_frame[11].car_status_available is True
+    assert by_frame[11].fuel_in_tank_reported == pytest.approx(35.5)
+    assert by_frame[11].vehicle_fia_flag == -1
     assert by_frame[12].motion_available is False
     assert by_frame[12].world_position_x_m is None
+    assert by_frame[12].car_status_available is False
+    assert by_frame[12].car_status_unavailable_reason == "status_packet_missing"
     assert pipeline.player_motion_samples == 2
     assert pipeline.missing_player_motion_samples == 1
+    assert pipeline.player_car_status_samples == 1
+    assert pipeline.missing_player_car_status_samples == 1
 
 
 def test_2026_import_persists_motion_and_wide_participant_snapshot(tmp_path) -> None:
@@ -714,7 +741,7 @@ def test_2026_import_persists_motion_and_wide_participant_snapshot(tmp_path) -> 
     assert imported.player_motion_samples == 2
     assert imported.missing_player_motion_samples == 0
     sessions = list_sessions(database_path)
-    assert sessions[0]["pipeline_version"] == "player-traces-v10-2026-motion-participants"
+    assert sessions[0]["pipeline_version"] == "player-traces-v11-2026-car-status"
     attempts = list_laps(database_path)
     complete = next(attempt for attempt in attempts if attempt["disposition"] == "completed")
     stored = load_attempt_trace(
@@ -856,7 +883,7 @@ def test_2026_capture_import_query_and_reimport_are_stable(tmp_path) -> None:
     session = list_sessions(database_path)[0]
     assert session["packet_format"] == 2026
     assert session["context"]["track_name"] == "Madrid"
-    assert session["pipeline_version"] == "player-traces-v10-2026-motion-participants"
+    assert session["pipeline_version"] == "player-traces-v11-2026-car-status"
     attempts = list_laps(database_path)
     complete = next(
         attempt for attempt in attempts if attempt["disposition"] == "completed"
@@ -865,7 +892,7 @@ def test_2026_capture_import_query_and_reimport_are_stable(tmp_path) -> None:
     assert complete["game_valid"] is True
     assert complete["reference_eligible"] is False
     assert "mode_policy_not_implemented" in complete["exclusion_reasons"]
-    assert complete["trace_schema_version"] == 2
+    assert complete["trace_schema_version"] == 3
 
     stored = load_attempt_trace(
         database_path,
@@ -879,7 +906,7 @@ def test_2026_capture_import_query_and_reimport_are_stable(tmp_path) -> None:
         ],
     )
     assert stored is not None
-    assert stored.trace_schema_version == 2
+    assert stored.trace_schema_version == 3
     assert len(stored.samples) == 1
     assert stored.samples[0]["car_index"] == 23
     assert stored.samples[0]["motion_available"] is False

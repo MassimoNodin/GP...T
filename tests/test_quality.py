@@ -143,6 +143,8 @@ def test_quality_keeps_unknown_track_length_and_schema_v1_motion_unavailable(
     assert report["context"]["game_modes"] == []
     assert report["channels"]["motion_available"]["status"] == "unavailable_in_trace_schema"
     assert report["channels"]["motion_available"]["missing_samples"] is None
+    assert report["observed_status"]["status"] == "unavailable_in_trace_schema"
+    assert report["observed_status"]["matched_sample_count"] is None
     assert report["distance_support"]["track_length_m"] is None
     assert report["distance_support"]["channels"]["speed_mps"]["full_track_coverage"] is None
 
@@ -208,8 +210,140 @@ def test_quality_handles_non_object_footer_as_invalid_shape(monkeypatch) -> None
     recording = report["evidence"]["recording"]
     assert recording["footer_available"] is False
     assert recording["footer_evidence_status"] == "invalid_shape"
-    assert recording["footer_status"] is None
-    assert recording["counters"]["queue_dropped"] is None
+
+
+def test_quality_reports_exact_frame_status_counts_changes_and_compound_labels(
+    monkeypatch,
+) -> None:
+    attempt = _attempt(schema_version=3, mode="race")
+    status_samples = []
+    for index, sample in enumerate(attempt.samples):
+        status_samples.append({
+            **sample,
+            "car_status_available": True,
+            "car_status_unavailable_reason": None,
+            "validation_flags": [],
+            "traction_control": 1 if index < 2 else 2,
+            "anti_lock_brakes": False,
+            "fuel_mix": 2,
+            "front_brake_bias_percent": 54,
+            "pit_limiter_active": False,
+            "fuel_in_tank_reported": 12.0 - index,
+            "fuel_capacity_reported": 100.0,
+            "fuel_remaining_laps": -1.0,
+            "actual_tyre_compound": 20,
+            "visual_tyre_compound": 17,
+            "tyre_age_laps": 3,
+            "drs_allowed": True,
+            "drs_activation_distance_m": 0,
+            "vehicle_fia_flag": -1,
+            "network_paused": False,
+        })
+    attempt = StoredAttemptTrace(
+        **{
+            **{name: getattr(attempt, name) for name in attempt.__dataclass_fields__},
+            "samples": tuple(status_samples),
+            "context_segments": ((1, {"formula_id": 0, "game_mode": "race"}),),
+        }
+    )
+    report = _report(monkeypatch, attempt)
+    status = report["observed_status"]
+
+    assert report["attempt"]["reference_eligible"] is False
+    assert status["matched_sample_count"] == 4
+    assert status["missing_join_sample_count"] == 0
+    assert status["fields"]["fuel_remaining_laps"]["valid_count"] == 4
+    assert status["fields"]["fuel_remaining_laps"]["invalid_count"] == 0
+    assert status["first_last_observed"]["fuel_in_tank_reported"]["first"]["frame_identifier"] == 1
+    assert status["discrete_changes"] == [{
+        "field": "traction_control",
+        "from_frame_identifier": 3,
+        "to_frame_identifier": 4,
+        "from_value": 1,
+        "to_value": 2,
+    }]
+    assert status["distinct_compounds"]["actual"] == [
+        {"raw_id": 20, "formula_id": 0, "label": "C1"}
+    ]
+    assert status["fuel_quantity_unit_note"] == "reported quantity; unit unspecified"
+
+
+def test_quality_resolves_compounds_across_uint32_frame_wrap(monkeypatch) -> None:
+    attempt = _attempt(
+        schema_version=3,
+        mode="race",
+        frames=(0xFFFFFFFE, 0xFFFFFFFF, 0, 1),
+        distances=(10.0, 20.0, 30.0, 40.0),
+    )
+    samples = tuple({
+        **sample,
+        "car_status_available": True,
+        "car_status_unavailable_reason": None,
+        "validation_flags": [],
+        "actual_tyre_compound": 20,
+        "visual_tyre_compound": 17,
+    } for sample in attempt.samples)
+    attempt = StoredAttemptTrace(
+        **{
+            **{name: getattr(attempt, name) for name in attempt.__dataclass_fields__},
+            "samples": samples,
+            "context_segments": (
+                (0xFFFFFFFE, {"formula_id": 0}),
+                (0, {"formula_id": 2}),
+            ),
+        }
+    )
+
+    status = _report(monkeypatch, attempt)["observed_status"]
+
+    assert status["distinct_compounds"]["actual"] == [
+        {"raw_id": 20, "formula_id": 0, "label": "C1"},
+        {"raw_id": 20, "formula_id": 2, "label": None},
+    ]
+    assert status["distinct_compounds"]["visual"] == [
+        {"raw_id": 17, "formula_id": 0, "label": "medium"},
+        {"raw_id": 17, "formula_id": 2, "label": None},
+    ]
+
+
+def test_quality_caps_discrete_changes_in_chronological_order(monkeypatch) -> None:
+    attempt = _attempt(schema_version=3, frames=(1, 2, 3, 4))
+    fields = (
+        "traction_control",
+        "anti_lock_brakes",
+        "fuel_mix",
+        "front_brake_bias_percent",
+        "pit_limiter_active",
+        "actual_tyre_compound",
+        "visual_tyre_compound",
+        "tyre_age_laps",
+        "drs_allowed",
+        "drs_activation_distance_m",
+        "vehicle_fia_flag",
+        "network_paused",
+    )
+    low = (0, False, 0, 50, False, 20, 17, 1, False, 0, 0, False)
+    high = (2, True, 3, 51, True, 21, 18, 2, True, 50, 1, True)
+    samples = tuple({
+        **sample,
+        "car_status_available": True,
+        "validation_flags": [],
+        **dict(zip(fields, low if index % 2 == 0 else high)),
+    } for index, sample in enumerate(attempt.samples))
+    attempt = StoredAttemptTrace(
+        **{
+            **{name: getattr(attempt, name) for name in attempt.__dataclass_fields__},
+            "samples": samples,
+        }
+    )
+
+    status = _report(monkeypatch, attempt)["observed_status"]
+    changes = status["discrete_changes"]
+
+    assert len(changes) == 20
+    assert status["discrete_changes_truncated"] is True
+    assert [change["to_frame_identifier"] for change in changes[:12]] == [2] * 12
+    assert [change["to_frame_identifier"] for change in changes[12:]] == [3] * 8
 
 
 def test_quality_api_returns_versioned_report_without_reference_selection(

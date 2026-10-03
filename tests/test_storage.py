@@ -19,7 +19,12 @@ from f1_engineer.storage.query import (
     load_attempt_trace,
     load_reference_inventory,
 )
-from f1_engineer.storage.parquet import TRACE_SCHEMA_V1, TRACE_SCHEMA_VERSION, read_trace
+from f1_engineer.storage.parquet import (
+    TRACE_SCHEMA_V1,
+    TRACE_SCHEMA_V2,
+    TRACE_SCHEMA_VERSION,
+    read_trace,
+)
 from f1_engineer.udp.car_telemetry import _F1_25_CAR_TELEMETRY_V1_CAR
 from f1_engineer.udp.participants import _PARTICIPANT_PREFIX
 from tests.helpers import make_datagram
@@ -121,6 +126,8 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert imported.motion_packets == 0
     assert imported.player_motion_samples == 3
     assert imported.missing_player_motion_samples == 3
+    assert imported.car_status_packets == 0
+    assert imported.missing_player_car_status_samples == 3
     assert len(list_sessions(database_path)) == 1
     session_record = list_sessions(database_path)[0]
     assert session_record["capture_sha256"] == imported.capture_sha256
@@ -140,7 +147,7 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert stored_attempt.start_observed is False
     assert stored_attempt.pit_encountered is False
     assert stored_attempt.trace_sha256
-    assert stored_attempt.trace_schema_version == TRACE_SCHEMA_VERSION == 2
+    assert stored_attempt.trace_schema_version == TRACE_SCHEMA_VERSION == 3
     assert stored_attempt.context_segments[0][1]["game_mode"] == "time_trial"
     inventory = load_reference_inventory(database_path, laps[0]["attempt_key"])
     assert inventory is not None
@@ -163,6 +170,16 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert trajectory_attempt is not None
     assert trajectory_attempt.samples[0]["motion_available"] is False
     assert trajectory_attempt.samples[0]["world_position_x_m"] is None
+    status_attempt = load_attempt_trace(
+        database_path,
+        laps[0]["attempt_key"],
+        columns=["car_status_available", "car_status_unavailable_reason"],
+    )
+    assert status_attempt is not None
+    assert status_attempt.samples[0] == {
+        "car_status_available": False,
+        "car_status_unavailable_reason": "status_packet_missing",
+    }
 
     details = get_lap(database_path, laps[0]["attempt_key"])
     assert details is not None
@@ -261,6 +278,28 @@ def test_trace_reader_adapts_v1_rows_with_unavailable_motion_fields() -> None:
             "world_position_x_m": None,
         }
     ]
+
+
+def test_trace_reader_adapts_v2_rows_with_unavailable_car_status_fields() -> None:
+    table = pa.Table.from_pylist(
+        [{"frame_identifier": 9, "motion_available": True}],
+        schema=TRACE_SCHEMA_V2,
+    )
+    encoded = BytesIO()
+    pq.write_table(table, encoded, compression="zstd")
+
+    metadata, loaded = read_trace(
+        encoded.getvalue(),
+        columns=["frame_identifier", "car_status_available", "fuel_in_tank_reported"],
+        expected_schema_version=2,
+    )
+
+    assert metadata.num_rows == 1
+    assert loaded.to_pylist() == [{
+        "frame_identifier": 9,
+        "car_status_available": None,
+        "fuel_in_tank_reported": None,
+    }]
 
 
 def test_format_change_invalidates_current_persisted_session_context(tmp_path) -> None:
