@@ -24,7 +24,7 @@ from .analysis.reference_selection import (
     select_reference,
 )
 from .analysis.quality import inspect_attempt_quality
-from .analysis.trajectory import build_observed_trajectory
+from .analysis.trajectory_service import load_observed_trajectory
 from .storage.importer import (
     DEFAULT_DATABASE,
     get_lap,
@@ -32,7 +32,6 @@ from .storage.importer import (
     list_laps,
     list_sessions,
 )
-from .storage.query import TRAJECTORY_TRACE_COLUMNS, load_attempt_trace
 from .udp.models import DecodedPacket
 from .udp.source import ReplaySource, UDPSource
 
@@ -372,29 +371,10 @@ def _api(args: argparse.Namespace) -> int:
 
 
 def _trajectory(args: argparse.Namespace) -> int:
-    attempt = load_attempt_trace(
-        args.database,
-        args.attempt_key,
-        columns=TRAJECTORY_TRACE_COLUMNS,
-    )
-    if attempt is None:
+    document = load_observed_trajectory(args.database, args.attempt_key)
+    if document is None:
         print("error: lap attempt not found or its trace is not ready", file=sys.stderr)
         return 2
-    document = build_observed_trajectory(
-        attempt_key=attempt.attempt_key,
-        run_id=attempt.run_id,
-        session_uid=attempt.session_uid,
-        car_index=attempt.car_index,
-        disposition=attempt.disposition,
-        lap_time_ms=attempt.lap_time_ms,
-        game_valid=attempt.game_valid,
-        reference_eligible=attempt.reference_eligible,
-        exclusion_reasons=attempt.exclusion_reasons,
-        trace_sha256=attempt.trace_sha256,
-        trace_schema_version=attempt.trace_schema_version,
-        context_segments=attempt.context_segments,
-        samples=attempt.samples,
-    )
     output = Path(args.output)
     if output.exists() and not args.overwrite:
         print(f"error: output already exists: {output} (use --overwrite)", file=sys.stderr)

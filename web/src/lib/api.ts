@@ -186,6 +186,83 @@ export interface AttemptObservedStatus {
   fuel_quantity_unit_note: string;
 }
 
+export interface ObservedTrajectoryPoint {
+  frame_identifier: number;
+  lap_distance_m: number;
+  session_time_s: number;
+  lap_time_s: number;
+  lap_time_ms: number;
+  world_position_m: { x: number; y: number; z: number };
+}
+
+export interface ObservedTrajectoryBreakExample {
+  reason: string;
+  frame_identifier?: number | null;
+  after?: { frame_identifier: number | null };
+  before?: { frame_identifier: number | null };
+}
+
+export interface AttemptTrajectoryPreview {
+  schema_version: number;
+  artifact_kind: "observed_driven_trajectory_preview";
+  diagnostic_only: true;
+  is_centreline: false;
+  coordinate_projection: {
+    horizontal_axis: "world_x";
+    vertical_axis: "world_z";
+    units: "m";
+    orientation_claim: null;
+  };
+  source: {
+    attempt_key: string;
+    run_id: string;
+    session_uid: string;
+    car_index: number;
+    disposition: string;
+    lap_time_ms: number | null;
+    game_valid: boolean | null;
+    reference_eligible: boolean;
+    exclusion_reasons: string[];
+    trace_sha256: string;
+    trace_schema_version: number;
+    context_segments: Array<{ from_frame_identifier: number; context: Record<string, unknown> | null }>;
+  };
+  coverage: {
+    source_sample_count: number;
+    position_sample_count: number;
+    position_sample_coverage: number;
+    unsupported_sample_count: number;
+    segment_count: number;
+    discontinuity_count: number;
+    observed_lap_distance_range_m: [number, number] | null;
+  };
+  segments: Array<{
+    segment_index: number;
+    break_before_reasons: string[];
+    sample_count: number;
+    rendered_point_count: number;
+    start_anchor: Record<string, number | null>;
+    end_anchor: Record<string, number | null>;
+    points: ObservedTrajectoryPoint[];
+  }>;
+  break_examples: ObservedTrajectoryBreakExample[];
+  unsupported_examples: Array<ObservedTrajectoryBreakExample & { frame_identifier: number | null }>;
+  preview: {
+    point_limit: number;
+    source_position_point_count: number;
+    rendered_point_count: number;
+    omitted_position_point_count: number;
+    source_segment_count: number;
+    rendered_segment_count: number;
+    segment_limit: number;
+    break_example_limit: number;
+    break_examples_omitted_count: number;
+    unsupported_example_limit: number;
+    unsupported_examples_omitted_count: number;
+    thinning_method: string;
+  };
+}
+
 export interface AttemptQualityReport {
   report_version: number;
   analysis_version: string;

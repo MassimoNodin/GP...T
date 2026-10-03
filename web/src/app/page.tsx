@@ -2,6 +2,7 @@ import {
   Comparison,
   CornerAnalysis,
   CornerRegion,
+  AttemptTrajectoryPreview,
   AttemptQualityReport,
   LapRecord,
   RegionEvent,
@@ -13,6 +14,7 @@ import {
 } from "@/lib/api";
 import RecordingInbox from "./RecordingInbox";
 import AttemptQualityPanel from "./AttemptQualityPanel";
+import ObservedTrajectoryPanel from "./ObservedTrajectoryPanel";
 import type { ImportJobRecord, RecordingSourceRecord } from "@/lib/api";
 
 type SearchParams = {
@@ -128,19 +130,27 @@ export default async function Home({
         `/api/v1/attempts/${encodeURIComponent(target.attempt_key)}/quality`,
       )
     : Promise.resolve(null);
+  const trajectoryRequest = target
+    ? requestApi<AttemptTrajectoryPreview>(
+        `/api/v1/attempts/${encodeURIComponent(target.attempt_key)}/trajectory`,
+      )
+    : Promise.resolve(null);
   const manualComparisonRequest =
     target && manualReference
       ? requestApi<Comparison>(
           `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, manualReference.attempt_key, selectedModel)}`,
         )
       : Promise.resolve(null);
-  const [selectionResponse, manualComparisonResponse, qualityResponse] = await Promise.all([
+  const [selectionResponse, manualComparisonResponse, qualityResponse, trajectoryResponse] = await Promise.all([
     selectionRequest,
     manualComparisonRequest,
     attemptQualityRequest,
+    trajectoryRequest,
   ]);
   const attemptQuality =
     qualityResponse?.status === "ok" ? qualityResponse.data : null;
+  const trajectoryPreview =
+    trajectoryResponse?.status === "ok" ? trajectoryResponse.data : null;
   const selection = selectionResponse?.data ?? null;
   const referenceKey = autoReference
     ? String(selection?.selected_reference?.attempt_key ?? "") || null
@@ -477,6 +487,17 @@ export default async function Home({
                     unavailableReason={
                       qualityResponse?.status === "unavailable"
                         ? qualityResponse.reason
+                        : null
+                    }
+                  />
+                ) : null}
+                {target ? (
+                  <ObservedTrajectoryPanel
+                    key={target.attempt_key}
+                    report={trajectoryPreview}
+                    unavailableReason={
+                      trajectoryResponse?.status === "unavailable"
+                        ? trajectoryResponse.reason
                         : null
                     }
                   />

@@ -7,11 +7,34 @@ from .continuity import MAX_SESSION_TIME_GAP_S, float32_ulp, session_time_discon
 
 
 TRAJECTORY_SCHEMA_VERSION = 1
+TRAJECTORY_PREVIEW_POINT_LIMIT = 2_000
+TRAJECTORY_PREVIEW_SEGMENT_LIMIT = 256
+TRAJECTORY_PREVIEW_EXAMPLE_LIMIT = 20
+TRAJECTORY_PREVIEW_SOURCE_ROW_LIMIT = 100_000
+TRAJECTORY_PREVIEW_SOURCE_BYTE_LIMIT = 64 * 1024 * 1024
+TRAJECTORY_PREVIEW_SOURCE_CONTEXT_SEGMENT_LIMIT = 1_024
+TRAJECTORY_PREVIEW_SOURCE_CONTEXT_BYTE_LIMIT = 4 * 1024 * 1024
+_PREVIEW_POINT_FIELDS = (
+    "frame_identifier",
+    "lap_distance_m",
+    "session_time_s",
+    "lap_time_s",
+    "lap_time_ms",
+    "world_position_m",
+)
 _FRAME_MASK = 0xFFFFFFFF
 _SERIAL_HALF_RANGE = 0x80000000
 _MAX_WORLD_POSITION_STEP_M = 25.0
 _LAP_TIME_REGRESSION_TOLERANCE_S = 0.020
 _LAP_DISTANCE_REGRESSION_TOLERANCE_M = 0.01
+
+
+class TrajectoryPreviewUnavailable(ValueError):
+    """A preview cannot preserve source continuity within its hard limits."""
+
+    def __init__(self, reason_code: str) -> None:
+        self.reason_code = reason_code
+        super().__init__(reason_code)
 
 
 def build_observed_trajectory(
@@ -158,6 +181,144 @@ def build_observed_trajectory(
         "breaks": breaks,
         "unsupported_samples": unsupported_samples,
     }
+
+
+def build_observed_trajectory_preview(
+    trajectory: Mapping[str, object],
+    *,
+    point_limit: int = TRAJECTORY_PREVIEW_POINT_LIMIT,
+    segment_limit: int = TRAJECTORY_PREVIEW_SEGMENT_LIMIT,
+    example_limit: int = TRAJECTORY_PREVIEW_EXAMPLE_LIMIT,
+) -> dict[str, object]:
+    """Create a deterministic, bounded view while retaining source segmentation."""
+    source_segments = trajectory.get("segments")
+    if not isinstance(source_segments, list):
+        raise ValueError("trajectory segments are malformed")
+    if len(source_segments) > segment_limit:
+        raise TrajectoryPreviewUnavailable("trajectory_preview_too_fragmented")
+
+    segments: list[Mapping[str, object]] = [
+        segment for segment in source_segments if isinstance(segment, Mapping)
+    ]
+    if len(segments) != len(source_segments):
+        raise ValueError("trajectory segments are malformed")
+    point_lists: list[list[Mapping[str, object]]] = []
+    for segment in segments:
+        points = segment.get("points")
+        if not isinstance(points, list) or any(not isinstance(point, Mapping) for point in points):
+            raise ValueError("trajectory segment points are malformed")
+        point_lists.append(points)
+
+    source_point_count = sum(len(points) for points in point_lists)
+    if source_point_count == 0:
+        raise TrajectoryPreviewUnavailable("no_observed_position_samples")
+    if point_limit < sum(min(2, len(points)) for points in point_lists):
+        raise TrajectoryPreviewUnavailable("trajectory_preview_too_fragmented")
+
+    quotas = _allocate_preview_points(point_lists, point_limit)
+    preview_segments: list[dict[str, object]] = []
+    for segment, points, quota in zip(segments, point_lists, quotas):
+        selected = [points[index] for index in _evenly_spaced_indices(len(points), quota)]
+        preview_segments.append(
+            {
+                key: value for key, value in segment.items() if key != "points"
+            }
+            | {
+                "rendered_point_count": len(selected),
+                "points": [
+                    {key: point[key] for key in _PREVIEW_POINT_FIELDS if key in point}
+                    for point in selected
+                ],
+            }
+        )
+
+    source_breaks = trajectory.get("breaks")
+    source_unsupported = trajectory.get("unsupported_samples")
+    if not isinstance(source_breaks, list) or not isinstance(source_unsupported, list):
+        raise ValueError("trajectory break evidence is malformed")
+    break_examples = source_breaks[:example_limit]
+    unsupported_examples = source_unsupported[:example_limit]
+
+    coverage = trajectory.get("coverage")
+    if not isinstance(coverage, Mapping):
+        raise ValueError("trajectory coverage is malformed")
+    return {
+        "schema_version": TRAJECTORY_SCHEMA_VERSION,
+        "artifact_kind": "observed_driven_trajectory_preview",
+        "diagnostic_only": True,
+        "is_centreline": False,
+        "coordinate_projection": {
+            "horizontal_axis": "world_x",
+            "vertical_axis": "world_z",
+            "units": "m",
+            "orientation_claim": None,
+        },
+        "source": trajectory.get("source"),
+        "units": trajectory.get("units"),
+        "continuity_policy": trajectory.get("continuity_policy"),
+        "coverage": dict(coverage),
+        "segments": preview_segments,
+        "break_examples": break_examples,
+        "unsupported_examples": unsupported_examples,
+        "preview": {
+            "point_limit": point_limit,
+            "source_position_point_count": source_point_count,
+            "rendered_point_count": sum(quotas),
+            "omitted_position_point_count": source_point_count - sum(quotas),
+            "source_segment_count": len(segments),
+            "rendered_segment_count": len(preview_segments),
+            "segment_limit": segment_limit,
+            "break_example_limit": example_limit,
+            "break_examples_omitted_count": len(source_breaks) - len(break_examples),
+            "unsupported_example_limit": example_limit,
+            "unsupported_examples_omitted_count": len(source_unsupported)
+            - len(unsupported_examples),
+            "thinning_method": "deterministic_even_spacing_with_segment_endpoints",
+        },
+    }
+
+
+def _allocate_preview_points(
+    point_lists: Sequence[Sequence[object]], point_limit: int
+) -> list[int]:
+    quotas = [min(2, len(points)) for points in point_lists]
+    remaining = point_limit - sum(quotas)
+    capacities = [len(points) - quota for points, quota in zip(point_lists, quotas)]
+    while remaining > 0 and any(capacities):
+        total_capacity = sum(capacities)
+        shares = [remaining * capacity / total_capacity for capacity in capacities]
+        grants = [min(capacity, int(share)) for capacity, share in zip(capacities, shares)]
+        granted = sum(grants)
+        quotas = [quota + grant for quota, grant in zip(quotas, grants)]
+        capacities = [capacity - grant for capacity, grant in zip(capacities, grants)]
+        remaining -= granted
+        if remaining <= 0 or not any(capacities):
+            continue
+        order = sorted(
+            range(len(capacities)),
+            key=lambda index: (-(shares[index] - int(shares[index])), index),
+        )
+        for index in order:
+            if remaining == 0:
+                break
+            if capacities[index] > 0:
+                quotas[index] += 1
+                capacities[index] -= 1
+                remaining -= 1
+    return quotas
+
+
+def _evenly_spaced_indices(point_count: int, retained_count: int) -> list[int]:
+    if retained_count >= point_count:
+        return list(range(point_count))
+    if retained_count <= 1:
+        return [0] if point_count else []
+    last_index = point_count - 1
+    denominator = retained_count - 1
+    return [
+        (2 * index * last_index + denominator) // (2 * denominator)
+        for index in range(retained_count)
+    ]
 
 
 def _trajectory_point(

@@ -103,11 +103,23 @@ class StoredReferenceInventory:
     attempts: tuple[StoredAttemptInventoryEntry, ...]
 
 
+class AttemptTraceReadLimitError(ValueError):
+    """Raised when a bounded trace consumer refuses an oversized artifact."""
+
+    def __init__(self, limit_kind: str) -> None:
+        self.limit_kind = limit_kind
+        super().__init__(f"attempt_trace_{limit_kind}_limit_exceeded")
+
+
 def load_attempt_trace(
     database_path: str | Path,
     attempt_key: str,
     *,
     columns: list[str] | None = None,
+    max_trace_bytes: int | None = None,
+    max_trace_rows: int | None = None,
+    max_context_segments: int | None = None,
+    max_context_bytes: int | None = None,
 ) -> StoredAttemptTrace | None:
     """Load a completed attempt after verifying its published Parquet trace."""
     database_path = Path(database_path)
@@ -126,6 +138,25 @@ def load_attempt_trace(
         ).fetchone()
         if row is None:
             return None
+        if max_trace_rows is not None and int(row["row_count"]) > max_trace_rows:
+            raise AttemptTraceReadLimitError("rows")
+        if max_context_segments is not None or max_context_bytes is not None:
+            context_size = db.connection.execute(
+                """SELECT COUNT(*) AS segment_count,
+                          COALESCE(SUM(LENGTH(CAST(context_json AS BLOB))), 0) AS context_bytes
+                     FROM lap_context_segments WHERE attempt_key = ?""",
+                (attempt_key,),
+            ).fetchone()
+            if (
+                max_context_segments is not None
+                and int(context_size["segment_count"]) > max_context_segments
+            ):
+                raise AttemptTraceReadLimitError("context_segments")
+            if (
+                max_context_bytes is not None
+                and int(context_size["context_bytes"]) > max_context_bytes
+            ):
+                raise AttemptTraceReadLimitError("context_bytes")
         context_rows = db.connection.execute(
             """SELECT from_frame_identifier, context_json
                  FROM lap_context_segments WHERE attempt_key = ? ORDER BY ordinal""",
@@ -141,17 +172,31 @@ def load_attempt_trace(
         raise ValueError("stored trace path escapes the database directory")
     if not trace_path.is_file():
         raise ValueError("trace file is missing")
+    if max_trace_bytes is not None and trace_path.stat().st_size > max_trace_bytes:
+        raise AttemptTraceReadLimitError("bytes")
     if row["schema_version"] not in SUPPORTED_TRACE_SCHEMA_VERSIONS:
         raise ValueError(f"unsupported trace schema version {row['schema_version']}")
 
-    trace_snapshot = trace_path.read_bytes()
+    if max_trace_bytes is None:
+        trace_snapshot = trace_path.read_bytes()
+    else:
+        with trace_path.open("rb") as trace_stream:
+            trace_snapshot = trace_stream.read(max_trace_bytes + 1)
+        if len(trace_snapshot) > max_trace_bytes:
+            raise AttemptTraceReadLimitError("bytes")
     if hashlib.sha256(trace_snapshot).hexdigest() != row["sha256"]:
         raise ValueError("trace file is missing or its checksum does not match SQLite")
-    metadata, table = read_trace(
-        trace_snapshot,
-        columns=ANALYSIS_TRACE_COLUMNS if columns is None else columns,
-        expected_schema_version=row["schema_version"],
-    )
+    try:
+        metadata, table = read_trace(
+            trace_snapshot,
+            columns=ANALYSIS_TRACE_COLUMNS if columns is None else columns,
+            expected_schema_version=row["schema_version"],
+            max_rows=max_trace_rows,
+        )
+    except ValueError as exc:
+        if str(exc) == "trace_row_limit_exceeded":
+            raise AttemptTraceReadLimitError("rows") from exc
+        raise
     if metadata.num_rows != row["row_count"]:
         raise ValueError("trace row count does not match SQLite")
 

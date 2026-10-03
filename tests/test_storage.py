@@ -16,6 +16,7 @@ from f1_engineer.storage.importer import get_lap, import_capture, list_laps, lis
 from f1_engineer.storage.lock import ImportRunLock
 from f1_engineer.storage.query import (
     TRAJECTORY_TRACE_COLUMNS,
+    AttemptTraceReadLimitError,
     load_attempt_trace,
     load_reference_inventory,
 )
@@ -149,6 +150,24 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert stored_attempt.trace_sha256
     assert stored_attempt.trace_schema_version == TRACE_SCHEMA_VERSION == 3
     assert stored_attempt.context_segments[0][1]["game_mode"] == "time_trial"
+    with pytest.raises(AttemptTraceReadLimitError, match="rows_limit_exceeded"):
+        load_attempt_trace(
+            database_path,
+            laps[0]["attempt_key"],
+            max_trace_rows=2,
+        )
+    with pytest.raises(AttemptTraceReadLimitError, match="bytes_limit_exceeded"):
+        load_attempt_trace(
+            database_path,
+            laps[0]["attempt_key"],
+            max_trace_bytes=1,
+        )
+    with pytest.raises(AttemptTraceReadLimitError, match="context_segments_limit_exceeded"):
+        load_attempt_trace(
+            database_path,
+            laps[0]["attempt_key"],
+            max_context_segments=0,
+        )
     inventory = load_reference_inventory(database_path, laps[0]["attempt_key"])
     assert inventory is not None
     assert inventory.run_id == imported.run_id
@@ -198,13 +217,14 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     actual_read_trace = query_module.read_trace
 
     def replace_trace_before_parsing(
-        snapshot, *, columns=None, expected_schema_version=None
+        snapshot, *, columns=None, expected_schema_version=None, max_rows=None
     ):
         trace_path.write_bytes(altered_bytes)
         return actual_read_trace(
             snapshot,
             columns=columns,
             expected_schema_version=expected_schema_version,
+            max_rows=max_rows,
         )
 
     monkeypatch.setattr(query_module, "read_trace", replace_trace_before_parsing)
@@ -215,6 +235,25 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert raced_attempt is not None
     assert raced_attempt.samples == stored_attempt.samples
     monkeypatch.setattr(query_module, "read_trace", actual_read_trace)
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "UPDATE telemetry_files SET row_count = 1 WHERE attempt_key = ?",
+            (laps[0]["attempt_key"],),
+        )
+    try:
+        with pytest.raises(AttemptTraceReadLimitError, match="rows_limit_exceeded"):
+            load_attempt_trace(
+                database_path,
+                laps[0]["attempt_key"],
+                max_trace_rows=2,
+            )
+    finally:
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                "UPDATE telemetry_files SET row_count = ? WHERE attempt_key = ?",
+                (len(stored_attempt.samples), laps[0]["attempt_key"]),
+            )
 
     assert details["trace_checksum_valid"] is True
     assert details["parquet_rows"] == 3

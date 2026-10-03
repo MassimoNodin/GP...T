@@ -13,6 +13,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, select_reference
 from ..analysis.quality import inspect_attempt_quality
 from ..analysis.service import compare_attempts
+from ..analysis.trajectory import TrajectoryPreviewUnavailable
+from ..analysis.trajectory_service import load_observed_trajectory_preview
 from ..storage.import_jobs import list_recording_sources
 from ..storage.importer import DEFAULT_DATABASE, list_laps, list_sessions
 from ..storage.database import DatabaseSchemaError
@@ -282,6 +284,34 @@ def create_app(
             return APIResponse[dict[str, Any]](
                 status="unavailable",
                 reason=str(exc),
+            )
+        if result is None:
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason="attempt_trace_unavailable",
+            )
+        return APIResponse[dict[str, Any]](
+            data=_stringify_session_uids(result)
+        )
+
+    @app.get(
+        "/api/v1/attempts/{attempt_key}/trajectory",
+        response_model=APIResponse[dict[str, Any]],
+    )
+    def attempt_trajectory(attempt_key: str) -> APIResponse[dict[str, Any]]:
+        try:
+            result = load_observed_trajectory_preview(
+                configured_database_path, attempt_key
+            )
+        except TrajectoryPreviewUnavailable as exc:
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason=exc.reason_code,
+            )
+        except (ValueError, OSError):
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason="attempt_trace_unavailable",
             )
         if result is None:
             return APIResponse[dict[str, Any]](

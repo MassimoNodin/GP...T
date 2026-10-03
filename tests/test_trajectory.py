@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import struct
 
-from f1_engineer.analysis.trajectory import build_observed_trajectory
+import pytest
+
+from f1_engineer.analysis.trajectory import (
+    TrajectoryPreviewUnavailable,
+    build_observed_trajectory,
+    build_observed_trajectory_preview,
+)
 
 
 def _sample(frame: int, distance: float, *, available: bool = True) -> dict[str, object]:
@@ -224,3 +230,101 @@ def test_observed_trajectory_does_not_assert_geometry_for_v1_trace_samples() -> 
     assert trajectory["coverage"]["position_sample_coverage"] == 0.0
     assert trajectory["unsupported_samples"][0]["reason"] == "motion_position_unavailable"
     assert trajectory["is_centreline"] is False
+
+
+def test_trajectory_preview_is_deterministic_bounded_and_preserves_segment_endpoints() -> None:
+    samples = tuple(_sample(frame, float(frame)) for frame in range(1, 11))
+    trajectory = build_observed_trajectory(
+        attempt_key="run:42:0:1",
+        run_id="run",
+        session_uid="42",
+        car_index=0,
+        disposition="completed",
+        lap_time_ms=80_000,
+        game_valid=False,
+        reference_eligible=False,
+        exclusion_reasons=("game_marked_invalid",),
+        trace_sha256="abc123",
+        trace_schema_version=3,
+        context_segments=(),
+        samples=samples,
+    )
+
+    first = build_observed_trajectory_preview(trajectory, point_limit=4)
+    second = build_observed_trajectory_preview(trajectory, point_limit=4)
+
+    assert first == second
+    assert first["artifact_kind"] == "observed_driven_trajectory_preview"
+    assert first["coordinate_projection"] == {
+        "horizontal_axis": "world_x",
+        "vertical_axis": "world_z",
+        "units": "m",
+        "orientation_claim": None,
+    }
+    assert first["source"]["game_valid"] is False
+    assert first["source"]["reference_eligible"] is False
+    segment = first["segments"][0]
+    assert segment["sample_count"] == 10
+    assert segment["rendered_point_count"] == 4
+    assert segment["points"][0]["frame_identifier"] == 1
+    assert segment["points"][-1]["frame_identifier"] == 10
+    assert first["preview"]["source_position_point_count"] == 10
+    assert first["preview"]["rendered_point_count"] == 4
+    assert first["preview"]["omitted_position_point_count"] == 6
+
+
+def test_trajectory_preview_keeps_all_segments_and_abstains_when_too_fragmented() -> None:
+    trajectory = build_observed_trajectory(
+        attempt_key="run:42:0:1",
+        run_id="run",
+        session_uid="42",
+        car_index=0,
+        disposition="partial",
+        lap_time_ms=None,
+        game_valid=None,
+        reference_eligible=False,
+        exclusion_reasons=("partial_attempt",),
+        trace_sha256="abc123",
+        trace_schema_version=3,
+        context_segments=(),
+        samples=(
+            _sample(1, 1.0),
+            _sample(2, 2.0),
+            _sample(3, 3.0, available=False),
+            _sample(4, 4.0),
+            _sample(5, 5.0),
+            _sample(6, 6.0, available=False),
+            _sample(7, 7.0),
+        ),
+    )
+
+    preview = build_observed_trajectory_preview(trajectory, point_limit=5)
+    assert len(preview["segments"]) == 3
+    assert [segment["points"][0]["frame_identifier"] for segment in preview["segments"]] == [1, 4, 7]
+    assert [segment["points"][-1]["frame_identifier"] for segment in preview["segments"]] == [2, 5, 7]
+    assert preview["preview"]["rendered_point_count"] == 5
+    with pytest.raises(TrajectoryPreviewUnavailable) as error:
+        build_observed_trajectory_preview(trajectory, segment_limit=2)
+    assert error.value.reason_code == "trajectory_preview_too_fragmented"
+
+
+def test_trajectory_preview_explicitly_abstains_without_positions() -> None:
+    trajectory = build_observed_trajectory(
+        attempt_key="old:42:0:1",
+        run_id="old",
+        session_uid="42",
+        car_index=0,
+        disposition="completed",
+        lap_time_ms=80_000,
+        game_valid=True,
+        reference_eligible=True,
+        exclusion_reasons=(),
+        trace_sha256="legacy",
+        trace_schema_version=1,
+        context_segments=(),
+        samples=(_sample(1, 1.0, available=False),),
+    )
+
+    with pytest.raises(TrajectoryPreviewUnavailable) as error:
+        build_observed_trajectory_preview(trajectory)
+    assert error.value.reason_code == "no_observed_position_samples"

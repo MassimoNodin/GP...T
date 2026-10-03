@@ -227,10 +227,13 @@ def read_trace(
     *,
     columns: list[str] | None = None,
     expected_schema_version: int | None = None,
+    max_rows: int | None = None,
 ) -> tuple[pq.FileMetaData, pa.Table]:
     source = pa.BufferReader(path) if isinstance(path, bytes) else path
     parquet = pq.ParquetFile(source)
     metadata = parquet.metadata
+    if max_rows is not None and metadata.num_rows > max_rows:
+        raise ValueError("trace_row_limit_exceeded")
     raw_version = (metadata.metadata or {}).get(b"trace_schema_version")
     try:
         schema_version = int(raw_version) if raw_version is not None else 1

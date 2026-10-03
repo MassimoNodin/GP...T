@@ -82,6 +82,54 @@ def test_track_model_catalog_exposes_draft_revision_and_provenance(tmp_path) -> 
     assert "path" not in model
 
 
+def test_attempt_trajectory_api_returns_bounded_preview_and_string_session_uid(
+    monkeypatch, tmp_path
+) -> None:
+    preview = {
+        "artifact_kind": "observed_driven_trajectory_preview",
+        "diagnostic_only": True,
+        "source": {"session_uid": "14237356543050158953", "game_valid": False},
+        "coverage": {"position_sample_count": 10, "segment_count": 1},
+        "preview": {"rendered_point_count": 4, "omitted_position_point_count": 6},
+        "segments": [{"points": [{"frame_identifier": 1}, {"frame_identifier": 10}]}],
+    }
+    monkeypatch.setattr(
+        api_module,
+        "load_observed_trajectory_preview",
+        lambda _database, attempt_key: preview if attempt_key == "run:42:0:1" else None,
+    )
+
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/attempts/run%3A42%3A0%3A1/trajectory",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["data"]["artifact_kind"] == "observed_driven_trajectory_preview"
+    assert response.json()["data"]["source"]["session_uid"] == "14237356543050158953"
+    assert response.json()["data"]["preview"]["rendered_point_count"] == 4
+
+
+def test_attempt_trajectory_api_reports_explicit_unavailable_reason(
+    monkeypatch, tmp_path
+) -> None:
+    def unavailable(_database, _attempt_key):
+        raise api_module.TrajectoryPreviewUnavailable(
+            "motion_unavailable_for_trace_schema"
+        )
+
+    monkeypatch.setattr(api_module, "load_observed_trajectory_preview", unavailable)
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/attempts/legacy%3A42%3A0%3A1/trajectory",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "unavailable"
+    assert response.json()["reason"] == "motion_unavailable_for_trace_schema"
+
+
 def test_compare_api_resolves_explicit_model_id_and_revision(monkeypatch, tmp_path) -> None:
     resolved_model = object()
     calls: dict[str, object] = {}
