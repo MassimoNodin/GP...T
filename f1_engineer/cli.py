@@ -18,6 +18,7 @@ from .recording.capture import CaptureReader
 from .recording.service import record_udp_capture
 from .sessions.context import SessionContext
 from .analysis.resampling import ResamplingConfig
+from .analysis.comparison_window import optional_distance_window
 from .analysis.service import ComparisonPolicy, compare_attempts
 from .analysis.reference_selection import (
     ReferenceKind,
@@ -338,6 +339,9 @@ def _compare(args: argparse.Namespace) -> int:
             config=config,
             track_model=args.track_model,
             policy=ComparisonPolicy(args.comparison_policy),
+            distance_window=optional_distance_window(
+                args.window_start_m, args.window_end_m
+            ),
         )
     )
     return 0
@@ -547,6 +551,16 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--grid-step-m", type=float, default=1.0, help="distance grid step (default: %(default)s)")
     compare.add_argument("--max-gap-s", type=float, default=0.1, help="maximum interpolation time gap in seconds")
     compare.add_argument("--max-gap-m", type=float, default=25.0, help="maximum interpolation distance gap in metres")
+    compare.add_argument(
+        "--window-start-m",
+        type=float,
+        help="optional diagnostic comparison interval start distance in metres",
+    )
+    compare.add_argument(
+        "--window-end-m",
+        type=float,
+        help="optional diagnostic comparison interval end distance in metres",
+    )
     compare.add_argument(
         "--track-model",
         help="versioned JSON track model; adds diagnostic corner-region analysis",

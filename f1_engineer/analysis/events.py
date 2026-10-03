@@ -232,6 +232,20 @@ def detect_sustained_threshold_events(
     return ThresholdDetection(status, tuple(events), rejected_short, unsupported_breaks)
 
 
+def bounded_threshold_event_examples(
+    detection: ThresholdDetection, example_limit: int
+) -> tuple[list[dict[str, object]], int, bool]:
+    """Return source-ordered event examples with full count and truncation state."""
+    if example_limit < 0:
+        raise ValueError("event example limit must not be negative")
+    event_count = len(detection.sustained_events)
+    return (
+        [event.to_dict() for event in detection.sustained_events[:example_limit]],
+        event_count,
+        event_count > example_limit,
+    )
+
+
 def _value(sample: TraceSample | None, channel: EventChannel) -> float | None:
     if sample is None:
         return None

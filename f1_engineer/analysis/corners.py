@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-import bisect
 import math
 from typing import Sequence
 
 from ..tracks.model import CornerDefinition, TrackModel
 from .comparison import DeltaTime
-from .events import ThresholdDetection, detect_sustained_threshold_events
-from .resampling import ExcludedSpan, ResampledTrace, ResamplingConfig, TraceSample
+from .distance_support import (
+    requested_window_coverage as _requested_window_coverage,
+    sample_at_distance as _grid_value,
+)
+from .events import (
+    ThresholdDetection,
+    bounded_threshold_event_examples,
+    detect_sustained_threshold_events,
+)
+from .resampling import ResampledTrace, ResamplingConfig, TraceSample
 
 
 CORNER_ANALYSIS_VERSION = "distance-regions-v1"
@@ -429,16 +436,18 @@ def _onset(
     *,
     event_example_limit: int | None = None,
 ) -> dict[str, object]:
-    events = [candidate.to_dict() for candidate in detection.sustained_events]
-    examples = (
-        events
+    limit = (
+        len(detection.sustained_events)
         if event_example_limit is None
-        else events[:event_example_limit]
+        else event_example_limit
+    )
+    examples, event_count, events_truncated = bounded_threshold_event_examples(
+        detection, limit
     )
     event_summary = {
         "events": examples,
-        "event_count": len(events),
-        "events_truncated": len(examples) < len(events),
+        "event_count": event_count,
+        "events_truncated": events_truncated,
     }
     event = next(
         (candidate for candidate in detection.sustained_events if not candidate.left_censored),
@@ -511,140 +520,6 @@ def _exit_speeds(
             }
         )
     return values
-
-
-def _grid_value(
-    grid: Sequence[float],
-    values: Sequence[float | int | bool | None],
-    mask: Sequence[bool],
-    distance_m: float,
-    *,
-    step_m: float = 1.0,
-    channel: str | None = None,
-    excluded_spans: Sequence[ExcludedSpan] = (),
-) -> float | None:
-    if not grid or not math.isfinite(distance_m):
-        return None
-    position = bisect.bisect_left(grid, distance_m)
-    if position < len(grid) and math.isclose(grid[position], distance_m, abs_tol=1e-7):
-        if mask[position] and values[position] is not None:
-            return float(values[position])
-        return None
-    if position == 0 or position >= len(grid):
-        return None
-    left = position - 1
-    right = position
-    if (
-        not mask[left]
-        or not mask[right]
-        or values[left] is None
-        or values[right] is None
-        or not math.isclose(grid[right] - grid[left], step_m, abs_tol=1e-7)
-    ):
-        return None
-    for span in excluded_spans:
-        if span.channel is not None and span.channel != channel:
-            continue
-        if span.reason == "stationary_clock" and channel != "time_s":
-            continue
-        if (
-            span.start_distance_m <= grid[right] + 1e-7
-            and span.end_distance_m >= grid[left] - 1e-7
-        ):
-            return None
-    ratio = (distance_m - grid[left]) / (grid[right] - grid[left])
-    return float(values[left]) + (float(values[right]) - float(values[left])) * ratio
-
-
-def _requested_window_coverage(
-    resampled: ResampledTrace,
-    start_m: float,
-    end_m: float,
-    step_m: float,
-    *,
-    channel: str,
-) -> float:
-    first_index = math.ceil((start_m - 1e-7) / step_m)
-    stop_index = math.ceil((end_m - 1e-7) / step_m)
-    expected = range(first_index, stop_index)
-    expected_count = len(expected)
-    if expected_count == 0:
-        return 0.0
-    supported_count = 0
-    for grid_index in expected:
-        distance = grid_index * step_m
-        position = bisect.bisect_left(resampled.distance_m, distance)
-        if (
-            position < len(resampled.distance_m)
-            and math.isclose(resampled.distance_m[position], distance, abs_tol=1e-7)
-            and resampled.masks[channel][position]
-        ):
-            supported_count += 1
-    grid_coverage = supported_count / expected_count
-    excluded_intervals = sorted(
-        (
-            max(start_m, span.start_distance_m),
-            min(end_m, span.end_distance_m),
-        )
-        for span in resampled.excluded_spans
-        if (span.channel is None or span.channel == channel)
-        and not (span.reason == "stationary_clock" and channel != "time_s")
-        and span.end_distance_m > start_m
-        and span.start_distance_m < end_m
-    )
-    supported_positions = [
-        index
-        for index, distance in enumerate(resampled.distance_m)
-        if start_m - 1e-7 <= distance <= end_m + 1e-7
-        and resampled.masks[channel][index]
-        and resampled.values[channel][index] is not None
-    ]
-    start_supported = _grid_value(
-        resampled.distance_m,
-        resampled.values[channel],
-        resampled.masks[channel],
-        start_m,
-        step_m=step_m,
-        channel=channel,
-        excluded_spans=resampled.excluded_spans,
-    ) is not None
-    end_supported = _grid_value(
-        resampled.distance_m,
-        resampled.values[channel],
-        resampled.masks[channel],
-        end_m,
-        step_m=step_m,
-        channel=channel,
-        excluded_spans=resampled.excluded_spans,
-    ) is not None
-    if not supported_positions:
-        excluded_intervals.append((start_m, end_m))
-    else:
-        if not start_supported:
-            first_supported_m = resampled.distance_m[supported_positions[0]]
-            if first_supported_m > start_m:
-                excluded_intervals.append((start_m, min(first_supported_m, end_m)))
-        if not end_supported:
-            last_supported_m = resampled.distance_m[supported_positions[-1]]
-            if last_supported_m < end_m:
-                excluded_intervals.append((max(last_supported_m, start_m), end_m))
-    excluded_intervals.sort()
-    excluded_length = 0.0
-    current_start: float | None = None
-    current_end: float | None = None
-    for interval_start, interval_end in excluded_intervals:
-        if current_start is None:
-            current_start, current_end = interval_start, interval_end
-        elif current_end is not None and interval_start <= current_end:
-            current_end = max(current_end, interval_end)
-        else:
-            assert current_end is not None
-            excluded_length += current_end - current_start
-            current_start, current_end = interval_start, interval_end
-    if current_start is not None and current_end is not None:
-        excluded_length += current_end - current_start
-    distance_coverage = max(0.0, 1.0 - excluded_length / (end_m - start_m))
-    return min(grid_coverage, distance_coverage)
 
 
 def _difference(target: object, reference: object) -> float | None:

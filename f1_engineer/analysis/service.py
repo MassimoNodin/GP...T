@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Mapping
 
 from .comparison import calculate_channel_differences, calculate_delta_time
+from .comparison_window import DistanceWindow, analyze_comparison_window
 from .corners import analyze_corner_regions
 from .quality import OBSERVED_CONDITION_TRACE_COLUMNS, summarize_observed_conditions
 from .resampling import (
@@ -95,6 +96,7 @@ def compare_attempts(
     config: ResamplingConfig = ResamplingConfig(),
     track_model: TrackModel | str | Path | None = None,
     policy: ComparisonPolicy | str = ComparisonPolicy.TIME_TRIAL,
+    distance_window: DistanceWindow | None = None,
 ) -> dict[str, object]:
     """Compare explicitly selected stored attempts under a mode-specific policy."""
     try:
@@ -107,9 +109,18 @@ def compare_attempts(
         raise ValueError(
             "track_model_region_analysis_unsupported_for_practice_qualifying"
         )
-    if policy is ComparisonPolicy.PRACTICE_QUALIFYING:
-        target = _load_bounded_attempt_trace(database_path, target_attempt_key)
-        reference = _load_bounded_attempt_trace(database_path, reference_attempt_key)
+    if policy is ComparisonPolicy.PRACTICE_QUALIFYING or distance_window is not None:
+        source_reason_prefix = (
+            "practice_qualifying_source"
+            if policy is ComparisonPolicy.PRACTICE_QUALIFYING
+            else "comparison_window_source"
+        )
+        target = _load_bounded_attempt_trace(
+            database_path, target_attempt_key, reason_prefix=source_reason_prefix
+        )
+        reference = _load_bounded_attempt_trace(
+            database_path, reference_attempt_key, reason_prefix=source_reason_prefix
+        )
     else:
         target = load_attempt_trace(
             database_path, target_attempt_key, columns=_COMPARISON_TRACE_COLUMNS
@@ -139,7 +150,11 @@ def compare_attempts(
             raise ValueError(
                 "practice_qualifying_attempts_have_incompatible_context"
             )
-        _require_bounded_grid(target_context["track_length_m"], config.grid_step_m)
+        _require_bounded_grid(
+            target_context["track_length_m"],
+            config.grid_step_m,
+            reason_prefix="practice_qualifying",
+        )
     else:
         target_context, target_signature = stable_time_trial_context(
             target.context_segments, target.attempt_key
@@ -152,6 +167,14 @@ def compare_attempts(
 
     target_samples = tuple(TraceSample.from_record(row) for row in target.samples)
     reference_samples = tuple(TraceSample.from_record(row) for row in reference.samples)
+    if distance_window is not None:
+        distance_window.validate_track_length(target_context["track_length_m"])
+        if policy is ComparisonPolicy.TIME_TRIAL:
+            _require_bounded_grid(
+                target_context["track_length_m"],
+                config.grid_step_m,
+                reason_prefix="comparison_window",
+            )
     track_length_m = float(target_context["track_length_m"])
     distance_grid = common_distance_grid(
         target_samples,
@@ -251,6 +274,16 @@ def compare_attempts(
             ],
         },
     }
+    if distance_window is not None:
+        result["comparison_window"] = analyze_comparison_window(
+            target_samples,
+            reference_samples,
+            target_resampled,
+            reference_resampled,
+            delta,
+            distance_window,
+            config=config,
+        )
     if track_model is not None:
         model = (
             track_model
@@ -273,7 +306,10 @@ def compare_attempts(
 
 
 def _load_bounded_attempt_trace(
-    database_path: str | Path, attempt_key: str
+    database_path: str | Path,
+    attempt_key: str,
+    *,
+    reason_prefix: str = "practice_qualifying_source",
 ) -> StoredAttemptTrace | None:
     try:
         return load_attempt_trace(
@@ -287,7 +323,7 @@ def _load_bounded_attempt_trace(
         )
     except AttemptTraceReadLimitError as exc:
         raise ValueError(
-            f"practice_qualifying_source_{exc.limit_kind}_limit_exceeded"
+            f"{reason_prefix}_{exc.limit_kind}_limit_exceeded"
         ) from exc
 
 
@@ -376,22 +412,27 @@ def stable_practice_qualifying_context(
     return contexts[-1], signature
 
 
-def _require_bounded_grid(track_length_m: object, grid_step_m: float) -> None:
+def _require_bounded_grid(
+    track_length_m: object,
+    grid_step_m: float,
+    *,
+    reason_prefix: str = "practice_qualifying",
+) -> None:
     if (
         not isinstance(track_length_m, (int, float))
         or isinstance(track_length_m, bool)
         or not math.isfinite(track_length_m)
         or track_length_m <= 0
     ):
-        raise ValueError("practice_qualifying_invalid_track_length")
+        raise ValueError(f"{reason_prefix}_invalid_track_length")
     if not math.isfinite(grid_step_m) or grid_step_m <= 0:
-        raise ValueError("practice_qualifying_invalid_grid_step")
+        raise ValueError(f"{reason_prefix}_invalid_grid_step")
     ratio = (track_length_m + 1e-9) / grid_step_m
     if not math.isfinite(ratio) or ratio >= _PRACTICE_QUALIFYING_GRID_POINT_LIMIT:
-        raise ValueError("practice_qualifying_resampling_grid_limit_exceeded")
+        raise ValueError(f"{reason_prefix}_resampling_grid_limit_exceeded")
     point_count = math.floor(ratio) + 1
     if point_count > _PRACTICE_QUALIFYING_GRID_POINT_LIMIT:
-        raise ValueError("practice_qualifying_resampling_grid_limit_exceeded")
+        raise ValueError(f"{reason_prefix}_resampling_grid_limit_exceeded")
 
 
 def _require_completed(attempt: StoredAttemptTrace) -> None:

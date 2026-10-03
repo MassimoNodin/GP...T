@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, select_reference
+from ..analysis.comparison_window import optional_distance_window
 from ..analysis.quality import inspect_attempt_quality
 from ..analysis.region_service import RegionReportUnavailable, load_attempt_region_report
 from ..analysis.service import compare_attempts
@@ -606,6 +607,8 @@ def create_app(
         comparison_policy: Literal["time_trial", "practice_qualifying"] = "time_trial",
         track_model_id: str | None = Query(default=None, min_length=1),
         track_model_revision: int | None = Query(default=None, ge=1),
+        window_start_m: float | None = Query(default=None),
+        window_end_m: float | None = Query(default=None),
     ) -> APIResponse[dict[str, Any]]:
         if (track_model_id is None) != (track_model_revision is None):
             return APIResponse[dict[str, Any]](
@@ -618,12 +621,14 @@ def create_app(
                 if track_model_id is not None and track_model_revision is not None
                 else None
             )
+            distance_window = optional_distance_window(window_start_m, window_end_m)
             result = compare_attempts(
                 configured_database_path,
                 target_attempt_key,
                 reference_attempt_key,
                 track_model=track_model,
                 policy=comparison_policy,
+                distance_window=distance_window,
             )
         except DatabaseSchemaError:
             raise

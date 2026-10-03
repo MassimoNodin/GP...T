@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 
 from f1_engineer.analysis import service as service_module
+from f1_engineer.analysis.comparison_window import DistanceWindow
 from f1_engineer.analysis.corners import analyze_attempt_regions
 from f1_engineer.analysis.events import detect_sustained_threshold_events
 from f1_engineer.analysis import quality as quality_module
@@ -497,6 +498,7 @@ def test_practice_qualifying_comparison_requires_same_run_session_and_player(
             target.attempt_key,
             reference.attempt_key,
             policy="practice_qualifying",
+            distance_window=DistanceWindow(0.0, 20.0),
         )
 
 
@@ -527,6 +529,7 @@ def test_practice_qualifying_comparison_requires_completed_started_non_pit_laps(
             target.attempt_key,
             reference.attempt_key,
             policy="practice_qualifying",
+            distance_window=DistanceWindow(0.0, 20.0),
         )
 
 
@@ -556,6 +559,7 @@ def test_practice_qualifying_comparison_rejects_race_unknown_and_incomplete_cont
             target.attempt_key,
             reference.attempt_key,
             policy="practice_qualifying",
+            distance_window=DistanceWindow(0.0, 20.0),
         )
 
 
@@ -598,6 +602,7 @@ def test_practice_qualifying_comparison_rejects_changing_or_mismatched_context(
             target.attempt_key,
             reference.attempt_key,
             policy="practice_qualifying",
+            distance_window=DistanceWindow(0.0, 20.0),
         )
 
 
@@ -662,6 +667,66 @@ def test_comparison_reports_absolute_delta_and_keeps_invalid_attempt_visible(mon
     assert result["quality"]["delta_time_coverage"] == 1.0
     assert result["channel_differences"]["speed_mps"]["values"][10] == 2.0
     assert result["channel_differences"]["throttle"]["values"][10] == 0.25
+    assert "comparison_window" not in result
+
+
+def test_time_trial_window_uses_bounded_source_reads_and_preserves_policy(monkeypatch):
+    target = _stored_attempt("target-attempt", (100, 200, 300))
+    reference = _stored_attempt("reference-attempt", (100, 150, 200))
+    attempts = {target.attempt_key: target, reference.attempt_key: reference}
+    load_calls: list[dict[str, object]] = []
+
+    def load(_database, key, **kwargs):
+        load_calls.append(kwargs)
+        return attempts.get(key)
+
+    monkeypatch.setattr(service_module, "load_attempt_trace", load)
+
+    result = service_module.compare_attempts(
+        "unused.sqlite3",
+        target.attempt_key,
+        reference.attempt_key,
+        distance_window=DistanceWindow(0.0, 20.0),
+    )
+
+    window = result["comparison_window"]
+    assert result["comparison_policy"] == "time_trial"
+    assert result["diagnostic_only"] is False
+    assert window["analysis_version"] == "comparison-distance-window-v1"
+    assert window["window_m"] == {"start_m": 0.0, "end_m": 20.0}
+    assert window["delta"]["delta_change_s"] == pytest.approx(0.1)
+    assert len(load_calls) == 2
+    assert all(call["max_trace_rows"] == 100_000 for call in load_calls)
+    assert all(call["max_trace_bytes"] == 64 * 1024 * 1024 for call in load_calls)
+
+
+def test_time_trial_window_rejects_out_of_track_range_and_oversized_grid(
+    monkeypatch,
+) -> None:
+    target = _stored_attempt("target-attempt", (100, 200, 300))
+    reference = _stored_attempt("reference-attempt", (100, 150, 200))
+    attempts = {target.attempt_key: target, reference.attempt_key: reference}
+    monkeypatch.setattr(
+        service_module,
+        "load_attempt_trace",
+        lambda _database, key, **_kwargs: attempts.get(key),
+    )
+
+    with pytest.raises(ValueError, match="comparison_window_exceeds_track_length"):
+        service_module.compare_attempts(
+            "unused.sqlite3",
+            target.attempt_key,
+            reference.attempt_key,
+            distance_window=DistanceWindow(10.0, 21.0),
+        )
+    with pytest.raises(ValueError, match="comparison_window_resampling_grid_limit_exceeded"):
+        service_module.compare_attempts(
+            "unused.sqlite3",
+            target.attempt_key,
+            reference.attempt_key,
+            config=ResamplingConfig(grid_step_m=0.0001),
+            distance_window=DistanceWindow(10.0, 11.0),
+        )
 
 
 def test_comparison_condition_summary_matches_standalone_quality_semantics(

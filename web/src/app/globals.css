@@ -386,7 +386,7 @@ h1 span {
 }
 .compare-form {
   display: grid;
-  grid-template-columns: 1.2fr 1fr 1fr 1.2fr auto;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: end;
   gap: 11px;
   margin-top: 21px;
@@ -397,7 +397,8 @@ h1 span {
 .compare-form label > span {
   margin-bottom: 7px;
 }
-.compare-form select {
+.compare-form select,
+.compare-form input {
   width: 100%;
   min-width: 0;
   height: 42px;
@@ -410,7 +411,8 @@ h1 span {
   color: #d5ddda;
   font: 10px var(--font-mono);
 }
-.compare-form select:focus {
+.compare-form select:focus,
+.compare-form input:focus {
   border-color: #71877f;
 }
 .compare-form select:disabled {
@@ -855,6 +857,166 @@ h1 span {
   color: #8c9b93;
   font: 8px var(--font-mono);
   line-height: 1.6;
+}
+.comparison-window {
+  margin-top: 12px;
+  padding: 18px;
+}
+.comparison-window-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 13px;
+  border-bottom: 1px solid #283330;
+}
+.comparison-window-heading h3 {
+  margin: 6px 0 0;
+  color: #dbe3de;
+  font-size: 15px;
+}
+.comparison-window-heading p {
+  max-width: 430px;
+  margin: 0;
+  color: #899590;
+  font-size: 9px;
+  line-height: 1.6;
+}
+.window-source-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  padding-top: 14px;
+}
+.window-source {
+  min-width: 0;
+}
+.window-source + .window-source {
+  padding-left: 18px;
+  border-left: 1px solid #283330;
+}
+.window-source-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+.window-source-heading small,
+.window-observation-grid small,
+.window-event-row small,
+.window-delta-summary small,
+.window-excluded-details li {
+  color: #82908a;
+  font: 8px var(--font-mono);
+  line-height: 1.6;
+}
+.window-observation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+.window-observation-grid > div {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #26312e;
+  background: rgba(9, 13, 13, 0.42);
+}
+.window-observation-grid > div > span,
+.window-coverage-grid > div > span {
+  color: #73807e;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.1em;
+}
+.window-observation-grid strong {
+  color: #cbd7d0;
+  font: 13px var(--font-mono);
+}
+.window-observation-grid small {
+  overflow-wrap: anywhere;
+  color: #75847d;
+}
+.window-coverage-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 8px;
+}
+.window-coverage-grid > div {
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  background: #111918;
+}
+.window-coverage-grid strong {
+  color: #b9c8bf;
+  font: 10px var(--font-mono);
+}
+.window-events {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #283330;
+}
+.window-event-row {
+  display: grid;
+  grid-template-columns: minmax(95px, 0.8fr) 24px minmax(0, 2fr);
+  align-items: baseline;
+  gap: 7px;
+}
+.window-event-row > span {
+  color: #aebbb4;
+  font-size: 9px;
+}
+.window-event-row > strong {
+  color: #d1ddd5;
+  font: 9px var(--font-mono);
+  text-align: right;
+}
+.window-delta-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #283330;
+}
+.window-delta-summary > div {
+  display: grid;
+  gap: 6px;
+}
+.window-delta-summary strong {
+  color: #d2ddd6;
+  font: 11px var(--font-mono);
+}
+.window-delta-summary i {
+  color: #66736f;
+  font-style: normal;
+}
+.window-delta-summary small {
+  overflow-wrap: anywhere;
+}
+.window-excluded-details {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid #283330;
+}
+.window-excluded-details summary {
+  color: #899590;
+  cursor: pointer;
+  font: 8px var(--font-mono);
+}
+.window-excluded-details ul {
+  display: grid;
+  gap: 3px;
+  max-height: 140px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding-left: 16px;
 }
 .quality-row > div {
   display: grid;
@@ -2235,6 +2397,23 @@ h1 span {
   .comparison-conditions-heading {
     flex-direction: column;
     gap: 8px;
+  }
+  .comparison-window {
+    padding: 13px;
+  }
+  .comparison-window-heading {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .window-source-grid,
+  .window-delta-summary {
+    grid-template-columns: 1fr;
+  }
+  .window-source + .window-source {
+    padding-top: 13px;
+    padding-left: 0;
+    border-top: 1px solid #283330;
+    border-left: 0;
   }
   .condition-source-grid {
     grid-template-columns: 1fr;

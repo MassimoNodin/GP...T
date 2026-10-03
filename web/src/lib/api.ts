@@ -762,6 +762,7 @@ export interface Comparison {
     target: ObservedConditionSummary;
     reference: ObservedConditionSummary;
   };
+  comparison_window?: ComparisonWindow;
   track: { track_id: number; track_name: string; track_length_m: number };
   distance_m: number[];
   target_trace: ResampledTrace;
@@ -836,6 +837,107 @@ export interface ObservedConditionAnchor {
   frame_identifier: number | null;
   session_time_s: number | null;
   lap_distance_m: number | null;
+}
+
+export interface ComparisonWindow {
+  schema_version: 1;
+  artifact_kind: "comparison_distance_window";
+  analysis_version: string;
+  diagnostic_only: true;
+  interval_convention: "[start_m, end_m)";
+  window_m: { start_m: number; end_m: number };
+  config: Record<string, number>;
+  event_thresholds: Record<
+    string,
+    { channel: string; threshold: number; absolute: boolean }
+  >;
+  target: ComparisonWindowAttempt;
+  reference: ComparisonWindowAttempt;
+  delta: {
+    status: string;
+    start_boundary: {
+      status: string;
+      distance_m: number;
+      target_minus_reference_s: number | null;
+    };
+    end_boundary: {
+      status: string;
+      distance_m: number;
+      target_minus_reference_s: number | null;
+    };
+    target_time_coverage: number;
+    reference_time_coverage: number;
+    shared_time_coverage: number;
+    target_source_session_time_connected: boolean;
+    reference_source_session_time_connected: boolean;
+    interval_connected_supported_time: boolean;
+    delta_change_s: number | null;
+    direction: string;
+    unavailable_reason: string | null;
+  };
+}
+
+export interface ComparisonWindowAttempt {
+  source_sample_count: number;
+  speed_sample_count: number;
+  brake_sample_count: number;
+  minimum_speed: {
+    status: string;
+    speed_kph: number | null;
+    anchor: {
+      frame_identifier: number;
+      session_time_s: number | null;
+      lap_distance_m: number;
+    } | null;
+  };
+  peak_brake: {
+    status: string;
+    value: number | null;
+    anchor: {
+      frame_identifier: number;
+      session_time_s: number | null;
+      lap_distance_m: number;
+    } | null;
+  };
+  coverage: Record<string, number>;
+  threshold_events: Record<
+    string,
+    {
+      status: string;
+      threshold: number;
+      events: Array<{
+        channel: string;
+        threshold: number;
+        start_distance_m: number;
+        start_distance_bracket_m: number[] | null;
+        end_distance_m: number;
+        end_distance_bracket_m: number[] | null;
+        start_session_time_s: number;
+        end_session_time_s: number;
+        duration_s: number;
+        peak_value: number;
+        start_speed_mps: number | null;
+        left_censored: boolean;
+        right_censored: boolean;
+      }>;
+      event_count: number;
+      events_truncated: boolean;
+      left_censored_event_count: number;
+      right_censored_event_count: number;
+      rejected_short_event_count: number;
+      unsupported_break_count: number;
+    }
+  >;
+  excluded_spans: {
+    count: number;
+    examples: Array<{
+      start_distance_m: number;
+      end_distance_m: number;
+      reason: string;
+      channel: string | null;
+    }>;
+    truncated: boolean;
+  };
 }
 
 export async function requestApi<T>(

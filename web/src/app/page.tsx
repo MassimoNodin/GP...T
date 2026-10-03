@@ -1,6 +1,7 @@
 import {
   AttemptRegionReport,
   Comparison,
+  ComparisonWindow,
   CornerAnalysis,
   CornerRegion,
   AttemptTrajectoryPreview,
@@ -31,6 +32,8 @@ type SearchParams = {
   target_attempt_key?: string | string[];
   reference_choice?: string | string[];
   comparison_policy?: string | string[];
+  window_start_m?: string | string[];
+  window_end_m?: string | string[];
   track_model_key?: string | string[];
   import_job_id?: string | string[];
   import_error?: string | string[];
@@ -58,6 +61,8 @@ export default async function Home({
     target_attempt_key: firstParam(rawParams.target_attempt_key),
     reference_choice: firstParam(rawParams.reference_choice),
     comparison_policy: firstParam(rawParams.comparison_policy),
+    window_start_m: firstParam(rawParams.window_start_m),
+    window_end_m: firstParam(rawParams.window_end_m),
     track_model_key: firstParam(rawParams.track_model_key),
     import_job_id: firstParam(rawParams.import_job_id),
     import_error: firstParam(rawParams.import_error),
@@ -218,7 +223,7 @@ export default async function Home({
   const manualComparisonRequest =
     target && manualReference
       ? requestApi<Comparison>(
-          `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, manualReference.attempt_key, selectedModel, comparisonPolicy)}`,
+          `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, manualReference.attempt_key, selectedModel, comparisonPolicy, params.window_start_m, params.window_end_m)}`,
         )
       : Promise.resolve(null);
   const [selectionResponse, manualComparisonResponse, qualityResponse, traceChartResponse, trajectoryResponse, regionResponse] = await Promise.all([
@@ -240,7 +245,7 @@ export default async function Home({
   const comparisonResponse =
     autoReference && target && referenceKey
       ? await requestApi<Comparison>(
-          `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, referenceKey, selectedModel, "time_trial")}`,
+          `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, referenceKey, selectedModel, "time_trial", params.window_start_m, params.window_end_m)}`,
         )
       : manualComparisonResponse;
   const comparison =
@@ -765,6 +770,28 @@ export default async function Home({
                         ))}
                       </select>
                     </label>
+                    <label>
+                      <span>INTERVAL START · M</span>
+                      <input
+                        name="window_start_m"
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        placeholder="Optional"
+                        defaultValue={params.window_start_m ?? ""}
+                      />
+                    </label>
+                    <label>
+                      <span>INTERVAL END · M</span>
+                      <input
+                        name="window_end_m"
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        placeholder="Optional"
+                        defaultValue={params.window_end_m ?? ""}
+                      />
+                    </label>
                     <button className="compare-button" type="submit">
                       Load analysis <span>↗</span>
                     </button>
@@ -960,6 +987,8 @@ export default async function Home({
                           session_key: session?.session_key ?? "",
                           target_attempt_key: target?.attempt_key ?? "",
                           reference_choice: referenceChoice,
+                          window_start_m: params.window_start_m ?? "",
+                          window_end_m: params.window_end_m ?? "",
                         })
                       }
                     />
@@ -967,6 +996,11 @@ export default async function Home({
                       target={comparison.observed_conditions.target}
                       reference={comparison.observed_conditions.reference}
                     />
+                    {comparison.comparison_window ? (
+                      <ComparisonWindowPanel
+                        report={comparison.comparison_window}
+                      />
+                    ) : null}
                     <div className="chart-stack">
                       <Chart
                         title="Speed trace"
@@ -1271,6 +1305,168 @@ function ComparisonConditionsPanel({
       </div>
     </section>
   );
+}
+
+function ComparisonWindowPanel({ report }: { report: ComparisonWindow }) {
+  return (
+    <section className="comparison-window panel">
+      <header className="comparison-window-heading">
+        <div>
+          <span className="eyebrow">SELECTED DISTANCE INTERVAL · DIAGNOSTIC</span>
+          <h3>
+            {report.window_m.start_m.toFixed(1)}–{report.window_m.end_m.toFixed(1)} m
+          </h3>
+        </div>
+        <p>
+          Numeric interval {report.interval_convention}; this is not a corner
+          definition. Measurements retain source gaps and event censoring.
+        </p>
+      </header>
+      <div className="window-source-grid">
+        <ComparisonWindowSource label="TARGET" summary={report.target} />
+        <ComparisonWindowSource label="REFERENCE" summary={report.reference} />
+      </div>
+      <div className="window-delta-summary">
+        <div>
+          <span className="condition-label">BOUNDARY DELTA · TARGET − REFERENCE</span>
+          <strong>
+            Start {seconds(report.delta.start_boundary.target_minus_reference_s)}
+            <i> → </i>
+            End {seconds(report.delta.end_boundary.target_minus_reference_s)}
+          </strong>
+          <small>
+            Target time {percent(report.delta.target_time_coverage)} · Reference time {percent(report.delta.reference_time_coverage)} · Shared {percent(report.delta.shared_time_coverage)}
+          </small>
+        </div>
+        <div>
+          <span className="condition-label">INTERVAL DELTA CHANGE</span>
+          <strong>{seconds(report.delta.delta_change_s)}</strong>
+          <small>
+            {report.delta.status === "supported"
+              ? "Connected time evidence supports both boundaries and the interval."
+              : report.delta.unavailable_reason === "unsupported_boundary_evidence"
+                ? "A selected boundary has no supported shared lap-clock delta."
+                : !report.delta.target_source_session_time_connected ||
+                    !report.delta.reference_source_session_time_connected
+                  ? "A raw source session-time gap or rewind prevents a connected interval delta."
+                  : "An unsupported or disconnected interior prevents this interval delta."}
+          </small>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ComparisonWindowSource({
+  label: sourceLabel,
+  summary,
+}: {
+  label: string;
+  summary: ComparisonWindow["target"];
+}) {
+  const eventLabels: Record<string, string> = {
+    brake_10_percent: "Brake ≥ 10%",
+    steering_absolute_15_percent: "Absolute steering ≥ 15%",
+    throttle_10_percent: "Throttle ≥ 10%",
+    throttle_50_percent: "Throttle ≥ 50%",
+    throttle_90_percent: "Throttle ≥ 90%",
+    throttle_99_percent: "Throttle ≥ 99%",
+  };
+  return (
+    <article className="window-source">
+      <div className="window-source-heading">
+        <span className="eyebrow">{sourceLabel}</span>
+        <small>
+          {summary.source_sample_count.toLocaleString()} source samples · {summary.excluded_spans.count} excluded spans
+          {summary.excluded_spans.truncated ? " · examples capped" : ""}
+        </small>
+      </div>
+      <div className="window-observation-grid">
+        <div>
+          <span>MINIMUM SPEED</span>
+          <strong>
+            {summary.minimum_speed.speed_kph == null
+              ? "Unavailable"
+              : `${summary.minimum_speed.speed_kph.toFixed(1)} km/h`}
+          </strong>
+          {summary.minimum_speed.anchor && (
+            <small>{windowAnchor(summary.minimum_speed.anchor)}</small>
+          )}
+        </div>
+        <div>
+          <span>PEAK BRAKE</span>
+          <strong>
+            {summary.peak_brake.value == null
+              ? "Unavailable"
+              : percent(summary.peak_brake.value)}
+          </strong>
+          {summary.peak_brake.anchor && (
+            <small>{windowAnchor(summary.peak_brake.anchor)}</small>
+          )}
+        </div>
+      </div>
+      <div className="window-coverage-grid">
+        {(["speed_mps", "brake", "throttle", "steering"] as const).map(
+          (channel) => (
+            <div key={channel}>
+              <span>{label(channel)}</span>
+              <strong>{percent(summary.coverage[channel])}</strong>
+            </div>
+          ),
+        )}
+      </div>
+      <div className="window-events">
+        <span className="condition-label">SUSTAINED THRESHOLD EPISODES</span>
+        {Object.entries(summary.threshold_events).map(([key, evidence]) => {
+          const first = evidence.events[0];
+          return (
+            <div className="window-event-row" key={key}>
+              <span>{eventLabels[key] ?? label(key)}</span>
+              <strong>{evidence.event_count}</strong>
+              <small>
+                {first
+                  ? `First at ${first.start_distance_m.toFixed(1)} m${first.left_censored ? " · left-censored" : ""}${first.right_censored ? " · right-censored" : ""}`
+                  : label(evidence.status)}
+                {evidence.events_truncated ? " · examples capped" : ""}
+                {` · ${evidence.left_censored_event_count} left / ${evidence.right_censored_event_count} right censored`}
+                {` · ${evidence.unsupported_break_count} unsupported breaks · ${evidence.rejected_short_event_count} short rejected`}
+              </small>
+            </div>
+          );
+        })}
+      </div>
+      {summary.excluded_spans.examples.length > 0 && (
+        <details className="window-excluded-details">
+          <summary>
+            Excluded source spans · showing {summary.excluded_spans.examples.length}
+          </summary>
+          <ul>
+            {summary.excluded_spans.examples.map((span, index) => (
+              <li key={`${span.reason}:${span.start_distance_m}:${index}`}>
+                {span.start_distance_m.toFixed(1)}–{span.end_distance_m.toFixed(1)} m · {span.reason} · {span.channel ?? "all channels"}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </article>
+  );
+}
+
+function windowAnchor(anchor: {
+  frame_identifier: number;
+  session_time_s: number | null;
+  lap_distance_m: number;
+}) {
+  return [
+    `frame ${anchor.frame_identifier}`,
+    anchor.session_time_s == null
+      ? null
+      : `${anchor.session_time_s.toFixed(3)} s`,
+    `${anchor.lap_distance_m.toFixed(1)} m`,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
 }
 
 function ConditionSource({
@@ -2067,6 +2263,8 @@ function comparisonQuery(
   referenceAttemptKey: string,
   model: TrackModelRecord | null,
   policy: "time_trial" | "practice_qualifying" = "time_trial",
+  windowStartM?: string,
+  windowEndM?: string,
 ) {
   const query = new URLSearchParams({
     target_attempt_key: targetAttemptKey,
@@ -2077,6 +2275,8 @@ function comparisonQuery(
     query.set("track_model_id", model.model_id);
     query.set("track_model_revision", String(model.revision));
   }
+  if (windowStartM?.trim()) query.set("window_start_m", windowStartM);
+  if (windowEndM?.trim()) query.set("window_end_m", windowEndM);
   return query.toString();
 }
 const numeric = (values: Array<number | boolean | null>) =>

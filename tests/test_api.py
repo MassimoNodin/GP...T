@@ -8,6 +8,7 @@ pytest.importorskip("fastapi")
 httpx = pytest.importorskip("httpx")
 
 import f1_engineer.api.app as api_module
+from f1_engineer.analysis.comparison_window import DistanceWindow
 from f1_engineer.api.app import create_app
 
 
@@ -408,12 +409,41 @@ def test_compare_api_requires_and_forwards_the_selected_comparison_policy(
             "target_attempt_key": "run:42:7:3",
             "reference_attempt_key": "run:42:7:2",
             "comparison_policy": "practice_qualifying",
+            "window_start_m": "100",
+            "window_end_m": "200.5",
         },
     )
 
     assert response.status_code == 200
     assert calls["policy"] == "practice_qualifying"
+    assert calls["distance_window"] == DistanceWindow(100.0, 200.5)
     assert response.json()["data"]["comparison_policy"] == "practice_qualifying"
+
+
+@pytest.mark.parametrize(
+    ("params", "reason"),
+    [
+        ({"window_start_m": "100"}, "bounds_must_be_selected_together"),
+        ({"window_end_m": "200"}, "bounds_must_be_selected_together"),
+        ({"window_start_m": "nan", "window_end_m": "200"}, "invalid_bounds"),
+    ],
+)
+def test_compare_api_rejects_incomplete_or_invalid_window_bounds(
+    params, reason, tmp_path
+) -> None:
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/compare/laps",
+        params={
+            "target_attempt_key": "run:42:7:3",
+            "reference_attempt_key": "run:42:7:2",
+            **params,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "unavailable"
+    assert reason in response.json()["reason"]
 
 
 def test_compare_api_rejects_unknown_comparison_policy(tmp_path) -> None:

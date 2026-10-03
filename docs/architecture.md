@@ -347,6 +347,20 @@ Expose observed fuel quantity, tyre compounds and age, and weather/temperature c
 
 These observations help explain diagnostic differences but do not establish matched conditions, normalize lap time, attribute causation, infer a stint or tyre degradation, or alter Time Trial / Practice-Qualifying comparison and automatic-reference policies. Legacy trace schemas report Car Status conditions as unavailable; unknown fields and context remain unknown. Add no migration, packet adapter, importer identity change or reference-policy expansion. Bound returned discrete/context examples and retain exact anchors in the response. Acceptance uses the Shanghai Practice 2/3 pair, the existing Melbourne invalid Time Trial captures, and synthetic legacy/missing/invalid/unknown/formula-change/frame-wrap cases. Clean Time Trial references and independently validated geometry remain separate gates.
 
+## Decision 0026: inspect one selected comparison distance interval
+
+**Status:** accepted
+
+**Date:** 2026-10-03
+
+Allow one explicitly selected numeric distance window within an already authorized completed-lap comparison. Require finite bounds satisfying `0 ≤ start < end ≤ reported track length`; represent its samples as the half-open interval `[start, end)`. Do not infer or persist a corner definition, track model, or geometry from the selected numbers. Keep the existing Time Trial and manual same-session Practice/Qualifying policy gates; Race, unknown context, and partial attempts continue to abstain.
+
+Within the selected window, report channel coverage including unsupported tails and recorded excluded spans, source-anchored observed minimum speed and peak brake, and bounded sustained brake/steering/throttle episodes with full counts, censoring, short-event rejection, and unsupported-break evidence. Report supported target-minus-reference lap-clock deltas at each boundary. Calculate interval delta change only when both traces and their shared delta have connected supported time evidence across the complete interval, including float32-tolerant continuity of raw source session time; endpoint values alone do not establish interior support. Keep official lap-time difference separate and preserve all existing source identities, checksums, capture evidence, and observed conditions.
+
+Use the established 100,000-row, 64 MiB trace, 1,024-context-segment, 4 MiB context, and 100,000-grid limits for interval requests under either policy. Read each verified trace once. Cap each threshold's event examples at 20 per attempt and excluded-span examples at 20 while retaining full counts and truncation flags. No window is selected automatically. Add no migration, trace/parser/importer change, reference expansion, ranking, diagnosis, causal claim, line/apex inference, or coaching.
+
+Acceptance uses numeric windows over the recovered Shanghai Practice 3/2 and sprint-shootout 3/1 comparisons, preserving their policy, source identities, condition summaries, and incomplete-capture evidence. Check a predetermined Shanghai window against the shared delta curve and raw event detector; verify unsupported spans remain unavailable. Existing Melbourne invalid-lap comparisons remain diagnostic, and matching a draft region reproduces its shared coverage, minimum-speed, and threshold observations. Partial/unobserved-start attempts cannot bypass comparison eligibility. Synthetic cases cover legacy schemas, missing channels, interior gaps, unsupported tails, censoring, multiple bounded episodes, sub-grid windows, frame wrap, chronology discontinuities, invalid/out-of-track bounds, and source/grid limits. Verified geometry, clean eligible Time Trial references, Race lifecycle, opponent comparison, and coaching remain separate gates.
+
 ## Data flow
 
 ```text
