@@ -103,6 +103,24 @@ _STATUS_DISCRETE_FIELDS = (
     "vehicle_fia_flag",
     "network_paused",
 )
+OBSERVED_CONDITION_TRACE_COLUMNS = [
+    "validation_flags",
+    "frame_identifier",
+    "session_time_s",
+    "lap_distance_m",
+    "car_status_available",
+    "car_status_unavailable_reason",
+    *_STATUS_FIELDS,
+]
+_ENVIRONMENT_CONTEXT_FIELDS = (
+    "weather_id",
+    "weather_name",
+    "track_temperature_c",
+    "air_temperature_c",
+    "formula_id",
+)
+_MAX_ENVIRONMENT_SEGMENTS = 16
+_MAX_ENVIRONMENT_VALUES_PER_FIELD = 16
 _COMPOUND_LABELS = {
     "actual_tyre_compound": {
         0: {16: "C5", 17: "C4", 18: "C3", 19: "C2", 20: "C1", 21: "C0", 22: "C6", 7: "intermediate", 8: "wet"},
@@ -188,7 +206,7 @@ def inspect_attempt_quality(
         ("world_velocity_x_mps", "world_velocity_y_mps", "world_velocity_z_mps"),
         schema_version=attempt.trace_schema_version,
     )
-    observed_status = _observed_status(
+    observed_status = summarize_observed_conditions(
         samples,
         trace_schema_version=attempt.trace_schema_version,
         context_segments=attempt.context_segments,
@@ -332,12 +350,13 @@ def inspect_attempt_quality(
     }
 
 
-def _observed_status(
+def summarize_observed_conditions(
     samples: Sequence[Mapping[str, object]],
     *,
     trace_schema_version: int,
     context_segments: Sequence[tuple[int, Mapping[str, object] | None]],
 ) -> dict[str, object]:
+    environment_context = _environment_context(context_segments)
     if trace_schema_version < 3:
         return {
             "status": "unavailable_in_trace_schema",
@@ -351,6 +370,7 @@ def _observed_status(
             "discrete_changes_truncated": None,
             "distinct_compounds": None,
             "fuel_quantity_unit_note": "reported quantity; unit unspecified",
+            "environment_context": environment_context,
         }
 
     matched = sum(sample.get("car_status_available") is True for sample in samples)
@@ -378,11 +398,12 @@ def _observed_status(
                 invalid_count += 1
             elif value is not None:
                 valid_count += 1
-            if value is not None:
+            if value is not None and not invalid:
                 observed = {
                     "value": value,
                     "frame_identifier": sample.get("frame_identifier"),
                     "session_time_s": sample.get("session_time_s"),
+                    "lap_distance_m": sample.get("lap_distance_m"),
                 }
                 if first is None:
                     first = observed
@@ -437,9 +458,15 @@ def _observed_status(
     for sample in samples:
         if sample.get("car_status_available") is not True:
             continue
+        flags = sample.get("validation_flags")
         frame = sample.get("frame_identifier")
         formula_id = _formula_at_frame(frame, context_segments)
         for output_name, field in compound_fields:
+            if (
+                isinstance(flags, (tuple, list))
+                and f"invalid_car_status_{field}" in flags
+            ):
+                continue
             raw_id = sample.get(field)
             if not isinstance(raw_id, int) or isinstance(raw_id, bool):
                 continue
@@ -465,6 +492,72 @@ def _observed_status(
             key: list(value.values()) for key, value in compounds.items()
         },
         "fuel_quantity_unit_note": "reported quantity; unit unspecified",
+        "environment_context": environment_context,
+    }
+
+
+def _environment_context(
+    context_segments: Sequence[tuple[int, Mapping[str, object] | None]],
+) -> dict[str, object]:
+    observed: list[dict[str, object]] = []
+    unknown_segment_count = 0
+    missing_counts = {field: 0 for field in _ENVIRONMENT_CONTEXT_FIELDS}
+    distinct_values: dict[str, list[object]] = {
+        field: [] for field in _ENVIRONMENT_CONTEXT_FIELDS
+    }
+    distinct_truncated = {field: False for field in _ENVIRONMENT_CONTEXT_FIELDS}
+    for frame, context in context_segments:
+        if context is None:
+            unknown_segment_count += 1
+            continue
+        snapshot: dict[str, object] = {"from_frame_identifier": frame}
+        for field in _ENVIRONMENT_CONTEXT_FIELDS:
+            value = context.get(field)
+            snapshot[field] = value
+            if value is None:
+                missing_counts[field] += 1
+                continue
+            values = distinct_values[field]
+            if value not in values:
+                if len(values) < _MAX_ENVIRONMENT_VALUES_PER_FIELD:
+                    values.append(value)
+                else:
+                    distinct_truncated[field] = True
+        observed.append(snapshot)
+
+    total_segments = len(context_segments)
+    known_segment_count = len(observed)
+    missing_context_values = any(missing_counts.values())
+    status = (
+        "unknown"
+        if known_segment_count == 0
+        else "incomplete"
+        if unknown_segment_count > 0 or missing_context_values
+        else "available"
+    )
+    retained = (
+        observed
+        if len(observed) <= _MAX_ENVIRONMENT_SEGMENTS
+        else [
+            *observed[: _MAX_ENVIRONMENT_SEGMENTS // 2],
+            *observed[-(_MAX_ENVIRONMENT_SEGMENTS // 2) :],
+        ]
+    )
+    return {
+        "status": status,
+        "segment_count": total_segments,
+        "known_segment_count": known_segment_count,
+        "unknown_segment_count": unknown_segment_count,
+        "missing_value_counts": missing_counts,
+        "retained_segments": retained,
+        "omitted_segment_count": len(observed) - len(retained),
+        "distinct_values": {
+            field: {
+                "values": values,
+                "truncated": distinct_truncated[field],
+            }
+            for field, values in distinct_values.items()
+        },
     }
 
 

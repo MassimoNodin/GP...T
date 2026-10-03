@@ -7,6 +7,7 @@ from typing import Mapping
 
 from .comparison import calculate_channel_differences, calculate_delta_time
 from .corners import analyze_corner_regions
+from .quality import OBSERVED_CONDITION_TRACE_COLUMNS, summarize_observed_conditions
 from .resampling import (
     ANALYSIS_VERSION,
     ResamplingConfig,
@@ -70,6 +71,9 @@ _KNOWN_GAME_MODES = frozenset(
 )
 _PRACTICE_QUALIFYING_POLICY_VERSION = "pq-same-session-diagnostic-v1"
 _PRACTICE_QUALIFYING_GRID_POINT_LIMIT = 100_000
+_COMPARISON_TRACE_COLUMNS = list(
+    dict.fromkeys((*ANALYSIS_TRACE_COLUMNS, *OBSERVED_CONDITION_TRACE_COLUMNS))
+)
 
 
 class ComparisonPolicy(str, Enum):
@@ -107,8 +111,12 @@ def compare_attempts(
         target = _load_bounded_attempt_trace(database_path, target_attempt_key)
         reference = _load_bounded_attempt_trace(database_path, reference_attempt_key)
     else:
-        target = load_attempt_trace(database_path, target_attempt_key)
-        reference = load_attempt_trace(database_path, reference_attempt_key)
+        target = load_attempt_trace(
+            database_path, target_attempt_key, columns=_COMPARISON_TRACE_COLUMNS
+        )
+        reference = load_attempt_trace(
+            database_path, reference_attempt_key, columns=_COMPARISON_TRACE_COLUMNS
+        )
     if target is None:
         raise ValueError(f"target attempt {target_attempt_key!r} was not found or is unavailable")
     if reference is None:
@@ -169,6 +177,18 @@ def compare_attempts(
     processing_run_evidence = _processing_run_evidence(
         database_path, target.run_id, reference.run_id
     )
+    observed_conditions = {
+        "target": summarize_observed_conditions(
+            target.samples,
+            trace_schema_version=target.trace_schema_version,
+            context_segments=target.context_segments,
+        ),
+        "reference": summarize_observed_conditions(
+            reference.samples,
+            trace_schema_version=reference.trace_schema_version,
+            context_segments=reference.context_segments,
+        ),
+    }
 
     result = {
         "analysis_version": ANALYSIS_VERSION,
@@ -197,6 +217,7 @@ def compare_attempts(
         "target": _attempt_summary(target),
         "reference": _attempt_summary(reference),
         "processing_run_evidence": processing_run_evidence,
+        "observed_conditions": observed_conditions,
         "track": {
             "track_id": target_context["track_id"],
             "track_name": target_context["track_name"],
@@ -258,7 +279,7 @@ def _load_bounded_attempt_trace(
         return load_attempt_trace(
             database_path,
             attempt_key,
-            columns=ANALYSIS_TRACE_COLUMNS,
+            columns=_COMPARISON_TRACE_COLUMNS,
             max_trace_bytes=ANALYSIS_SOURCE_TRACE_BYTE_LIMIT,
             max_trace_rows=ANALYSIS_SOURCE_TRACE_ROW_LIMIT,
             max_context_segments=ANALYSIS_SOURCE_CONTEXT_SEGMENT_LIMIT,

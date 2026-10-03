@@ -337,6 +337,16 @@ Retain the current Time Trial comparison behavior and TT-only automatic referenc
 
 The recovered Shanghai capture supplies completed same-session pairs for acceptance: practice attempts 2/3 and sprint-shootout-1 attempts 1/3 have observed starts, no recorded pit encounter and no null context segments. Confirm full context compatibility before comparing them. Preserve and expose its incomplete-footer and replay-loss evidence in comparison results, and separately validate reported lap-time differences, supported delta masks and channel coverage. Practice attempt 1 must abstain for missing context/unobserved start, and attempt 6 for unobserved start. Synthetic checks cover unsupported Race/unknown modes, context changes, session/player/run mismatches, invalid and pit attempts, legacy trace schemas, checksums, source/grid limits, and unchanged Time Trial/reference/region policies. A clean eligible TT capture remains required for positive automatic-reference validation; verified geometry and coaching remain separate evidence gates.
 
+## Decision 0025: expose observed conditions beside lap comparisons
+
+**Status:** accepted
+
+**Date:** 2026-10-03
+
+Expose observed fuel quantity, tyre compounds and age, and weather/temperature context for both source attempts beside explicit lap comparisons. Reuse the schema-v3 exact-frame Car Status data and the existing quality-summary semantics, preserving valid/missing/invalid counts and first/last frame, session-time and distance anchors. Describe those anchors as first/last observed within the trace; they do not guarantee lap-start or lap-end conditions. Resolve compound labels using the formula context where known; retain raw IDs and unknown labels otherwise. Keep quantities in source-reported units without inferring fuel consumption.
+
+These observations help explain diagnostic differences but do not establish matched conditions, normalize lap time, attribute causation, infer a stint or tyre degradation, or alter Time Trial / Practice-Qualifying comparison and automatic-reference policies. Legacy trace schemas report Car Status conditions as unavailable; unknown fields and context remain unknown. Add no migration, packet adapter, importer identity change or reference-policy expansion. Bound returned discrete/context examples and retain exact anchors in the response. Acceptance uses the Shanghai Practice 2/3 pair, the existing Melbourne invalid Time Trial captures, and synthetic legacy/missing/invalid/unknown/formula-change/frame-wrap cases. Clean Time Trial references and independently validated geometry remain separate gates.
+
 ## Data flow
 
 ```text

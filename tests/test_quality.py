@@ -255,6 +255,7 @@ def test_quality_reports_exact_frame_status_counts_changes_and_compound_labels(
     assert status["fields"]["fuel_remaining_laps"]["valid_count"] == 4
     assert status["fields"]["fuel_remaining_laps"]["invalid_count"] == 0
     assert status["first_last_observed"]["fuel_in_tank_reported"]["first"]["frame_identifier"] == 1
+    assert status["first_last_observed"]["fuel_in_tank_reported"]["first"]["lap_distance_m"] == 10.0
     assert status["discrete_changes"] == [{
         "field": "traction_control",
         "from_frame_identifier": 3,
@@ -266,6 +267,154 @@ def test_quality_reports_exact_frame_status_counts_changes_and_compound_labels(
         {"raw_id": 20, "formula_id": 0, "label": "C1"}
     ]
     assert status["fuel_quantity_unit_note"] == "reported quantity; unit unspecified"
+
+
+def test_observed_conditions_preserve_fuel_tyre_context_and_source_anchors() -> None:
+    attempt = _attempt(
+        schema_version=3,
+        frames=(0xFFFFFFFE, 0xFFFFFFFF, 0, 1),
+        distances=(10.0, 20.0, 30.0, 40.0),
+    )
+    samples = tuple(
+        {
+            **sample,
+            "car_status_available": True,
+            "car_status_unavailable_reason": None,
+            "validation_flags": [],
+            "fuel_in_tank_reported": (7.194, 7.0, 5.8, 5.421)[index],
+            "actual_tyre_compound": 20,
+            "visual_tyre_compound": 17,
+            "tyre_age_laps": 1 if index < 2 else 2,
+        }
+        for index, sample in enumerate(attempt.samples)
+    )
+    context_segments = (
+        (
+            0xFFFFFFFE,
+            {
+                "formula_id": 0,
+                "weather_id": 1,
+                "weather_name": "light_cloud",
+                "track_temperature_c": 32,
+                "air_temperature_c": 24,
+            },
+        ),
+        (
+            0,
+            {
+                "formula_id": 0,
+                "weather_id": 2,
+                "weather_name": "overcast",
+                "track_temperature_c": 31,
+                "air_temperature_c": 24,
+            },
+        ),
+    )
+
+    summary = quality_module.summarize_observed_conditions(
+        samples, trace_schema_version=3, context_segments=context_segments
+    )
+
+    fuel = summary["first_last_observed"]["fuel_in_tank_reported"]
+    assert fuel["first"] == {
+        "value": 7.194,
+        "frame_identifier": 0xFFFFFFFE,
+        "session_time_s": 0.0,
+        "lap_distance_m": 10.0,
+    }
+    assert fuel["last"]["value"] == 5.421
+    assert fuel["last"]["lap_distance_m"] == 40.0
+    assert summary["fields"]["fuel_in_tank_reported"] == {
+        "valid_count": 4,
+        "missing_count": 0,
+        "invalid_count": 0,
+    }
+    assert summary["distinct_compounds"]["actual"] == [
+        {"raw_id": 20, "formula_id": 0, "label": "C1"}
+    ]
+    assert summary["environment_context"]["status"] == "available"
+    assert summary["environment_context"]["distinct_values"]["weather_name"]["values"] == [
+        "light_cloud",
+        "overcast",
+    ]
+    assert summary["environment_context"]["retained_segments"][1][
+        "from_frame_identifier"
+    ] == 0
+
+
+def test_observed_conditions_exclude_invalid_values_from_first_last_evidence() -> None:
+    attempt = _attempt(
+        schema_version=3,
+        frames=(10, 11, 12, 13),
+        distances=(1.0, 2.0, 3.0, 4.0),
+    )
+    samples = tuple(
+        {
+            **sample,
+            "car_status_available": True,
+            "car_status_unavailable_reason": None,
+            "validation_flags": (
+                [
+                    "invalid_car_status_fuel_in_tank_reported",
+                    "invalid_car_status_actual_tyre_compound",
+                ]
+                if index == 0
+                else []
+            ),
+            "fuel_in_tank_reported": (99.0, 7.0, None, 5.0)[index],
+            "actual_tyre_compound": 255 if index == 0 else 20,
+        }
+        for index, sample in enumerate(attempt.samples)
+    )
+
+    summary = quality_module.summarize_observed_conditions(
+        samples, trace_schema_version=3, context_segments=()
+    )
+
+    fuel = summary["first_last_observed"]["fuel_in_tank_reported"]
+    assert fuel["first"]["value"] == 7.0
+    assert fuel["first"]["frame_identifier"] == 11
+    assert fuel["last"]["value"] == 5.0
+    assert summary["fields"]["fuel_in_tank_reported"] == {
+        "valid_count": 2,
+        "missing_count": 1,
+        "invalid_count": 1,
+    }
+    assert summary["distinct_compounds"]["actual"] == [
+        {"raw_id": 20, "formula_id": None, "label": None}
+    ]
+
+
+def test_legacy_observed_conditions_are_explicitly_unavailable() -> None:
+    attempt = _attempt(schema_version=2)
+    summary = quality_module.summarize_observed_conditions(
+        attempt.samples,
+        trace_schema_version=2,
+        context_segments=attempt.context_segments,
+    )
+
+    assert summary["status"] == "unavailable_in_trace_schema"
+    assert summary["fields"] is None
+    assert summary["first_last_observed"] is None
+    assert summary["distinct_compounds"] is None
+
+
+def test_observed_environment_context_caps_segments_and_keeps_unknown_intervals() -> None:
+    contexts = tuple(
+        (frame, {"weather_id": frame, "weather_name": f"weather-{frame}"})
+        for frame in range(18)
+    ) + ((18, None),)
+
+    summary = quality_module.summarize_observed_conditions(
+        (), trace_schema_version=3, context_segments=contexts
+    )
+    environment = summary["environment_context"]
+
+    assert environment["status"] == "incomplete"
+    assert environment["unknown_segment_count"] == 1
+    assert len(environment["retained_segments"]) == 16
+    assert environment["omitted_segment_count"] == 2
+    assert environment["distinct_values"]["weather_id"]["truncated"] is True
 
 
 def test_quality_resolves_compounds_across_uint32_frame_wrap(monkeypatch) -> None:

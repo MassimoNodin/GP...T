@@ -301,4 +301,7 @@ def test_quality_distinguishes_persisted_invalid_status_from_missing(tmp_path) -
     assert fuel == {"valid_count": 0, "missing_count": 0, "invalid_count": 1}
     fia_flag = status["fields"]["vehicle_fia_flag"]
     assert fia_flag["invalid_count"] == 1
-    assert status["first_last_observed"]["vehicle_fia_flag"]["first"]["value"] == -1
+    assert status["first_last_observed"]["vehicle_fia_flag"] == {
+        "first": None,
+        "last": None,
+    }

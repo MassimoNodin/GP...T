@@ -8,6 +8,7 @@ import pytest
 from f1_engineer.analysis import service as service_module
 from f1_engineer.analysis.corners import analyze_attempt_regions
 from f1_engineer.analysis.events import detect_sustained_threshold_events
+from f1_engineer.analysis import quality as quality_module
 from f1_engineer.analysis.resampling import (
     ResamplingConfig,
     TraceSample,
@@ -644,7 +645,7 @@ def test_comparison_reports_absolute_delta_and_keeps_invalid_attempt_visible(mon
     monkeypatch.setattr(
         service_module,
         "load_attempt_trace",
-        lambda _database, key: attempts.get(key),
+        lambda _database, key, **_kwargs: attempts.get(key),
     )
 
     result = service_module.compare_attempts("test.sqlite3", "target-attempt", "reference-attempt")
@@ -663,6 +664,69 @@ def test_comparison_reports_absolute_delta_and_keeps_invalid_attempt_visible(mon
     assert result["channel_differences"]["throttle"]["values"][10] == 0.25
 
 
+def test_comparison_condition_summary_matches_standalone_quality_semantics(
+    monkeypatch,
+) -> None:
+    target = _stored_attempt("target-attempt", (100, 200, 300))
+    reference = _stored_attempt("reference-attempt", (100, 150, 200))
+
+    def with_conditions(attempt, fuel: tuple[float, float, float], tyre_age: int):
+        samples = tuple(
+            {
+                **sample,
+                "validation_flags": [],
+                "car_status_available": True,
+                "car_status_unavailable_reason": None,
+                "fuel_in_tank_reported": value,
+                "actual_tyre_compound": 20,
+                "visual_tyre_compound": 17,
+                "tyre_age_laps": tyre_age,
+            }
+            for sample, value in zip(attempt.samples, fuel)
+        )
+        context = {
+            **attempt.context_segments[0][1],
+            "track_temperature_c": 30,
+            "air_temperature_c": 24,
+        }
+        return replace(
+            attempt,
+            trace_schema_version=3,
+            samples=samples,
+            context_segments=((10, context),),
+        )
+
+    target = with_conditions(target, (7.194, 6.5, 5.9), 1)
+    reference = with_conditions(reference, (5.421, 5.1, 4.8), 2)
+    attempts = {target.attempt_key: target, reference.attempt_key: reference}
+    load_calls: list[dict[str, object]] = []
+
+    def load(_database, key, **kwargs):
+        load_calls.append(kwargs)
+        return attempts.get(key)
+
+    monkeypatch.setattr(service_module, "load_attempt_trace", load)
+
+    result = service_module.compare_attempts(
+        "unused.sqlite3", target.attempt_key, reference.attempt_key
+    )
+
+    assert result["observed_conditions"]["target"] == quality_module.summarize_observed_conditions(
+        target.samples,
+        trace_schema_version=target.trace_schema_version,
+        context_segments=target.context_segments,
+    )
+    assert result["observed_conditions"]["reference"] == quality_module.summarize_observed_conditions(
+        reference.samples,
+        trace_schema_version=reference.trace_schema_version,
+        context_segments=reference.context_segments,
+    )
+    assert result["observed_conditions"]["target"]["first_last_observed"][
+        "fuel_in_tank_reported"
+    ]["first"]["lap_distance_m"] == 0.0
+    assert all("car_status_available" in call["columns"] for call in load_calls)
+
+
 def test_comparison_rejects_unknown_context_and_cross_mode_attempts(monkeypatch) -> None:
     target = _stored_attempt("target-attempt", (100, 200, 300), context=None)
     unknown = {**target.context_segments[0][1], "game_mode": None}
@@ -672,7 +736,7 @@ def test_comparison_rejects_unknown_context_and_cross_mode_attempts(monkeypatch)
     monkeypatch.setattr(
         service_module,
         "load_attempt_trace",
-        lambda _database, key: attempts.get(key),
+        lambda _database, key, **_kwargs: attempts.get(key),
     )
 
     with pytest.raises(ValueError, match="unknown.*mode"):
@@ -694,7 +758,7 @@ def test_corner_region_analysis_keeps_draft_and_invalid_laps_diagnostic(monkeypa
     monkeypatch.setattr(
         service_module,
         "load_attempt_trace",
-        lambda _database, key: attempts.get(key),
+        lambda _database, key, **_kwargs: attempts.get(key),
     )
     model = TrackModel(
         model_id="melbourne-draft-test",

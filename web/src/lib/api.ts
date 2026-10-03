@@ -758,6 +758,10 @@ export interface Comparison {
     target: ProcessingRunSummary | null;
     reference: ProcessingRunSummary | null;
   };
+  observed_conditions: {
+    target: ObservedConditionSummary;
+    reference: ObservedConditionSummary;
+  };
   track: { track_id: number; track_name: string; track_length_m: number };
   distance_m: number[];
   target_trace: ResampledTrace;
@@ -777,6 +781,61 @@ export interface Comparison {
     reference_excluded_spans: unknown[];
   };
   corner_analysis?: CornerAnalysis;
+}
+
+export interface ObservedConditionSummary {
+  status: string;
+  matched_sample_count: number | null;
+  sample_count: number;
+  missing_join_sample_count: number | null;
+  unavailable_reason_counts: Record<string, number> | null;
+  fields: Record<
+    string,
+    { valid_count: number; missing_count: number; invalid_count: number }
+  > | null;
+  first_last_observed: Record<
+    string,
+    {
+      first: ObservedConditionAnchor | null;
+      last: ObservedConditionAnchor | null;
+    }
+  > | null;
+  discrete_changes: unknown[] | null;
+  discrete_changes_truncated: boolean | null;
+  distinct_compounds:
+    | {
+        actual: Array<{ raw_id: number; formula_id: number | null; label: string | null }>;
+        visual: Array<{ raw_id: number; formula_id: number | null; label: string | null }>;
+      }
+    | null;
+  fuel_quantity_unit_note: string;
+  environment_context: {
+    status: string;
+    segment_count: number;
+    known_segment_count: number;
+    unknown_segment_count: number;
+    missing_value_counts: Record<string, number>;
+    retained_segments: Array<{
+      from_frame_identifier: number;
+      weather_id: number | null;
+      weather_name: string | null;
+      track_temperature_c: number | null;
+      air_temperature_c: number | null;
+      formula_id: number | null;
+    }>;
+    omitted_segment_count: number;
+    distinct_values: Record<
+      string,
+      { values: Array<string | number>; truncated: boolean }
+    >;
+  };
+}
+
+export interface ObservedConditionAnchor {
+  value: number | boolean;
+  frame_identifier: number | null;
+  session_time_s: number | null;
+  lap_distance_m: number | null;
 }
 
 export async function requestApi<T>(

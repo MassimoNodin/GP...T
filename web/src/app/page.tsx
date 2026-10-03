@@ -7,6 +7,8 @@ import {
   AttemptQualityReport,
   AttemptTraceChartReport,
   LapRecord,
+  ObservedConditionAnchor,
+  ObservedConditionSummary,
   ProcessingRunDetail,
   ProcessingRunPage,
   ProcessingRunSummary,
@@ -961,6 +963,10 @@ export default async function Home({
                         })
                       }
                     />
+                    <ComparisonConditionsPanel
+                      target={comparison.observed_conditions.target}
+                      reference={comparison.observed_conditions.reference}
+                    />
                     <div className="chart-stack">
                       <Chart
                         title="Speed trace"
@@ -1237,6 +1243,225 @@ function ComparisonRunEvidence({
       ))}
     </>
   );
+}
+
+function ComparisonConditionsPanel({
+  target,
+  reference,
+}: {
+  target: ObservedConditionSummary;
+  reference: ObservedConditionSummary;
+}) {
+  return (
+    <section className="comparison-conditions panel">
+      <header className="comparison-conditions-heading">
+        <div>
+          <span className="eyebrow">STORED TRACE EVIDENCE</span>
+          <h3>Observed conditions</h3>
+        </div>
+        <p>
+          First and last reported values within each stored trace. They do not
+          guarantee lap-start or lap-end conditions, and do not establish a
+          matched comparison.
+        </p>
+      </header>
+      <div className="condition-source-grid">
+        <ConditionSource label="TARGET" summary={target} />
+        <ConditionSource label="REFERENCE" summary={reference} />
+      </div>
+    </section>
+  );
+}
+
+function ConditionSource({
+  label: sourceLabel,
+  summary,
+}: {
+  label: string;
+  summary: ObservedConditionSummary;
+}) {
+  const field = (name: string) => summary.fields?.[name];
+  const anchorPair = (name: string) => summary.first_last_observed?.[name];
+  const conditionFields = [
+    {
+      title: "Fuel quantity",
+      key: "fuel_in_tank_reported",
+      note: summary.fuel_quantity_unit_note,
+    },
+    { title: "Tyre age", key: "tyre_age_laps", note: null },
+  ] as const;
+  const statusLine =
+    summary.status === "available"
+      ? `Car Status matched ${formatEvidenceCount(summary.matched_sample_count)} / ${summary.sample_count} samples · ${formatEvidenceCount(summary.missing_join_sample_count)} missing joins`
+      : summary.status === "unavailable_in_trace_schema"
+        ? "Car Status unavailable in this trace schema"
+        : `Car Status ${label(summary.status).toLowerCase()} · ${summary.sample_count} trace samples`;
+  const compounds = summary.distinct_compounds;
+  const environment = summary.environment_context;
+  const retained = environment.retained_segments;
+  const missingContextValues = Object.entries(environment.missing_value_counts)
+    .filter(([, count]) => count > 0)
+    .map(([fieldName, count]) => `${fieldName.replaceAll("_", " ")} ${count}`);
+  const truncatedContextFields = Object.entries(environment.distinct_values)
+    .filter(([, values]) => values.truncated)
+    .map(([fieldName]) => fieldName.replaceAll("_", " "));
+
+  return (
+    <article className="condition-source">
+      <div className="condition-source-heading">
+        <span className="eyebrow">{sourceLabel}</span>
+        <strong>{statusLine}</strong>
+      </div>
+      <div className="condition-observation-list">
+        {conditionFields.map(({ title, key, note }) => {
+          const counts = field(key);
+          const pair = anchorPair(key);
+          return (
+            <div className="condition-observation" key={key}>
+              <div className="condition-observation-title">
+                <strong>{title}</strong>
+                <span>
+                  {counts
+                    ? `${counts.valid_count} valid · ${counts.missing_count} missing · ${counts.invalid_count} invalid`
+                    : "Field evidence unavailable"}
+                </span>
+              </div>
+              {note && <small className="condition-measure-note">{note}</small>}
+              <div className="condition-observation-values">
+                {pair?.first || pair?.last ? (
+                  <>
+                    {pair.first && (
+                      <span>
+                        First {formatConditionValue(key, pair.first.value)} · {conditionAnchor(pair.first)}
+                      </span>
+                    )}
+                    {pair.last && pair.last !== pair.first && (
+                      <span>
+                        Last {formatConditionValue(key, pair.last.value)} · {conditionAnchor(pair.last)}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span>No valid reported value</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="condition-compounds">
+        <span className="condition-label">COMPOUNDS</span>
+        {compounds ? (
+          <div className="condition-compound-list">
+            {(["actual", "visual"] as const).map((kind) => (
+              <div key={kind}>
+                <span>{kind === "actual" ? "Actual" : "Visual"}</span>
+                <div>
+                  {compounds[kind].length ? (
+                    compounds[kind].map((compound) => (
+                      <small key={`${compound.formula_id}:${compound.raw_id}`}>
+                        {compound.label ?? "Unknown label"} · ID {compound.raw_id} · formula {formatEvidenceCount(compound.formula_id)}
+                      </small>
+                    ))
+                  ) : (
+                    <small>Unknown</small>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <small>Unavailable in this trace schema</small>
+        )}
+      </div>
+      <div className="condition-environment">
+        <div className="condition-environment-heading">
+          <span className="condition-label">SESSION CONTEXT</span>
+          <span>
+            {label(environment.status)} · {environment.known_segment_count} known / {environment.segment_count} segments
+            {environment.unknown_segment_count > 0
+              ? ` · ${environment.unknown_segment_count} unknown`
+              : ""}
+            {environment.omitted_segment_count > 0
+              ? ` · ${environment.omitted_segment_count} omitted from detail`
+              : ""}
+          </span>
+        </div>
+        <div className="condition-environment-values">
+          <span>
+            Weather: {conditionValues(environment.distinct_values.weather_name)}
+            {environment.distinct_values.weather_id?.values.length
+              ? ` · IDs ${conditionValues(environment.distinct_values.weather_id)}`
+              : ""}
+          </span>
+          <span>
+            Track temperature: {conditionValues(environment.distinct_values.track_temperature_c, " °C")}
+          </span>
+          <span>
+            Air temperature: {conditionValues(environment.distinct_values.air_temperature_c, " °C")}
+          </span>
+          <span>
+            Formula IDs: {conditionValues(environment.distinct_values.formula_id)}
+          </span>
+        </div>
+        {missingContextValues.length > 0 && (
+          <div className="condition-environment-details">
+            Missing context values by segment: {missingContextValues.join(", ")}
+          </div>
+        )}
+        {truncatedContextFields.length > 0 && (
+          <div className="condition-environment-details">
+            Distinct value lists capped at 16; additional values omitted for {truncatedContextFields.join(", ")}.
+          </div>
+        )}
+        {retained.length > 0 && (
+          <div className="condition-context-anchors">
+            {retained.length === 1 ? (
+              <span>Context first observed at frame {retained[0].from_frame_identifier}</span>
+            ) : (
+              <>
+                <span>First retained context at frame {retained[0].from_frame_identifier}</span>
+                <span>Last retained context at frame {retained[retained.length - 1].from_frame_identifier}</span>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function formatConditionValue(field: string, value: number | boolean) {
+  if (typeof value === "boolean") return value ? "On" : "Off";
+  return field === "tyre_age_laps" ? String(value) : value.toFixed(3);
+}
+
+function conditionAnchor(anchor: ObservedConditionAnchor) {
+  const parts = [
+    anchor.frame_identifier == null
+      ? null
+      : `frame ${anchor.frame_identifier}`,
+    anchor.session_time_s == null
+      ? null
+      : `${anchor.session_time_s.toFixed(3)} s session time`,
+    anchor.lap_distance_m == null
+      ? null
+      : `${anchor.lap_distance_m.toFixed(1)} m distance`,
+  ].filter((part): part is string => part !== null);
+  return parts.length ? `@ ${parts.join(" · ")}` : "source anchor unavailable";
+}
+
+function conditionValues(
+  entry:
+    | { values: Array<string | number>; truncated: boolean }
+    | undefined,
+  suffix = "",
+) {
+  if (!entry?.values.length) return "Unknown";
+  const values = entry.values.map((value) => `${value}${suffix}`).join(", ");
+  return entry.truncated
+    ? `${values} (list capped at 16; more omitted)`
+    : values;
 }
 
 function Metric({
