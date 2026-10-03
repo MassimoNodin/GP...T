@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import struct
+
 import pytest
 
 from f1_engineer.analysis import service as service_module
+from f1_engineer.analysis.corners import analyze_attempt_regions
 from f1_engineer.analysis.events import detect_sustained_threshold_events
 from f1_engineer.analysis.resampling import (
     ResamplingConfig,
@@ -270,6 +273,41 @@ def test_threshold_detector_breaks_at_missing_values_and_large_gaps() -> None:
     assert result.sustained_events[0].left_censored
 
 
+@pytest.mark.parametrize(("start", "end"), [(10.0, 10.1), (64.0, 64.1)])
+def test_threshold_event_uses_float32_tolerance_at_exact_time_boundaries(
+    start: float, end: float
+) -> None:
+    encode_float32 = lambda value: struct.unpack("<f", struct.pack("<f", value))[0]
+    samples = (
+        _sample(
+            1,
+            0.0,
+            0.0,
+            throttle=0.2,
+            session_time_s=encode_float32(start),
+        ),
+        _sample(
+            2,
+            1.0,
+            0.1,
+            throttle=0.2,
+            session_time_s=encode_float32(end),
+        ),
+    )
+
+    result = detect_sustained_threshold_events(
+        samples,
+        channel="throttle",
+        threshold=0.1,
+        search_window_m=(0.0, 2.0),
+        minimum_duration_s=0.1,
+    )
+
+    assert len(result.sustained_events) == 1
+    assert result.rejected_short_event_count == 0
+    assert result.sustained_events[0].duration_s == pytest.approx(0.1, abs=2e-6)
+
+
 def _stored_attempt(
     attempt_key: str,
     times_ms: tuple[int, int, int],
@@ -445,6 +483,19 @@ def test_corner_region_analysis_keeps_draft_and_invalid_laps_diagnostic(monkeypa
         region["target"]["turn_in_proxy"]["interpretation"]
         == "absolute steering threshold; calibrated track-relative geometry unavailable"
     )
+    target_samples = tuple(TraceSample.from_record(row) for row in target.samples)
+    reference_samples = tuple(TraceSample.from_record(row) for row in reference.samples)
+    grid = common_distance_grid(target_samples, reference_samples, track_length_m=20)
+    target_resampled = resample_trace(
+        target_samples, grid, track_length_m=20
+    )
+    standalone = analyze_attempt_regions(
+        target_samples,
+        target_resampled,
+        model,
+        config=ResamplingConfig(),
+    )
+    assert standalone["regions"][0]["observations"] == region["target"]
     assert region["target"]["throttle_pickup"]["0.5"]["status"] == "left_censored"
     assert region["delta_change"]["delta_change_s"] == pytest.approx(0.1)
 

@@ -24,6 +24,7 @@ from .analysis.reference_selection import (
     select_reference,
 )
 from .analysis.quality import inspect_attempt_quality
+from .analysis.region_service import load_attempt_region_report
 from .analysis.trajectory_service import load_observed_trajectory
 from .storage.importer import (
     DEFAULT_DATABASE,
@@ -34,6 +35,7 @@ from .storage.importer import (
 )
 from .udp.models import DecodedPacket
 from .udp.source import ReplaySource, UDPSource
+from .tracks.registry import resolve_track_model
 
 
 def _json_line(value: dict[str, Any]) -> None:
@@ -398,6 +400,20 @@ def _trajectory(args: argparse.Namespace) -> int:
     return 0
 
 
+def _regions(args: argparse.Namespace) -> int:
+    model = resolve_track_model(args.track_model_id, args.track_model_revision)
+    document = load_attempt_region_report(
+        args.database,
+        args.attempt_key,
+        model,
+    )
+    if document is None:
+        print("error: lap attempt not found or its trace is not ready", file=sys.stderr)
+        return 2
+    _json_line(document)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="f1-engineer", description="F1 telemetry capture and replay")
     parser.add_argument("--version", action="version", version=f"f1-engineer {__version__}")
@@ -513,6 +529,15 @@ def build_parser() -> argparse.ArgumentParser:
     trajectory.add_argument("--output", required=True, help="destination versioned JSON path")
     trajectory.add_argument("--overwrite", action="store_true", help="replace an existing output file")
     trajectory.set_defaults(handler=_trajectory)
+
+    regions = commands.add_parser(
+        "regions", help="inspect one attempt against a packaged diagnostic distance-region model"
+    )
+    regions.add_argument("attempt_key", help="attempt key printed by the laps command")
+    regions.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
+    regions.add_argument("--track-model-id", required=True, help="registered track model ID")
+    regions.add_argument("--track-model-revision", type=int, required=True, help="registered model revision")
+    regions.set_defaults(handler=_regions)
     return parser
 
 

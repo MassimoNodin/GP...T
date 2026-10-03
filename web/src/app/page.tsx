@@ -1,4 +1,5 @@
 import {
+  AttemptRegionReport,
   Comparison,
   CornerAnalysis,
   CornerRegion,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/api";
 import RecordingInbox from "./RecordingInbox";
 import AttemptQualityPanel from "./AttemptQualityPanel";
+import AttemptRegionsPanel from "./AttemptRegionsPanel";
 import ObservedTrajectoryPanel from "./ObservedTrajectoryPanel";
 import type { ImportJobRecord, RecordingSourceRecord } from "@/lib/api";
 
@@ -135,17 +137,26 @@ export default async function Home({
         `/api/v1/attempts/${encodeURIComponent(target.attempt_key)}/trajectory`,
       )
     : Promise.resolve(null);
+  const regionRequest = target && selectedModel
+    ? requestApi<AttemptRegionReport>(
+        `/api/v1/attempts/${encodeURIComponent(target.attempt_key)}/regions?${new URLSearchParams({
+          track_model_id: selectedModel.model_id,
+          track_model_revision: String(selectedModel.revision),
+        })}`,
+      )
+    : Promise.resolve(null);
   const manualComparisonRequest =
     target && manualReference
       ? requestApi<Comparison>(
           `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, manualReference.attempt_key, selectedModel)}`,
         )
       : Promise.resolve(null);
-  const [selectionResponse, manualComparisonResponse, qualityResponse, trajectoryResponse] = await Promise.all([
+  const [selectionResponse, manualComparisonResponse, qualityResponse, trajectoryResponse, regionResponse] = await Promise.all([
     selectionRequest,
     manualComparisonRequest,
     attemptQualityRequest,
     trajectoryRequest,
+    regionRequest,
   ]);
   const attemptQuality =
     qualityResponse?.status === "ok" ? qualityResponse.data : null;
@@ -502,6 +513,23 @@ export default async function Home({
                     }
                   />
                 ) : null}
+                {target && selectedModel ? (
+                  <AttemptRegionsPanel
+                    key={`${target.attempt_key}:${modelKey(selectedModel)}`}
+                    report={
+                      regionResponse?.status === "ok"
+                        ? regionResponse.data
+                        : null
+                    }
+                    unavailableReason={
+                      regionResponse?.status === "unavailable"
+                        ? regionResponse.reason
+                        : regionResponse
+                          ? null
+                          : "region_analysis_api_unavailable"
+                    }
+                  />
+                ) : null}
                 <section className="panel compare-panel">
                   <div className="compare-header">
                     <div>
@@ -586,7 +614,7 @@ export default async function Home({
                         defaultValue={
                           selectedModel ? modelKey(selectedModel) : ""
                         }
-                        disabled={!isTimeTrial || trackModelCatalogUnavailable}
+                        disabled={trackModelCatalogUnavailable}
                       >
                         <option value="">No region analysis</option>
                         {trackModels.map((model) => (
@@ -598,7 +626,7 @@ export default async function Home({
                       </select>
                     </label>
                     <button className="compare-button" type="submit">
-                      Compare laps <span>↗</span>
+                      Load analysis <span>↗</span>
                     </button>
                   </form>
                   {trackModelCatalogUnavailable ? (
@@ -613,8 +641,9 @@ export default async function Home({
                     </p>
                   ) : !isTimeTrial ? (
                     <p className="model-note">
-                      Diagnostic region comparison currently requires a Time
-                      Trial session.
+                      Standalone region observations currently require a
+                      stable Time Trial context. Other modes return an
+                      explicit unavailable result.
                     </p>
                   ) : selectedModel ? (
                     <p className="model-note">

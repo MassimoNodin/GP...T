@@ -4,6 +4,7 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
+from .continuity import float32_ulp, session_time_discontinuity
 from .resampling import TraceSample
 
 
@@ -122,12 +123,16 @@ def detect_sustained_threshold_events(
         assert first.distance_m is not None and last.distance_m is not None
         assert first.session_time_s is not None and last.session_time_s is not None
         duration = max(0.0, last.session_time_s - first.session_time_s)
+        duration_tolerance = max(
+            float32_ulp(first.session_time_s),
+            float32_ulp(last.session_time_s),
+        )
         values = [
             value
             for sample in active_samples
             if (value := _value(sample, channel)) is not None
         ]
-        sustained = duration + 1e-9 >= minimum_duration_s
+        sustained = duration + duration_tolerance >= minimum_duration_s
         if sustained:
             events.append(
                 ThresholdEvent(
@@ -252,15 +257,24 @@ def _continuous(
         or current.session_time_s is None
         or previous.distance_m is None
         or current.distance_m is None
+        or not math.isfinite(previous.session_time_s)
+        or not math.isfinite(current.session_time_s)
         or previous.session_time_s < 0
-        or current.session_time_s < previous.session_time_s
+    ):
+        return False
+    session_time_reason = (
+        session_time_discontinuity(
+            previous.session_time_s,
+            current.session_time_s,
+            max_gap_s=max_gap_time_s,
+        )
+    )
+    if (
+        session_time_reason is not None
         or current.time_s is None
         or previous.time_s is None
         or current.time_s < previous.time_s
         or current.distance_m < previous.distance_m
     ):
         return False
-    return (
-        current.session_time_s - previous.session_time_s <= max_gap_time_s + 1e-9
-        and current.distance_m - previous.distance_m <= max_gap_distance_m + 1e-7
-    )
+    return current.distance_m - previous.distance_m <= max_gap_distance_m + 1e-7

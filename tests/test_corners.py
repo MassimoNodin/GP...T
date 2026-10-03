@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from f1_engineer.analysis.corners import _grid_value, _requested_window_coverage
+from f1_engineer.analysis.corners import (
+    _grid_value,
+    _requested_window_coverage,
+    analyze_attempt_regions,
+)
 from f1_engineer.analysis.events import detect_sustained_threshold_events
 from f1_engineer.analysis.resampling import ResamplingConfig, TraceSample, resample_trace
+from f1_engineer.tracks.model import CornerDefinition, TrackModel
 
 
 def _sample(
@@ -143,3 +148,61 @@ def test_boundary_sampling_does_not_interpolate_across_an_excluded_gap() -> None
         channel="speed_mps",
         excluded_spans=resampled.excluded_spans,
     ) is None
+
+
+def test_standalone_region_observations_cap_examples_but_keep_onset_and_count() -> None:
+    throttle_values = (0.0, 0.2, 0.2, 0.2, 0.0, 0.0, 0.2, 0.2, 0.2, 0.0, 0.0, 0.0, 0.0)
+    samples = tuple(
+        TraceSample(
+            frame_identifier=index + 1,
+            distance_m=float(index),
+            time_s=index * 0.05,
+            speed_mps=20.0 + index,
+            throttle=throttle,
+            brake=0.0,
+            steering=0.0,
+            gear=3,
+            drs_active=False,
+            session_time_s=1.0 + index * 0.05,
+        )
+        for index, throttle in enumerate(throttle_values)
+    )
+    config = ResamplingConfig()
+    resampled = resample_trace(samples, tuple(float(index) for index in range(13)), config)
+    model = TrackModel(
+        model_id="test-region-v1",
+        revision=1,
+        packet_format=2025,
+        track_id=0,
+        track_name="Melbourne",
+        layout_id="synthetic",
+        track_length_m=12,
+        distance_origin_m=0,
+        provenance="synthetic test window",
+        validation_status="draft",
+        corners=(
+            CornerDefinition(
+                identifier="window-1",
+                label="Draft window 1",
+                start_distance_m=0,
+                end_distance_m=12,
+                throttle_pickup_window_m=(0, 12),
+            ),
+        ),
+    )
+
+    result = analyze_attempt_regions(
+        samples,
+        resampled,
+        model,
+        config=config,
+        event_example_limit=1,
+    )
+
+    throttle = result["regions"][0]["observations"]["throttle_pickup"]["0.1"]
+    assert throttle["status"] == "detected"
+    assert throttle["distance_m"] == pytest.approx(1.0)
+    assert throttle["event_count"] == 2
+    assert len(throttle["events"]) == 1
+    assert throttle["events_truncated"] is True
+    assert result["diagnostic_only"] is True

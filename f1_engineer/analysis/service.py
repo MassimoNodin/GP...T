@@ -144,7 +144,7 @@ def compare_attempts(
             if isinstance(track_model, TrackModel)
             else load_track_model(track_model)
         )
-        _require_track_model_compatible(model, target_context)
+        require_track_model_compatible(model, target_context)
         result["corner_analysis"] = analyze_corner_regions(
             target_samples,
             reference_samples,
@@ -246,7 +246,7 @@ def stable_time_trial_context(
     return contexts[-1], signature
 
 
-def _require_track_model_compatible(
+def require_track_model_compatible(
     model: TrackModel, context: Mapping[str, object]
 ) -> None:
     if model.packet_format != context["packet_format"]:

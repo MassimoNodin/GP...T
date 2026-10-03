@@ -11,6 +11,8 @@ from .resampling import ExcludedSpan, ResampledTrace, ResamplingConfig, TraceSam
 
 
 CORNER_ANALYSIS_VERSION = "distance-regions-v1"
+REGION_EVENT_EXAMPLE_LIMIT = 20
+_EVENT_MINIMUM_DURATION_S = 0.1
 _EVENT_THRESHOLDS = {
     "brake": 0.1,
     "steering_abs": 0.15,
@@ -19,6 +21,59 @@ _EVENT_THRESHOLDS = {
     "throttle_90": 0.9,
     "throttle_99": 0.99,
 }
+
+
+def analyze_attempt_regions(
+    samples: Sequence[TraceSample],
+    resampled: ResampledTrace,
+    track_model: TrackModel,
+    *,
+    config: ResamplingConfig,
+    event_example_limit: int = REGION_EVENT_EXAMPLE_LIMIT,
+) -> dict[str, object]:
+    """Report observations in configured distance windows for one attempt."""
+    if event_example_limit < 0:
+        raise ValueError("event_example_limit must not be negative")
+    regions = []
+    for definition in track_model.corners:
+        start_m = definition.start_distance_m + track_model.distance_origin_m
+        end_m = definition.end_distance_m + track_model.distance_origin_m
+        regions.append(
+            {
+                "identifier": definition.identifier,
+                "label": definition.label,
+                "analysis_window_m": [start_m, end_m],
+                "definition_validation_status": track_model.validation_status,
+                "direction": definition.direction,
+                "complex_id": definition.complex_id,
+                "observations": _analyze_attempt_region(
+                    samples,
+                    resampled,
+                    definition,
+                    start_m,
+                    end_m,
+                    config,
+                    track_model.validation_status,
+                    track_model.distance_origin_m,
+                    track_model.track_length_m,
+                    event_example_limit=event_example_limit,
+                ),
+            }
+        )
+    return {
+        "analysis_version": CORNER_ANALYSIS_VERSION,
+        "model": _model_summary(track_model),
+        "layout_validation_status": "explicit_model_selected; layout absent from session packet",
+        "diagnostic_only": True,
+        "event_thresholds": {
+            **_EVENT_THRESHOLDS,
+            "minimum_duration_s": _EVENT_MINIMUM_DURATION_S,
+            "maximum_gap_time_s": config.max_bracket_time_s,
+            "maximum_gap_distance_m": config.max_bracket_distance_m,
+        },
+        "event_example_limit_per_channel_region": event_example_limit,
+        "regions": regions,
+    }
 
 
 def analyze_corner_regions(
@@ -58,18 +113,7 @@ def analyze_corner_regions(
         )
     return {
         "analysis_version": CORNER_ANALYSIS_VERSION,
-        "model": {
-            "model_id": track_model.model_id,
-            "revision": track_model.revision,
-            "packet_format": track_model.packet_format,
-            "track_id": track_model.track_id,
-            "track_name": track_model.track_name,
-            "layout_id": track_model.layout_id,
-            "track_length_m": track_model.track_length_m,
-            "distance_origin_m": track_model.distance_origin_m,
-            "validation_status": track_model.validation_status,
-            "provenance": track_model.provenance,
-        },
+        "model": _model_summary(track_model),
         "layout_validation_status": "explicit_model_selected; layout absent from session packet",
         "attempts_reference_eligible": {
             "target": target_reference_eligible,
@@ -77,6 +121,21 @@ def analyze_corner_regions(
         },
         "diagnostic_only": diagnostic_only,
         "regions": regions,
+    }
+
+
+def _model_summary(track_model: TrackModel) -> dict[str, object]:
+    return {
+        "model_id": track_model.model_id,
+        "revision": track_model.revision,
+        "packet_format": track_model.packet_format,
+        "track_id": track_model.track_id,
+        "track_name": track_model.track_name,
+        "layout_id": track_model.layout_id,
+        "track_length_m": track_model.track_length_m,
+        "distance_origin_m": track_model.distance_origin_m,
+        "validation_status": track_model.validation_status,
+        "provenance": track_model.provenance,
     }
 
 
@@ -206,6 +265,8 @@ def _analyze_attempt_region(
     model_validation_status: str,
     distance_origin_m: float,
     track_length_m: float,
+    *,
+    event_example_limit: int | None = None,
 ) -> dict[str, object]:
     region_samples = [
         sample
@@ -290,13 +351,19 @@ def _analyze_attempt_region(
             "definition_validation_status": model_validation_status,
         }
     )
-    turn_in = _onset(turn_in_detection, "steering_onset_proxy")
+    turn_in = _onset(
+        turn_in_detection,
+        "steering_onset_proxy",
+        event_example_limit=event_example_limit,
+    )
     turn_in["interpretation"] = (
         "absolute steering threshold; calibrated track-relative geometry unavailable"
     )
 
     return {
-        "braking": _onset(brake_detection, "brake_onset"),
+        "braking": _onset(
+            brake_detection, "brake_onset", event_example_limit=event_example_limit
+        ),
         "minimum_speed": minimum_speed,
         "turn_in_proxy": turn_in,
         "track_apex": apex,
@@ -315,7 +382,11 @@ def _analyze_attempt_region(
             for channel in ("brake", "steering", "throttle")
         },
         "throttle_pickup": {
-            threshold: _onset(detection, f"throttle_{threshold}_onset")
+            threshold: _onset(
+                detection,
+                f"throttle_{threshold}_onset",
+                event_example_limit=event_example_limit,
+            )
             for threshold, detection in throttle_detections.items()
         },
         "exit_speeds": _exit_speeds(
@@ -345,14 +416,30 @@ def _detect(
         channel=channel,  # type: ignore[arg-type]
         threshold=threshold,
         search_window_m=window,
-        minimum_duration_s=0.1,
+        minimum_duration_s=_EVENT_MINIMUM_DURATION_S,
         max_gap_time_s=config.max_bracket_time_s,
         max_gap_distance_m=config.max_bracket_distance_m,
         absolute=absolute,
     )
 
 
-def _onset(detection: ThresholdDetection, event_name: str) -> dict[str, object]:
+def _onset(
+    detection: ThresholdDetection,
+    event_name: str,
+    *,
+    event_example_limit: int | None = None,
+) -> dict[str, object]:
+    events = [candidate.to_dict() for candidate in detection.sustained_events]
+    examples = (
+        events
+        if event_example_limit is None
+        else events[:event_example_limit]
+    )
+    event_summary = {
+        "events": examples,
+        "event_count": len(events),
+        "events_truncated": len(examples) < len(events),
+    }
     event = next(
         (candidate for candidate in detection.sustained_events if not candidate.left_censored),
         None,
@@ -368,7 +455,7 @@ def _onset(detection: ThresholdDetection, event_name: str) -> dict[str, object]:
             "speed_mps": event.start_speed_mps,
             "duration_s": event.duration_s,
             "peak_value": event.peak_value,
-            "events": [candidate.to_dict() for candidate in detection.sustained_events],
+            **event_summary,
         }
     status = detection.status
     reason = (
@@ -384,7 +471,7 @@ def _onset(detection: ThresholdDetection, event_name: str) -> dict[str, object]:
         "distance_m": None,
         "distance_bracket_m": None,
         "reason": reason,
-        "events": [candidate.to_dict() for candidate in detection.sustained_events],
+        **event_summary,
         "rejected_short_event_count": detection.rejected_short_event_count,
         "unsupported_break_count": detection.unsupported_break_count,
     }

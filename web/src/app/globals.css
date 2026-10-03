@@ -1150,6 +1150,66 @@ h1 span {
   font-size: 9px;
   line-height: 1.5;
 }
+.region-event ul {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding-left: 14px;
+  color: #a8b1ad;
+  font: 9px var(--font-mono);
+  line-height: 1.5;
+}
+.region-event > small {
+  display: block;
+  margin-top: 8px;
+  color: #8d9996;
+  font-size: 9px;
+}
+.attempt-region-unavailable {
+  padding: 18px;
+}
+.attempt-region-unavailable h2 {
+  margin: 8px 0 6px;
+  font-size: 15px;
+}
+.attempt-region-unavailable p {
+  margin: 0;
+  color: #9aa5a2;
+  font-size: 10px;
+}
+.attempt-region-events {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+.attempt-region-provenance {
+  padding: 14px 17px;
+  color: #a8b1ad;
+}
+.attempt-region-provenance summary {
+  color: #bdc7c2;
+  font-size: 10px;
+  cursor: pointer;
+}
+.attempt-region-provenance dl {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+.attempt-region-provenance dl > div {
+  display: grid;
+  grid-template-columns: minmax(100px, 150px) 1fr;
+  gap: 12px;
+  font: 9px var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.attempt-region-provenance dt {
+  color: #788482;
+}
+.attempt-region-provenance dd {
+  margin: 0;
+}
 .region-exits {
   margin-top: 12px;
   padding: 12px;
@@ -1704,6 +1764,9 @@ h1 span {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .region-event-grid {
+    grid-template-columns: 1fr;
+  }
+  .attempt-region-events {
     grid-template-columns: 1fr;
   }
   .region-stat {

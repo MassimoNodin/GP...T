@@ -265,6 +265,22 @@ Display the path as an explicitly observed world-X/world-Z projection in metres 
 
 Acceptance uses the supplied Melbourne capture: all three attempts remain viewable as captured (two invalid completed attempts and one partial), with their full-source segment and coverage counts unchanged and no reference becoming eligible. Synthetic checks cover deterministic point caps, endpoint retention, discontinuities, singleton/all-missing data, oversized and fragmented abstentions, and legacy Motion unavailability. UI checks cover equal axes, labels, provenance, and accessible point inspection. Clean valid Time Trial, Race, and real 2026 capture validation remain future evidence gates.
 
+## Decision 0020: expose standalone diagnostic region observations
+
+**Status:** accepted
+
+**Date:** 2026-10-03
+
+Expose the existing per-attempt distance-region measurements independently of lap comparison and reference selection. This allows invalid, partial, and abandoned attempts to provide useful Phase D evidence when no reference is available, using the capture already on hand.
+
+Reuse the chronological control-channel threshold detectors, censoring behavior, resampling masks, and requested-window coverage calculations. Apply the shared source float32-ULP tolerance to session-time gaps/regressions and endpoint-ULP tolerance to minimum sustained-event duration so exact 100 ms observations remain stable at different session-time magnitudes. Preserve source attempt, trace checksum/schema, session-context and model revision/provenance, selected observed events, full event counts, and unsupported/partial reasons. Bound source reads using D0019's row/byte/context limits, cap the resampling grid at 100,000 positions, and return at most 20 event examples per channel and region without changing the selected event or total count. Support trace schemas v1/v2/v3 where their control channels exist; Motion is not required.
+
+Require an explicitly selected packaged track-model revision in CLI, API, and dashboard flows. API requests identify a registry entry by model ID/revision and cannot supply filesystem paths. Keep the current stable Time Trial context and track-model compatibility gate, but do not require completion, game validity, or reference eligibility. Race, unknown, changing, or incompatible contexts return explicit unavailable policy reasons; their quality and observed-path evidence remains accessible.
+
+Return a versioned single-attempt report through a shared Python service, a read-only local API, the CLI, and the selected-attempt dashboard, independently of comparison success. Keep every result diagnostic-only. These distance windows are not validated corners; steering onset is only a proxy, and driver apex/track-relative geometry remain unavailable. Do not calculate comparative loss, rankings, diagnoses, theoretical-best laps, or advice. No storage migration, trace schema change, importer identity change, or packet decoder change is needed.
+
+Acceptance uses the Melbourne capture: both invalid completed attempts produce the six draft-window reports, and the partial third reports only observations supported by its recorded range. Under identical configuration, standalone metrics match each attempt's target/reference metrics from existing comparison reports. Synthetic checks cover censoring, missing channels, gaps/regressions, partial windows, repeated events and truncation. Policy tests cover invalid/partial Time Trial, Race/unknown/changing context, model incompatibility, schema-v1/v2/v3 traces, checksums, source limits, and grid limits. Dashboard inspection remains available when automatic reference selection abstains.
+
 ## Data flow
 
 ```text
@@ -307,6 +323,6 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 
 - Remaining packet-body parsers are added from EA's official structure files, with their source and revision recorded. Support is explicit per `(packet_format, packet_id, packet_version)`. Current typed body support covers F1 25 Session, Lap Data, Participants, Car Telemetry, Motion, and Car Status v1 plus 2026 Season Pack Session, Lap Data, Participants, Car Telemetry, Motion, and Car Status v1. Session packet adapters populate canonical gameplay context independently of the wire format.
 - Add canonical traces for additional cars only when validated multi-car capture coverage justifies them. Slower packet families will use freshness windows rather than being required in every frame.
-- Distance comparison, run-scoped Time Trial reference selection, and the read-only local historical explorer are implemented for diagnostics. Validated circuit geometry, race reference policy, and actionable coaching remain deferred until their supporting evidence and interfaces are ready.
-- The local dashboard starts and stops mode-independent UDP capture and imports finalized `.f1ecap` files through durable jobs. It exposes a bounded observed world-coordinate path for a selected attempt. Track calibration, line comparison, trajectory coaching, race reference policy, live analysis/coaching, and opponent coverage remain deferred.
+- Distance comparison, run-scoped Time Trial reference selection, and the read-only local historical explorer are implemented for diagnostics. Standalone region observations support stable Time Trial contexts, including invalid, partial, and abandoned attempts; Race/unknown policy, validated circuit geometry, and actionable coaching remain deferred until their supporting evidence and interfaces are ready.
+- The local dashboard starts and stops mode-independent UDP capture and imports finalized `.f1ecap` files through durable jobs. It exposes a bounded observed world-coordinate path and selected-model distance-region observations for a selected attempt. Track calibration, line comparison, trajectory coaching, race reference policy, live analysis/coaching, and opponent coverage remain deferred.
 - Voice, LLM, and frontend work remain above deterministic analysis; no LLM is needed to capture or inspect telemetry.

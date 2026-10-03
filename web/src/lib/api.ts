@@ -427,6 +427,8 @@ export interface RegionEvent {
   distance_bracket_m: number[] | null;
   reason?: string;
   events: RegionEventEpisode[];
+  event_count?: number;
+  events_truncated?: boolean;
 }
 
 export interface RegionAttempt {
@@ -487,6 +489,48 @@ export interface CornerAnalysis {
   attempts_reference_eligible: { target: boolean; reference: boolean };
   diagnostic_only: boolean;
   regions: CornerRegion[];
+}
+
+export interface AttemptRegionWindow {
+  identifier: string;
+  label: string;
+  analysis_window_m: [number, number];
+  definition_validation_status: string;
+  direction: string | null;
+  complex_id: string | null;
+  observations: RegionAttempt;
+}
+
+export interface AttemptRegionReport {
+  schema_version: number;
+  artifact_kind: "single_attempt_distance_region_observations";
+  diagnostic_only: true;
+  config: { grid_step_m: number; max_bracket_time_s: number; max_bracket_distance_m: number };
+  source: {
+    attempt_key: string;
+    run_id: string;
+    session_uid: string;
+    car_index: number;
+    attempt_number: number;
+    disposition: string;
+    lap_time_ms: number | null;
+    game_valid: boolean | null;
+    reference_eligible: boolean;
+    exclusion_reasons: string[];
+    trace_sha256: string;
+    trace_schema_version: number;
+    source_sample_count: number;
+    session_context_segments: Array<{
+      from_frame_identifier: number;
+      context: Record<string, unknown> | null;
+    }>;
+  };
+  analysis_version: string;
+  model: TrackModelRecord & { distance_origin_m: number };
+  layout_validation_status: string;
+  event_thresholds: Record<string, number>;
+  event_example_limit_per_channel_region: number;
+  regions: AttemptRegionWindow[];
 }
 
 export interface Comparison {

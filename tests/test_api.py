@@ -130,6 +130,95 @@ def test_attempt_trajectory_api_reports_explicit_unavailable_reason(
     assert response.json()["reason"] == "motion_unavailable_for_trace_schema"
 
 
+def test_attempt_regions_api_resolves_registered_model_and_returns_report(
+    monkeypatch, tmp_path
+) -> None:
+    model = object()
+    calls: dict[str, object] = {}
+    report = {
+        "schema_version": 1,
+        "artifact_kind": "single_attempt_distance_region_observations",
+        "diagnostic_only": True,
+        "source": {"session_uid": "14237356543050158953"},
+        "model": {"model_id": "melbourne-draft-v1", "revision": 1},
+        "regions": [],
+    }
+
+    def resolve(model_id: str, revision: int):
+        calls["identity"] = (model_id, revision)
+        return model
+
+    def load(_database, attempt_key: str, selected_model):
+        calls["attempt_key"] = attempt_key
+        calls["model"] = selected_model
+        return report
+
+    monkeypatch.setattr(api_module, "resolve_track_model", resolve)
+    monkeypatch.setattr(api_module, "load_attempt_region_report", load)
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/attempts/run%3A42%3A0%3A1/regions",
+        params={
+            "track_model_id": "melbourne-draft-v1",
+            "track_model_revision": "1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["data"]["diagnostic_only"] is True
+    assert response.json()["data"]["source"]["session_uid"] == "14237356543050158953"
+    assert calls == {
+        "identity": ("melbourne-draft-v1", 1),
+        "attempt_key": "run:42:0:1",
+        "model": model,
+    }
+
+
+def test_attempt_regions_api_requires_registered_model_identity_and_reports_policy(
+    monkeypatch, tmp_path
+) -> None:
+    def unsupported(*_args, **_kwargs):
+        raise api_module.RegionReportUnavailable("unsupported_mode")
+
+    monkeypatch.setattr(api_module, "resolve_track_model", lambda *_args: object())
+    monkeypatch.setattr(api_module, "load_attempt_region_report", unsupported)
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/attempts/run%3A42%3A0%3A1/regions",
+        params={"track_model_id": "melbourne-draft-v1", "track_model_revision": "1"},
+    )
+    incomplete = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/attempts/run%3A42%3A0%3A1/regions",
+        params={"track_model_id": "melbourne-draft-v1"},
+    )
+
+    assert response.json()["status"] == "unavailable"
+    assert response.json()["reason"] == "unsupported_mode"
+    assert incomplete.json()["status"] == "unavailable"
+    assert incomplete.json()["reason"] == "track_model_id_and_revision_must_be_selected_together"
+
+
+def test_attempt_regions_api_maps_trace_file_errors_to_unavailable(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(api_module, "resolve_track_model", lambda *_args: object())
+
+    def missing_trace(*_args, **_kwargs):
+        raise FileNotFoundError("trace disappeared during load")
+
+    monkeypatch.setattr(api_module, "load_attempt_region_report", missing_trace)
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/attempts/run%3A42%3A0%3A1/regions",
+        params={"track_model_id": "melbourne-draft-v1", "track_model_revision": "1"},
+    )
+
+    assert response.json()["status"] == "unavailable"
+    assert response.json()["reason"] == "attempt_trace_unavailable"
+
+
 def test_compare_api_resolves_explicit_model_id_and_revision(monkeypatch, tmp_path) -> None:
     resolved_model = object()
     calls: dict[str, object] = {}

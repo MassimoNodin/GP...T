@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, select_reference
 from ..analysis.quality import inspect_attempt_quality
+from ..analysis.region_service import RegionReportUnavailable, load_attempt_region_report
 from ..analysis.service import compare_attempts
 from ..analysis.trajectory import TrajectoryPreviewUnavailable
 from ..analysis.trajectory_service import load_observed_trajectory_preview
@@ -280,10 +281,14 @@ def create_app(
     def attempt_quality(attempt_key: str) -> APIResponse[dict[str, Any]]:
         try:
             result = inspect_attempt_quality(configured_database_path, attempt_key)
-        except ValueError as exc:
+        except (ValueError, OSError) as exc:
             return APIResponse[dict[str, Any]](
                 status="unavailable",
-                reason=str(exc),
+                reason=(
+                    "attempt_trace_unavailable"
+                    if isinstance(exc, OSError)
+                    else str(exc)
+                ),
             )
         if result is None:
             return APIResponse[dict[str, Any]](
@@ -312,6 +317,50 @@ def create_app(
             return APIResponse[dict[str, Any]](
                 status="unavailable",
                 reason="attempt_trace_unavailable",
+            )
+        if result is None:
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason="attempt_trace_unavailable",
+            )
+        return APIResponse[dict[str, Any]](
+            data=_stringify_session_uids(result)
+        )
+
+    @app.get(
+        "/api/v1/attempts/{attempt_key}/regions",
+        response_model=APIResponse[dict[str, Any]],
+    )
+    def attempt_regions(
+        attempt_key: str,
+        track_model_id: str | None = Query(default=None, min_length=1),
+        track_model_revision: int | None = Query(default=None, ge=1),
+    ) -> APIResponse[dict[str, Any]]:
+        if track_model_id is None or track_model_revision is None:
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason="track_model_id_and_revision_must_be_selected_together",
+            )
+        try:
+            track_model = resolve_track_model(track_model_id, track_model_revision)
+            result = load_attempt_region_report(
+                configured_database_path,
+                attempt_key,
+                track_model,
+            )
+        except RegionReportUnavailable as exc:
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason=exc.reason_code,
+            )
+        except (ValueError, OSError) as exc:
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason=(
+                    "attempt_trace_unavailable"
+                    if isinstance(exc, OSError)
+                    else str(exc)
+                ),
             )
         if result is None:
             return APIResponse[dict[str, Any]](
