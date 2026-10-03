@@ -153,6 +153,25 @@ export interface LapRecord {
   context: SessionContext | null;
   quality: Record<string, unknown>;
   exclusion_reasons: string[];
+  timing_evidence: AttemptTimingEvidence;
+}
+
+export interface AttemptTimingEvidence {
+  status: "matched" | "ambiguous" | "conflicting" | "unavailable" | "truncated" | string;
+  reasons: string[];
+  reported_lap_time_ms?: number | null;
+  sector1_time_ms?: number | null;
+  sector2_time_ms?: number | null;
+  sector3_time_ms?: number | null;
+  validity_flags?: number | null;
+  lap_valid?: boolean | null;
+  sector1_valid?: boolean | null;
+  sector2_valid?: boolean | null;
+  sector3_valid?: boolean | null;
+  sector_sum_residual_ms?: number | null;
+  source_lap?: Record<string, unknown> | null;
+  source?: Record<string, unknown> | null;
+  candidates?: Array<Record<string, unknown>>;
 }
 
 export interface AttemptQualityAvailability {
@@ -444,6 +463,7 @@ export interface ProcessingRunAttempt {
   end_frame_ordinal: number | null;
   superseded: boolean | null;
   lifecycle_assessed: boolean;
+  timing_evidence: AttemptTimingEvidence;
 }
 
 export interface ProcessingRunLifecycleEvent {
@@ -788,6 +808,27 @@ export interface Comparison {
   comparison_policy_version: string;
   diagnostic_only: boolean;
   policy_limitations: string[];
+  reported_timing_evidence: {
+    target: AttemptTimingEvidence;
+    reference: AttemptTimingEvidence;
+  };
+  sector_timing_difference_ms: {
+    direction: "target_minus_reference";
+    status: string;
+    sectors: Record<
+      string,
+      {
+        target_time_ms: number | null;
+        reference_time_ms: number | null;
+        target_minus_reference_ms: number | null;
+        target_valid: boolean | null;
+        reference_valid: boolean | null;
+        status: string;
+      }
+    >;
+    target_sector_sum_residual_ms: number | null;
+    reference_sector_sum_residual_ms: number | null;
+  };
   config: { max_bracket_time_s: number; [key: string]: number };
   target: {
     attempt_key: string;

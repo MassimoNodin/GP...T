@@ -1025,6 +1025,23 @@ export default async function Home({
                         tone="neutral"
                       />
                     </section>
+                    <section className="quality-row panel" aria-label="Reported lap and sector timing">
+                      <div className="quality-title">
+                        <span className="eyebrow">SESSION HISTORY</span>
+                        <strong>Reported timing</strong>
+                      </div>
+                      {(["sector1", "sector2", "sector3"] as const).map((sector, index) => {
+                        const evidence = comparison.sector_timing_difference_ms;
+                        const item = evidence.sectors[sector];
+                        return (
+                          <div key={sector}>
+                            <span>SECTOR {index + 1} · TARGET − REFERENCE</span>
+                            <strong>{seconds(item?.target_minus_reference_ms == null ? null : item.target_minus_reference_ms / 1000)}</strong>
+                            <small>{item?.target_valid === false || item?.reference_valid === false ? "At least one reported sector is invalid" : item?.status === "matched_values" ? "Reported sector values" : "Timing evidence unavailable"}</small>
+                          </div>
+                        );
+                      })}
+                    </section>
                     <ComparisonRunEvidence
                       target={comparison.processing_run_evidence?.target ?? null}
                       reference={comparison.processing_run_evidence?.reference ?? null}

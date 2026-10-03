@@ -37,6 +37,9 @@ class LapObservation:
     context_timeline: tuple[SessionContextSegment, ...]
     frame_ordinal: int = 0
     game_frame_identifier: int | None = None
+    association_epoch: int = 0
+    association_scope_assessable: bool = True
+    association_packet_format: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +66,12 @@ class LapAttempt:
     end_frame_ordinal: int | None = None
     superseded: bool | None = None
     lifecycle_assessed: bool = False
+    completion_frame_ordinal: int | None = None
+    start_association_epoch: int | None = None
+    association_epoch: int | None = None
+    association_scope_assessable: bool = False
+    start_association_packet_format: int | None = None
+    association_packet_format: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -88,6 +97,12 @@ class LapAttempt:
             "end_frame_ordinal": self.end_frame_ordinal,
             "superseded": self.superseded,
             "lifecycle_assessed": self.lifecycle_assessed,
+            "completion_frame_ordinal": self.completion_frame_ordinal,
+            "start_association_epoch": self.start_association_epoch,
+            "association_epoch": self.association_epoch,
+            "association_scope_assessable": self.association_scope_assessable,
+            "start_association_packet_format": self.start_association_packet_format,
+            "association_packet_format": self.association_packet_format,
         }
 
 
@@ -99,6 +114,9 @@ class _ActiveLap:
     start_session_time_s: float
     start_observed: bool
     start_frame_ordinal: int
+    start_association_epoch: int
+    association_scope_assessable: bool
+    start_association_packet_format: int | None
     sample_count: int = 0
     invalid_seen: bool = False
     pit_encountered: bool = False
@@ -106,6 +124,8 @@ class _ActiveLap:
     end_frame_identifier: int | None = None
     end_session_time_s: float | None = None
     end_frame_ordinal: int | None = None
+    association_epoch: int | None = None
+    association_packet_format: int | None = None
     context_segments: list[SessionContextSegment] = field(default_factory=list)
 
 
@@ -308,6 +328,9 @@ class LapTracker:
             start_session_time_s=observation.session_time_s,
             start_observed=start_observed,
             start_frame_ordinal=observation.frame_ordinal,
+            start_association_epoch=observation.association_epoch,
+            association_scope_assessable=observation.association_scope_assessable,
+            start_association_packet_format=observation.association_packet_format,
         )
         self._active[car_index] = active
         if self._post_boundary_pending_session:
@@ -336,6 +359,12 @@ class LapTracker:
         active.end_frame_identifier = observation.frame_identifier
         active.end_session_time_s = observation.session_time_s
         active.end_frame_ordinal = observation.frame_ordinal
+        active.association_epoch = observation.association_epoch
+        active.association_packet_format = observation.association_packet_format
+        active.association_scope_assessable = (
+            active.association_scope_assessable
+            and observation.association_scope_assessable
+        )
 
     @staticmethod
     def _set_context_timeline(
@@ -425,6 +454,31 @@ class LapTracker:
             reference_eligible=eligible,
             start_frame_ordinal=active.start_frame_ordinal,
             end_frame_ordinal=active.end_frame_ordinal,
+            completion_frame_ordinal=(
+                ended_at.frame_ordinal
+                if disposition is LapDisposition.COMPLETED and ended_at is not None
+                else None
+            ),
+            start_association_epoch=active.start_association_epoch,
+            association_epoch=(
+                ended_at.association_epoch
+                if ended_at is not None
+                else active.association_epoch
+            ),
+            association_scope_assessable=(
+                active.association_scope_assessable
+                and (
+                    ended_at.association_scope_assessable
+                    if ended_at is not None
+                    else True
+                )
+            ),
+            start_association_packet_format=active.start_association_packet_format,
+            association_packet_format=(
+                ended_at.association_packet_format
+                if ended_at is not None
+                else active.association_packet_format
+            ),
         )
         self.attempts.append(attempt)
 

@@ -23,6 +23,7 @@ from ..analysis.trace_chart_service import (
 )
 from ..storage.import_jobs import list_recording_sources
 from ..storage.importer import DEFAULT_DATABASE, list_laps, list_sessions
+from ..storage.query import load_attempt_timing_evidence
 from ..storage.run_summaries import (
     DEFAULT_ATTEMPT_PAGE_SIZE,
     DEFAULT_LIFECYCLE_EVENT_PAGE_SIZE,
@@ -195,6 +196,7 @@ class LapRecord(BaseModel):
     context: dict[str, Any] | None
     quality: dict[str, Any]
     exclusion_reasons: list[str]
+    timing_evidence: dict[str, Any]
 
 
 class ReferenceCandidate(BaseModel):
@@ -384,6 +386,22 @@ def create_app(
             return APIResponse[dict[str, Any]](
                 status="unavailable",
                 reason="attempt_trace_unavailable",
+            )
+        return APIResponse[dict[str, Any]](
+            data=_stringify_session_uids(result)
+        )
+
+    @app.get(
+        "/api/v1/attempts/{attempt_key}/timing",
+        response_model=APIResponse[dict[str, Any]],
+    )
+    def attempt_timing(attempt_key: str) -> APIResponse[dict[str, Any]]:
+        result = load_attempt_timing_evidence(
+            configured_database_path, attempt_key
+        )
+        if result is None:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="attempt_timing_evidence_unavailable"
             )
         return APIResponse[dict[str, Any]](
             data=_stringify_session_uids(result)

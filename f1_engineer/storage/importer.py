@@ -11,13 +11,17 @@ from ..errors import ProtocolError
 from ..pipeline import TelemetryPipeline
 from ..recording.capture import CaptureReader
 from ..sessions.lifecycle import LifecycleEvent, reconcile_attempt_lifecycle
+from ..sessions.session_history import (
+    AttemptTimingEvidence,
+    SessionHistoryAccumulator,
+)
 from ..telemetry.canonical import CarSample
 from .database import Database
 from .lock import ImportRunLock
 from .parquet import ParquetTraceWriter, TRACE_SCHEMA_VERSION, sha256_file
 
 
-PIPELINE_VERSION = "player-traces-v12-event-lifecycle"
+PIPELINE_VERSION = "player-traces-v13-session-history"
 MAX_STORED_LIFECYCLE_EVENTS = 100_000
 DEFAULT_DATABASE = Path("data") / "f1-engineer.sqlite3"
 IMPORT_CONFIG = {"max_open_frames": 256, "reorder_window_frames": 3}
@@ -55,6 +59,20 @@ class ImportSummary:
     event_decode_errors: int = 0
     lifecycle_events: int = 0
     lifecycle_events_dropped: int = 0
+    session_history_packets_admitted: int = 0
+    session_history_packets_decoded: int = 0
+    session_history_non_player_packets: int = 0
+    session_history_player_index_mismatches: int = 0
+    session_history_decode_errors: int = 0
+    session_history_packets_dropped: int = 0
+    session_history_candidates: int = 0
+    session_history_association_work: int = 0
+    session_history_matched_attempts: int = 0
+    session_history_ambiguous_attempts: int = 0
+    session_history_conflicting_attempts: int = 0
+    session_history_unavailable_attempts: int = 0
+    session_history_truncated_attempts: int = 0
+    session_history_truncated_sessions: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -300,6 +318,7 @@ def import_capture(
             run_trace_dir.mkdir(parents=True, exist_ok=True)
             trace_manager = _TraceWriterManager(database_path, run_id, trace_namespace)
             pipeline = TelemetryPipeline(**IMPORT_CONFIG)
+            session_history = SessionHistoryAccumulator()
             sessions: dict[int, int] = {}
             latest_contexts: dict[int, dict[str, object]] = {}
             context_updates: dict[tuple[int, int], dict[str, object]] = {}
@@ -316,6 +335,7 @@ def import_capture(
             participant_error_count = 0
             motion_error_count = 0
             car_status_error_count = 0
+            session_history_decode_error_count = 0
             capture_metadata: dict[str, object]
             capture_completion: dict[str, object] | None = None
             capture_complete = False
@@ -340,6 +360,13 @@ def import_capture(
                         continue
                     attempts.extend(result.lap_attempts)
                     trace_manager.consume(result.car_samples, result.lap_attempts)
+                    for attempt in result.lap_attempts:
+                        session_history.register_attempt(attempt)
+                    for observation in result.session_history:
+                        session_history.observe(observation)
+                    session_history_decode_error_count += len(
+                        result.session_history_decode_errors
+                    )
                     for lifecycle_event in result.lifecycle_events:
                         if len(lifecycle_events) < MAX_STORED_LIFECYCLE_EVENTS:
                             lifecycle_events.append(lifecycle_event)
@@ -412,6 +439,13 @@ def import_capture(
                 flushed = pipeline.finish_with_outputs()
                 attempts.extend(flushed.lap_attempts)
                 trace_manager.consume(flushed.car_samples, flushed.lap_attempts)
+                for attempt in flushed.lap_attempts:
+                    session_history.register_attempt(attempt)
+                for observation in flushed.session_history:
+                    session_history.observe(observation)
+                session_history_decode_error_count += len(
+                    flushed.session_history_decode_errors
+                )
                 for lifecycle_event in flushed.lifecycle_events:
                     if len(lifecycle_events) < MAX_STORED_LIFECYCLE_EVENTS:
                         lifecycle_events.append(lifecycle_event)
@@ -454,6 +488,23 @@ def import_capture(
             truncated_lifecycle_sessions.update(
                 lifecycle_reconciliation_truncated_sessions
             )
+            timing_truncated_sessions = set(
+                pipeline.session_history_truncated_session_uids
+            )
+            timing_truncated_sessions.update(
+                pipeline.lifecycle_events_truncated_session_uids
+            )
+            timing_truncated_sessions.update(truncated_lifecycle_sessions)
+            timing_evidence = session_history.reconcile(
+                tuple(attempts),
+                truncated_session_uids=frozenset(timing_truncated_sessions),
+            )
+            timing_status_counts: dict[str, int] = {}
+            for evidence in timing_evidence.values():
+                timing_status_counts[evidence.status] = (
+                    timing_status_counts.get(evidence.status, 0) + 1
+                )
+            timing_truncated_sessions.update(session_history.truncated_session_uids)
             attempt_keys = {
                 attempt.attempt_id: _attempt_key(
                     run_id, attempt.session_uid, attempt.car_index, attempt.attempt_number
@@ -500,6 +551,17 @@ def import_capture(
                 "lifecycle_reconciliation_truncated_session_count": len(
                     lifecycle_reconciliation_truncated_sessions
                 ),
+                "session_history_analysis_version": "session-history-v1",
+                "session_history_packets_admitted": pipeline.session_history_packets_admitted,
+                "session_history_packets_decoded": pipeline.session_history_packets_decoded,
+                "session_history_non_player_packets": pipeline.session_history_non_player_packets,
+                "session_history_player_index_mismatches": pipeline.session_history_player_index_mismatches,
+                "session_history_decode_errors": session_history_decode_error_count,
+                "session_history_packets_dropped": pipeline.session_history_packets_dropped,
+                "session_history_candidate_count": session_history.candidate_count,
+                "session_history_association_work": session_history.work,
+                "session_history_timing_status_counts": dict(sorted(timing_status_counts.items())),
+                "session_history_truncated_session_count": len(timing_truncated_sessions),
             }
 
             import_summary = ImportSummary(
@@ -534,6 +596,20 @@ def import_capture(
                 lifecycle_events=len(lifecycle_events),
                 lifecycle_events_dropped=pipeline.lifecycle_events_dropped
                 + importer_lifecycle_events_dropped,
+                session_history_packets_admitted=pipeline.session_history_packets_admitted,
+                session_history_packets_decoded=pipeline.session_history_packets_decoded,
+                session_history_non_player_packets=pipeline.session_history_non_player_packets,
+                session_history_player_index_mismatches=pipeline.session_history_player_index_mismatches,
+                session_history_decode_errors=session_history_decode_error_count,
+                session_history_packets_dropped=pipeline.session_history_packets_dropped,
+                session_history_candidates=session_history.candidate_count,
+                session_history_association_work=session_history.work,
+                session_history_matched_attempts=timing_status_counts.get("matched", 0),
+                session_history_ambiguous_attempts=timing_status_counts.get("ambiguous", 0),
+                session_history_conflicting_attempts=timing_status_counts.get("conflicting", 0),
+                session_history_unavailable_attempts=timing_status_counts.get("unavailable", 0),
+                session_history_truncated_attempts=timing_status_counts.get("truncated", 0),
+                session_history_truncated_sessions=len(timing_truncated_sessions),
             )
             metrics_json = _json(
                 {"capture_quality": capture_quality, "summary": import_summary.to_dict()}
@@ -689,6 +765,24 @@ def import_capture(
                             _json(quality),
                         ),
                     )
+                    timing = timing_evidence.get(
+                        attempt.attempt_id,
+                        AttemptTimingEvidence(
+                            "unavailable", ("timing_evidence_not_reconciled",)
+                        ),
+                    )
+                    timing_payload = timing.to_dict()
+                    timing_payload["provenance"] = {
+                        "attempt_key": attempt_key,
+                        "run_id": run_id,
+                        "capture_sha256": capture_hash,
+                        "completion_frame_ordinal": attempt.completion_frame_ordinal,
+                    }
+                    connection.execute(
+                        """INSERT INTO attempt_timing_evidence(
+                                  attempt_key,status,evidence_json) VALUES (?,?,?)""",
+                        (attempt_key, timing.status, _json(timing_payload)),
+                    )
                 for attempt_id, event_ordinal, relation in lifecycle_links:
                     attempt = attempts_by_id.get(attempt_id)
                     if attempt is None:
@@ -777,11 +871,13 @@ def list_laps(
             f"""SELECT l.*, s.session_uid, s.run_id, t.relative_path,
                        t.row_count AS trace_row_count, t.quality_json, t.sha256 AS trace_sha256,
                        t.schema_version AS trace_schema_version,
+                       e.evidence_json AS timing_evidence_json,
                        (SELECT c.context_json FROM lap_context_segments c
                           WHERE c.attempt_key = l.attempt_key ORDER BY c.ordinal LIMIT 1)
                           AS initial_context_json
                   FROM lap_attempts l JOIN sessions s USING(session_key)
                   JOIN telemetry_files t USING(attempt_key)
+                  LEFT JOIN attempt_timing_evidence e USING(attempt_key)
                   JOIN processing_runs r USING(run_id)
                  WHERE {' AND '.join(clauses)}
                    AND r.status = 'complete'
@@ -819,6 +915,14 @@ def list_laps(
                 ),
                 "quality": json.loads(row["quality_json"]),
                 "exclusion_reasons": json.loads(row["exclusion_reasons_json"]),
+                "timing_evidence": (
+                    json.loads(row["timing_evidence_json"])
+                    if row["timing_evidence_json"]
+                    else {
+                        "status": "unavailable",
+                        "reasons": ["not_available_for_legacy_import"],
+                    }
+                ),
             }
             for row in rows
         ]
@@ -828,9 +932,11 @@ def get_lap(database_path: str | Path, attempt_key: str) -> dict[str, object] | 
     with Database(database_path, read_only=True) as db:
         row = db.connection.execute(
             """SELECT l.*, s.session_uid, s.run_id, t.relative_path, t.row_count,
-                      t.sha256, t.quality_json, t.schema_version
+                      t.sha256, t.quality_json, t.schema_version,
+                      e.evidence_json AS timing_evidence_json
                  FROM lap_attempts l JOIN sessions s USING(session_key)
                  JOIN telemetry_files t USING(attempt_key)
+                 LEFT JOIN attempt_timing_evidence e USING(attempt_key)
                   JOIN processing_runs r USING(run_id)
                 WHERE l.attempt_key = ? AND t.ready = 1 AND r.status = 'complete'""",
             (attempt_key,),
@@ -861,6 +967,14 @@ def get_lap(database_path: str | Path, attempt_key: str) -> dict[str, object] | 
             "trace_checksum_valid": True,
             "parquet_rows": metadata.num_rows,
             "quality": json.loads(row["quality_json"]),
+            "timing_evidence": (
+                json.loads(row["timing_evidence_json"])
+                if row["timing_evidence_json"]
+                else {
+                    "status": "unavailable",
+                    "reasons": ["not_available_for_legacy_import"],
+                }
+            ),
             "first_sample": table.slice(0, min(1, table.num_rows)).to_pylist(),
             "last_sample": table.slice(max(0, table.num_rows - 1), min(1, table.num_rows)).to_pylist(),
         }

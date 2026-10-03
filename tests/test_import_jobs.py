@@ -69,7 +69,7 @@ def test_database_schema_v4_migrates_and_backfills_job_update_time(tmp_path):
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recording_jobs'"
         ).fetchone()
 
-    assert version == 8
+    assert version == 9
     assert recording_table is not None
     assert "updated_at_utc" in columns
     assert updated_at == "2026-10-01T01:02:03.000000+00:00"
@@ -90,7 +90,7 @@ def test_database_schema_v5_migrates_to_recording_jobs(tmp_path):
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recording_jobs'"
         ).fetchone()
 
-    assert version == 8
+    assert version == 9
     assert recording_table is not None
 
 
@@ -121,8 +121,29 @@ def test_database_schema_v7_migrates_bounded_lifecycle_metadata(tmp_path):
             for row in db.connection.execute("PRAGMA table_info(lifecycle_events)")
         }
 
-    assert version == 8
+    assert version == 9
     assert {"details_length_bytes", "details_truncated"} <= columns
+
+
+def test_database_schema_v8_migrates_session_history_evidence(tmp_path):
+    database = tmp_path / "legacy-v8.sqlite3"
+    with Database(database) as db:
+        with db.connection:
+            db.connection.execute("DROP TABLE attempt_timing_evidence")
+            db.connection.execute(
+                "UPDATE schema_info SET version=8 WHERE singleton=1"
+            )
+
+    with Database(database) as db:
+        version = db.connection.execute(
+            "SELECT version FROM schema_info WHERE singleton=1"
+        ).fetchone()[0]
+        table = db.connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='attempt_timing_evidence'"
+        ).fetchone()
+
+    assert version == 9
+    assert table is not None
 
 
 def test_recording_sources_have_stable_opaque_ids_and_never_expose_paths(tmp_path):

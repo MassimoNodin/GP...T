@@ -71,6 +71,7 @@ class DecodedPacket:
     packet_kind: PacketId | None
     body: bytes
     wire_fingerprint: bytes
+    source_sequence: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

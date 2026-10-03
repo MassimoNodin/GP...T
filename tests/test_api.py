@@ -51,6 +51,43 @@ def test_sessions_api_is_versioned_and_keeps_session_uid_as_text(monkeypatch, tm
     assert response.json()["data"][0]["capture_sha256"] == "a" * 64
 
 
+def test_attempt_timing_api_is_standalone_and_stringifies_source_session_uid(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        api_module,
+        "load_attempt_timing_evidence",
+        lambda _database, attempt_key: {
+            "status": "matched",
+            "reasons": [],
+            "provenance": {
+                "attempt_key": attempt_key,
+                "run_id": "run-id",
+                "capture_sha256": "a" * 64,
+                "completion_frame_ordinal": 10,
+            },
+            "source": {"session_uid": 18446744073709551600},
+        }
+        if attempt_key == "attempt"
+        else None,
+    )
+
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/attempts/attempt/timing",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "matched"
+    assert response.json()["data"]["source"]["session_uid"] == "18446744073709551600"
+    assert response.json()["data"]["provenance"] == {
+        "attempt_key": "attempt",
+        "run_id": "run-id",
+        "capture_sha256": "a" * 64,
+        "completion_frame_ordinal": 10,
+    }
+
+
 def test_processing_run_api_bounds_pages_and_preserves_unsigned_session_uids(
     monkeypatch, tmp_path
 ) -> None:

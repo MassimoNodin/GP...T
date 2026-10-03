@@ -168,7 +168,7 @@ function RunDetail({
           <EvidenceValue label="Telemetry join gaps" value={imported?.missing_car_telemetry_samples} />
         </EvidenceGroup>
         <EvidenceGroup title="Event lifecycle decoding">
-          <EvidenceValue label="Event packets" value={lifecycle?.event_packets_decoded} />
+          <EvidenceValue label="Admitted Event packets" value={lifecycle?.event_packets_decoded} />
           <EvidenceValue label="Decode errors" value={lifecycle?.event_decode_errors} />
           <EvidenceValue label="Persisted lifecycle records" value={lifecycle?.lifecycle_event_count} />
           <EvidenceValue label="Dropped lifecycle records" value={lifecycle?.lifecycle_events_dropped} />
@@ -182,6 +182,18 @@ function RunDetail({
                 : "unknown"}
             </dd>
           </div>
+        </EvidenceGroup>
+        <EvidenceGroup title="Reported lap and sector timing">
+          <EvidenceValue label="Admitted Session History" value={imported?.session_history_packets_admitted} />
+          <EvidenceValue label="Player snapshots decoded" value={imported?.session_history_packets_decoded} />
+          <EvidenceValue label="Non-player snapshots skipped" value={imported?.session_history_non_player_packets} />
+          <EvidenceValue label="Decode errors" value={imported?.session_history_decode_errors} />
+          <EvidenceValue label="Unique lap candidates" value={imported?.session_history_candidates} />
+          <EvidenceValue label="Association work" value={imported?.session_history_association_work} />
+          <EvidenceValue label="Matched attempts" value={imported?.session_history_matched_attempts} />
+          <EvidenceValue label="Ambiguous / conflicting" value={(imported?.session_history_ambiguous_attempts ?? 0) + (imported?.session_history_conflicting_attempts ?? 0)} />
+          <EvidenceValue label="Unavailable / truncated" value={(imported?.session_history_unavailable_attempts ?? 0) + (imported?.session_history_truncated_attempts ?? 0)} />
+          <EvidenceValue label="Truncated sessions" value={imported?.session_history_truncated_sessions} />
         </EvidenceGroup>
         <EvidenceGroup title="Stored lap evidence">
           <EvidenceValue label="Sessions" value={totals.session_count} />
@@ -341,6 +353,7 @@ function SessionRow({ session }: { session: ProcessingRunSession }) {
 }
 
 function AttemptRow({ attempt }: { attempt: ProcessingRunAttempt }) {
+  const timing = attempt.timing_evidence;
   const lifecycleStatus = !attempt.lifecycle_assessed || attempt.superseded === null
     ? "lifecycle unassessed"
     : attempt.superseded
@@ -357,6 +370,9 @@ function AttemptRow({ attempt }: { attempt: ProcessingRunAttempt }) {
         </span>
         <small>
           {contextLabel(attempt.first_context_snapshot, "First context snapshot")} · {attempt.context_segment_count} context segments · {attempt.missing_context_segment_count} missing context segments
+          {timing?.status === "matched"
+            ? ` · reported ${formatLapTime(timing.reported_lap_time_ms ?? null)} · sectors ${formatLapTime(timing.sector1_time_ms ?? null)} / ${formatLapTime(timing.sector2_time_ms ?? null)} / ${formatLapTime(timing.sector3_time_ms ?? null)}`
+            : ` · reported timing ${humanize(timing?.status ?? "unavailable")}`}
           {attempt.exclusion_reasons === null
             ? " · exclusion reasons unknown"
             : attempt.exclusion_reasons.length

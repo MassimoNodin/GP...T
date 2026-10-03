@@ -60,6 +60,20 @@ _IMPORT_SUMMARY_COUNTERS = (
     "event_decode_errors",
     "lifecycle_events",
     "lifecycle_events_dropped",
+    "session_history_packets_admitted",
+    "session_history_packets_decoded",
+    "session_history_non_player_packets",
+    "session_history_player_index_mismatches",
+    "session_history_decode_errors",
+    "session_history_packets_dropped",
+    "session_history_candidates",
+    "session_history_association_work",
+    "session_history_matched_attempts",
+    "session_history_ambiguous_attempts",
+    "session_history_conflicting_attempts",
+    "session_history_unavailable_attempts",
+    "session_history_truncated_attempts",
+    "session_history_truncated_sessions",
 )
 
 
@@ -374,6 +388,7 @@ def _list_run_attempts(
                   l.reference_eligible, l.sample_count, l.exclusion_reasons_json,
                   l.start_frame_ordinal, l.end_frame_ordinal, l.superseded,
                   l.lifecycle_assessed,
+                  e.evidence_json AS timing_evidence_json,
                   (SELECT c.context_json FROM lap_context_segments c
                     WHERE c.attempt_key = l.attempt_key AND c.ordinal = 0) AS first_context_json,
                   (SELECT COUNT(*) FROM lap_context_segments c
@@ -382,6 +397,7 @@ def _list_run_attempts(
                     WHERE c.attempt_key = l.attempt_key AND c.context_json IS NULL)
                     AS missing_context_segment_count
              FROM lap_attempts l JOIN sessions s USING(session_key)
+             LEFT JOIN attempt_timing_evidence e USING(attempt_key)
             WHERE s.run_id = ?
             ORDER BY s.session_uid, l.car_index, l.attempt_number
             LIMIT ? OFFSET ?""",
@@ -416,6 +432,13 @@ def _list_run_attempts(
                     None if row["superseded"] is None else bool(row["superseded"])
                 ),
                 "lifecycle_assessed": bool(row["lifecycle_assessed"]),
+                "timing_evidence": (
+                    _json_object(row["timing_evidence_json"])
+                    or {
+                        "status": "unavailable",
+                        "reasons": ["not_available_for_legacy_import"],
+                    }
+                ),
                 "exclusion_reasons": reasons,
                 "first_context_snapshot": _json_object(row["first_context_json"]),
                 "context_segment_count": int(row["context_segment_count"]),

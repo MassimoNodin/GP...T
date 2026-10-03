@@ -67,6 +67,7 @@ class StoredAttemptTrace:
     pit_encountered: bool = False
     superseded: bool | None = None
     lifecycle_assessed: bool = False
+    timing_evidence: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,10 +135,12 @@ def load_attempt_trace(
                       l.game_valid, l.reference_eligible, l.exclusion_reasons_json,
                       l.superseded, l.lifecycle_assessed,
                       s.session_uid, s.run_id, t.relative_path, t.row_count,
-                      t.sha256, t.quality_json, t.schema_version
+                      t.sha256, t.quality_json, t.schema_version,
+                      e.evidence_json AS timing_evidence_json
                  FROM lap_attempts l JOIN sessions s USING(session_key)
                  JOIN processing_runs r USING(run_id)
                  JOIN telemetry_files t USING(attempt_key)
+                 LEFT JOIN attempt_timing_evidence e USING(attempt_key)
                 WHERE l.attempt_key = ? AND t.ready = 1 AND r.status = 'complete'""",
             (attempt_key,),
         ).fetchone()
@@ -234,7 +237,58 @@ def load_attempt_trace(
         pit_encountered=bool(row["pit_encountered"]),
         superseded=None if row["superseded"] is None else bool(row["superseded"]),
         lifecycle_assessed=bool(row["lifecycle_assessed"]),
+        timing_evidence=(
+            json.loads(row["timing_evidence_json"])
+            if row["timing_evidence_json"]
+            else {
+                "status": "unavailable",
+                "reasons": ["not_available_for_legacy_import"],
+            }
+        ),
     )
+
+
+def load_attempt_timing_evidence(
+    database_path: str | Path, attempt_key: str
+) -> dict[str, object] | None:
+    """Read reported Session History timing without opening a Parquet trace."""
+    with Database(database_path, read_only=True) as db:
+        row = db.connection.execute(
+            """SELECT e.evidence_json, l.attempt_json, l.attempt_key,
+                      s.run_id, r.capture_sha256
+                 FROM lap_attempts l
+                 JOIN sessions s USING(session_key)
+                 JOIN processing_runs r USING(run_id)
+                 LEFT JOIN attempt_timing_evidence e USING(attempt_key)
+                WHERE l.attempt_key = ? AND r.status = 'complete'""",
+            (attempt_key,),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["evidence_json"]:
+            value = json.loads(row["evidence_json"])
+            if not isinstance(value, dict):
+                return None
+        else:
+            value = {
+                "status": "unavailable",
+                "reasons": ["not_available_for_legacy_import"],
+            }
+
+        attempt = json.loads(row["attempt_json"])
+        provenance = value.get("provenance")
+        provenance = dict(provenance) if isinstance(provenance, dict) else {}
+        provenance.setdefault("attempt_key", row["attempt_key"])
+        provenance.setdefault("run_id", row["run_id"])
+        provenance.setdefault("capture_sha256", row["capture_sha256"])
+        provenance.setdefault(
+            "completion_frame_ordinal",
+            attempt.get("completion_frame_ordinal")
+            if isinstance(attempt, dict)
+            else None,
+        )
+        value["provenance"] = provenance
+        return value
 
 
 def load_reference_inventory(

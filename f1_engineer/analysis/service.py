@@ -200,6 +200,13 @@ def compare_attempts(
     processing_run_evidence = _processing_run_evidence(
         database_path, target.run_id, reference.run_id
     )
+    reported_timing = {
+        "target": _timing_evidence_summary(target.timing_evidence),
+        "reference": _timing_evidence_summary(reference.timing_evidence),
+    }
+    sector_timing_difference = _sector_timing_difference(
+        reported_timing["target"], reported_timing["reference"]
+    )
     observed_conditions = {
         "target": summarize_observed_conditions(
             target.samples,
@@ -245,6 +252,8 @@ def compare_attempts(
         "reference": _attempt_summary(reference),
         "processing_run_evidence": processing_run_evidence,
         "observed_conditions": observed_conditions,
+        "reported_timing_evidence": reported_timing,
+        "sector_timing_difference_ms": sector_timing_difference,
         "track": {
             "track_id": target_context["track_id"],
             "track_name": target_context["track_name"],
@@ -572,4 +581,55 @@ def _attempt_summary(attempt: StoredAttemptTrace) -> dict[str, object]:
             }
             for frame, context in attempt.context_segments
         ],
+        "reported_timing_evidence": _timing_evidence_summary(
+            attempt.timing_evidence
+        ),
+    }
+
+
+def _timing_evidence_summary(
+    evidence: Mapping[str, object] | None,
+) -> dict[str, object]:
+    if evidence is None:
+        return {
+            "status": "unavailable",
+            "reasons": ["not_available_for_legacy_import"],
+        }
+    return dict(evidence)
+
+
+def _sector_timing_difference(
+    target: Mapping[str, object], reference: Mapping[str, object]
+) -> dict[str, object]:
+    matched = target.get("status") == reference.get("status") == "matched"
+    sectors: dict[str, object] = {}
+    for sector in (1, 2, 3):
+        field = f"sector{sector}_time_ms"
+        target_ms = target.get(field)
+        reference_ms = reference.get(field)
+        supported = (
+            matched
+            and isinstance(target_ms, (int, float))
+            and not isinstance(target_ms, bool)
+            and target_ms > 0
+            and isinstance(reference_ms, (int, float))
+            and not isinstance(reference_ms, bool)
+            and reference_ms > 0
+        )
+        sectors[f"sector{sector}"] = {
+            "target_time_ms": target_ms,
+            "reference_time_ms": reference_ms,
+            "target_minus_reference_ms": (
+                target_ms - reference_ms if supported else None
+            ),
+            "target_valid": target.get(f"sector{sector}_valid"),
+            "reference_valid": reference.get(f"sector{sector}_valid"),
+            "status": "matched_values" if supported else "unavailable",
+        }
+    return {
+        "direction": "target_minus_reference",
+        "status": "matched" if matched else "unavailable",
+        "sectors": sectors,
+        "target_sector_sum_residual_ms": target.get("sector_sum_residual_ms"),
+        "reference_sector_sum_residual_ms": reference.get("sector_sum_residual_ms"),
     }

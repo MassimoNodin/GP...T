@@ -39,6 +39,7 @@ class _BaseFormatAdapter:
             packet_kind=packet_kind,
             body=raw.payload[HEADER_SIZE:],
             wire_fingerprint=hashlib.blake2s(raw.payload, digest_size=16).digest(),
+            source_sequence=raw.sequence,
         )
 
 

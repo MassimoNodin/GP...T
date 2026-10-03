@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 class DatabaseSchemaError(ValueError):
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS schema_info (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     version INTEGER NOT NULL
 );
-INSERT OR IGNORE INTO schema_info(singleton, version) VALUES (1, 8);
+INSERT OR IGNORE INTO schema_info(singleton, version) VALUES (1, 9);
 
 CREATE TABLE IF NOT EXISTS captures (
     capture_sha256 TEXT PRIMARY KEY,
@@ -147,6 +147,12 @@ CREATE TABLE IF NOT EXISTS telemetry_files (
     sha256 TEXT NOT NULL,
     quality_json TEXT NOT NULL,
     ready INTEGER NOT NULL CHECK (ready IN (0, 1))
+);
+
+CREATE TABLE IF NOT EXISTS attempt_timing_evidence (
+    attempt_key TEXT PRIMARY KEY REFERENCES lap_attempts(attempt_key) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK (status IN ('matched', 'ambiguous', 'conflicting', 'unavailable', 'truncated')),
+    evidence_json TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS recording_sources (
@@ -339,6 +345,19 @@ class Database:
             self.connection.execute("UPDATE schema_info SET version = 8 WHERE singleton = 1")
             self.connection.commit()
             version = 8
+        if version == 8:
+            self.connection.execute(
+                """CREATE TABLE IF NOT EXISTS attempt_timing_evidence (
+                       attempt_key TEXT PRIMARY KEY REFERENCES lap_attempts(attempt_key) ON DELETE CASCADE,
+                       status TEXT NOT NULL CHECK (status IN
+                           ('matched', 'ambiguous', 'conflicting', 'unavailable', 'truncated')),
+                       evidence_json TEXT NOT NULL)"""
+            )
+            self.connection.execute(
+                "UPDATE schema_info SET version = 9 WHERE singleton = 1"
+            )
+            self.connection.commit()
+            version = 9
         if version != SCHEMA_VERSION:
             self.connection.close()
             raise ValueError(f"database schema {version} is not supported")

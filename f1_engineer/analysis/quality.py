@@ -295,6 +295,14 @@ def inspect_attempt_quality(
             "start_observed": attempt.start_observed,
             "pit_encountered": attempt.pit_encountered,
             "exclusion_reasons": list(attempt.exclusion_reasons),
+            "reported_timing_evidence": (
+                dict(attempt.timing_evidence)
+                if attempt.timing_evidence is not None
+                else {
+                    "status": "unavailable",
+                    "reasons": ["not_available_for_legacy_import"],
+                }
+            ),
         },
         "context": {
             "segments": context_segments,

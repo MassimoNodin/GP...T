@@ -10,6 +10,7 @@ from .sessions.lap_tracker import (
     SessionContextSegment,
 )
 from .sessions.lifecycle import LifecycleEvent
+from .sessions.session_history import SessionHistoryObservation
 from .sessions.context import SessionContext
 from .sessions.manager import ContextHistoryChange, SessionTracker
 from .analysis.continuity import float32_ulp, session_time_discontinuity
@@ -19,10 +20,21 @@ from .udp.car_telemetry import CarTelemetryDecoder
 from .udp.car_status import CarStatusDecoder, CarStatusData, CarStatusPacket
 from .udp.decoder import PacketDecoder
 from .udp.events import EventData, EventDecoder
-from .udp.models import DecodedPacket, PacketFrame, PacketId, RawDatagram, SessionEvent
+from .udp.models import (
+    DecodedPacket,
+    PacketFormat,
+    PacketFrame,
+    PacketId,
+    RawDatagram,
+    SessionEvent,
+)
 from .udp.lap_data import LapDataDecoder
 from .udp.motion import CarMotionData, MotionDecoder
 from .udp.participants import ParticipantsDecoder, ParticipantsPacket
+from .udp.session_history import (
+    SESSION_HISTORY_BODY_SIZE,
+    SessionHistoryDecoder,
+)
 from .udp.session_context import SessionContextDecoder
 
 
@@ -41,6 +53,8 @@ class PipelineResult:
     participants_error: str | None = None
     context_history_changes: tuple[ContextHistoryChange, ...] = ()
     lifecycle_events: tuple[LifecycleEvent, ...] = ()
+    session_history: tuple[SessionHistoryObservation, ...] = ()
+    session_history_decode_errors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +65,8 @@ class PipelineFlushResult:
     lap_data_errors: tuple[str, ...]
     car_telemetry_errors: tuple[str, ...]
     lifecycle_events: tuple[LifecycleEvent, ...] = ()
+    session_history: tuple[SessionHistoryObservation, ...] = ()
+    session_history_decode_errors: tuple[str, ...] = ()
 
 
 class TelemetryPipeline:
@@ -72,6 +88,7 @@ class TelemetryPipeline:
         self.car_status_decoder = CarStatusDecoder()
         self.participants_decoder = ParticipantsDecoder()
         self.event_decoder = EventDecoder()
+        self.session_history_decoder = SessionHistoryDecoder()
         self.laps = LapTracker()
         self._frame_ordinal_by_uid: dict[int, int] = {}
         self._event_ordinal_by_uid: dict[int, int] = {}
@@ -84,6 +101,19 @@ class TelemetryPipeline:
         self.event_decode_error_count = 0
         self.event_code_counts: Counter[str] = Counter()
         self._max_event_code_counts = 64
+        self._association_epoch_by_uid: dict[int, int] = {}
+        self._association_scope_assessable_by_uid: dict[int, bool] = {}
+        self._last_association_player_by_uid: dict[int, int | None] = {}
+        self._last_association_format_by_uid: dict[int, int | None] = {}
+        self._session_history: list[SessionHistoryObservation] = []
+        self.max_buffered_session_history = 4096
+        self.session_history_packets_admitted = 0
+        self.session_history_packets_decoded = 0
+        self.session_history_non_player_packets = 0
+        self.session_history_player_index_mismatches = 0
+        self.session_history_decode_errors: list[str] = []
+        self.session_history_packets_dropped = 0
+        self.session_history_truncated_session_uids: set[int] = set()
         self.lap_data_packets_decoded = 0
         self.lap_data_decode_errors: list[str] = []
         self.car_telemetry_packets_decoded = 0
@@ -111,10 +141,23 @@ class TelemetryPipeline:
         for frame in frames:
             frame_ordinal = self._frame_ordinal_by_uid.get(frame.session_uid, 0) + 1
             self._frame_ordinal_by_uid[frame.session_uid] = frame_ordinal
-            lifecycle_attempts, quarantine_lap_data = self._process_lifecycle(
+            (
+                lifecycle_attempts,
+                quarantine_lap_data,
+                association_epoch,
+                association_scope_assessable,
+                lifecycle_boundary,
+            ) = self._process_lifecycle(
                 frame, frame_ordinal
             )
             attempts.extend(lifecycle_attempts)
+            if not lifecycle_boundary:
+                self._process_session_history(
+                    frame,
+                    frame_ordinal,
+                    association_epoch=association_epoch,
+                    association_scope_assessable=association_scope_assessable,
+                )
             telemetry_by_car: dict[int, object] = {}
             motion_by_car: tuple[CarMotionData, ...] | None = None
             conflicting_motion = False
@@ -205,6 +248,9 @@ class TelemetryPipeline:
                             ),
                             frame_ordinal=frame_ordinal,
                             game_frame_identifier=packet.header.frame_identifier,
+                            association_epoch=association_epoch,
+                            association_scope_assessable=association_scope_assessable,
+                            association_packet_format=int(packet.packet_format),
                         )
                     )
                 )
@@ -256,7 +302,7 @@ class TelemetryPipeline:
 
     def _process_lifecycle(
         self, frame: PacketFrame, frame_ordinal: int
-    ) -> tuple[tuple[LapAttempt, ...], bool]:
+    ) -> tuple[tuple[LapAttempt, ...], bool, int, bool, bool]:
         decoded: list[tuple[DecodedPacket, EventData]] = []
         for packet in frame.packets:
             if packet.packet_kind is not PacketId.EVENT:
@@ -276,6 +322,24 @@ class TelemetryPipeline:
             decoded.append((packet, event))
 
         uid = frame.session_uid
+        association_epoch = self._association_epoch_by_uid.get(uid, 0)
+        association_scope_assessable = self._association_scope_assessable_by_uid.get(
+            uid, True
+        )
+        packet_formats = {int(packet.packet_format) for packet in frame.packets}
+        primary_players = {packet.header.player_car_index for packet in frame.packets}
+        frame_scope_uncertain = len(packet_formats) != 1 or len(primary_players) != 1
+        current_format = next(iter(packet_formats)) if len(packet_formats) == 1 else None
+        current_player = next(iter(primary_players)) if len(primary_players) == 1 else None
+        previous_format = self._last_association_format_by_uid.get(uid)
+        previous_player = self._last_association_player_by_uid.get(uid)
+        frame_scope_changed = (
+            frame_scope_uncertain
+            or (previous_format is not None and previous_format != current_format)
+            or (previous_player is not None and previous_player != current_player)
+        )
+        self._last_association_format_by_uid[uid] = current_format
+        self._last_association_player_by_uid[uid] = current_player
         previous_time = self._last_session_time_by_uid.get(uid)
         selected_lap_packets: list[DecodedPacket] = []
         for packet in frame.packets:
@@ -473,7 +537,90 @@ class TelemetryPipeline:
                 session_time_s=boundary_clock_packet.header.session_time,
                 packet_format=int(boundary_clock_packet.packet_format),
             )
-        return tuple(lifecycle_attempts), quarantine
+        lifecycle_boundary = boundary_cause is not None
+        if uid != 0 and (lifecycle_boundary or frame_scope_changed):
+            association_epoch += 1
+            if (
+                unknown_boundary
+                or regression_boundary
+                or (explicit_boundary and not flashback_valid)
+                or frame_scope_uncertain
+            ):
+                association_scope_assessable = False
+            self._association_epoch_by_uid[uid] = association_epoch
+            self._association_scope_assessable_by_uid[uid] = (
+                association_scope_assessable
+            )
+        return (
+            tuple(lifecycle_attempts),
+            quarantine,
+            association_epoch,
+            association_scope_assessable,
+            lifecycle_boundary,
+        )
+
+    def _process_session_history(
+        self,
+        frame: PacketFrame,
+        frame_ordinal: int,
+        *,
+        association_epoch: int,
+        association_scope_assessable: bool,
+    ) -> None:
+        if frame.session_uid == 0:
+            return
+        for packet in frame.packets:
+            if packet.packet_kind is not PacketId.SESSION_HISTORY:
+                continue
+            self.session_history_packets_admitted += 1
+            if (
+                len(packet.body) != SESSION_HISTORY_BODY_SIZE
+                or packet.header.packet_version != 1
+                or packet.packet_format
+                not in (PacketFormat.F1_25, PacketFormat.SEASON_PACK_2026)
+            ):
+                decoded = self.session_history_decoder.decode(
+                    packet, frame_ordinal=frame_ordinal
+                )
+                if decoded.error is not None:
+                    self.session_history_decode_errors.append(decoded.error)
+                continue
+            if packet.body[0] != packet.header.player_car_index:
+                self.session_history_non_player_packets += 1
+                continue
+            decoded = self.session_history_decoder.decode(
+                packet, frame_ordinal=frame_ordinal
+            )
+            if decoded.error is not None or decoded.history is None:
+                self.session_history_decode_errors.append(
+                    decoded.error or "session_history_unavailable"
+                )
+                continue
+            if decoded.history.car_index != packet.header.player_car_index:
+                self.session_history_player_index_mismatches += 1
+                continue
+            self.session_history_packets_decoded += 1
+            if len(self._session_history) < self.max_buffered_session_history:
+                self._session_history.append(
+                    SessionHistoryObservation(
+                        packet=decoded.history,
+                        association_epoch=association_epoch,
+                        scope_assessable=association_scope_assessable,
+                    )
+                )
+            else:
+                self.session_history_packets_dropped += 1
+                self.session_history_truncated_session_uids.add(frame.session_uid)
+
+    def drain_session_history(self) -> tuple[SessionHistoryObservation, ...]:
+        observations = tuple(self._session_history)
+        self._session_history.clear()
+        return observations
+
+    def drain_session_history_decode_errors(self) -> tuple[str, ...]:
+        errors = tuple(self.session_history_decode_errors)
+        self.session_history_decode_errors.clear()
+        return errors
 
     def _record_lifecycle_event(
         self,
@@ -604,6 +751,14 @@ class TelemetryPipeline:
                 lap_attempts.extend(self.laps.end_session(event.session_uid))
             elif event.kind == "session_started":
                 self.laps.start_session(event.session_uid)
+                self._association_epoch_by_uid[event.session_uid] = 0
+                self._association_scope_assessable_by_uid[event.session_uid] = True
+                self._last_association_format_by_uid[event.session_uid] = int(
+                    packet.packet_format
+                )
+                self._last_association_player_by_uid[event.session_uid] = (
+                    packet.header.player_car_index
+                )
             elif event.kind == "session_context_invalidated":
                 old_format_frames = self.frames.flush_session(event.session_uid)
                 completed_frames.extend(old_format_frames)
@@ -616,6 +771,15 @@ class TelemetryPipeline:
                     self.laps.close_segment(
                         event.session_uid, reason="packet_format_changed"
                     )
+                )
+                self._association_epoch_by_uid[event.session_uid] = (
+                    self._association_epoch_by_uid.get(event.session_uid, 0) + 1
+                )
+                self._last_association_format_by_uid[event.session_uid] = int(
+                    packet.packet_format
+                )
+                self._last_association_player_by_uid[event.session_uid] = (
+                    packet.header.player_car_index
                 )
         obsolete_format = (
             packet.header.session_uid == self.sessions.current_session_uid
@@ -645,6 +809,8 @@ class TelemetryPipeline:
             participants_error=participant_result.error,
             context_history_changes=self.sessions.drain_context_history_changes(),
             lifecycle_events=self.drain_lifecycle_events(),
+            session_history=self.drain_session_history(),
+            session_history_decode_errors=self.drain_session_history_decode_errors(),
         )
 
     def finish(self) -> tuple[PacketFrame, ...]:
@@ -663,6 +829,8 @@ class TelemetryPipeline:
             lap_data_errors=errors,
             car_telemetry_errors=telemetry_errors,
             lifecycle_events=self.drain_lifecycle_events(),
+            session_history=self.drain_session_history(),
+            session_history_decode_errors=self.drain_session_history_decode_errors(),
         )
 
 
