@@ -465,6 +465,10 @@ def test_practice_qualifying_comparison_is_explicit_bounded_and_diagnostic(
     assert brief["analysis_version"] == "comparison-brief-v1"
     assert brief["status"] == "available"
     assert "Target was 0.200 s slower" in brief["text"]
+    assert result["corner_comparison_brief"]["status"] == "abstained"
+    assert result["corner_comparison_brief"]["gate_reasons"] == [
+        "unsupported_comparison_policy"
+    ]
     assert result["target"]["trace_sha256"] == "a" * 64
     assert result["reference"]["trace_sha256"] == "b" * 64
     assert result["target"]["game_valid"] is False

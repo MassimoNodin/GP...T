@@ -449,6 +449,18 @@ Keep the existing comparisons and deterministic comparison brief unchanged. Expo
 
 Acceptance covers a synthetic clean approved Time Trial ranking; stable ties; nonpositive and sub-millisecond values; partial/unsupported intervals; overlapping and complex regions; mismatched selected reference, source identity, checksum, scope, or model approval; draft/unregistered models; invalid, incomplete, unknown, superseded, unassessed, or non-Time-Trial attempts; selector attempt-count bounds; stable omitted/excluded counts; and unchanged comparison briefs. Melbourne's draft model and the recovered incomplete Shanghai Practice capture must not produce candidates.
 
+## Decision 0033: summarize ranked recorded corner evidence
+
+**Status:** accepted
+
+**Date:** 2026-10-04
+
+Add a bounded deterministic corner-comparison brief over D0032 ranked measurements and their matching region observations. Preserve D0032 eligibility and provenance gates, including the exact approved model fingerprint, selected session-best identity, and connected interval support. For each of at most three regions, include the recorded interval-time difference and supported brake-threshold onset, observed minimum-speed, 50% throttle-onset, and configured exit-anchor speed facts, for at most five facts total. Require unique threshold events whose onset is not left-censored, full channel coverage, and no rejected short events or unsupported breaks; a right-censored continuation still supports an observed onset. Require complete-window minimum-speed coverage and matching, supported exit anchors. Retain onset brackets, source paths, attempt/run/checksum and model/approval provenance, and bounded reasons and omitted counts. Missing or ambiguous control measurements omit only those facts; a failed D0032 ranking abstains the entire corner brief.
+
+Use descriptive recorded-measurement language only. Do not infer causes, recoverable time, confidence probabilities, or driving advice; keep `coaching_eligible` false. Reuse comparison and region results already in memory without additional trace reads, persistence, migrations, or changes to the existing deterministic comparison brief. Expose one shared result through comparison service, CLI, API, and dashboard. Synthetic approved-model evidence validates positive behavior; current draft Melbourne and incomplete Shanghai Practice evidence must abstain. A clean eligible Time Trial capture and independently approved region definitions remain prerequisites for real positive acceptance and any future coaching.
+
+Acceptance covers clean synthetic approved evidence with all five facts, bounded sign/rounding behavior for sampled threshold brackets, missing, ambiguous, censored, partial, or unsupported control observations, mismatched model/reference/source provenance, and explicit gate/omission counts. It confirms that the existing `comparison_brief` output remains unchanged and that the current packaged model/captures produce no corner summary.
+
 ## Data flow
 
 ```text

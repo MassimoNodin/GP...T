@@ -931,9 +931,50 @@ export interface CornerLossCandidates {
   limits: Record<string, number>;
 }
 
+export interface CornerComparisonFact {
+  kind: string;
+  label: string;
+  value: number;
+  unit: string;
+  direction: "target_minus_reference";
+  text: string;
+  source_fields: Record<string, string>;
+  provenance: {
+    target: { attempt_key?: string | null; run_id?: string | null; trace_sha256?: string | null };
+    reference: { attempt_key?: string | null; run_id?: string | null; trace_sha256?: string | null };
+    model: { model_id?: string; revision?: number; model_content_sha256?: string | null };
+    reference_selection: Record<string, unknown>;
+  };
+  [key: string]: unknown;
+}
+
+export interface CornerComparisonBrief {
+  schema_version: number;
+  analysis_version: string;
+  status: "available" | "abstained" | "no_ranked_candidates";
+  coaching_eligible: false;
+  text: string;
+  regions: Array<{
+    rank: number;
+    region_id: string;
+    region_label: string;
+    analysis_window_m: [number, number];
+    facts: CornerComparisonFact[];
+    omitted_measurements: Array<{ metric: string; reason: string }>;
+    omitted_measurement_count: number;
+    connected_support: Record<string, boolean | number | null>;
+    provenance: CornerComparisonFact["provenance"];
+  }>;
+  gate_reasons: string[];
+  gate_reasons_omitted_count: number;
+  omitted_region_count: number;
+  limits: Record<string, number>;
+}
+
 export interface Comparison {
   analysis_version: string;
   comparison_brief: ComparisonBrief;
+  corner_comparison_brief: CornerComparisonBrief;
   comparison_policy: "time_trial" | "practice_qualifying";
   comparison_policy_version: string;
   diagnostic_only: boolean;

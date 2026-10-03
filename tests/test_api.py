@@ -466,10 +466,19 @@ def test_compare_api_returns_the_shared_structured_brief(monkeypatch, tmp_path) 
         "facts": [{"kind": "official_lap_time_difference", "unit": "s"}],
         "limitations": [],
     }
+    corner_brief = {
+        "schema_version": 1,
+        "analysis_version": "corner-comparison-brief-v1",
+        "status": "abstained",
+        "coaching_eligible": False,
+    }
     monkeypatch.setattr(
         api_module,
         "compare_attempts",
-        lambda *_args, **_kwargs: {"comparison_brief": brief},
+        lambda *_args, **_kwargs: {
+            "comparison_brief": brief,
+            "corner_comparison_brief": corner_brief,
+        },
     )
 
     response = _get(
@@ -483,6 +492,7 @@ def test_compare_api_returns_the_shared_structured_brief(monkeypatch, tmp_path) 
 
     assert response.status_code == 200
     assert response.json()["data"]["comparison_brief"] == brief
+    assert response.json()["data"]["corner_comparison_brief"] == corner_brief
 
 
 @pytest.mark.parametrize(

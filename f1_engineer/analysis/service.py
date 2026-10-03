@@ -9,6 +9,7 @@ from typing import Mapping
 from .comparison import calculate_channel_differences, calculate_delta_time
 from .comparison_brief import build_comparison_brief
 from .comparison_window import DistanceWindow, analyze_comparison_window
+from .corner_comparison_brief import build_corner_comparison_brief
 from .corner_loss_candidates import build_corner_loss_candidates
 from .corners import analyze_corner_regions
 from .interval_delta import reserve_interval_evaluation_work
@@ -425,6 +426,7 @@ def compare_attempts(
         reference_selection_error=reference_selection_error,
     )
     result["comparison_brief"] = build_comparison_brief(result)
+    result["corner_comparison_brief"] = build_corner_comparison_brief(result)
     return result
 
 

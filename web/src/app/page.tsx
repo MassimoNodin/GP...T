@@ -1,6 +1,7 @@
 import {
   AttemptRegionReport,
   Comparison,
+  CornerComparisonBrief,
   ComparisonWindow,
   CornerAnalysis,
   CornerLossCandidates,
@@ -1234,6 +1235,11 @@ export default async function Home({
                     <CornerLossCandidatesPanel
                       analysis={comparison.corner_loss_candidates}
                     />
+                    {comparison.corner_comparison_brief.status === "available" ? (
+                      <CornerComparisonBriefPanel
+                        report={comparison.corner_comparison_brief}
+                      />
+                    ) : null}
                     {comparison.corner_analysis ? (
                       <RegionAnalysisPanel
                         analysis={comparison.corner_analysis}
@@ -1922,6 +1928,59 @@ function CornerLossCandidatesPanel({
       )}
       <p className="corner-candidate-note">
         Half-open distance bounds [start, end). Coaching is disabled.
+      </p>
+    </section>
+  );
+}
+
+function CornerComparisonBriefPanel({
+  report,
+}: {
+  report: CornerComparisonBrief;
+}) {
+  return (
+    <section className="corner-comparison-brief panel" aria-label="Recorded corner comparison brief">
+      <header className="region-card-header">
+        <div>
+          <div className="region-index">RECORDED CONTROL OBSERVATIONS</div>
+          <h3>What the ranked regions show</h3>
+        </div>
+        <span className="brief-version">{report.analysis_version}</span>
+      </header>
+      <p className="corner-comparison-brief-text">{report.text}</p>
+      <div className="corner-comparison-brief-regions">
+        {report.regions.map((region) => (
+          <article key={region.region_id}>
+            <div className="corner-comparison-brief-region-heading">
+              <strong>#{region.rank} {region.region_label}</strong>
+              <span>[{region.analysis_window_m[0].toFixed(1)}, {region.analysis_window_m[1].toFixed(1)}) m</span>
+            </div>
+            <ul>
+              {region.facts.map((fact, index) => (
+                <li key={`${fact.kind}-${index}`}>
+                  <strong>{fact.text}</strong>
+                  <small>
+                    Target {fact.provenance.target.attempt_key ?? "unknown"} ·
+                    Reference {fact.provenance.reference.attempt_key ?? "unknown"} ·
+                    {Object.values(fact.source_fields).join(" / ")}
+                  </small>
+                </li>
+              ))}
+            </ul>
+            {region.omitted_measurement_count > 0 ? (
+              <p className="corner-comparison-brief-omissions">
+                {region.omitted_measurement_count} control observation(s) omitted: {region.omitted_measurements.map((item) => `${label(item.metric)} (${label(item.reason)})`).join(" · ")}
+              </p>
+            ) : null}
+            <small className="corner-comparison-brief-provenance">
+              Model {region.provenance.model.model_id ?? "unknown"} r{region.provenance.model.revision ?? "?"} ·
+              SHA-256 {region.provenance.model.model_content_sha256 ?? "unavailable"}
+            </small>
+          </article>
+        ))}
+      </div>
+      <p className="corner-candidate-note">
+        Recorded measurements only. They do not establish a cause or driving advice.
       </p>
     </section>
   );

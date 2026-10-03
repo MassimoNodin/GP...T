@@ -205,4 +205,6 @@ def test_standalone_region_observations_cap_examples_but_keep_onset_and_count() 
     assert throttle["event_count"] == 2
     assert len(throttle["events"]) == 1
     assert throttle["events_truncated"] is True
+    assert throttle["rejected_short_event_count"] == 0
+    assert throttle["unsupported_break_count"] == 0
     assert result["diagnostic_only"] is True

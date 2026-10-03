@@ -454,6 +454,8 @@ def _onset(
         "events": examples,
         "event_count": event_count,
         "events_truncated": events_truncated,
+        "rejected_short_event_count": detection.rejected_short_event_count,
+        "unsupported_break_count": detection.unsupported_break_count,
     }
     event = next(
         (candidate for candidate in detection.sustained_events if not candidate.left_censored),
@@ -487,8 +489,6 @@ def _onset(
         "distance_bracket_m": None,
         "reason": reason,
         **event_summary,
-        "rejected_short_event_count": detection.rejected_short_event_count,
-        "unsupported_break_count": detection.unsupported_break_count,
     }
 
 

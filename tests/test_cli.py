@@ -19,6 +19,10 @@ def test_compare_cli_forwards_an_explicit_distance_window(monkeypatch, capsys) -
                 "analysis_version": "comparison-brief-v1",
                 "text": "Target was 1.000 s slower.",
             },
+            "corner_comparison_brief": {
+                "analysis_version": "corner-comparison-brief-v1",
+                "status": "abstained",
+            },
         }
 
     monkeypatch.setattr(cli, "compare_attempts", compare)
@@ -42,6 +46,9 @@ def test_compare_cli_forwards_an_explicit_distance_window(monkeypatch, capsys) -
         "end_m": 1200.0,
     }
     assert output["comparison_brief"]["analysis_version"] == "comparison-brief-v1"
+    assert output["corner_comparison_brief"]["analysis_version"] == (
+        "corner-comparison-brief-v1"
+    )
 
 
 def test_compare_cli_rejects_an_incomplete_window(monkeypatch) -> None:
