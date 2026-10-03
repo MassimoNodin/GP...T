@@ -1071,6 +1071,7 @@ export interface Comparison {
   analysis_version: string;
   comparison_brief: ComparisonBrief;
   corner_comparison_brief: CornerComparisonBrief;
+  distance_window_brief?: DistanceWindowBrief;
   comparison_policy: "time_trial" | "practice_qualifying";
   comparison_policy_version: string;
   diagnostic_only: boolean;
@@ -1245,6 +1246,41 @@ export interface ComparisonWindow {
     unavailable_reason: string | null;
     unavailable_reasons: string[];
   };
+}
+
+export interface DistanceWindowBrief {
+  schema_version: 1;
+  artifact_kind: "distance_window_brief";
+  analysis_version: string;
+  status: "available" | "unavailable";
+  diagnostic_only: true;
+  coaching_eligible: false;
+  text: string;
+  window_m: { start_m: number; end_m: number } | null;
+  provenance: {
+    comparison_policy: string | null;
+    window_m: { start_m: number; end_m: number } | null;
+    target: {
+      attempt_key?: string | null;
+      run_id?: string | null;
+      trace_sha256?: string | null;
+    };
+    reference: {
+      attempt_key?: string | null;
+      run_id?: string | null;
+      trace_sha256?: string | null;
+    };
+  };
+  facts: Array<{
+    kind: string;
+    text: string;
+    source_fields: Record<string, string>;
+    provenance: DistanceWindowBrief["provenance"];
+    [key: string]: unknown;
+  }>;
+  limitations: Array<{ code: string; text: string }>;
+  warnings: Array<{ code: string; text: string }>;
+  limits: Record<string, number>;
 }
 
 export interface ComparisonWindowAttempt {

@@ -540,12 +540,20 @@ def test_compare_api_returns_the_shared_structured_brief(monkeypatch, tmp_path) 
         "status": "abstained",
         "coaching_eligible": False,
     }
+    distance_window_brief = {
+        "schema_version": 1,
+        "analysis_version": "distance-window-brief-v1",
+        "status": "available",
+        "diagnostic_only": True,
+        "coaching_eligible": False,
+    }
     monkeypatch.setattr(
         api_module,
         "compare_attempts",
         lambda *_args, **_kwargs: {
             "comparison_brief": brief,
             "corner_comparison_brief": corner_brief,
+            "distance_window_brief": distance_window_brief,
         },
     )
 
@@ -561,6 +569,7 @@ def test_compare_api_returns_the_shared_structured_brief(monkeypatch, tmp_path) 
     assert response.status_code == 200
     assert response.json()["data"]["comparison_brief"] == brief
     assert response.json()["data"]["corner_comparison_brief"] == corner_brief
+    assert response.json()["data"]["distance_window_brief"] == distance_window_brief
 
 
 @pytest.mark.parametrize(

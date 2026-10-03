@@ -503,6 +503,20 @@ This export is diagnostic for Time Trial, Practice, Qualifying, Race, invalid, p
 
 Acceptance uses synthetic straight and curved artifacts through persisted checksummed traces, including known signed residuals, nonzero origin, endpoints, unsupported seams/gaps, skipped unusable anchor brackets, frame wrap, missing Motion and legacy schemas, unstable/mismatched context, layout assertion mismatch, source/work/output limits, continuity-preserving thinning and atomic CLI publication. Existing Melbourne and Shanghai data validate only their recorded diagnostic or unavailable cases; no real geometry is promoted. Physical projection validation still requires independently reviewed geometry and game-distance calibration, while clean eligible Time Trial evidence remains a separate coaching gate.
 
+## Decision 0037: summarize supported control observations within explicit distance windows
+
+**Status:** accepted
+
+**Date:** 2026-10-04
+
+Build a separate, versioned `distance_window_brief` from the existing in-memory comparison result. Do not add persistence, trace reads, geometry generation, or an LLM dependency. Keep the existing comparison and corner briefs unchanged, and expose the same bounded result in CLI JSON, the local compare API, and the dashboard.
+
+The brief may contain at most five facts: connected interval-time change; observed minimum-speed difference; peak recorded brake-input difference in percentage points; sustained 10% brake-onset bracket difference; and sustained 50% throttle-onset bracket difference. Minimum speed and peak brake require complete requested-window channel coverage on both attempts plus valid source frame, time, and distance anchors. Threshold-onset differences require complete channel coverage and exactly one supported sustained event per side, with no truncation, left censoring, unsupported breaks, or rejected short episodes. Right-censored continuation can support an onset only when that censoring is disclosed. Compute onset-difference intervals from the two sampled distance brackets; never turn a bracket into an exact pedal event location.
+
+Retain game-validity, lifecycle, capture-completion, acquisition-loss, and frame-admission warnings. Unsupported facts are omitted with bounded reason codes. Preserve the existing Time Trial and same-run/session/player Practice/Qualifying gates; Race and unknown comparison modes remain unavailable. The brief stays descriptive and diagnostic, sets `coaching_eligible` to false, and makes no corner, causal, recoverable-time, or driving-recommendation claim. No new capture is required for this diagnostic increment.
+
+Acceptance covers known signed differences, overlapping onset brackets, censoring, multiple episodes, gaps/rewinds, threshold boundaries, incomplete coverage, invalid source anchors, incomplete captures, attempt validity and lifecycle warnings, mode/pair rejection, output caps, provenance, and CLI/API/dashboard parity. The recovered Melbourne and Shanghai attempts should emit only supported facts, retain their diagnostic warnings, and omit unsupported interval deltas.
+
 ## Data flow
 
 ```text
@@ -544,6 +558,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - Selected draft distance regions can be linked to a source-bounded position summary only when region and trajectory reports match on attempt, run, session, player, trace checksum and schema. Full-source position counts are separate from retained preview points; anchors are bounded and continuity fragments remain separate.
 - Geometry artifacts and projection use a separate schema from distance-region `TrackModel`. Projection retains normalized game lap distance, explicit supported segments and independent geometry/calibration evidence; observed paths remain diagnostic and no real centreline is currently activated.
 - `project-trajectory` projects one checksummed attempt against a caller-selected geometry artifact for bounded diagnostics. It preserves source discontinuities and unsupported spans, and all modes remain ineligible for coaching through this command.
+- `distance_window_brief` derives at most five measured facts from the already computed selected-window comparison. Complete coverage, source anchors and event uncertainty remain explicit; all results are diagnostic and coaching-ineligible.
 - Standalone attempt trace previews read the checksummed speed/control channels independently of comparison and reference eligibility. Session time remains the plot coordinate; frame/time gaps and missing channel values split runs, and deterministic point/run caps preserve discontinuities and report omitted data.
 - Replay timing is based only on the monotonic intervals stored in the capture; maximum-speed replay skips sleeps.
 - The capture format has a magic value and schema version. Unknown packet IDs remain inspectable.

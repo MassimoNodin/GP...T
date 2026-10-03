@@ -943,6 +943,35 @@ h1 span {
   font-size: 9px;
   line-height: 1.6;
 }
+.window-measured-brief {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid #35453f;
+  background: #151d1a;
+}
+.window-measured-brief-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.window-measured-brief > p {
+  margin: 9px 0 0;
+  color: #c4d0c9;
+  font-size: 10px;
+  line-height: 1.7;
+}
+.window-measured-brief details {
+  margin-top: 8px;
+}
+.window-brief-provenance {
+  display: block;
+  margin-top: 9px;
+  overflow-wrap: anywhere;
+  color: #77857e;
+  font: 8px var(--font-mono);
+  line-height: 1.6;
+}
 .window-source-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

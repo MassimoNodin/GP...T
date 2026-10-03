@@ -6,6 +6,7 @@ import {
   CornerAnalysis,
   CornerLossCandidates,
   CornerRegion,
+  DistanceWindowBrief,
   AttemptTrajectoryPreview,
   AttemptQualityReport,
   AttemptTraceChartReport,
@@ -1162,6 +1163,7 @@ export default async function Home({
                     {comparison.comparison_window ? (
                       <ComparisonWindowPanel
                         report={comparison.comparison_window}
+                        brief={comparison.distance_window_brief ?? null}
                       />
                     ) : null}
                     <div className="chart-stack">
@@ -1478,7 +1480,13 @@ function ComparisonConditionsPanel({
   );
 }
 
-function ComparisonWindowPanel({ report }: { report: ComparisonWindow }) {
+function ComparisonWindowPanel({
+  report,
+  brief,
+}: {
+  report: ComparisonWindow;
+  brief: DistanceWindowBrief | null;
+}) {
   return (
     <section className="comparison-window panel">
       <header className="comparison-window-heading">
@@ -1493,6 +1501,55 @@ function ComparisonWindowPanel({ report }: { report: ComparisonWindow }) {
           definition. Measurements retain source gaps and event censoring.
         </p>
       </header>
+      {brief ? (
+        <section
+          className="window-measured-brief"
+          aria-label="Deterministic distance-window brief"
+        >
+          <div className="window-measured-brief-heading">
+            <span className="eyebrow">DETERMINISTIC MEASUREMENTS · DIAGNOSTIC ONLY</span>
+            <span className="brief-version">{brief.analysis_version}</span>
+          </div>
+          <p>{brief.text}</p>
+          <details className="comparison-brief-details">
+            <summary>
+              {brief.facts.length} supported facts · source and support details
+            </summary>
+            {brief.facts.length ? (
+              <ul>
+                {brief.facts.map((fact, index) => (
+                  <li key={`${fact.kind}-${index}`}>
+                    <strong>{fact.text}</strong>
+                    <small>
+                      {Object.values(fact.source_fields).join(" / ")}
+                    </small>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {brief.limitations.length ? (
+              <ul className="brief-limitations">
+                {brief.limitations.map((item) => (
+                  <li key={item.code}>{item.text}</li>
+                ))}
+              </ul>
+            ) : null}
+            {brief.warnings.length ? (
+              <ul className="brief-limitations">
+                {brief.warnings.map((item) => (
+                  <li key={`${item.code}-${item.text}`}>{item.text}</li>
+                ))}
+              </ul>
+            ) : null}
+            <small className="window-brief-provenance">
+              Target {brief.provenance.target.attempt_key ?? "unknown"} · trace{" "}
+              {brief.provenance.target.trace_sha256 ?? "unknown"}
+              {" · "}Reference {brief.provenance.reference.attempt_key ?? "unknown"} ·
+              trace {brief.provenance.reference.trace_sha256 ?? "unknown"}
+            </small>
+          </details>
+        </section>
+      ) : null}
       <div className="window-source-grid">
         <ComparisonWindowSource label="TARGET" summary={report.target} />
         <ComparisonWindowSource label="REFERENCE" summary={report.reference} />

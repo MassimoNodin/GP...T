@@ -774,6 +774,14 @@ def test_time_trial_window_uses_bounded_source_reads_and_preserves_policy(monkey
     assert window["analysis_version"] == "comparison-distance-window-v1"
     assert window["window_m"] == {"start_m": 0.0, "end_m": 20.0}
     assert window["delta"]["delta_change_s"] == pytest.approx(0.1)
+    brief = result["distance_window_brief"]
+    assert brief["analysis_version"] == "distance-window-brief-v1"
+    assert brief["coaching_eligible"] is False
+    assert brief["provenance"]["target"]["trace_sha256"] == "a" * 64
+    assert any(
+        fact["kind"] == "connected_interval_time_difference"
+        for fact in brief["facts"]
+    )
     assert len(load_calls) == 2
     assert all(call["max_trace_rows"] == 100_000 for call in load_calls)
     assert all(call["max_trace_bytes"] == 64 * 1024 * 1024 for call in load_calls)
