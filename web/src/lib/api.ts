@@ -802,8 +802,45 @@ export interface AttemptRegionReport {
   regions: AttemptRegionWindow[];
 }
 
+export interface ComparisonBriefFact {
+  kind: string;
+  text: string;
+  unit?: string;
+  source_fields: Record<string, string>;
+  provenance: {
+    target: {
+      attempt_key: string | null;
+      run_id: string | null;
+      trace_sha256: string | null;
+    };
+    reference: {
+      attempt_key: string | null;
+      run_id: string | null;
+      trace_sha256: string | null;
+    };
+  };
+  [key: string]: unknown;
+}
+
+export interface ComparisonBrief {
+  schema_version: number;
+  analysis_version: string;
+  status: "available" | "unavailable";
+  diagnostic_only: boolean;
+  text: string;
+  facts: ComparisonBriefFact[];
+  limitations: Array<{ code: string; text: string }>;
+  limits: {
+    fact_limit: number;
+    omitted_fact_count: number;
+    limitation_limit: number;
+    omitted_limitation_count: number;
+  };
+}
+
 export interface Comparison {
   analysis_version: string;
+  comparison_brief: ComparisonBrief;
   comparison_policy: "time_trial" | "practice_qualifying";
   comparison_policy_version: string;
   diagnostic_only: boolean;

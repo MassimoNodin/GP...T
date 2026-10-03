@@ -457,6 +457,34 @@ def test_compare_api_requires_and_forwards_the_selected_comparison_policy(
     assert response.json()["data"]["comparison_policy"] == "practice_qualifying"
 
 
+def test_compare_api_returns_the_shared_structured_brief(monkeypatch, tmp_path) -> None:
+    brief = {
+        "schema_version": 1,
+        "analysis_version": "comparison-brief-v1",
+        "status": "available",
+        "text": "Target was 1.000 s slower than the reference by official lap time.",
+        "facts": [{"kind": "official_lap_time_difference", "unit": "s"}],
+        "limitations": [],
+    }
+    monkeypatch.setattr(
+        api_module,
+        "compare_attempts",
+        lambda *_args, **_kwargs: {"comparison_brief": brief},
+    )
+
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/compare/laps",
+        params={
+            "target_attempt_key": "target",
+            "reference_attempt_key": "reference",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["comparison_brief"] == brief
+
+
 @pytest.mark.parametrize(
     ("params", "reason"),
     [

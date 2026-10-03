@@ -393,6 +393,20 @@ Standalone timing inspection is mode-independent and does not require a valid Se
 
 Capture acceptance uses the recovered Melbourne and Shanghai F1 25 v1 evidence without requiring another recording. Required covered cases include invalid Melbourne attempts whose individually valid sectors disagree with whole-lap validity, and Shanghai Practice attempts 2/3 that match actual laps 4/5 by lap number and reported lap time. Capture footer incompleteness remains visible, no recovered sector evidence makes a lap reference-eligible, and late frame-zero snapshots cannot bypass frame ordering. Synthetic coverage includes F1 25 and 2026 layouts, 2026 player index 23, count/body/version errors, unknown validity bits and markers, opponent cycling, UID zero, player/format changes, uint32 wrap, partial records, conflicting and repeated identities, flashback rewriting, uncertain boundaries, missing/invalid sectors, residuals, migration, bounded work, idempotent import, and unchanged trace schemas.
 
+## Decision 0029: explain existing diagnostic comparisons deterministically
+
+**Status:** accepted
+
+**Date:** 2026-10-04
+
+Add a bounded, versioned comparison brief generated only from the structured comparison result already in memory. Use deterministic templates to report the official target-minus-reference lap-time difference, supported reported sector differences with independent validity labels, and an explicitly requested distance-window delta only when the interval has connected supported time evidence. Include material limitations for game validity, lifecycle state, capture completion/losses, comparison coverage, and uncontrolled Practice/Qualifying conditions.
+
+Return the same structured facts and rendered text through the comparison CLI, API, and dashboard. Each fact names its source fields, units, target/reference attempt identities, run IDs, and trace checksums. Cap the brief at six facts and eight grouped limitations while retaining complete detail in existing comparison reports. Unsupported, missing, invalid, conflicting, or truncated inputs cannot produce supported facts. Race, unknown, partial, or incompatible pairs remain unavailable under the existing comparison-policy gates; the brief never selects a different reference.
+
+The brief reports what the stored evidence shows. It does not infer causes, recommend changes, rank opportunities, identify corners, claim verified geometry, or change reference eligibility. It advances the post-lap explanation milestone while deterministic coaching waits for validated corner and reference evidence. No persistence, importer, trace, or schema changes are needed.
+
+Acceptance covers positive, negative, and tied values with stable rounding; invalid sectors; missing, conflicting, and truncated timing evidence; unsupported windows; diagnostic Melbourne invalid laps and their reference abstention; and Shanghai Practice 3/2's -1.232 s official difference, source identities, incomplete capture, and lifecycle warnings. Synthetic tests verify the CLI, API, and dashboard receive the same bounded facts/text and that unavailable comparisons produce no successful brief. No extra trace reads or raw arrays enter the formatter.
+
 ## Data flow
 
 ```text
@@ -425,6 +439,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - Frozen dataclasses carry packet headers, capture records, and assembled frames.
 - Both live input and replay produce `RawDatagram` values and use `TelemetryPipeline`.
 - Known Session packet versions produce canonical `SessionContext`; unsupported variants remain raw and are reported as unavailable context. Attempts snapshot context changes with frame provenance.
+- Event v1 and Session History v1 are dispatched by wire format, packet ID, and packet version. Event lifecycle evidence follows admitted-frame ordering; reported lap/sector timing is persisted as a separate non-authoritative evidence record and never changes attempt validity or reference eligibility.
 - F1 25 Lap Data v1 packets produce immutable records for all 22 cars; 2026 Season Pack Lap Data v1 produces all 24 records. The lifecycle inventory follows only the header-designated player and preserves invalid, partial, and abandoned attempts.
 - F1 25 and 2026 Season Pack Car Telemetry v1 preserve their documented wire records (22 and 24 cars respectively); Participants v1 decodes 22 F1 25 or 24 2026 records. The 2026 adapter preserves widened driver, network, and team IDs. Assembled-frame synchronization joins supported player Car Telemetry to the player's Lap Data by session UID, frame, and player car index; missing telemetry remains explicitly unavailable in the canonical sample.
 - Motion v1 decodes all 22 F1 25 or 24 2026 packed car records. The 2026 adapter converts quantized signed G-force values to g units. The primary player's world position, velocity, forward/right directions, G-forces, and orientation join to Lap Data by assembled session/frame and the header-designated car index. Missing Motion stays null and is never carried forward. MotionEx remains opaque.
@@ -439,7 +454,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 
 ## Deferred decisions
 
-- Remaining packet-body parsers are added from EA's official structure files, with their source and revision recorded. Support is explicit per `(packet_format, packet_id, packet_version)`. Current typed body support covers F1 25 Session, Lap Data, Participants, Car Telemetry, Motion, and Car Status v1 plus 2026 Season Pack Session, Lap Data, Participants, Car Telemetry, Motion, and Car Status v1. Session packet adapters populate canonical gameplay context independently of the wire format.
+- Remaining packet-body parsers are added from EA's official structure files, with their source and revision recorded. Support is explicit per `(packet_format, packet_id, packet_version)`. Current typed body support covers F1 25 and 2026 Season Pack Session, Lap Data, Event, Participants, Car Telemetry, Motion, Car Status, and Session History v1. Session packet adapters populate canonical gameplay context independently of the wire format.
 - Add canonical traces for additional cars only when validated multi-car capture coverage justifies them. Slower packet families will use freshness windows rather than being required in every frame.
 - Distance comparison, run-scoped Time Trial reference selection, and the read-only local historical explorer are implemented for diagnostics. Standalone region observations support stable Time Trial contexts, including invalid, partial, and abandoned attempts; Race/unknown policy, validated circuit geometry, and actionable coaching remain deferred until their supporting evidence and interfaces are ready.
 - The local dashboard starts and stops mode-independent UDP capture and imports finalized `.f1ecap` files through durable jobs. It exposes bounded standalone player traces and an observed world-coordinate path, then links selected Time Trial distance regions to matching source positions for diagnostic inspection. Track calibration, line comparison, trajectory coaching, race reference policy, live analysis/coaching, and opponent coverage remain deferred.

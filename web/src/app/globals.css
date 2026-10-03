@@ -707,6 +707,67 @@ h1 span {
   margin-top: 12px;
   padding: 16px 18px;
 }
+.comparison-brief {
+  margin-top: 12px;
+  padding: 19px 22px;
+}
+.comparison-brief-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+.comparison-brief-heading h3 {
+  margin: 6px 0 0;
+  color: #dbe3de;
+  font-size: 15px;
+}
+.brief-version {
+  color: #71807b;
+  font: 9px var(--font-mono);
+  letter-spacing: 0.08em;
+}
+.comparison-brief-text {
+  margin: 16px 0 12px;
+  color: #c3ceca;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.comparison-brief-details {
+  border-top: 1px solid #283330;
+  padding-top: 11px;
+  color: #899590;
+  font-size: 11px;
+}
+.comparison-brief-details summary {
+  cursor: pointer;
+  color: #a7b4af;
+}
+.comparison-brief-details ul {
+  display: grid;
+  gap: 11px;
+  margin: 12px 0 0;
+  padding-left: 18px;
+}
+.comparison-brief-details li strong,
+.comparison-brief-details li small {
+  display: block;
+}
+.comparison-brief-details li strong {
+  color: #c6d0cc;
+  font-weight: 500;
+}
+.comparison-brief-details li small {
+  margin-top: 4px;
+  color: #77837f;
+  font: 9px/1.6 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.comparison-brief-details .brief-limitations {
+  border-top: 1px solid #283330;
+  color: #9faaa5;
+  padding-top: 11px;
+}
 .capture-evidence-row {
   grid-template-columns: 1.4fr repeat(5, minmax(0, 1fr));
 }

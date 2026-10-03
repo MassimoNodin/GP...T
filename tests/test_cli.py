@@ -13,7 +13,13 @@ def test_compare_cli_forwards_an_explicit_distance_window(monkeypatch, capsys) -
 
     def compare(*_args, **kwargs):
         calls.update(kwargs)
-        return {"comparison_window": {"window_m": {"start_m": 500.0, "end_m": 1200.0}}}
+        return {
+            "comparison_window": {"window_m": {"start_m": 500.0, "end_m": 1200.0}},
+            "comparison_brief": {
+                "analysis_version": "comparison-brief-v1",
+                "text": "Target was 1.000 s slower.",
+            },
+        }
 
     monkeypatch.setattr(cli, "compare_attempts", compare)
     args = cli.build_parser().parse_args(
@@ -30,10 +36,12 @@ def test_compare_cli_forwards_an_explicit_distance_window(monkeypatch, capsys) -
 
     assert cli._compare(args) == 0
     assert calls["distance_window"] == DistanceWindow(500.0, 1200.0)
-    assert json.loads(capsys.readouterr().out)["comparison_window"]["window_m"] == {
+    output = json.loads(capsys.readouterr().out)
+    assert output["comparison_window"]["window_m"] == {
         "start_m": 500.0,
         "end_m": 1200.0,
     }
+    assert output["comparison_brief"]["analysis_version"] == "comparison-brief-v1"
 
 
 def test_compare_cli_rejects_an_incomplete_window(monkeypatch) -> None:

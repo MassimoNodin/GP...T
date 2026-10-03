@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Mapping
 
 from .comparison import calculate_channel_differences, calculate_delta_time
+from .comparison_brief import build_comparison_brief
 from .comparison_window import DistanceWindow, analyze_comparison_window
 from .corners import analyze_corner_regions
 from .quality import OBSERVED_CONDITION_TRACE_COLUMNS, summarize_observed_conditions
@@ -315,6 +316,7 @@ def compare_attempts(
             target_reference_eligible=target.reference_eligible,
             reference_reference_eligible=reference.reference_eligible,
         )
+    result["comparison_brief"] = build_comparison_brief(result)
     return result
 
 

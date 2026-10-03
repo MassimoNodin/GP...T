@@ -1025,6 +1025,53 @@ export default async function Home({
                         tone="neutral"
                       />
                     </section>
+                    <section
+                      className="comparison-brief panel"
+                      aria-label="Deterministic comparison brief"
+                    >
+                      <div className="comparison-brief-heading">
+                        <div>
+                          <span className="eyebrow">DETERMINISTIC BRIEF</span>
+                          <h3>What the selected evidence says</h3>
+                        </div>
+                        <span className="brief-version">
+                          {comparison.comparison_brief.analysis_version}
+                        </span>
+                      </div>
+                      <p className="comparison-brief-text">
+                        {comparison.comparison_brief.text}
+                      </p>
+                      <details className="comparison-brief-details">
+                        <summary>
+                          {comparison.comparison_brief.facts.length} supported facts · source fields
+                        </summary>
+                        {comparison.comparison_brief.facts.length ? (
+                          <ul>
+                            {comparison.comparison_brief.facts.map((fact, index) => (
+                              <li key={`${fact.kind}-${index}`}>
+                                <strong>{fact.text}</strong>
+                                <small>
+                                  Target {fact.provenance.target.attempt_key ?? "unknown"} ·
+                                  Reference {fact.provenance.reference.attempt_key ?? "unknown"}
+                                  {Object.values(fact.source_fields).length
+                                    ? ` · ${Object.values(fact.source_fields).join(" / ")}`
+                                    : ""}
+                                </small>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p>No facts meet the brief&apos;s support requirements.</p>
+                        )}
+                        {comparison.comparison_brief.limitations.length ? (
+                          <ul className="brief-limitations">
+                            {comparison.comparison_brief.limitations.map((item, index) => (
+                              <li key={`${item.code}-${index}`}>{item.text}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </details>
+                    </section>
                     <section className="quality-row panel" aria-label="Reported lap and sector timing">
                       <div className="quality-title">
                         <span className="eyebrow">SESSION HISTORY</span>
