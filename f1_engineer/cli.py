@@ -455,6 +455,7 @@ def _compare_trajectories(args: argparse.Namespace) -> int:
         args.target_attempt_key,
         args.reference_attempt_key,
         policy=ComparisonPolicy(args.comparison_policy),
+        position_probe_m=args.position_probe_m,
     )
     output = Path(args.output)
     if output.exists() and not args.overwrite:
@@ -735,6 +736,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[policy.value for policy in ComparisonPolicy],
         default=ComparisonPolicy.TIME_TRIAL.value,
         help="existing comparison policy (default: Time Trial)",
+    )
+    compare_trajectories.add_argument(
+        "--position-probe-m",
+        type=float,
+        help="optionally compare observed world positions at this lap distance (m)",
     )
     compare_trajectories.add_argument(
         "--output", required=True, help="destination versioned JSON path"

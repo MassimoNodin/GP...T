@@ -1290,6 +1290,134 @@ h1 span {
 .trajectory-comparison-heading p {
   margin: 7px 0 0;
 }
+.trajectory-probe-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 10px;
+  border: 1px solid #252e2f;
+  background: rgba(9, 12, 13, 0.45);
+}
+.trajectory-probe-form label {
+  color: #aebbb7;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.trajectory-probe-form input:not([type="hidden"]) {
+  width: 130px;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 1px solid #354340;
+  border-radius: 0;
+  background: #0a0e0f;
+  color: #e1e8e4;
+  font: 10px var(--font-mono);
+}
+.trajectory-probe-form button {
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid #a47b42;
+  background: rgba(240, 180, 92, 0.12);
+  color: #f0b45c;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.trajectory-probe-form button:hover {
+  background: rgba(240, 180, 92, 0.2);
+}
+.trajectory-probe-evidence {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #354340;
+  background: rgba(9, 12, 13, 0.45);
+}
+.trajectory-probe-evidence > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.trajectory-probe-evidence h4 {
+  margin: 6px 0 0;
+  color: #e1e8e4;
+  font-size: 12px;
+}
+.trajectory-probe-evidence header p {
+  margin: 5px 0 0;
+  color: #899693;
+  font-size: 9px;
+  line-height: 1.5;
+}
+.trajectory-probe-status {
+  flex: none;
+  padding: 4px 6px;
+  border: 1px solid #354340;
+  color: #aebbb7;
+  font: 8px var(--font-mono);
+  text-transform: uppercase;
+}
+.trajectory-probe-status.is-available {
+  border-color: #416c60;
+  color: #71c7b5;
+}
+.trajectory-probe-sides {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+.trajectory-probe-card {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #252e2f;
+  background: #0a0e0f;
+}
+.trajectory-probe-card h5 {
+  margin: 0;
+  color: #aebbb7;
+  font: 8px var(--font-mono);
+  text-transform: uppercase;
+}
+.trajectory-probe-card strong {
+  color: #e1e8e4;
+  font: 9px var(--font-mono);
+  line-height: 1.5;
+}
+.trajectory-probe-card small {
+  overflow-wrap: anywhere;
+  color: #899693;
+  font: 8px var(--font-mono);
+  line-height: 1.5;
+}
+.trajectory-probe-anchors {
+  display: grid;
+  gap: 3px;
+  padding-left: 7px;
+  border-left: 1px solid #354340;
+}
+.trajectory-probe-card .trajectory-probe-source {
+  color: #71807c;
+}
+.trajectory-probe-difference {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 14px;
+  margin-top: 8px;
+  color: #aebbb7;
+  font: 8px var(--font-mono);
+}
+.trajectory-probe-difference strong {
+  color: #e1e8e4;
+  text-transform: uppercase;
+}
 .trajectory-comparison-paths {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2787,6 +2915,12 @@ h1 span {
   }
   .trajectory-comparison-paths {
     grid-template-columns: 1fr;
+  }
+  .trajectory-probe-sides {
+    grid-template-columns: 1fr;
+  }
+  .trajectory-probe-form label {
+    flex-basis: 100%;
   }
   .trajectory-provenance-grid {
     grid-template-columns: 1fr 1fr;

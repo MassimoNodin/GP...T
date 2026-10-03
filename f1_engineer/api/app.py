@@ -658,13 +658,19 @@ def create_app(
         target_attempt_key: str = Query(min_length=1),
         reference_attempt_key: str = Query(min_length=1),
         comparison_policy: Literal["time_trial", "practice_qualifying"] = "time_trial",
+        position_probe_m: float | None = Query(default=None),
     ) -> APIResponse[dict[str, Any]]:
         try:
+            comparison_options: dict[str, object] = {
+                "policy": comparison_policy,
+            }
+            if position_probe_m is not None:
+                comparison_options["position_probe_m"] = position_probe_m
             result = compare_observed_trajectories(
                 configured_database_path,
                 target_attempt_key,
                 reference_attempt_key,
-                policy=comparison_policy,
+                **comparison_options,
             )
         except DatabaseSchemaError:
             raise

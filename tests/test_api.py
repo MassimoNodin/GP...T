@@ -218,12 +218,13 @@ def test_trajectory_comparison_api_returns_bounded_diagnostic_result(
         "paths": {"target": {"source": {"session_uid": "18446744073709551600"}}},
     }
 
-    def compare(database, target, reference, *, policy):
+    def compare(database, target, reference, *, policy, **options):
         calls.update(
             database=database,
             target=target,
             reference=reference,
             policy=policy,
+            **options,
         )
         return result
 
@@ -235,6 +236,7 @@ def test_trajectory_comparison_api_returns_bounded_diagnostic_result(
             "target_attempt_key": "run:42:0:2",
             "reference_attempt_key": "run:42:0:1",
             "comparison_policy": "practice_qualifying",
+            "position_probe_m": "1250.5",
         },
     )
 
@@ -247,6 +249,7 @@ def test_trajectory_comparison_api_returns_bounded_diagnostic_result(
     assert calls["target"] == "run:42:0:2"
     assert calls["reference"] == "run:42:0:1"
     assert calls["policy"] == "practice_qualifying"
+    assert calls["position_probe_m"] == 1250.5
 
 
 def test_trajectory_comparison_api_keeps_unavailable_reason(monkeypatch, tmp_path) -> None:

@@ -11,6 +11,7 @@ from .trajectory import (
     build_observed_trajectory,
     build_observed_trajectory_preview,
 )
+from .trajectory_probe import build_observed_position_probe
 from ..storage.query import (
     TRAJECTORY_TRACE_COLUMNS,
     AttemptTraceReadLimitError,
@@ -59,9 +60,13 @@ def load_observed_trajectory(
 
 
 def load_observed_trajectory_preview(
-    database_path: str | Path, attempt_key: str
+    database_path: str | Path,
+    attempt_key: str,
+    *,
+    position_probe_m: float | None = None,
+    track_length_m: float | None = None,
 ) -> dict[str, object] | None:
-    """Load a source-limited and point-bounded dashboard trajectory preview."""
+    """Load a bounded preview and optional source-based position probe."""
     try:
         attempt = load_attempt_trace(
             database_path,
@@ -96,4 +101,13 @@ def load_observed_trajectory_preview(
         context_segments=attempt.context_segments,
         samples=attempt.samples,
     )
-    return build_observed_trajectory_preview(trajectory)
+    preview = build_observed_trajectory_preview(trajectory)
+    if position_probe_m is not None:
+        if track_length_m is None:
+            raise ValueError("position probe requires a known track length")
+        preview["position_probe"] = build_observed_position_probe(
+            trajectory,
+            position_probe_m,
+            track_length_m=track_length_m,
+        )
+    return preview

@@ -475,6 +475,20 @@ This is observed-path inspection only. It does not identify an ideal line, track
 
 Acceptance covers the recovered invalid Melbourne pair and Shanghai Practice 3/2 with diagnostic labels and incomplete-capture/lifecycle warnings; explicit true/false/unknown validity and capture states; a shared coordinate scale; distinct paths and preserved segment breaks; source thinning and coverage; missing Motion/legacy schema; mismatched scope, checksum, schema or comparison policy; oversized context and source rejection before full comparison/resampling; and point/segment/source-read bounds. Ordinary lap comparisons, rankings, and briefs remain unchanged.
 
+## Decision 0035: inspect distance-aligned observed positions
+
+**Status:** accepted
+
+**Date:** 2026-10-04
+
+Add one optional game-lap-distance probe to the D0034 paired observed-path overlay. Preserve its Time Trial / Practice–Qualifying policy and same-run/session/player gates. Accept one finite requested distance within the known track range `[0, track_length]`; keep the start and finish endpoints distinct. Evaluate each side from the same bounded, checksum-verified full-source read used for its path preview, before preview thinning, and return the exact source observation or interpolation within one continuous source segment.
+
+Require strictly increasing source-distance brackets, at most 25 m of distance span, the existing 100 ms session-time continuity bound, and frame adjacency with uint32 wrap allowed. Reject extrapolation, gaps, repeated or overlapping support, ambiguous matches, and unsupported/missing coordinates. A shared exact sample must not be counted again as two adjacent brackets. Preserve source frame/time/distance/XYZ anchors, segment identity, interpolation fraction and attempt/run/checksum/schema provenance. Report target-minus-reference world X/Z difference and horizontal separation only when both probes are supported; these are world-coordinate differences, not track-relative offset or performance loss.
+
+An unsupported probe retains the paired path overlay and returns per-side reasons with null paired differences. Include supported probe positions in shared plot bounds and show them as diagnostic markers. Keep one probe per request; do not allocate a distance grid, add persistence, promote track geometry, or enable racing-line claims, diagnosis, or coaching. Expose the optional distance through the CLI, local API and dashboard.
+
+Acceptance covers exact samples, known interpolation, endpoint distinction, shared bracket endpoints, duplicate/repeated distances, overlapping segments, discontinuities, frame wrap, missing Motion, provenance mismatch and source limits. Melbourne invalid attempts and Shanghai Practice 3/2 can validate observed probes and explicit support gaps; preview thinning must not change the result. No new capture is required. Clean eligible Time Trial evidence and independently approved region geometry remain prerequisites for positive coaching acceptance.
+
 ## Data flow
 
 ```text

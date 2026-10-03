@@ -333,13 +333,55 @@ export interface ObservedTrajectoryComparisonPreview {
     segments: AttemptTrajectoryPreview["segments"];
     break_examples: AttemptTrajectoryPreview["break_examples"];
     unsupported_examples: AttemptTrajectoryPreview["unsupported_examples"];
+    position_probe?: ObservedPositionProbe;
   }>;
+  position_probe?: {
+    schema_version: 1;
+    analysis_version: string;
+    status: "available" | "unavailable";
+    requested_distance_m: number | null;
+    target: ObservedPositionProbe;
+    reference: ObservedPositionProbe;
+    difference: {
+      status: "available" | "unavailable";
+      world_x_m: number | null;
+      world_z_m: number | null;
+      horizontal_separation_m: number | null;
+      reason_code: string | null;
+    };
+  };
   limits: {
     points_per_attempt: number;
     segments_per_attempt: number;
     combined_points: number;
   };
   limits_applied: Record<string, number>;
+}
+
+export interface ObservedPositionProbe {
+  schema_version: 1;
+  analysis_version: string;
+  status: "available" | "unavailable";
+  requested_distance_m: number | null;
+  method: "exact_source_observation" | "linear_interpolation" | null;
+  segment_index: number | null;
+  interpolation_fraction: number | null;
+  position_world_xyz_m: { x: number; y: number; z: number } | null;
+  source_anchors: Array<{
+    frame_identifier: number;
+    lap_distance_m: number;
+    session_time_s: number;
+    world_position_m: { x: number; y: number; z: number };
+  }>;
+  source: {
+    attempt_key: string | null;
+    run_id: string | null;
+    session_uid: string | null;
+    car_index: number | null;
+    trace_sha256: string | null;
+    trace_schema_version: number | null;
+  } | null;
+  reason_code: string | null;
 }
 
 export type AttemptTraceChannelKey = "speed" | "throttle" | "brake" | "steering";

@@ -1,14 +1,39 @@
 import type {
+  ObservedPositionProbe,
   ObservedTrajectoryComparisonPreview,
 } from "@/lib/api";
 
 export default function TrajectoryComparisonPanel({
   report,
   unavailableReason,
+  probeDistanceM,
+  formParams,
 }: {
   report: ObservedTrajectoryComparisonPreview | null;
   unavailableReason: string | null;
+  probeDistanceM: string;
+  formParams: Record<string, string>;
 }) {
+  const probeForm = (
+    <form className="trajectory-probe-form" action="/" method="get">
+      {Object.entries(formParams).map(([name, value]) => (
+        <input key={name} type="hidden" name={name} value={value} />
+      ))}
+      <label htmlFor="position-probe-m">Position probe · lap distance (m)</label>
+      <input
+        id="position-probe-m"
+        name="position_probe_m"
+        type="number"
+        min="0"
+        step="any"
+        inputMode="decimal"
+        placeholder="e.g. 1250"
+        defaultValue={probeDistanceM}
+      />
+      <button type="submit">Inspect distance</button>
+    </form>
+  );
+
   if (!report) {
     return (
       <section className="trajectory-comparison-unavailable panel">
@@ -19,6 +44,7 @@ export default function TrajectoryComparisonPanel({
             : "Paired path evidence is unavailable for this lap pair."}
         </p>
         <small>The ordinary lap comparison remains available.</small>
+        {probeForm}
       </section>
     );
   }
@@ -29,6 +55,7 @@ export default function TrajectoryComparisonPanel({
   const span = maxX - minX;
   const x = (value: number) => ((value - minX) / span) * side;
   const y = (value: number) => ((maxZ - value) / span) * side;
+  const positionProbe = report.position_probe;
 
   return (
     <section
@@ -45,6 +72,51 @@ export default function TrajectoryComparisonPanel({
         </div>
         <span className="trajectory-badge">DIAGNOSTIC ONLY</span>
       </header>
+      {probeForm}
+      {positionProbe ? (
+        <section className="trajectory-probe-evidence" aria-label="Position probe evidence">
+          <header>
+            <div>
+              <div className="eyebrow">DISTANCE-ALIGNED POSITION PROBE</div>
+              <h4>
+                {positionProbe.requested_distance_m == null
+                  ? "Requested distance unavailable"
+                  : `${format(positionProbe.requested_distance_m)} m along lap`}
+              </h4>
+              <p>Observed world position or interpolation between adjacent source samples.</p>
+            </div>
+            <span className={`trajectory-probe-status is-${positionProbe.status}`}>
+              {positionProbe.status}
+            </span>
+          </header>
+          <div className="trajectory-probe-sides">
+            {(["target", "reference"] as const).map((sideName) => (
+              <ProbeEvidence
+                key={sideName}
+                label={sideName === "target" ? "Target" : "Reference"}
+                probe={positionProbe[sideName]}
+              />
+            ))}
+          </div>
+          <div className="trajectory-probe-difference">
+            {positionProbe.difference.status === "available" ? (
+              <>
+                <strong>Target minus reference</strong>
+                <span>ΔX {format(positionProbe.difference.world_x_m)} m</span>
+                <span>ΔZ {format(positionProbe.difference.world_z_m)} m</span>
+                <span>Horizontal separation {format(positionProbe.difference.horizontal_separation_m)} m</span>
+              </>
+            ) : (
+              <span>
+                Paired position difference unavailable
+                {positionProbe.difference.reason_code
+                  ? ` · ${humanize(positionProbe.difference.reason_code)}`
+                  : ""}
+              </span>
+            )}
+          </div>
+        </section>
+      ) : null}
       <div className="trajectory-comparison-paths">
         {(["target", "reference"] as const).map((sideName) => {
           const path = report.paths[sideName];
@@ -157,17 +229,102 @@ export default function TrajectoryComparisonPanel({
               );
             });
           })}
+          {positionProbe ? (["target", "reference"] as const).map((sideName) => {
+            const probe = positionProbe[sideName];
+            const position = probe.status === "available"
+              ? probe.position_world_xyz_m
+              : null;
+            if (!position) return null;
+            const cx = x(position.x);
+            const cy = y(position.z);
+            const color = sideName === "target" ? "#f0b45c" : "#71c7b5";
+            return sideName === "target" ? (
+              <circle
+                key={`probe-${sideName}`}
+                cx={cx}
+                cy={cy}
+                r="7"
+                fill={color}
+                stroke="#0a0e0f"
+                strokeWidth="2"
+                aria-hidden="true"
+              />
+            ) : (
+              <path
+                key={`probe-${sideName}`}
+                d={`M${cx},${cy - 8} L${cx + 8},${cy} L${cx},${cy + 8} L${cx - 8},${cy} Z`}
+                fill={color}
+                stroke="#0a0e0f"
+                strokeWidth="2"
+                aria-hidden="true"
+              />
+            );
+          }) : null}
         </svg>
       </div>
       <div className="trajectory-comparison-legend">
-        <span><i className="is-target" />Target</span>
+        <span><i className="is-target" />Target · circle</span>
         <span><i className="is-reference" />Reference · dashed</span>
+        {positionProbe ? <span>Probe markers · target circle / reference diamond</span> : null}
         <span>Gaps are not connected</span>
       </div>
       <p className="trajectory-comparison-note">
-        These are the cars’ recorded positions. The overlay does not identify an ideal
-        racing line or establish a driving cause.
+        These are the cars’ recorded positions. The probe uses world coordinates; it does not report line offset or time loss.
       </p>
     </section>
   );
+}
+
+function ProbeEvidence({
+  label,
+  probe,
+}: {
+  label: string;
+  probe: ObservedPositionProbe;
+}) {
+  const position = probe.position_world_xyz_m;
+  return (
+    <article className={`trajectory-probe-card is-${probe.status}`}>
+      <h5>{label}</h5>
+      {probe.status === "available" && position ? (
+        <>
+          <strong className="trajectory-probe-coordinates">
+            X {format(position.x)} · Y {format(position.y)} · Z {format(position.z)} m
+          </strong>
+          <small>
+            {probe.method === "exact_source_observation"
+              ? "Exact source observation"
+              : `Linear interpolation · ${(100 * (probe.interpolation_fraction ?? 0)).toFixed(1)}%`}
+            {probe.segment_index == null ? "" : ` · segment ${probe.segment_index}`}
+          </small>
+          <div className="trajectory-probe-anchors">
+            {probe.source_anchors.map((anchor) => (
+              <small key={`${anchor.frame_identifier}-${anchor.session_time_s}`}>
+                Frame {anchor.frame_identifier} · {format(anchor.session_time_s)} s · {format(anchor.lap_distance_m)} m
+              </small>
+            ))}
+          </div>
+          <small className="trajectory-probe-source">
+            Source {probe.source?.attempt_key ?? "unknown"} · trace {probe.source?.trace_sha256?.slice(0, 12) ?? "unknown"}… · schema {probe.source?.trace_schema_version ?? "unknown"}
+          </small>
+        </>
+      ) : (
+        <>
+          <strong>Unavailable</strong>
+          <small>{probe.reason_code ? humanize(probe.reason_code) : "Source position evidence unavailable."}</small>
+          <small className="trajectory-probe-source">
+            Source {probe.source?.attempt_key ?? "unknown"} · trace {probe.source?.trace_sha256?.slice(0, 12) ?? "unknown"}… · schema {probe.source?.trace_schema_version ?? "unknown"}
+          </small>
+        </>
+      )}
+    </article>
+  );
+}
+
+function format(value: number | null): string {
+  return value == null || !Number.isFinite(value) ? "—" : value.toFixed(2);
+}
+
+function humanize(value: string): string {
+  return value.replaceAll("_", " ");
 }

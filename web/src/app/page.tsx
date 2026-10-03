@@ -39,6 +39,7 @@ type SearchParams = {
   window_start_m?: string | string[];
   window_end_m?: string | string[];
   track_model_key?: string | string[];
+  position_probe_m?: string | string[];
   import_job_id?: string | string[];
   import_error?: string | string[];
   run_id?: string | string[];
@@ -69,6 +70,7 @@ export default async function Home({
     window_start_m: firstParam(rawParams.window_start_m),
     window_end_m: firstParam(rawParams.window_end_m),
     track_model_key: firstParam(rawParams.track_model_key),
+    position_probe_m: firstParam(rawParams.position_probe_m),
     import_job_id: firstParam(rawParams.import_job_id),
     import_error: firstParam(rawParams.import_error),
     run_id: firstParam(rawParams.run_id),
@@ -259,16 +261,38 @@ export default async function Home({
       : manualComparisonResponse;
   const comparison =
     comparisonResponse?.status === "ok" ? comparisonResponse.data : null;
+  const trajectoryComparisonQuery = new URLSearchParams();
+  if (target) trajectoryComparisonQuery.set("target_attempt_key", target.attempt_key);
+  if (referenceKey) trajectoryComparisonQuery.set("reference_attempt_key", referenceKey);
+  trajectoryComparisonQuery.set(
+    "comparison_policy",
+    comparison?.comparison_policy ?? comparisonPolicy,
+  );
+  if (params.position_probe_m?.trim()) {
+    trajectoryComparisonQuery.set("position_probe_m", params.position_probe_m);
+  }
   const trajectoryComparisonResponse =
     comparison && target && referenceKey
       ? await requestApi<ObservedTrajectoryComparisonPreview>(
-          `/api/v1/compare/trajectories?${new URLSearchParams({
-            target_attempt_key: target.attempt_key,
-            reference_attempt_key: referenceKey,
-            comparison_policy: comparison.comparison_policy,
-          })}`,
+          `/api/v1/compare/trajectories?${trajectoryComparisonQuery}`,
         )
       : null;
+  const trajectoryComparisonFormParams: Record<string, string> = {};
+  for (const [name, value] of Object.entries(params)) {
+    if (name !== "position_probe_m" && value) {
+      trajectoryComparisonFormParams[name] = value;
+    }
+  }
+  if (session) trajectoryComparisonFormParams.session_key = session.session_key;
+  if (target) trajectoryComparisonFormParams.target_attempt_key = target.attempt_key;
+  if (referenceChoice) trajectoryComparisonFormParams.reference_choice = referenceChoice;
+  if (comparison?.comparison_policy ?? comparisonPolicy) {
+    trajectoryComparisonFormParams.comparison_policy =
+      comparison?.comparison_policy ?? comparisonPolicy;
+  }
+  if (params.window_start_m) trajectoryComparisonFormParams.window_start_m = params.window_start_m;
+  if (params.window_end_m) trajectoryComparisonFormParams.window_end_m = params.window_end_m;
+  if (selectedModel) trajectoryComparisonFormParams.track_model_key = modelKey(selectedModel);
   const reference =
     completed.find((lap) => lap.attempt_key === referenceKey) ?? null;
   const lifecycleReasonsFor = (
@@ -1015,6 +1039,8 @@ export default async function Home({
                           ? trajectoryComparisonResponse.reason
                           : null
                       }
+                      probeDistanceM={params.position_probe_m ?? ""}
+                      formParams={trajectoryComparisonFormParams}
                     />
                     <section className="metric-row">
                       <Metric

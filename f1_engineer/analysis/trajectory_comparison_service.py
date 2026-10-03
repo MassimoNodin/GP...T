@@ -27,6 +27,7 @@ def compare_observed_trajectories(
     reference_attempt_key: str,
     *,
     policy: ComparisonPolicy | str = ComparisonPolicy.TIME_TRIAL,
+    position_probe_m: float | None = None,
 ) -> dict[str, object]:
     """Return bounded paired paths after metadata-only policy validation."""
     try:
@@ -52,19 +53,38 @@ def compare_observed_trajectories(
         ) from exc
     if target is None or reference is None:
         raise TrajectoryPreviewUnavailable("trajectory_pair_provenance_unavailable")
-    validate_comparison_pair_policy(target, reference, policy=policy)
+    target_context, _ = validate_comparison_pair_policy(
+        target, reference, policy=policy
+    )
     if not all(
         getattr(target, key) == getattr(reference, key)
         for key in ("run_id", "session_uid", "car_index")
     ):
         raise TrajectoryPreviewUnavailable("trajectory_pair_scope_mismatch")
 
-    target_preview = load_observed_trajectory_preview(
-        database_path, target_attempt_key
-    )
-    reference_preview = load_observed_trajectory_preview(
-        database_path, reference_attempt_key
-    )
+    if position_probe_m is None:
+        target_preview = load_observed_trajectory_preview(
+            database_path, target_attempt_key
+        )
+        reference_preview = load_observed_trajectory_preview(
+            database_path, reference_attempt_key
+        )
+    else:
+        track_length = target_context.get("track_length_m")
+        if not isinstance(track_length, (int, float)) or isinstance(track_length, bool):
+            raise TrajectoryPreviewUnavailable("probe_track_length_invalid")
+        target_preview = load_observed_trajectory_preview(
+            database_path,
+            target_attempt_key,
+            position_probe_m=position_probe_m,
+            track_length_m=float(track_length),
+        )
+        reference_preview = load_observed_trajectory_preview(
+            database_path,
+            reference_attempt_key,
+            position_probe_m=position_probe_m,
+            track_length_m=float(track_length),
+        )
     if target_preview is None or reference_preview is None:
         raise TrajectoryPreviewUnavailable("trajectory_attempt_unavailable")
     target_run = get_processing_run_summary(database_path, target.run_id)
@@ -75,6 +95,7 @@ def compare_observed_trajectories(
     )
     comparison = {
         "comparison_policy": policy.value,
+        "track_length_m": target_context.get("track_length_m"),
         "target": _attempt_evidence(target),
         "reference": _attempt_evidence(reference),
         "processing_run_evidence": {

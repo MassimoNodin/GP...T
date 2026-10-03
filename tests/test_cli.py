@@ -84,6 +84,8 @@ def test_compare_trajectories_cli_exports_versioned_json(monkeypatch, capsys, tm
             "practice_qualifying",
             "--database",
             "state.sqlite3",
+            "--position-probe-m",
+            "1250.5",
             "--output",
             str(output_path),
         ]
@@ -94,6 +96,7 @@ def test_compare_trajectories_cli_exports_versioned_json(monkeypatch, capsys, tm
     assert saved == document
     assert calls["args"] == ("state.sqlite3", "target", "reference")
     assert calls["kwargs"]["policy"] is cli.ComparisonPolicy.PRACTICE_QUALIFYING
+    assert calls["kwargs"]["position_probe_m"] == 1250.5
     summary = json.loads(capsys.readouterr().out)
     assert summary["artifact_kind"] == "observed_trajectory_comparison_preview"
     assert summary["limits_applied"]["target_points"] == 2

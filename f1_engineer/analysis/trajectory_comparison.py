@@ -4,6 +4,9 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .continuity import MAX_SESSION_TIME_GAP_S, session_time_discontinuity
+from .trajectory_probe import MAX_PROBE_DISTANCE_BRACKET_SPAN_M
+
 
 TRAJECTORY_COMPARISON_VERSION = "trajectory-comparison-preview-v1"
 MAX_COMPARISON_PREVIEW_POINTS_PER_ATTEMPT = 2_000
@@ -46,6 +49,78 @@ def build_trajectory_comparison_preview(
         min(target_bounds[2], reference_bounds[2]),
         max(target_bounds[3], reference_bounds[3]),
     )
+    target_probe = _mapping(target_path.get("position_probe"))
+    reference_probe = _mapping(reference_path.get("position_probe"))
+    position_probe: dict[str, object] | None = None
+    if target_probe is not None or reference_probe is not None:
+        if target_probe is None or reference_probe is None:
+            raise TrajectoryComparisonUnavailable("trajectory_probe_pair_incomplete")
+        target_distance = target_probe.get("requested_distance_m")
+        reference_distance = reference_probe.get("requested_distance_m")
+        if target_distance != reference_distance:
+            raise TrajectoryComparisonUnavailable("trajectory_probe_distance_mismatch")
+        track_length = _finite_number(comparison.get("track_length_m"))
+        requested_distance = _finite_number(target_distance)
+        distance_outside_track = requested_distance is not None and (
+            track_length is None
+            or requested_distance < 0.0
+            or requested_distance > track_length
+        )
+        if distance_outside_track and (
+            target_probe.get("status") == "available"
+            or reference_probe.get("status") == "available"
+        ):
+            raise TrajectoryComparisonUnavailable(
+                "trajectory_probe_distance_outside_track_range"
+            )
+        probe_positions = [
+            _mapping(probe.get("position_world_xyz_m"))
+            for probe in (target_probe, reference_probe)
+            if probe.get("status") == "available"
+        ]
+        probe_coordinates = [
+            (float(position["x"]), float(position["z"]))
+            for position in probe_positions
+            if position is not None
+        ]
+        if probe_coordinates:
+            all_bounds = (
+                min(all_bounds[0], *(point[0] for point in probe_coordinates)),
+                max(all_bounds[1], *(point[0] for point in probe_coordinates)),
+                min(all_bounds[2], *(point[1] for point in probe_coordinates)),
+                max(all_bounds[3], *(point[1] for point in probe_coordinates)),
+            )
+        target_position = _mapping(target_probe.get("position_world_xyz_m"))
+        reference_position = _mapping(reference_probe.get("position_world_xyz_m"))
+        if target_probe.get("status") == reference_probe.get("status") == "available":
+            if target_position is None or reference_position is None:
+                raise TrajectoryComparisonUnavailable("trajectory_probe_positions_invalid")
+            delta_x = float(target_position["x"]) - float(reference_position["x"])
+            delta_z = float(target_position["z"]) - float(reference_position["z"])
+            difference: dict[str, object] = {
+                "status": "available",
+                "world_x_m": delta_x,
+                "world_z_m": delta_z,
+                "horizontal_separation_m": math.hypot(delta_x, delta_z),
+                "reason_code": None,
+            }
+        else:
+            difference = {
+                "status": "unavailable",
+                "world_x_m": None,
+                "world_z_m": None,
+                "horizontal_separation_m": None,
+                "reason_code": "one_or_both_positions_unavailable",
+            }
+        position_probe = {
+            "schema_version": 1,
+            "analysis_version": "paired-observed-position-probe-v1",
+            "status": difference["status"],
+            "requested_distance_m": target_distance,
+            "target": target_probe,
+            "reference": reference_probe,
+            "difference": difference,
+        }
     plot_bounds = _equal_scale_bounds(all_bounds)
     if any(
         not math.isfinite(value)
@@ -60,7 +135,7 @@ def build_trajectory_comparison_preview(
     target_path["capture_evidence"] = _mapping(target_run.get("capture"))
     reference_path["capture_evidence"] = _mapping(reference_run.get("capture"))
 
-    return {
+    result = {
         "schema_version": 1,
         "analysis_version": TRAJECTORY_COMPARISON_VERSION,
         "artifact_kind": "observed_trajectory_comparison_preview",
@@ -89,6 +164,9 @@ def build_trajectory_comparison_preview(
             "reference_segments": reference_path["preview"]["rendered_segment_count"],
         },
     }
+    if position_probe is not None:
+        result["position_probe"] = position_probe
+    return result
 
 
 def _validated_path(
@@ -221,6 +299,9 @@ def _validated_path(
             "source_sample_count",
         )
     }
+    position_probe = preview.get("position_probe")
+    if position_probe is not None:
+        position_probe = _validated_probe(position_probe, attempt)
     return (
         {
             "source": path_source,
@@ -232,9 +313,140 @@ def _validated_path(
             "unsupported_examples": _bounded_examples(
                 preview.get("unsupported_examples")
             ),
+            **({"position_probe": position_probe} if position_probe is not None else {}),
         },
         (min_x, max_x, min_z, max_z),
     )
+
+
+def _validated_probe(
+    value: object, attempt: Mapping[str, Any]
+) -> dict[str, object]:
+    probe = _mapping(value)
+    source = _mapping(probe.get("source")) if probe is not None else None
+    status = probe.get("status") if probe is not None else None
+    if (
+        probe is None
+        or probe.get("schema_version") != 1
+        or probe.get("analysis_version") != "observed-position-probe-v1"
+        or status not in {"available", "unavailable"}
+        or source is None
+        or not _source_matches_attempt(source, attempt)
+    ):
+        raise TrajectoryComparisonUnavailable("trajectory_probe_provenance_invalid")
+    distance = probe.get("requested_distance_m")
+    if distance is not None and _finite_number(distance) is None:
+        raise TrajectoryComparisonUnavailable("trajectory_probe_distance_invalid")
+    anchors = probe.get("source_anchors")
+    if not isinstance(anchors, list):
+        raise TrajectoryComparisonUnavailable("trajectory_probe_anchors_invalid")
+    if status == "unavailable":
+        reason = probe.get("reason_code")
+        if (
+            not isinstance(reason, str)
+            or not reason
+            or anchors
+            or probe.get("method") is not None
+            or probe.get("segment_index") is not None
+            or probe.get("interpolation_fraction") is not None
+        ):
+            raise TrajectoryComparisonUnavailable("trajectory_probe_result_invalid")
+        if probe.get("position_world_xyz_m") is not None:
+            raise TrajectoryComparisonUnavailable("trajectory_probe_result_invalid")
+    else:
+        position = _mapping(probe.get("position_world_xyz_m"))
+        method = probe.get("method")
+        segment_index = _integer(probe.get("segment_index"))
+        fraction = _finite_number(probe.get("interpolation_fraction"))
+        if (
+            position is None
+            or any(_finite_number(position.get(axis)) is None for axis in ("x", "y", "z"))
+            or method not in {"exact_source_observation", "linear_interpolation"}
+            or segment_index is None
+            or segment_index < 0
+            or fraction is None
+            or not 0.0 <= fraction <= 1.0
+            or _finite_number(distance) is None
+            or len(anchors) != (1 if method == "exact_source_observation" else 2)
+        ):
+            raise TrajectoryComparisonUnavailable("trajectory_probe_result_invalid")
+        normalized_anchors: list[Mapping[str, Any]] = []
+        for anchor in anchors:
+            anchor_mapping = _mapping(anchor)
+            anchor_position = (
+                _mapping(anchor_mapping.get("world_position_m"))
+                if anchor_mapping is not None else None
+            )
+            if (
+                anchor_mapping is None
+                or not _valid_source_frame(anchor_mapping.get("frame_identifier"))
+                or _finite_number(anchor_mapping.get("lap_distance_m")) is None
+                or _finite_number(anchor_mapping.get("session_time_s")) is None
+                or anchor_position is None
+                or any(_finite_number(anchor_position.get(axis)) is None for axis in ("x", "y", "z"))
+            ):
+                raise TrajectoryComparisonUnavailable("trajectory_probe_anchors_invalid")
+            normalized_anchors.append(anchor_mapping)
+        probe_position = {
+            axis: float(position[axis]) for axis in ("x", "y", "z")
+        }
+        requested_distance = float(distance)
+        if method == "exact_source_observation":
+            anchor = normalized_anchors[0]
+            anchor_position = _mapping(anchor.get("world_position_m")) or {}
+            if (
+                float(anchor["lap_distance_m"]) != requested_distance
+                or fraction != 0.0
+                or any(
+                    not math.isclose(
+                        probe_position[axis],
+                        float(anchor_position[axis]),
+                        rel_tol=0.0,
+                        abs_tol=1e-9,
+                    )
+                    for axis in ("x", "y", "z")
+                )
+            ):
+                raise TrajectoryComparisonUnavailable("trajectory_probe_result_invalid")
+        else:
+            left, right = normalized_anchors
+            left_distance = float(left["lap_distance_m"])
+            right_distance = float(right["lap_distance_m"])
+            left_time = float(left["session_time_s"])
+            right_time = float(right["session_time_s"])
+            left_frame = int(left["frame_identifier"])
+            right_frame = int(right["frame_identifier"])
+            distance_span = right_distance - left_distance
+            expected_fraction = (
+                (requested_distance - left_distance) / distance_span
+                if distance_span > 0.0
+                else -1.0
+            )
+            left_position = _mapping(left.get("world_position_m")) or {}
+            right_position = _mapping(right.get("world_position_m")) or {}
+            if (
+                not left_distance < requested_distance < right_distance
+                or distance_span > MAX_PROBE_DISTANCE_BRACKET_SPAN_M
+                or ((right_frame - left_frame) & 0xFFFFFFFF) != 1
+                or session_time_discontinuity(
+                    left_time,
+                    right_time,
+                    max_gap_s=MAX_SESSION_TIME_GAP_S,
+                ) is not None
+                or not math.isclose(fraction, expected_fraction, rel_tol=0.0, abs_tol=1e-12)
+                or any(
+                    not math.isclose(
+                        probe_position[axis],
+                        float(left_position[axis])
+                        + fraction * (float(right_position[axis]) - float(left_position[axis])),
+                        rel_tol=1e-12,
+                        abs_tol=1e-9,
+                    )
+                    for axis in ("x", "y", "z")
+                )
+            ):
+                raise TrajectoryComparisonUnavailable("trajectory_probe_result_invalid")
+    return dict(probe)
 
 
 def _source_matches_attempt(source: Mapping[str, Any], attempt: Mapping[str, Any]) -> bool:
@@ -307,6 +519,11 @@ def _string_list(value: object) -> list[str]:
 
 def _integer(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _valid_source_frame(value: object) -> bool:
+    frame = _integer(value)
+    return frame is not None and 0 <= frame <= 0xFFFFFFFF
 
 
 def _nonempty_string(value: object) -> bool:

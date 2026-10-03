@@ -156,6 +156,39 @@ def _comparison() -> dict[str, object]:
     }
 
 
+def _exact_probe(attempt: dict[str, object], distance: float, x: float) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "analysis_version": "observed-position-probe-v1",
+        "status": "available",
+        "requested_distance_m": distance,
+        "method": "exact_source_observation",
+        "segment_index": 0,
+        "interpolation_fraction": 0.0,
+        "position_world_xyz_m": {"x": x, "y": 0.0, "z": 4.0},
+        "source_anchors": [
+            {
+                "frame_identifier": 1,
+                "lap_distance_m": distance,
+                "session_time_s": 1.0,
+                "world_position_m": {"x": x, "y": 0.0, "z": 4.0},
+            }
+        ],
+        "source": {
+            key: attempt[key]
+            for key in (
+                "attempt_key",
+                "run_id",
+                "session_uid",
+                "car_index",
+                "trace_sha256",
+                "trace_schema_version",
+            )
+        },
+        "reason_code": None,
+    }
+
+
 def _policy_attempt(attempt_key: str, *, run_id: str = "run") -> SimpleNamespace:
     context = {
         "packet_format": 2025,
@@ -220,6 +253,84 @@ def test_paired_preview_uses_one_equal_scale_and_preserves_path_breaks() -> None
     assert report["paths"]["target"]["preview"]["omitted_position_point_count"] == 2
     assert report["paths"]["target"]["capture_evidence"]["footer_status"] == "incomplete"
     assert report["paths"]["target"]["attempt_evidence"]["game_valid"] is False
+
+
+def test_paired_probe_adds_markers_and_computes_world_coordinate_difference() -> None:
+    comparison = _comparison()
+    comparison["track_length_m"] = 5_000.0
+    target = _preview(comparison["target"], x_offset=0.0)
+    reference = _preview(comparison["reference"], x_offset=100.0)
+    target["position_probe"] = _exact_probe(comparison["target"], 1_250.0, 35.0)
+    reference["position_probe"] = _exact_probe(comparison["reference"], 1_250.0, 32.0)
+
+    report = build_trajectory_comparison_preview(target, reference, comparison)
+
+    assert report["position_probe"]["status"] == "available"
+    assert report["position_probe"]["difference"] == {
+        "status": "available",
+        "world_x_m": 3.0,
+        "world_z_m": 0.0,
+        "horizontal_separation_m": 3.0,
+        "reason_code": None,
+    }
+    assert report["plot_bounds_world_xz_m"]["world_x"][1] > 35.0
+
+
+def test_unsupported_side_probe_keeps_the_paired_path_overlay() -> None:
+    comparison = _comparison()
+    comparison["track_length_m"] = 5_000.0
+    target = _preview(comparison["target"], x_offset=0.0)
+    reference = _preview(comparison["reference"], x_offset=100.0)
+    target_probe = _exact_probe(comparison["target"], 1_250.0, 35.0)
+    target_probe.update(
+        status="unavailable",
+        method=None,
+        segment_index=None,
+        interpolation_fraction=None,
+        position_world_xyz_m=None,
+        source_anchors=[],
+        reason_code="probe_distance_not_observed",
+    )
+    target["position_probe"] = target_probe
+    reference["position_probe"] = _exact_probe(comparison["reference"], 1_250.0, 32.0)
+
+    report = build_trajectory_comparison_preview(target, reference, comparison)
+
+    assert report["status"] == "available"
+    assert len(report["paths"]["target"]["segments"]) == 2
+    assert report["position_probe"]["status"] == "unavailable"
+    assert report["position_probe"]["difference"]["horizontal_separation_m"] is None
+
+
+def test_out_of_range_probe_keeps_overlay_and_per_side_reasons() -> None:
+    comparison = _comparison()
+    comparison["track_length_m"] = 5_000.0
+    target = _preview(comparison["target"], x_offset=0.0)
+    reference = _preview(comparison["reference"], x_offset=100.0)
+    for preview, attempt in (
+        (target, comparison["target"]),
+        (reference, comparison["reference"]),
+    ):
+        probe = _exact_probe(attempt, 5_001.0, 35.0)
+        probe.update(
+            status="unavailable",
+            method=None,
+            segment_index=None,
+            interpolation_fraction=None,
+            position_world_xyz_m=None,
+            source_anchors=[],
+            reason_code="probe_distance_outside_track_range",
+        )
+        preview["position_probe"] = probe
+
+    report = build_trajectory_comparison_preview(target, reference, comparison)
+
+    assert report["status"] == "available"
+    assert len(report["paths"]["target"]["segments"]) == 2
+    assert report["position_probe"]["target"]["reason_code"] == (
+        "probe_distance_outside_track_range"
+    )
+    assert report["position_probe"]["difference"]["status"] == "unavailable"
 
 
 def test_paired_preview_rejects_scope_checksum_schema_and_policy_mismatches() -> None:
@@ -312,6 +423,64 @@ def test_comparison_service_validates_metadata_then_loads_bounded_pair(
     assert loads == ["run:42:0:2", "run:42:0:1"]
     assert report["paths"]["target"]["attempt_evidence"]["game_valid"] is None
     assert report["paths"]["target"]["capture_evidence"]["complete"] is True
+
+
+def test_comparison_service_loads_full_source_for_optional_position_probe(monkeypatch) -> None:
+    target_metadata = _policy_attempt("run:42:0:2")
+    reference_metadata = _policy_attempt("run:42:0:1")
+    target_summary = _attempt(target_metadata.attempt_key, target_metadata.trace_sha256)
+    reference_summary = _attempt(reference_metadata.attempt_key, reference_metadata.trace_sha256)
+    target = _preview(target_summary, x_offset=0.0)
+    reference = _preview(reference_summary, x_offset=100.0)
+    calls: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        trajectory_comparison_service,
+        "load_attempt_policy_metadata",
+        lambda _database, attempt_key, **_limits: (
+            target_metadata
+            if attempt_key == target_metadata.attempt_key
+            else reference_metadata
+        ),
+    )
+    monkeypatch.setattr(
+        trajectory_comparison_service,
+        "get_processing_run_summary",
+        lambda *_args: None,
+    )
+
+    def load_preview(_database: object, attempt_key: str, **options: object):
+        calls.append((attempt_key, options))
+        source_attempt = target_summary if attempt_key == target_summary["attempt_key"] else reference_summary
+        document = target if attempt_key == target_summary["attempt_key"] else reference
+        result = dict(document)
+        result["position_probe"] = _exact_probe(
+            source_attempt,
+            1250.5,
+            35.0 if attempt_key == target_summary["attempt_key"] else 32.0,
+        )
+        return result
+
+    monkeypatch.setattr(
+        trajectory_comparison_service,
+        "load_observed_trajectory_preview",
+        load_preview,
+    )
+
+    report = trajectory_comparison_service.compare_observed_trajectories(
+        "db.sqlite3",
+        "run:42:0:2",
+        "run:42:0:1",
+        policy="time_trial",
+        position_probe_m=1250.5,
+    )
+
+    assert [item[1] for item in calls] == [
+        {"position_probe_m": 1250.5, "track_length_m": 5_000.0},
+        {"position_probe_m": 1250.5, "track_length_m": 5_000.0},
+    ]
+    assert report["position_probe"]["requested_distance_m"] == 1250.5
+    assert report["position_probe"]["difference"]["world_x_m"] == 3.0
+    assert report["plot_bounds_world_xz_m"]["world_x"][1] > 35.0
 
 
 def test_comparison_service_stops_on_bounded_source_failure_without_comparing(
