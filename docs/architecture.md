@@ -517,6 +517,20 @@ Retain game-validity, lifecycle, capture-completion, acquisition-loss, and frame
 
 Acceptance covers known signed differences, overlapping onset brackets, censoring, multiple episodes, gaps/rewinds, threshold boundaries, incomplete coverage, invalid source anchors, incomplete captures, attempt validity and lifecycle warnings, mode/pair rejection, output caps, provenance, and CLI/API/dashboard parity. The recovered Melbourne and Shanghai attempts should emit only supported facts, retain their diagnostic warnings, and omit unsupported interval deltas.
 
+## Decision 0038: inspect linked distance grids in comparison charts
+
+**Status:** accepted
+
+**Date:** 2026-10-04
+
+Make the existing speed, lap-delta, and driver-input charts share one cursor over the existing resampled comparison distance grid. Pointer selection maps to the nearest existing point, with exact ties selecting the lower-distance point; keyboard arrows, Home, and End move across the same grid. The readout reports the selected distance, requested-versus-selected distance when they differ, source channel availability, and target-minus-reference values with explicit units. It reads original resampled values and masks without additional interpolation or an added analysis pass.
+
+Keep cursor selection and zoom in a bounded client component. Local zoom only changes the plotted view; changing the comparison-analysis window remains an explicit submission through the existing window controls. Render at most 2,000 sampled points and 256 separate supported runs per series, preserving run breaks before thinning and reporting omitted runs or grid points. Cursor lookup remains against the original grid. If the grid is over 100,000 points, is not finite and strictly increasing, or does not align with each series and mask, show the linked inspector as unavailable.
+
+The existing comparison policy, attempt and trace provenance, validity, lifecycle and capture warnings remain authoritative and unchanged. Race and unknown comparison modes remain unsupported under the existing comparison gates. This is measurement inspection only; it does not change API or CLI output, resampling, the comparison window, eligibility, or coaching claims.
+
+Acceptance covers nearest-point selection and lower-distance ties, grid endpoints, pointer and keyboard use, drag and button zoom/reset including expansion from a two-point view, missing channel values and masks, units, delta signs and millisecond display precision, continuity across rendering limits, original-grid cursor values after thinning, current Melbourne and Shanghai diagnostic warnings, and unchanged API/CLI output. No new capture is required. Clean eligible Time Trial evidence and approved geometry remain prerequisites for any future real coaching.
+
 ## Data flow
 
 ```text
@@ -559,6 +573,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - Geometry artifacts and projection use a separate schema from distance-region `TrackModel`. Projection retains normalized game lap distance, explicit supported segments and independent geometry/calibration evidence; observed paths remain diagnostic and no real centreline is currently activated.
 - `project-trajectory` projects one checksummed attempt against a caller-selected geometry artifact for bounded diagnostics. It preserves source discontinuities and unsupported spans, and all modes remain ineligible for coaching through this command.
 - `distance_window_brief` derives at most five measured facts from the already computed selected-window comparison. Complete coverage, source anchors and event uncertainty remain explicit; all results are diagnostic and coaching-ineligible.
+- Comparison speed, lap-delta, and driver-input charts share a bounded pointer and keyboard cursor over the original resampled comparison distance grid. Local chart zoom is presentation-only and preserves sampled continuity gaps; analysis, mode policy and comparison outputs are unchanged.
 - Standalone attempt trace previews read the checksummed speed/control channels independently of comparison and reference eligibility. Session time remains the plot coordinate; frame/time gaps and missing channel values split runs, and deterministic point/run caps preserve discontinuities and report omitted data.
 - Replay timing is based only on the monotonic intervals stored in the capture; maximum-speed replay skips sleeps.
 - The capture format has a magic value and schema version. Unknown packet IDs remain inspectable.

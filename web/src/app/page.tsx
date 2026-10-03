@@ -30,6 +30,8 @@ import DiagnosticEvidencePanels from "./DiagnosticEvidencePanels";
 import AttemptTraceCharts from "./AttemptTraceCharts";
 import RunEvidencePanel from "./RunEvidencePanel";
 import TrajectoryComparisonPanel from "./TrajectoryComparisonPanel";
+import LinkedComparisonCharts from "./LinkedComparisonCharts";
+import type { ChartSpec } from "./LinkedComparisonCharts";
 import type { ImportJobRecord, RecordingSourceRecord } from "@/lib/api";
 
 type SearchParams = {
@@ -1166,89 +1168,119 @@ export default async function Home({
                         brief={comparison.distance_window_brief ?? null}
                       />
                     ) : null}
-                    <div className="chart-stack">
-                      <Chart
-                        title="Speed trace"
-                        subtitle="Vehicle speed · km/h"
-                        unit="KM/H"
-                        distance={comparison.distance_m}
-                        series={[
-                          {
-                            label: `Target · ${lapTime(target?.lap_time_ms)}`,
-                            color: "#f06a4f",
-                            values: speed(
-                              comparison.target_trace.values.speed_mps,
-                            ),
-                            mask: comparison.target_trace.masks.speed_mps,
-                          },
-                          {
-                            label: `Reference · ${lapTime(reference?.lap_time_ms)}`,
-                            color: "#71c7b5",
-                            values: speed(
-                              comparison.reference_trace.values.speed_mps,
-                            ),
-                            mask: comparison.reference_trace.masks.speed_mps,
-                          },
-                        ]}
-                      />
-                      <Chart
-                        title="Lap delta"
-                        subtitle="Positive means target is slower · seconds"
-                        unit="SECONDS"
-                        distance={comparison.distance_m}
-                        zero
-                        series={[
-                          {
-                            label: "Target − reference",
-                            color: "#f0b45c",
-                            values: comparison.delta_s,
-                            mask: comparison.delta_mask,
-                          },
-                        ]}
-                      />
-                      <Chart
-                        title="Driver inputs"
-                        subtitle="Brake and throttle · percent"
-                        unit="%"
-                        distance={comparison.distance_m}
-                        range={[0, 1]}
-                        percentAxis
-                        series={[
-                          {
-                            label: "Target brake",
-                            color: "#f06a4f",
-                            values: numeric(
-                              comparison.target_trace.values.brake,
-                            ),
-                            mask: comparison.target_trace.masks.brake,
-                          },
-                          {
-                            label: "Target throttle",
-                            color: "#71c7b5",
-                            values: numeric(
-                              comparison.target_trace.values.throttle,
-                            ),
-                            mask: comparison.target_trace.masks.throttle,
-                          },
-                          {
-                            label: "Reference brake",
-                            color: "#d89079",
-                            values: numeric(
-                              comparison.reference_trace.values.brake,
-                            ),
-                            mask: comparison.reference_trace.masks.brake,
-                          },
-                          {
-                            label: "Reference throttle",
-                            color: "#97b2a9",
-                            values: numeric(
-                              comparison.reference_trace.values.throttle,
-                            ),
-                            mask: comparison.reference_trace.masks.throttle,
-                          },
-                        ]}
-                      />
-                    </div>
+                    <LinkedComparisonCharts
+                      distance={comparison.distance_m}
+                      charts={[
+                        {
+                          title: "Speed trace",
+                          subtitle: "Vehicle speed · km/h",
+                          unit: "KM/H",
+                          valueUnit: "km/h",
+                          series: [
+                            {
+                              label: `Target · ${lapTime(target?.lap_time_ms)}`,
+                              color: "#f06a4f",
+                              values: speed(
+                                comparison.target_trace.values.speed_mps,
+                              ),
+                              mask: comparison.target_trace.masks.speed_mps,
+                            },
+                            {
+                              label: `Reference · ${lapTime(reference?.lap_time_ms)}`,
+                              color: "#71c7b5",
+                              values: speed(
+                                comparison.reference_trace.values.speed_mps,
+                              ),
+                              mask: comparison.reference_trace.masks.speed_mps,
+                            },
+                          ],
+                          differences: [
+                            {
+                              label: "Target − reference",
+                              left: 0,
+                              right: 1,
+                              unit: "km/h",
+                            },
+                          ],
+                        },
+                        {
+                          title: "Lap delta",
+                          subtitle: "Positive means target is slower · seconds",
+                          unit: "SECONDS",
+                          valueUnit: "s",
+                          signedValues: true,
+                          precision: 3,
+                          zero: true,
+                          series: [
+                            {
+                              label: "Target − reference",
+                              color: "#f0b45c",
+                              values: comparison.delta_s,
+                              mask: comparison.delta_mask,
+                            },
+                          ],
+                        },
+                        {
+                          title: "Driver inputs",
+                          subtitle: "Brake and throttle · percent",
+                          unit: "%",
+                          valueUnit: "%",
+                          valueScale: 100,
+                          range: [0, 1],
+                          percentAxis: true,
+                          series: [
+                            {
+                              label: "Target brake",
+                              color: "#f06a4f",
+                              values: numeric(
+                                comparison.target_trace.values.brake,
+                              ),
+                              mask: comparison.target_trace.masks.brake,
+                            },
+                            {
+                              label: "Target throttle",
+                              color: "#71c7b5",
+                              values: numeric(
+                                comparison.target_trace.values.throttle,
+                              ),
+                              mask: comparison.target_trace.masks.throttle,
+                            },
+                            {
+                              label: "Reference brake",
+                              color: "#d89079",
+                              values: numeric(
+                                comparison.reference_trace.values.brake,
+                              ),
+                              mask: comparison.reference_trace.masks.brake,
+                            },
+                            {
+                              label: "Reference throttle",
+                              color: "#97b2a9",
+                              values: numeric(
+                                comparison.reference_trace.values.throttle,
+                              ),
+                              mask: comparison.reference_trace.masks.throttle,
+                            },
+                          ],
+                          differences: [
+                            {
+                              label: "Brake · target − reference",
+                              left: 0,
+                              right: 2,
+                              unit: "percentage points",
+                              scale: 100,
+                            },
+                            {
+                              label: "Throttle · target − reference",
+                              left: 1,
+                              right: 3,
+                              unit: "percentage points",
+                              scale: 100,
+                            },
+                          ],
+                        },
+                      ] satisfies ChartSpec[]}
+                    />
                     <section className="quality-row panel">
                       <div className="quality-title">
                         <span className="eyebrow">DATA QUALITY</span>
