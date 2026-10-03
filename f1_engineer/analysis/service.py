@@ -156,36 +156,9 @@ def compare_attempts(
         raise ValueError(
             f"reference attempt {reference_attempt_key!r} was not found or is unavailable"
         )
-    _require_completed(target)
-    _require_completed(reference)
-    if policy is ComparisonPolicy.PRACTICE_QUALIFYING:
-        _require_same_session_player(target, reference)
-        _require_practice_qualifying_attempt(target)
-        _require_practice_qualifying_attempt(reference)
-        target_context, target_signature = stable_practice_qualifying_context(
-            target.context_segments, target.attempt_key
-        )
-        reference_context, reference_signature = stable_practice_qualifying_context(
-            reference.context_segments, reference.attempt_key
-        )
-        if target_signature != reference_signature:
-            raise ValueError(
-                "practice_qualifying_attempts_have_incompatible_context"
-            )
-        _require_bounded_grid(
-            target_context["track_length_m"],
-            config.grid_step_m,
-            reason_prefix="practice_qualifying",
-        )
-    else:
-        target_context, target_signature = stable_time_trial_context(
-            target.context_segments, target.attempt_key
-        )
-        reference_context, reference_signature = stable_time_trial_context(
-            reference.context_segments, reference.attempt_key
-        )
-    if target_signature != reference_signature:
-        raise ValueError("attempts have incompatible track, format, or Time Trial settings")
+    target_context, reference_context = validate_comparison_pair_policy(
+        target, reference, policy=policy, config=config
+    )
     if model is not None:
         require_track_model_compatible(model, target_context)
 
@@ -484,6 +457,53 @@ def _load_bounded_attempt_trace(
         ) from exc
 
 
+def validate_comparison_pair_policy(
+    target: StoredAttemptTrace,
+    reference: StoredAttemptTrace,
+    *,
+    policy: ComparisonPolicy | str = ComparisonPolicy.TIME_TRIAL,
+    config: ResamplingConfig = ResamplingConfig(),
+) -> tuple[Mapping[str, object], Mapping[str, object]]:
+    """Apply the shared mode-specific eligibility rules without resampling."""
+    try:
+        policy = ComparisonPolicy(policy)
+    except ValueError as exc:
+        raise ValueError("unsupported_comparison_policy") from exc
+    if target.attempt_key == reference.attempt_key:
+        raise ValueError("target and reference must be different lap attempts")
+    _require_completed(target)
+    _require_completed(reference)
+    if policy is ComparisonPolicy.PRACTICE_QUALIFYING:
+        _require_same_session_player(target, reference)
+        _require_practice_qualifying_attempt(target)
+        _require_practice_qualifying_attempt(reference)
+        target_context, target_signature = stable_practice_qualifying_context(
+            target.context_segments, target.attempt_key
+        )
+        reference_context, reference_signature = stable_practice_qualifying_context(
+            reference.context_segments, reference.attempt_key
+        )
+        if target_signature != reference_signature:
+            raise ValueError(
+                "practice_qualifying_attempts_have_incompatible_context"
+            )
+        _require_bounded_grid(
+            target_context["track_length_m"],
+            config.grid_step_m,
+            reason_prefix="practice_qualifying",
+        )
+    else:
+        target_context, target_signature = stable_time_trial_context(
+            target.context_segments, target.attempt_key
+        )
+        reference_context, reference_signature = stable_time_trial_context(
+            reference.context_segments, reference.attempt_key
+        )
+    if target_signature != reference_signature:
+        raise ValueError("attempts have incompatible track, format, or Time Trial settings")
+    return target_context, reference_context
+
+
 def _processing_run_evidence(
     database_path: str | Path, target_run_id: str, reference_run_id: str
 ) -> dict[str, object | None]:
@@ -717,7 +737,11 @@ def _attempt_summary(attempt: StoredAttemptTrace) -> dict[str, object]:
         "exclusion_reasons": list(attempt.exclusion_reasons),
         "trace_sha256": attempt.trace_sha256,
         "trace_schema_version": attempt.trace_schema_version,
-        "source_sample_count": len(attempt.samples),
+        "source_sample_count": (
+            attempt.source_sample_count
+            if attempt.source_sample_count is not None
+            else len(attempt.samples)
+        ),
         "session_context_segments": [
             {
                 "from_frame_identifier": frame,

@@ -16,6 +16,8 @@ from ..analysis.quality import inspect_attempt_quality
 from ..analysis.region_service import RegionReportUnavailable, load_attempt_region_report
 from ..analysis.service import compare_attempts
 from ..analysis.trajectory import TrajectoryPreviewUnavailable
+from ..analysis.trajectory_comparison import TrajectoryComparisonUnavailable
+from ..analysis.trajectory_comparison_service import compare_observed_trajectories
 from ..analysis.trajectory_service import load_observed_trajectory_preview
 from ..analysis.trace_chart_service import (
     TraceChartUnavailable,
@@ -647,6 +649,38 @@ def create_app(
             )
             return _api_error(status_code, reason)
         return APIResponse[ImportJobRecord](data=job)
+
+    @app.get(
+        "/api/v1/compare/trajectories",
+        response_model=APIResponse[dict[str, Any]],
+    )
+    def compare_trajectories(
+        target_attempt_key: str = Query(min_length=1),
+        reference_attempt_key: str = Query(min_length=1),
+        comparison_policy: Literal["time_trial", "practice_qualifying"] = "time_trial",
+    ) -> APIResponse[dict[str, Any]]:
+        try:
+            result = compare_observed_trajectories(
+                configured_database_path,
+                target_attempt_key,
+                reference_attempt_key,
+                policy=comparison_policy,
+            )
+        except DatabaseSchemaError:
+            raise
+        except TrajectoryComparisonUnavailable as exc:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason=exc.reason_code
+            )
+        except OSError:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="attempt_trace_unavailable"
+            )
+        except ValueError as exc:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason=str(exc)
+            )
+        return APIResponse[dict[str, Any]](data=_stringify_session_uids(result))
 
     @app.get("/api/v1/compare/laps", response_model=APIResponse[dict[str, Any]])
     def compare_laps(

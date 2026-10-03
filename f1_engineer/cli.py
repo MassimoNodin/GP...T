@@ -29,6 +29,7 @@ from .analysis.reference_selection import (
 from .analysis.quality import inspect_attempt_quality
 from .analysis.region_service import load_attempt_region_report
 from .analysis.trajectory_service import load_observed_trajectory
+from .analysis.trajectory_comparison_service import compare_observed_trajectories
 from .analysis.trace_chart_service import load_attempt_trace_chart_preview
 from .storage.importer import (
     DEFAULT_DATABASE,
@@ -448,6 +449,34 @@ def _trajectory(args: argparse.Namespace) -> int:
     return 0
 
 
+def _compare_trajectories(args: argparse.Namespace) -> int:
+    document = compare_observed_trajectories(
+        args.database,
+        args.target_attempt_key,
+        args.reference_attempt_key,
+        policy=ComparisonPolicy(args.comparison_policy),
+    )
+    output = Path(args.output)
+    if output.exists() and not args.overwrite:
+        print(f"error: output already exists: {output} (use --overwrite)", file=sys.stderr)
+        return 2
+    try:
+        _write_json_document(output, document, overwrite=args.overwrite)
+    except FileExistsError:
+        print(f"error: output already exists: {output} (use --overwrite)", file=sys.stderr)
+        return 2
+    _json_line(
+        {
+            "output": str(output),
+            "analysis_version": document["analysis_version"],
+            "artifact_kind": document["artifact_kind"],
+            "diagnostic_only": document["diagnostic_only"],
+            "limits_applied": document["limits_applied"],
+        }
+    )
+    return 0
+
+
 def _traces(args: argparse.Namespace) -> int:
     document = load_attempt_trace_chart_preview(args.database, args.attempt_key)
     if document is None:
@@ -687,6 +716,33 @@ def build_parser() -> argparse.ArgumentParser:
     trajectory.add_argument("--output", required=True, help="destination versioned JSON path")
     trajectory.add_argument("--overwrite", action="store_true", help="replace an existing output file")
     trajectory.set_defaults(handler=_trajectory)
+
+    compare_trajectories = commands.add_parser(
+        "compare-trajectories",
+        help="export two observed lap paths in one diagnostic world-coordinate frame",
+    )
+    compare_trajectories.add_argument(
+        "target_attempt_key", help="target attempt key printed by the laps command"
+    )
+    compare_trajectories.add_argument(
+        "reference_attempt_key", help="reference attempt key printed by the laps command"
+    )
+    compare_trajectories.add_argument(
+        "--database", default=str(DEFAULT_DATABASE), help="SQLite database path"
+    )
+    compare_trajectories.add_argument(
+        "--comparison-policy",
+        choices=[policy.value for policy in ComparisonPolicy],
+        default=ComparisonPolicy.TIME_TRIAL.value,
+        help="existing comparison policy (default: Time Trial)",
+    )
+    compare_trajectories.add_argument(
+        "--output", required=True, help="destination versioned JSON path"
+    )
+    compare_trajectories.add_argument(
+        "--overwrite", action="store_true", help="replace an existing output file"
+    )
+    compare_trajectories.set_defaults(handler=_compare_trajectories)
 
     traces = commands.add_parser(
         "traces", help="export bounded standalone speed and control traces for an attempt"

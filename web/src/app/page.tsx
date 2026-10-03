@@ -12,6 +12,7 @@ import {
   LapRecord,
   ObservedConditionAnchor,
   ObservedConditionSummary,
+  ObservedTrajectoryComparisonPreview,
   ProcessingRunDetail,
   ProcessingRunPage,
   ProcessingRunSummary,
@@ -27,6 +28,7 @@ import AttemptQualityPanel from "./AttemptQualityPanel";
 import DiagnosticEvidencePanels from "./DiagnosticEvidencePanels";
 import AttemptTraceCharts from "./AttemptTraceCharts";
 import RunEvidencePanel from "./RunEvidencePanel";
+import TrajectoryComparisonPanel from "./TrajectoryComparisonPanel";
 import type { ImportJobRecord, RecordingSourceRecord } from "@/lib/api";
 
 type SearchParams = {
@@ -257,6 +259,16 @@ export default async function Home({
       : manualComparisonResponse;
   const comparison =
     comparisonResponse?.status === "ok" ? comparisonResponse.data : null;
+  const trajectoryComparisonResponse =
+    comparison && target && referenceKey
+      ? await requestApi<ObservedTrajectoryComparisonPreview>(
+          `/api/v1/compare/trajectories?${new URLSearchParams({
+            target_attempt_key: target.attempt_key,
+            reference_attempt_key: referenceKey,
+            comparison_policy: comparison.comparison_policy,
+          })}`,
+        )
+      : null;
   const reference =
     completed.find((lap) => lap.attempt_key === referenceKey) ?? null;
   const lifecycleReasonsFor = (
@@ -992,6 +1004,18 @@ export default async function Home({
                         <small>METRES</small>
                       </div>
                     </section>
+                    <TrajectoryComparisonPanel
+                      report={
+                        trajectoryComparisonResponse?.status === "ok"
+                          ? trajectoryComparisonResponse.data
+                          : null
+                      }
+                      unavailableReason={
+                        trajectoryComparisonResponse?.status === "unavailable"
+                          ? trajectoryComparisonResponse.reason
+                          : null
+                      }
+                    />
                     <section className="metric-row">
                       <Metric
                         label="OFFICIAL LAP TIME"

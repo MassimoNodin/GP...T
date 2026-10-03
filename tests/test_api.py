@@ -206,6 +206,71 @@ def test_compare_api_reports_unsupported_pair_without_losing_status(monkeypatch,
     assert response.json()["reason"] == "attempts have incompatible track, format, or Time Trial settings"
 
 
+def test_trajectory_comparison_api_returns_bounded_diagnostic_result(
+    monkeypatch, tmp_path
+) -> None:
+    calls = {}
+    result = {
+        "analysis_version": "trajectory-comparison-preview-v1",
+        "artifact_kind": "observed_trajectory_comparison_preview",
+        "diagnostic_only": True,
+        "is_centreline": False,
+        "paths": {"target": {"source": {"session_uid": "18446744073709551600"}}},
+    }
+
+    def compare(database, target, reference, *, policy):
+        calls.update(
+            database=database,
+            target=target,
+            reference=reference,
+            policy=policy,
+        )
+        return result
+
+    monkeypatch.setattr(api_module, "compare_observed_trajectories", compare)
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/compare/trajectories",
+        params={
+            "target_attempt_key": "run:42:0:2",
+            "reference_attempt_key": "run:42:0:1",
+            "comparison_policy": "practice_qualifying",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["data"]["diagnostic_only"] is True
+    assert response.json()["data"]["paths"]["target"]["source"]["session_uid"] == (
+        "18446744073709551600"
+    )
+    assert calls["target"] == "run:42:0:2"
+    assert calls["reference"] == "run:42:0:1"
+    assert calls["policy"] == "practice_qualifying"
+
+
+def test_trajectory_comparison_api_keeps_unavailable_reason(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        api_module,
+        "compare_observed_trajectories",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            api_module.TrajectoryComparisonUnavailable("trajectory_pair_scope_mismatch")
+        ),
+    )
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/compare/trajectories",
+        params={
+            "target_attempt_key": "run:42:0:2",
+            "reference_attempt_key": "run:42:0:1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "unavailable"
+    assert response.json()["reason"] == "trajectory_pair_scope_mismatch"
+
+
 def test_track_model_catalog_exposes_draft_revision_and_provenance(tmp_path) -> None:
     response = _get(create_app(tmp_path / "unused.sqlite3"), "/api/v1/track-models")
 

@@ -1265,6 +1265,135 @@ h1 span {
   margin-bottom: 14px;
   padding: 18px;
 }
+.trajectory-comparison {
+  margin-bottom: 14px;
+  padding: 18px;
+}
+.trajectory-comparison-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.trajectory-comparison-heading h3 {
+  margin: 7px 0 0;
+  font-size: 15px;
+}
+.trajectory-comparison-heading p,
+.trajectory-comparison-note,
+.trajectory-comparison-unavailable p,
+.trajectory-comparison-unavailable small {
+  color: #899693;
+  font-size: 9px;
+  line-height: 1.6;
+}
+.trajectory-comparison-heading p {
+  margin: 7px 0 0;
+}
+.trajectory-comparison-paths {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 15px;
+}
+.trajectory-comparison-paths article {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #252e2f;
+  background: rgba(9, 12, 13, 0.45);
+}
+.trajectory-comparison-paths article > div:last-child {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.trajectory-comparison-paths strong {
+  color: #e1e8e4;
+  font: 10px var(--font-mono);
+  text-transform: uppercase;
+}
+.trajectory-comparison-paths small {
+  overflow-wrap: anywhere;
+  color: #899693;
+  font: 8px var(--font-mono);
+  line-height: 1.5;
+}
+.trajectory-comparison-paths .trajectory-comparison-warning {
+  color: #d2ad78;
+}
+.trajectory-comparison-dot,
+.trajectory-comparison-legend i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: #f0b45c;
+}
+.trajectory-comparison-dot.is-reference,
+.trajectory-comparison-legend i.is-reference {
+  background: #71c7b5;
+}
+.trajectory-comparison-plot-wrap {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  margin-top: 10px;
+  border: 1px solid #252e2f;
+  background: #0a0e0f;
+}
+.trajectory-comparison-plot {
+  display: block;
+  width: min(100%, 680px);
+  height: auto;
+  aspect-ratio: 1;
+}
+.trajectory-comparison-background {
+  fill: #0a0e0f;
+}
+.trajectory-comparison-axis-label {
+  fill: #71807c;
+  font: 10px var(--font-mono);
+  letter-spacing: 0.06em;
+}
+.trajectory-comparison-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 10px;
+  color: #899693;
+  font: 8px var(--font-mono);
+}
+.trajectory-comparison-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.trajectory-comparison-legend i {
+  display: inline-block;
+  margin-top: 0;
+}
+.trajectory-comparison-legend i.is-target {
+  background: #f0b45c;
+}
+.trajectory-comparison-note {
+  margin: 12px 0 0;
+}
+.trajectory-comparison-unavailable {
+  margin-bottom: 14px;
+  padding: 14px 18px;
+  border-color: #303638;
+}
+.trajectory-comparison-unavailable p {
+  margin: 8px 0 3px;
+  color: #d2ad78;
+}
+.trajectory-comparison-unavailable small {
+  display: block;
+}
 .observed-trajectory-heading {
   display: flex;
   align-items: flex-start;
@@ -2648,6 +2777,16 @@ h1 span {
   }
   .observed-trajectory {
     padding: 13px;
+  }
+  .trajectory-comparison {
+    padding: 13px;
+  }
+  .trajectory-comparison-heading {
+    flex-direction: column;
+    gap: 9px;
+  }
+  .trajectory-comparison-paths {
+    grid-template-columns: 1fr;
   }
   .trajectory-provenance-grid {
     grid-template-columns: 1fr 1fr;

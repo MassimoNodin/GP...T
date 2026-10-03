@@ -17,6 +17,7 @@ from f1_engineer.storage.lock import ImportRunLock
 from f1_engineer.storage.query import (
     TRAJECTORY_TRACE_COLUMNS,
     AttemptTraceReadLimitError,
+    load_attempt_policy_metadata,
     load_attempt_trace,
     load_reference_inventory,
 )
@@ -150,6 +151,30 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert stored_attempt.trace_sha256
     assert stored_attempt.trace_schema_version == TRACE_SCHEMA_VERSION == 3
     assert stored_attempt.context_segments[0][1]["game_mode"] == "time_trial"
+    monkeypatch.setattr(
+        query_module,
+        "read_trace",
+        lambda *_args, **_kwargs: pytest.fail("policy metadata must not decode Parquet"),
+    )
+    policy_metadata = load_attempt_policy_metadata(
+        database_path,
+        laps[0]["attempt_key"],
+        max_context_segments=1,
+    )
+    assert policy_metadata is not None
+    assert policy_metadata.samples == ()
+    assert policy_metadata.source_sample_count == len(stored_attempt.samples)
+    assert policy_metadata.trace_sha256 == stored_attempt.trace_sha256
+    with pytest.raises(
+        AttemptTraceReadLimitError,
+        match="context_segments_limit_exceeded",
+    ):
+        load_attempt_policy_metadata(
+            database_path,
+            laps[0]["attempt_key"],
+            max_context_segments=0,
+        )
+    monkeypatch.setattr(query_module, "read_trace", read_trace)
     with pytest.raises(AttemptTraceReadLimitError, match="rows_limit_exceeded"):
         load_attempt_trace(
             database_path,

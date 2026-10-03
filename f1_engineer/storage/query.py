@@ -68,6 +68,7 @@ class StoredAttemptTrace:
     superseded: bool | None = None
     lifecycle_assessed: bool = False
     timing_evidence: Mapping[str, object] | None = None
+    source_sample_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +255,101 @@ def load_attempt_trace(
                 "reasons": ["not_available_for_legacy_import"],
             }
         ),
+        source_sample_count=int(row["row_count"]),
+    )
+
+
+def load_attempt_policy_metadata(
+    database_path: str | Path,
+    attempt_key: str,
+    *,
+    max_context_segments: int | None = None,
+    max_context_bytes: int | None = None,
+) -> StoredAttemptTrace | None:
+    """Load bounded SQLite evidence needed to validate a comparison policy.
+
+    This deliberately does not read or decode the attempt's Parquet trace. Any
+    subsequent telemetry preview must load and verify that trace independently.
+    """
+    with Database(Path(database_path), read_only=True) as db:
+        row = db.connection.execute(
+            """SELECT l.attempt_key, l.car_index, l.attempt_number,
+                      l.disposition, l.lap_time_ms, l.start_observed, l.pit_encountered,
+                      l.game_valid, l.reference_eligible, l.exclusion_reasons_json,
+                      l.superseded, l.lifecycle_assessed,
+                      s.session_uid, s.run_id, t.row_count, t.sha256,
+                      t.quality_json, t.schema_version,
+                      e.evidence_json AS timing_evidence_json
+                 FROM lap_attempts l JOIN sessions s USING(session_key)
+                 JOIN processing_runs r USING(run_id)
+                 JOIN telemetry_files t USING(attempt_key)
+                 LEFT JOIN attempt_timing_evidence e USING(attempt_key)
+                WHERE l.attempt_key = ? AND t.ready = 1 AND r.status = 'complete'""",
+            (attempt_key,),
+        ).fetchone()
+        if row is None:
+            return None
+        if max_context_segments is not None or max_context_bytes is not None:
+            context_size = db.connection.execute(
+                """SELECT COUNT(*) AS segment_count,
+                          COALESCE(SUM(LENGTH(CAST(context_json AS BLOB))), 0) AS context_bytes
+                     FROM lap_context_segments WHERE attempt_key = ?""",
+                (attempt_key,),
+            ).fetchone()
+            if (
+                max_context_segments is not None
+                and int(context_size["segment_count"]) > max_context_segments
+            ):
+                raise AttemptTraceReadLimitError("context_segments")
+            if (
+                max_context_bytes is not None
+                and int(context_size["context_bytes"]) > max_context_bytes
+            ):
+                raise AttemptTraceReadLimitError("context_bytes")
+        context_rows = db.connection.execute(
+            """SELECT from_frame_identifier, context_json
+                 FROM lap_context_segments WHERE attempt_key = ? ORDER BY ordinal""",
+            (attempt_key,),
+        ).fetchall()
+
+    contexts = tuple(
+        (
+            int(context_row["from_frame_identifier"]),
+            json.loads(context_row["context_json"])
+            if context_row["context_json"] is not None
+            else None,
+        )
+        for context_row in context_rows
+    )
+    return StoredAttemptTrace(
+        attempt_key=row["attempt_key"],
+        run_id=row["run_id"],
+        session_uid=row["session_uid"],
+        car_index=row["car_index"],
+        disposition=row["disposition"],
+        lap_time_ms=row["lap_time_ms"],
+        game_valid=None if row["game_valid"] is None else bool(row["game_valid"]),
+        reference_eligible=bool(row["reference_eligible"]),
+        exclusion_reasons=tuple(json.loads(row["exclusion_reasons_json"])),
+        trace_sha256=row["sha256"],
+        trace_schema_version=row["schema_version"],
+        quality=json.loads(row["quality_json"]),
+        context_segments=contexts,
+        samples=(),
+        attempt_number=row["attempt_number"],
+        start_observed=bool(row["start_observed"]),
+        pit_encountered=bool(row["pit_encountered"]),
+        superseded=None if row["superseded"] is None else bool(row["superseded"]),
+        lifecycle_assessed=bool(row["lifecycle_assessed"]),
+        timing_evidence=(
+            json.loads(row["timing_evidence_json"])
+            if row["timing_evidence_json"]
+            else {
+                "status": "unavailable",
+                "reasons": ["not_available_for_legacy_import"],
+            }
+        ),
+        source_sample_count=int(row["row_count"]),
     )
 
 

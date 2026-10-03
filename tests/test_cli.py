@@ -59,3 +59,41 @@ def test_compare_cli_rejects_an_incomplete_window(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="bounds_must_be_selected_together"):
         cli._compare(args)
+
+
+def test_compare_trajectories_cli_exports_versioned_json(monkeypatch, capsys, tmp_path) -> None:
+    output_path = tmp_path / "paired-paths.json"
+    calls: dict[str, object] = {}
+    document = {
+        "analysis_version": "trajectory-comparison-preview-v1",
+        "artifact_kind": "observed_trajectory_comparison_preview",
+        "diagnostic_only": True,
+        "limits_applied": {"target_points": 2, "reference_points": 2},
+    }
+    monkeypatch.setattr(
+        cli,
+        "compare_observed_trajectories",
+        lambda *args, **kwargs: calls.update(args=args, kwargs=kwargs) or document,
+    )
+    args = cli.build_parser().parse_args(
+        [
+            "compare-trajectories",
+            "target",
+            "reference",
+            "--comparison-policy",
+            "practice_qualifying",
+            "--database",
+            "state.sqlite3",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert cli._compare_trajectories(args) == 0
+    saved = json.loads(output_path.read_text(encoding="utf-8"))
+    assert saved == document
+    assert calls["args"] == ("state.sqlite3", "target", "reference")
+    assert calls["kwargs"]["policy"] is cli.ComparisonPolicy.PRACTICE_QUALIFYING
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["artifact_kind"] == "observed_trajectory_comparison_preview"
+    assert summary["limits_applied"]["target_points"] == 2

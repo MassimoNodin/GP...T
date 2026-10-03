@@ -288,6 +288,60 @@ export interface AttemptTrajectoryPreview {
   };
 }
 
+export interface ObservedTrajectoryComparisonPreview {
+  schema_version: 1;
+  analysis_version: string;
+  artifact_kind: "observed_trajectory_comparison_preview";
+  status: "available";
+  comparison_policy: "time_trial" | "practice_qualifying";
+  diagnostic_only: true;
+  is_centreline: false;
+  coordinate_projection: {
+    horizontal_axis: "world_x";
+    vertical_axis: "world_z";
+    units: "m";
+    orientation_claim: null;
+    equal_scale: true;
+  };
+  plot_bounds_world_xz_m: {
+    world_x: [number, number];
+    world_z: [number, number];
+  };
+  paths: Record<"target" | "reference", {
+    source: Omit<AttemptTrajectoryPreview["source"], "context_segments">;
+    attempt_evidence: {
+      disposition: string;
+      lap_time_ms: number | null;
+      game_valid: boolean | null;
+      reference_eligible: boolean;
+      superseded: boolean | null;
+      lifecycle_assessed: boolean;
+      lifecycle_exclusions: string[];
+      exclusion_reasons: string[];
+      source_sample_count: number;
+    };
+    capture_evidence: {
+      sha256: string | null;
+      byte_size: number | null;
+      complete: boolean | null;
+      footer_status: string | null;
+      recording_counters: Record<string, number | null>;
+      recording_observer_counters: Record<string, number | null>;
+    } | null;
+    coverage: AttemptTrajectoryPreview["coverage"];
+    preview: AttemptTrajectoryPreview["preview"];
+    segments: AttemptTrajectoryPreview["segments"];
+    break_examples: AttemptTrajectoryPreview["break_examples"];
+    unsupported_examples: AttemptTrajectoryPreview["unsupported_examples"];
+  }>;
+  limits: {
+    points_per_attempt: number;
+    segments_per_attempt: number;
+    combined_points: number;
+  };
+  limits_applied: Record<string, number>;
+}
+
 export type AttemptTraceChannelKey = "speed" | "throttle" | "brake" | "steering";
 
 export interface AttemptTraceChartPoint {

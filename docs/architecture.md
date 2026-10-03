@@ -461,6 +461,20 @@ Use descriptive recorded-measurement language only. Do not infer causes, recover
 
 Acceptance covers clean synthetic approved evidence with all five facts, bounded sign/rounding behavior for sampled threshold brackets, missing, ambiguous, censored, partial, or unsupported control observations, mismatched model/reference/source provenance, and explicit gate/omission counts. It confirms that the existing `comparison_brief` output remains unchanged and that the current packaged model/captures produce no corner summary.
 
+## Decision 0034: compare bounded observed trajectories diagnostically
+
+**Status:** accepted
+
+**Date:** 2026-10-04
+
+Add a versioned paired world-X/Z preview for explicitly selected comparisons already supported by the Time Trial or Practice/Qualifying policies. For this first overlay, require both attempts to share the same processing run, session UID, and player car. Validate the shared mode-specific comparison policy from SQLite-only attempt/context metadata first, bounded to 1,024 context segments and 4 MiB per attempt. Do not run full distance resampling just to authorize an overlay. Then load each checksummed Parquet trace only through the existing 64 MiB/100,000-row source-limited trajectory preview and verify attempt/run/session/player/checksum/schema provenance. Enforce at most 2,000 rendered points and 256 preserved continuity segments per attempt.
+
+Plot both recorded paths in a single shared equal-scale world coordinate frame. Preserve each path's source breaks; do not independently align, rotate, normalize, interpolate across gaps, or claim compass orientation. Retain each attempt's game validity (including unknown), lifecycle exclusions, capture completion (including unknown), source coverage, and thinning counts. If either Motion preview or provenance is unsupported, make the overlay unavailable while leaving the ordinary comparison usable. Race and unknown comparison policies remain unsupported.
+
+This is observed-path inspection only. It does not identify an ideal line, track-relative lateral offset, turn-in/apex error, causes, or driving advice; it does not change geometry validation, reference eligibility, ranking, or coaching permission. Expose the same bounded result through a CLI JSON export, local API route, and dashboard overlay without storage migrations or changes to existing comparison outputs.
+
+Acceptance covers the recovered invalid Melbourne pair and Shanghai Practice 3/2 with diagnostic labels and incomplete-capture/lifecycle warnings; explicit true/false/unknown validity and capture states; a shared coordinate scale; distinct paths and preserved segment breaks; source thinning and coverage; missing Motion/legacy schema; mismatched scope, checksum, schema or comparison policy; oversized context and source rejection before full comparison/resampling; and point/segment/source-read bounds. Ordinary lap comparisons, rankings, and briefs remain unchanged.
+
 ## Data flow
 
 ```text
