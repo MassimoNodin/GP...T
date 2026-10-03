@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import sqlite3
 from enum import Enum
 from pathlib import Path
 from typing import Mapping
@@ -8,6 +9,7 @@ from typing import Mapping
 from .comparison import calculate_channel_differences, calculate_delta_time
 from .comparison_brief import build_comparison_brief
 from .comparison_window import DistanceWindow, analyze_comparison_window
+from .corner_loss_candidates import build_corner_loss_candidates
 from .corners import analyze_corner_regions
 from .interval_delta import reserve_interval_evaluation_work
 from .quality import OBSERVED_CONDITION_TRACE_COLUMNS, summarize_observed_conditions
@@ -28,6 +30,7 @@ from ..storage.query import (
 from ..storage.run_summaries import get_processing_run_summary
 from ..tracks.loader import load_track_model
 from ..tracks.model import MAX_TRACK_MODEL_REGIONS, TrackModel
+from ..tracks.registry import corner_candidate_ranking_approval
 from .source_limits import (
     ANALYSIS_SOURCE_CONTEXT_BYTE_LIMIT,
     ANALYSIS_SOURCE_CONTEXT_SEGMENT_LIMIT,
@@ -358,8 +361,103 @@ def compare_attempts(
             },
         }
         result["corner_analysis"] = corner_analysis
+
+    target_candidate_evidence = _corner_candidate_attempt_evidence(target)
+    reference_candidate_evidence = _corner_candidate_attempt_evidence(reference)
+    target_context_supported = False
+    if policy is ComparisonPolicy.TIME_TRIAL:
+        try:
+            stable_time_trial_context(
+                target.context_segments,
+                target.attempt_key,
+                require_conditions=True,
+            )
+        except TimeTrialContextError:
+            pass
+        else:
+            target_context_supported = True
+
+    model_summary = _corner_candidate_model_summary(model)
+    model_approval = (
+        corner_candidate_ranking_approval(model) if model is not None else None
+    )
+    reference_selection: dict[str, object] | None = None
+    reference_selection_error: str | None = None
+    if model is not None and policy is ComparisonPolicy.TIME_TRIAL:
+        try:
+            # Import locally because reference_selection reuses this module's
+            # stable Time Trial context validator.
+            from .reference_selection import (
+                MAX_BOUNDED_PRIOR_CANDIDATES,
+                MAX_BOUNDED_PRIOR_CONTEXT_BYTES,
+                MAX_BOUNDED_PRIOR_CONTEXT_SEGMENTS,
+                MAX_BOUNDED_PRIOR_TRACE_BYTES,
+                MAX_BOUNDED_PRIOR_TRACE_ROWS,
+                ReferenceRequest,
+                select_reference,
+            )
+
+            reference_selection = select_reference(
+                database_path,
+                ReferenceRequest(target_attempt_key=target_attempt_key),
+                max_prior_candidate_assessments=MAX_BOUNDED_PRIOR_CANDIDATES,
+                max_candidate_trace_bytes=MAX_BOUNDED_PRIOR_TRACE_BYTES,
+                max_candidate_trace_rows=MAX_BOUNDED_PRIOR_TRACE_ROWS,
+                max_candidate_context_bytes=MAX_BOUNDED_PRIOR_CONTEXT_BYTES,
+                max_candidate_context_segments=MAX_BOUNDED_PRIOR_CONTEXT_SEGMENTS,
+            ).to_dict()
+        except (OSError, ValueError, sqlite3.Error):
+            reference_selection_error = "session_best_assessment_unavailable"
+
+    result["corner_loss_candidates"] = build_corner_loss_candidates(
+        comparison_policy=policy.value,
+        target=target_candidate_evidence,
+        reference=reference_candidate_evidence,
+        corner_analysis=(
+            result.get("corner_analysis")
+            if isinstance(result.get("corner_analysis"), Mapping)
+            else None
+        ),
+        reference_selection=reference_selection,
+        selected_model=model_summary,
+        model_approval=model_approval,
+        target_context_supported=target_context_supported,
+        reference_selection_error=reference_selection_error,
+    )
     result["comparison_brief"] = build_comparison_brief(result)
     return result
+
+
+def _corner_candidate_attempt_evidence(
+    attempt: StoredAttemptTrace,
+) -> dict[str, object]:
+    return {
+        "attempt_key": attempt.attempt_key,
+        "run_id": attempt.run_id,
+        "session_uid": attempt.session_uid,
+        "car_index": attempt.car_index,
+        "disposition": attempt.disposition,
+        "lap_time_ms": attempt.lap_time_ms,
+        "game_valid": attempt.game_valid,
+        "reference_eligible": attempt.reference_eligible,
+        "start_observed": attempt.start_observed,
+        "pit_encountered": attempt.pit_encountered,
+        "superseded": attempt.superseded,
+        "lifecycle_assessed": attempt.lifecycle_assessed,
+        "trace_sha256": attempt.trace_sha256,
+    }
+
+
+def _corner_candidate_model_summary(
+    model: TrackModel | None,
+) -> dict[str, object] | None:
+    if model is None:
+        return None
+    return {
+        "model_id": model.model_id,
+        "revision": model.revision,
+        "validation_status": model.validation_status,
+    }
 
 
 def _load_bounded_attempt_trace(

@@ -3,6 +3,7 @@ import {
   Comparison,
   ComparisonWindow,
   CornerAnalysis,
+  CornerLossCandidates,
   CornerRegion,
   AttemptTrajectoryPreview,
   AttemptQualityReport,
@@ -1230,6 +1231,9 @@ export default async function Home({
                       Lines stop where a channel is unsupported. Missing
                       telemetry is not interpolated across.
                     </p>
+                    <CornerLossCandidatesPanel
+                      analysis={comparison.corner_loss_candidates}
+                    />
                     {comparison.corner_analysis ? (
                       <RegionAnalysisPanel
                         analysis={comparison.corner_analysis}
@@ -1828,6 +1832,97 @@ function RegionAnalysisPanel({
           />
         ))}
       </div>
+    </section>
+  );
+}
+
+function CornerLossCandidatesPanel({
+  analysis,
+}: {
+  analysis: CornerLossCandidates;
+}) {
+  const model = analysis.source.model;
+  const selection = analysis.source.reference_selection;
+  const selectedReference = selection?.selected_reference?.attempt_key;
+  const assessments = analysis.region_assessment;
+
+  return (
+    <section className="corner-candidates panel" aria-label="Recorded corner time differences">
+      <header className="region-card-header">
+        <div>
+          <div className="region-index">RECORDED CORNER-TIME DIFFERENCES</div>
+          <h3>
+            {analysis.status === "ranked"
+              ? "Largest supported measurements"
+              : analysis.status === "no_positive_supported_differences"
+                ? "No positive supported differences"
+                : "Candidate ranking abstained"}
+          </h3>
+          <p>
+            {analysis.measurement_label}. These measurements do not identify a
+            cause or give driving advice.
+          </p>
+        </div>
+        <span className={`region-state ${analysis.status === "ranked" ? "" : "region-state-draft"}`}>
+          {label(analysis.status)}
+        </span>
+      </header>
+      <div className="corner-candidate-provenance">
+        <span>
+          MODEL {model ? `${model.model_id} r${model.revision}` : "NOT SELECTED"}
+        </span>
+        <span>
+          SESSION BEST {typeof selectedReference === "string"
+            ? selectedReference
+            : selection?.status
+              ? label(selection.status)
+              : "NOT ASSESSED"}
+        </span>
+        <span>
+          CONNECTED REGIONS {assessments.connected_interval_count}/
+          {assessments.region_count}
+        </span>
+      </div>
+      {analysis.ranked_candidates.length ? (
+        <ol className="corner-candidate-list">
+          {analysis.ranked_candidates.map((candidate) => (
+            <li key={candidate.region_id}>
+              <strong>#{candidate.rank} {candidate.region_label}</strong>
+              <span>
+                {seconds(candidate.recorded_time_difference_s)} ·{" "}
+                [{candidate.analysis_window_m[0].toFixed(1)}, {candidate.analysis_window_m[1].toFixed(1)}) m
+              </span>
+              <small>
+                Shared coverage {percent(candidate.connected_support.shared_time_coverage)} ·
+                target {percent(candidate.connected_support.target_time_coverage)} ·
+                reference {percent(candidate.connected_support.reference_time_coverage)}
+              </small>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <div className="corner-candidate-exclusions">
+          <strong>No ranked measurements.</strong>
+          {analysis.gate_reasons.length ? (
+            <ul>
+              {analysis.gate_reasons.map((reason) => (
+                <li key={reason}>{label(reason)}</li>
+              ))}
+            </ul>
+          ) : (
+            <p>No positive supported difference remained at one-millisecond display precision.</p>
+          )}
+          {analysis.gate_reasons_omitted_count > 0 ? (
+            <p>
+              {analysis.gate_reasons_omitted_count} additional gate reasons
+              omitted.
+            </p>
+          ) : null}
+        </div>
+      )}
+      <p className="corner-candidate-note">
+        Half-open distance bounds [start, end). Coaching is disabled.
+      </p>
     </section>
   );
 }

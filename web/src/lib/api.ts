@@ -853,6 +853,84 @@ export interface ComparisonBrief {
   };
 }
 
+export interface CornerLossCandidate {
+  rank: number;
+  region_id: string;
+  region_label: string;
+  analysis_window_m: [number, number];
+  recorded_time_difference_s: number;
+  measurement_direction: "target_minus_reference_interval_time_difference";
+  connected_support: {
+    target_resampled_time_connected: boolean;
+    reference_resampled_time_connected: boolean;
+    shared_delta_time_connected: boolean;
+    target_source_session_time_connected: boolean;
+    reference_source_session_time_connected: boolean;
+    interval_connected_supported_time: boolean;
+    target_time_coverage: number | null;
+    reference_time_coverage: number | null;
+    shared_time_coverage: number | null;
+    entry_delta_s: number | null;
+    exit_delta_s: number | null;
+  };
+}
+
+export interface CornerLossCandidates {
+  schema_version: number;
+  analysis_version: string;
+  policy_version: string;
+  status: "abstained" | "ranked" | "no_positive_supported_differences";
+  measurement_label: string;
+  coaching_eligible: false;
+  source: {
+    target: Record<string, string | number | null>;
+    reference: Record<string, string | number | null>;
+    model: {
+      model_id: string;
+      revision: number;
+      validation_status: string;
+      registered: boolean;
+      approved_for_candidate_ranking: boolean;
+      model_content_sha256: string | null;
+      approval_provenance: Record<string, unknown> | null;
+    } | null;
+    reference_selection: {
+      reference_kind: string;
+      status: string;
+      policy_version: string;
+      scope: Record<string, unknown> | null;
+      selected_reference: Record<string, unknown> | null;
+      reasons: string[];
+    } | null;
+    capture_evidence: "passed_session_best_policy" | "not_established";
+  };
+  gate_reasons: string[];
+  gate_reasons_omitted_count: number;
+  ranked_candidates: CornerLossCandidate[];
+  region_assessment: {
+    region_count: number;
+    assessed_region_count: number;
+    connected_interval_count: number;
+    unsupported_region_count: number;
+    diagnostic_region_count: number;
+    non_positive_region_count: number;
+    below_display_resolution_count: number;
+    all_model_regions_assessed: boolean;
+    excluded_regions: Array<{
+      region_id: string | null;
+      region_label: string | null;
+      analysis_window_m: [number, number] | null;
+      connected_interval_supported: boolean;
+      recorded_time_difference_s: number | null;
+      reasons: string[];
+    }>;
+    excluded_regions_omitted_count: number;
+    omitted_region_count: number;
+  };
+  omitted_candidate_count: number;
+  limits: Record<string, number>;
+}
+
 export interface Comparison {
   analysis_version: string;
   comparison_brief: ComparisonBrief;
@@ -932,6 +1010,7 @@ export interface Comparison {
     reference_excluded_spans: unknown[];
   };
   corner_analysis?: CornerAnalysis;
+  corner_loss_candidates: CornerLossCandidates;
 }
 
 export interface ObservedConditionSummary {

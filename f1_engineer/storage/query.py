@@ -93,6 +93,7 @@ class StoredAttemptInventoryEntry:
     context_segments: tuple[tuple[int, Mapping[str, object] | None], ...]
     superseded: bool | None = None
     lifecycle_assessed: bool = False
+    trace_size_bytes: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +115,14 @@ class AttemptTraceReadLimitError(ValueError):
     def __init__(self, limit_kind: str) -> None:
         self.limit_kind = limit_kind
         super().__init__(f"attempt_trace_{limit_kind}_limit_exceeded")
+
+
+class AttemptInventoryReadLimitError(ValueError):
+    """Raised when bounded reference inventory metadata exceeds its read limits."""
+
+    def __init__(self, limit_kind: str) -> None:
+        self.limit_kind = limit_kind
+        super().__init__(f"attempt_inventory_{limit_kind}_limit_exceeded")
 
 
 def load_attempt_trace(
@@ -292,9 +301,23 @@ def load_attempt_timing_evidence(
 
 
 def load_reference_inventory(
-    database_path: str | Path, attempt_key: str
+    database_path: str | Path,
+    attempt_key: str,
+    *,
+    max_prior_attempts: int | None = None,
+    max_context_segments: int | None = None,
+    max_context_bytes: int | None = None,
 ) -> StoredReferenceInventory | None:
     """Read run-scoped attempt/context metadata for deterministic reference selection."""
+    for name, limit in (
+        ("max_prior_attempts", max_prior_attempts),
+        ("max_context_segments", max_context_segments),
+        ("max_context_bytes", max_context_bytes),
+    ):
+        if limit is not None and (
+            not isinstance(limit, int) or isinstance(limit, bool) or limit < 0
+        ):
+            raise ValueError(f"{name} must be a non-negative integer")
     database_path = Path(database_path)
     with Database(database_path, read_only=True) as db:
         target = db.connection.execute(
@@ -307,20 +330,84 @@ def load_reference_inventory(
         ).fetchone()
         if target is None:
             return None
+        attempt_scope = "s.run_id = ? AND s.session_uid = ? AND l.car_index = ?"
+        scope_values = (target["run_id"], target["session_uid"], target["car_index"])
+        attempt_filter = (
+            " AND l.attempt_number <= ?" if max_prior_attempts is not None else ""
+        )
+        attempt_parameters = (
+            (*scope_values, target["attempt_number"])
+            if max_prior_attempts is not None
+            else scope_values
+        )
+        if max_prior_attempts is not None:
+            prior_count = db.connection.execute(
+                f"""SELECT COUNT(*) AS attempt_count
+                      FROM lap_attempts l JOIN sessions s USING(session_key)
+                      JOIN processing_runs r USING(run_id)
+                     WHERE {attempt_scope} AND r.status = 'complete'
+                       AND l.attempt_number < ?""",
+                (*scope_values, target["attempt_number"]),
+            ).fetchone()["attempt_count"]
+            if int(prior_count) > max_prior_attempts:
+                raise AttemptInventoryReadLimitError("prior_attempts")
+            bounded_attempt_count = db.connection.execute(
+                f"""SELECT COUNT(*) AS attempt_count
+                      FROM lap_attempts l JOIN sessions s USING(session_key)
+                      JOIN processing_runs r USING(run_id)
+                     WHERE {attempt_scope} AND r.status = 'complete'
+                       AND l.attempt_number <= ?""",
+                (*scope_values, target["attempt_number"]),
+            ).fetchone()["attempt_count"]
+            if int(bounded_attempt_count) > max_prior_attempts + 1:
+                raise AttemptInventoryReadLimitError("prior_attempts")
+        if max_context_segments is not None or max_context_bytes is not None:
+            context_row_limit = (
+                max_context_segments + 1
+                if max_context_segments is not None
+                else max_context_bytes + 1
+                if max_context_bytes is not None
+                else 1
+            )
+            context_sizes = db.connection.execute(
+                f"""SELECT LENGTH(CAST(c.context_json AS BLOB)) AS context_bytes
+                     FROM lap_context_segments c JOIN lap_attempts l USING(attempt_key)
+                     JOIN sessions s USING(session_key)
+                     JOIN processing_runs r USING(run_id)
+                    WHERE {attempt_scope} {attempt_filter} AND r.status = 'complete'
+                    ORDER BY c.attempt_key, c.ordinal LIMIT ?""",
+                (*attempt_parameters, context_row_limit),
+            )
+            segment_count = 0
+            context_bytes = 0
+            for context_row in context_sizes:
+                segment_count += 1
+                context_bytes += int(context_row["context_bytes"] or 0)
+                if (
+                    max_context_segments is not None
+                    and segment_count > max_context_segments
+                ):
+                    raise AttemptInventoryReadLimitError("context_segments")
+                if (
+                    max_context_bytes is not None
+                    and context_bytes > max_context_bytes
+                ):
+                    raise AttemptInventoryReadLimitError("context_bytes")
         rows = db.connection.execute(
-            """SELECT l.attempt_key, l.attempt_number, l.car_index, l.disposition,
+            f"""SELECT l.attempt_key, l.attempt_number, l.car_index, l.disposition,
                       l.lap_time_ms, l.game_valid, l.reference_eligible,
                       l.start_observed, l.pit_encountered, l.sample_count,
                       l.exclusion_reasons_json, l.superseded, l.lifecycle_assessed,
                       s.run_id, s.session_uid, t.ready, t.row_count, t.sha256, t.schema_version,
-                      t.quality_json
+                      t.quality_json, t.relative_path
                  FROM lap_attempts l JOIN sessions s USING(session_key)
                  JOIN processing_runs r USING(run_id)
                  LEFT JOIN telemetry_files t USING(attempt_key)
                 WHERE s.run_id = ? AND s.session_uid = ? AND l.car_index = ?
+                  {attempt_filter}
                   AND r.status = 'complete'
                 ORDER BY l.attempt_number""",
-            (target["run_id"], target["session_uid"], target["car_index"]),
+            attempt_parameters,
         ).fetchall()
         capture = db.connection.execute(
             """SELECT c.complete, c.completion_json, r.metrics_json
@@ -329,12 +416,13 @@ def load_reference_inventory(
             (target["run_id"],),
         ).fetchone()
         context_rows = db.connection.execute(
-            """SELECT c.attempt_key, c.from_frame_identifier, c.context_json
+            f"""SELECT c.attempt_key, c.from_frame_identifier, c.context_json
                  FROM lap_context_segments c JOIN lap_attempts l USING(attempt_key)
                  JOIN sessions s USING(session_key)
                 WHERE s.run_id = ? AND s.session_uid = ? AND l.car_index = ?
+                  {attempt_filter}
                 ORDER BY c.attempt_key, c.ordinal""",
-            (target["run_id"], target["session_uid"], target["car_index"]),
+            attempt_parameters,
         ).fetchall()
 
     contexts_by_attempt: dict[str, list[tuple[int, Mapping[str, object] | None]]] = {}
@@ -370,6 +458,7 @@ def load_reference_inventory(
             context_segments=tuple(contexts_by_attempt.get(row["attempt_key"], ())),
             superseded=None if row["superseded"] is None else bool(row["superseded"]),
             lifecycle_assessed=bool(row["lifecycle_assessed"]),
+            trace_size_bytes=_trace_file_size(database_path, row["relative_path"]),
         )
         for row in rows
     )
@@ -393,3 +482,16 @@ def load_reference_inventory(
         ),
         attempts=attempts,
     )
+
+
+def _trace_file_size(database_path: Path, relative_path_value: object) -> int | None:
+    if not isinstance(relative_path_value, str):
+        return None
+    relative_path = Path(relative_path_value)
+    if relative_path.is_absolute() or ".." in relative_path.parts:
+        return None
+    root = database_path.parent.resolve()
+    trace_path = (database_path.parent / relative_path).resolve()
+    if not trace_path.is_relative_to(root) or not trace_path.is_file():
+        return None
+    return trace_path.stat().st_size

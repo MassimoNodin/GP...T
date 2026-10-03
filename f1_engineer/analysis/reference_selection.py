@@ -6,15 +6,28 @@ from pathlib import Path
 from typing import Mapping
 
 from ..storage.query import (
+    AttemptInventoryReadLimitError,
+    AttemptTraceReadLimitError,
     StoredAttemptInventoryEntry,
     StoredAttemptTrace,
     load_attempt_trace,
     load_reference_inventory,
 )
 from .service import TimeTrialContextError, stable_time_trial_context
+from .source_limits import (
+    ANALYSIS_SOURCE_CONTEXT_BYTE_LIMIT,
+    ANALYSIS_SOURCE_CONTEXT_SEGMENT_LIMIT,
+    ANALYSIS_SOURCE_TRACE_BYTE_LIMIT,
+    ANALYSIS_SOURCE_TRACE_ROW_LIMIT,
+)
 
 
 REFERENCE_SELECTION_POLICY_VERSION = "tt-session-best-v2-lifecycle"
+MAX_BOUNDED_PRIOR_CANDIDATES = 256
+MAX_BOUNDED_PRIOR_TRACE_BYTES = ANALYSIS_SOURCE_TRACE_BYTE_LIMIT
+MAX_BOUNDED_PRIOR_TRACE_ROWS = ANALYSIS_SOURCE_TRACE_ROW_LIMIT
+MAX_BOUNDED_PRIOR_CONTEXT_BYTES = ANALYSIS_SOURCE_CONTEXT_BYTE_LIMIT
+MAX_BOUNDED_PRIOR_CONTEXT_SEGMENTS = ANALYSIS_SOURCE_CONTEXT_SEGMENT_LIMIT
 _TRACE_IDENTITY_COLUMNS = ["frame_identifier"]
 _CAPTURE_LOSS_FIELDS = {
     "queue_dropped": "capture_queue_drops",
@@ -106,16 +119,57 @@ class ReferenceSelection:
 def select_reference(
     database_path: str | Path,
     request: ReferenceRequest,
+    *,
+    max_prior_candidate_assessments: int | None = None,
+    max_candidate_trace_bytes: int | None = None,
+    max_candidate_trace_rows: int | None = None,
+    max_candidate_context_bytes: int | None = None,
+    max_candidate_context_segments: int | None = None,
 ) -> ReferenceSelection:
     """Select the fastest eligible prior Time Trial lap in the target's run scope."""
     if request.reference_kind is not ReferenceKind.SESSION_BEST:
         raise ValueError(f"unsupported reference kind {request.reference_kind!r}")
+    if max_prior_candidate_assessments is not None and (
+        not isinstance(max_prior_candidate_assessments, int)
+        or isinstance(max_prior_candidate_assessments, bool)
+        or max_prior_candidate_assessments < 1
+    ):
+        raise ValueError("max_prior_candidate_assessments must be positive")
+    for name, limit in (
+        ("max_candidate_trace_bytes", max_candidate_trace_bytes),
+        ("max_candidate_trace_rows", max_candidate_trace_rows),
+        ("max_candidate_context_bytes", max_candidate_context_bytes),
+        ("max_candidate_context_segments", max_candidate_context_segments),
+    ):
+        if limit is not None and (
+            not isinstance(limit, int) or isinstance(limit, bool) or limit < 1
+        ):
+            raise ValueError(f"{name} must be positive")
 
     try:
         target = load_attempt_trace(
             database_path,
             request.target_attempt_key,
             columns=_TRACE_IDENTITY_COLUMNS,
+            **(
+                {
+                    "max_trace_bytes": max_candidate_trace_bytes,
+                    "max_trace_rows": max_candidate_trace_rows,
+                    "max_context_bytes": max_candidate_context_bytes,
+                    "max_context_segments": max_candidate_context_segments,
+                }
+                if max_candidate_trace_bytes is not None
+                or max_candidate_trace_rows is not None
+                or max_candidate_context_bytes is not None
+                or max_candidate_context_segments is not None
+                else {}
+            ),
+        )
+    except AttemptTraceReadLimitError as exc:
+        return _empty_result(
+            request,
+            ReferenceSelectionStatus.TARGET_UNAVAILABLE,
+            reason=f"target_trace_{exc.limit_kind}_limit_exceeded",
         )
     except (OSError, ValueError):
         return _empty_result(
@@ -129,7 +183,30 @@ def select_reference(
             ReferenceSelectionStatus.TARGET_UNAVAILABLE,
             reason="target_attempt_not_found_or_unavailable",
         )
-    inventory = load_reference_inventory(database_path, request.target_attempt_key)
+    try:
+        inventory = load_reference_inventory(
+            database_path,
+            request.target_attempt_key,
+            **(
+                {
+                    "max_prior_attempts": max_prior_candidate_assessments,
+                    "max_context_bytes": max_candidate_context_bytes,
+                    "max_context_segments": max_candidate_context_segments,
+                }
+                if max_prior_candidate_assessments is not None
+                or max_candidate_context_bytes is not None
+                or max_candidate_context_segments is not None
+                else {}
+            ),
+        )
+    except AttemptInventoryReadLimitError as exc:
+        return _empty_result(
+            request,
+            ReferenceSelectionStatus.NO_ELIGIBLE_REFERENCE,
+            reason=f"candidate_{exc.limit_kind}_limit_exceeded",
+            target_reference_eligible=target.reference_eligible,
+            diagnostic_only=not target.reference_eligible,
+        )
     if inventory is None:
         return _empty_result(
             request,
@@ -200,15 +277,90 @@ def select_reference(
         inventory.capture_completion,
         inventory.processing_quality,
     )
+    selection_entries = inventory.attempts
+    if max_prior_candidate_assessments is not None:
+        prior_count = sum(
+            entry.attempt_key != target.attempt_key
+            and entry.attempt_number < target.attempt_number
+            for entry in inventory.attempts
+        )
+        if prior_count > max_prior_candidate_assessments:
+            return _empty_result(
+                request,
+                ReferenceSelectionStatus.NO_ELIGIBLE_REFERENCE,
+                reason="candidate_assessment_limit_exceeded",
+                scope=scope,
+                target_reference_eligible=target.reference_eligible,
+                diagnostic_only=not target.reference_eligible,
+            )
+        # Later attempts can never qualify as a prior session best. Avoid
+        # building redundant assessments for them in bounded comparisons.
+        selection_entries = tuple(
+            entry
+            for entry in inventory.attempts
+            if entry.attempt_key == target.attempt_key
+            or entry.attempt_number < target.attempt_number
+        )
+
+    pre_assessments = [
+        (
+            entry,
+            _candidate_exclusions(
+                entry,
+                target=target,
+                target_signature=target_signature,
+                capture_reasons=capture_reasons,
+            ),
+        )
+        for entry in selection_entries
+    ]
+    if max_candidate_trace_bytes is not None or max_candidate_trace_rows is not None:
+        total_trace_bytes = 0
+        total_trace_rows = 0
+        for entry, reasons in pre_assessments:
+            if reasons:
+                continue
+            if max_candidate_trace_bytes is not None:
+                if entry.trace_size_bytes is None or entry.trace_size_bytes < 0:
+                    return _empty_result(
+                        request,
+                        ReferenceSelectionStatus.NO_ELIGIBLE_REFERENCE,
+                        reason="candidate_trace_size_unavailable",
+                        scope=scope,
+                        target_reference_eligible=target.reference_eligible,
+                        diagnostic_only=not target.reference_eligible,
+                    )
+                total_trace_bytes += entry.trace_size_bytes
+            if max_candidate_trace_rows is not None:
+                total_trace_rows += int(entry.trace_row_count or 0)
+        if (
+            max_candidate_trace_bytes is not None
+            and total_trace_bytes > max_candidate_trace_bytes
+        ):
+            return _empty_result(
+                request,
+                ReferenceSelectionStatus.NO_ELIGIBLE_REFERENCE,
+                reason="candidate_trace_byte_limit_exceeded",
+                scope=scope,
+                target_reference_eligible=target.reference_eligible,
+                diagnostic_only=not target.reference_eligible,
+            )
+        if (
+            max_candidate_trace_rows is not None
+            and total_trace_rows > max_candidate_trace_rows
+        ):
+            return _empty_result(
+                request,
+                ReferenceSelectionStatus.NO_ELIGIBLE_REFERENCE,
+                reason="candidate_trace_row_limit_exceeded",
+                scope=scope,
+                target_reference_eligible=target.reference_eligible,
+                diagnostic_only=not target.reference_eligible,
+            )
+
     assessments: list[CandidateAssessment] = []
     verified_candidates: list[StoredAttemptInventoryEntry] = []
-    for entry in inventory.attempts:
-        reasons = _candidate_exclusions(
-            entry,
-            target=target,
-            target_signature=target_signature,
-            capture_reasons=capture_reasons,
-        )
+    for entry, reasons in pre_assessments:
         candidate_trace: StoredAttemptTrace | None = None
         if not reasons:
             try:
@@ -216,7 +368,22 @@ def select_reference(
                     database_path,
                     entry.attempt_key,
                     columns=_TRACE_IDENTITY_COLUMNS,
+                    **(
+                        {
+                            "max_trace_bytes": max_candidate_trace_bytes,
+                            "max_trace_rows": max_candidate_trace_rows,
+                            "max_context_bytes": max_candidate_context_bytes,
+                            "max_context_segments": max_candidate_context_segments,
+                        }
+                        if max_candidate_trace_bytes is not None
+                        or max_candidate_trace_rows is not None
+                        or max_candidate_context_bytes is not None
+                        or max_candidate_context_segments is not None
+                        else {}
+                    ),
                 )
+            except AttemptTraceReadLimitError as exc:
+                reasons.append(f"trace_{exc.limit_kind}_limit_exceeded")
             except (OSError, ValueError):
                 reasons.append("trace_missing_or_corrupt")
             if candidate_trace is None and not reasons:
@@ -355,11 +522,17 @@ def _capture_loss_reasons(
     if "recorded" not in completion or "received" not in completion:
         reasons.append("capture_packet_counts_unavailable")
     else:
-        try:
-            if int(completion["recorded"]) != int(completion["received"]):
-                reasons.append("recording_count_mismatch")
-        except (TypeError, ValueError):
+        recorded = completion["recorded"]
+        received = completion["received"]
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+            for value in (recorded, received)
+        ):
             reasons.append("capture_packet_counts_invalid")
+        elif recorded != received:
+            reasons.append("recording_count_mismatch")
     for field, reason in _CAPTURE_LOSS_FIELDS.items():
         if field not in completion:
             reasons.append("capture_loss_metrics_unavailable")

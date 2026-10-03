@@ -91,6 +91,7 @@ def _entry(
     context: dict[str, object] | None = None,
     superseded: bool | None = False,
     lifecycle_assessed: bool = True,
+    trace_size_bytes: int | None = 100,
 ) -> StoredAttemptInventoryEntry:
     return StoredAttemptInventoryEntry(
         attempt_key=f"run:42:0:{attempt_number}",
@@ -114,6 +115,7 @@ def _entry(
         context_segments=((100, _CONTEXT if context is None else context),),
         superseded=superseded,
         lifecycle_assessed=lifecycle_assessed,
+        trace_size_bytes=trace_size_bytes,
     )
 
 
@@ -179,6 +181,62 @@ def test_session_best_selects_fastest_prior_candidate_and_records_exclusions(mon
     assert result.candidates[0].exclusion_reasons[0] == "game_invalid"
     assert result.candidates[3].exclusion_reasons == ("target_attempt",)
     assert result.candidates[4].exclusion_reasons == ("recorded_after_target",)
+
+
+def test_bounded_selection_abstains_before_scanning_prior_candidate_traces(monkeypatch) -> None:
+    target = _trace(3)
+    attempts = (_entry(1), _entry(2), _entry(3))
+    trace_reads: list[str] = []
+
+    def load_trace(_db, key, **_):
+        trace_reads.append(key)
+        return target if key == target.attempt_key else _trace(1)
+
+    monkeypatch.setattr(selection_module, "load_attempt_trace", load_trace)
+    monkeypatch.setattr(
+        selection_module,
+        "load_reference_inventory",
+        lambda _db, _key, **_: _inventory(3, attempts),
+    )
+
+    result = selection_module.select_reference(
+        "telemetry.sqlite3",
+        ReferenceRequest(target.attempt_key),
+        max_prior_candidate_assessments=1,
+    )
+
+    assert result.status is ReferenceSelectionStatus.NO_ELIGIBLE_REFERENCE
+    assert result.reasons == ("candidate_assessment_limit_exceeded",)
+    assert trace_reads == [target.attempt_key]
+
+
+def test_bounded_selection_enforces_aggregate_trace_byte_budget(monkeypatch) -> None:
+    target = _trace(2)
+    attempts = (_entry(1, trace_size_bytes=100), _entry(2))
+    trace_reads: list[str] = []
+
+    def load_trace(_db, key, **_):
+        trace_reads.append(key)
+        return target if key == target.attempt_key else _trace(1)
+
+    monkeypatch.setattr(selection_module, "load_attempt_trace", load_trace)
+    monkeypatch.setattr(
+        selection_module,
+        "load_reference_inventory",
+        lambda _db, _key, **_: _inventory(2, attempts),
+    )
+
+    result = selection_module.select_reference(
+        "telemetry.sqlite3",
+        ReferenceRequest(target.attempt_key),
+        max_prior_candidate_assessments=8,
+        max_candidate_trace_bytes=99,
+        max_candidate_trace_rows=100,
+    )
+
+    assert result.status is ReferenceSelectionStatus.NO_ELIGIBLE_REFERENCE
+    assert result.reasons == ("candidate_trace_byte_limit_exceeded",)
+    assert trace_reads == [target.attempt_key]
 
 
 def test_session_best_ties_use_earlier_attempt_number(monkeypatch) -> None:
@@ -257,6 +315,37 @@ def test_session_best_abstains_when_capture_reports_recording_loss(monkeypatch) 
     assert result.selected_reference is None
     assert result.reasons == ("capture_queue_drops",)
     assert result.candidates[0].exclusion_reasons == ("capture_queue_drops",)
+
+
+def test_session_best_rejects_non_integer_capture_packet_counts(monkeypatch) -> None:
+    target = _trace(2)
+    attempts = (_entry(1), _entry(2))
+    malformed_pairs = (
+        (True, 1),
+        (100.0, 100.0),
+        ("100", "100"),
+        (-1, -1),
+    )
+    monkeypatch.setattr(
+        selection_module,
+        "load_attempt_trace",
+        lambda _db, key, **_: target if key == target.attempt_key else _trace(1),
+    )
+
+    for received, recorded in malformed_pairs:
+        completion = {**_CLEAN_CAPTURE, "received": received, "recorded": recorded}
+        monkeypatch.setattr(
+            selection_module,
+            "load_reference_inventory",
+            lambda _db, _key, _completion=completion: _inventory(
+                2, attempts, completion=_completion
+            ),
+        )
+        result = selection_module.select_reference(
+            "telemetry.sqlite3", ReferenceRequest(target.attempt_key)
+        )
+        assert result.status is ReferenceSelectionStatus.NO_ELIGIBLE_REFERENCE
+        assert "capture_packet_counts_invalid" in result.reasons
 
 
 def test_session_best_abstains_when_import_assembler_reports_loss(monkeypatch) -> None:

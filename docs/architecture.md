@@ -435,6 +435,20 @@ Version corner analysis as `distance-regions-v2`, keep source attempt/run/trace-
 
 Acceptance covers evaluator parity between numeric windows and regions; supported clean intervals; unsupported boundaries, interior gaps, clock gaps/rewinds, unsupported tails, and sub-grid missing brackets; float32 timing tolerance and half-open bounds; resource-limit rejection before partial region output; and draft Melbourne output remaining diagnostic. A read-only replay of recovered Shanghai Practice 3/2 over `[500 m, 1,200 m)` retained `unsupported_interior`, a null delta change, and target/reference/shared coverage of 0.957143/0.941629/0.906007, exactly matching the pre-refactor calculation. Race and unknown mode policy remains unchanged.
 
+## Decision 0032: rank only gated recorded corner-time differences
+
+**Status:** accepted
+
+**Date:** 2026-10-04
+
+Add a pure, versioned `corner_loss_candidates` measurement builder over D0031 corner interval evidence. Return at most three positive target-minus-reference interval differences that remain nonzero at the existing one-millisecond display precision, with half-open region bounds, target/reference attempt/run/checksum identity, registered model revision and approval provenance, the session-best policy version and selected identity, and the connected-support coverage/continuity evidence. Sort by unrounded difference descending, then start distance and stable region identifier. Expose bounded region counts, exclusion reasons, and omitted counts. Use “recorded time differences” (or “largest supported recorded time differences” when coverage is incomplete); never present these as recoverable time, diagnoses, or advice. Keep `coaching_eligible` false.
+
+Enable ranking only for completed, game-valid, positive-time, observed-start, non-pit, lifecycle-assessed, nonsuperseded Time Trial targets with supported stable conditions; clean finalized capture and replay evidence; an exact match between the explicit comparison reference and the full server-generated session-best assessment, including scope and trace checksum; and a registered, validated region-model revision with a separate explicit approval bound to its exact content fingerprint. `TrackModel.validation_status` alone is not approval. Require connected D0031 interval evidence and reject complex-bearing or overlapping models for this version. Unsupported regions are excluded, never treated as zero. Practice, Qualifying, Race, unknown modes, draft/unregistered/unapproved models, invalid attempts, incomplete/unknown capture, reference mismatch, unsupported intervals, diagnosis, and coaching abstain with bounded reasons. Before scanning candidate traces, bound the inventory to the target and at most 256 prior attempts, context to 1,024 segments and 4 MiB in aggregate, and eligible prior traces to the existing 64 MiB/100,000-row source limits in aggregate; exceeding any cap abstains.
+
+Keep the existing comparisons and deterministic comparison brief unchanged. Expose the same bounded object through the comparison service, CLI, API, and dashboard; do not add persistence, automatic processing, or raw trace reads beyond the bounded session-best selector. A candidate ranking reports measured interval differences and does not establish cause, recoverability, or permission to coach. Synthetic approved-model evidence validates positive behavior; current draft/invalid or incomplete captures validate abstention. No real region model is promoted by this decision.
+
+Acceptance covers a synthetic clean approved Time Trial ranking; stable ties; nonpositive and sub-millisecond values; partial/unsupported intervals; overlapping and complex regions; mismatched selected reference, source identity, checksum, scope, or model approval; draft/unregistered models; invalid, incomplete, unknown, superseded, unassessed, or non-Time-Trial attempts; selector attempt-count bounds; stable omitted/excluded counts; and unchanged comparison briefs. Melbourne's draft model and the recovered incomplete Shanghai Practice capture must not produce candidates.
+
 ## Data flow
 
 ```text
