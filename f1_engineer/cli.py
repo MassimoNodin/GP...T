@@ -29,6 +29,7 @@ from .analysis.reference_selection import (
 from .analysis.quality import inspect_attempt_quality
 from .analysis.region_service import load_attempt_region_report
 from .analysis.trajectory_service import load_observed_trajectory
+from .analysis.trajectory_projection import project_attempt_trajectory
 from .analysis.trajectory_comparison_service import compare_observed_trajectories
 from .analysis.trace_chart_service import load_attempt_trace_chart_preview
 from .storage.importer import (
@@ -449,6 +450,35 @@ def _trajectory(args: argparse.Namespace) -> int:
     return 0
 
 
+def _project_trajectory(args: argparse.Namespace) -> int:
+    document = project_attempt_trajectory(
+        args.database,
+        args.attempt_key,
+        args.geometry,
+        declared_layout_id=args.layout_id,
+    )
+    output = Path(args.output)
+    if output.exists() and not args.overwrite:
+        print(f"error: output already exists: {output} (use --overwrite)", file=sys.stderr)
+        return 2
+    try:
+        _write_json_document(output, document, overwrite=args.overwrite)
+    except FileExistsError:
+        print(f"error: output already exists: {output} (use --overwrite)", file=sys.stderr)
+        return 2
+    _json_line(
+        {
+            "output": str(output),
+            "artifact_kind": document["artifact_kind"],
+            "status": document["status"],
+            "diagnostic_only": document["diagnostic_only"],
+            "coaching_eligible": document["coaching_eligible"],
+            "coverage": document.get("coverage"),
+        }
+    )
+    return 0
+
+
 def _compare_trajectories(args: argparse.Namespace) -> int:
     document = compare_observed_trajectories(
         args.database,
@@ -717,6 +747,32 @@ def build_parser() -> argparse.ArgumentParser:
     trajectory.add_argument("--output", required=True, help="destination versioned JSON path")
     trajectory.add_argument("--overwrite", action="store_true", help="replace an existing output file")
     trajectory.set_defaults(handler=_trajectory)
+
+    project_trajectory = commands.add_parser(
+        "project-trajectory",
+        help="export a bounded diagnostic projection against an explicit geometry artifact",
+    )
+    project_trajectory.add_argument(
+        "attempt_key", help="attempt key printed by the laps command"
+    )
+    project_trajectory.add_argument(
+        "--database", default=str(DEFAULT_DATABASE), help="SQLite database path"
+    )
+    project_trajectory.add_argument(
+        "--geometry", required=True, help="local versioned geometry JSON artifact"
+    )
+    project_trajectory.add_argument(
+        "--layout-id",
+        required=True,
+        help="caller-declared layout assertion; must match the geometry artifact",
+    )
+    project_trajectory.add_argument(
+        "--output", required=True, help="destination versioned JSON path"
+    )
+    project_trajectory.add_argument(
+        "--overwrite", action="store_true", help="replace an existing output file"
+    )
+    project_trajectory.set_defaults(handler=_project_trajectory)
 
     compare_trajectories = commands.add_parser(
         "compare-trajectories",

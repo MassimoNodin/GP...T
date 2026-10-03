@@ -6,6 +6,8 @@ from .geometry import (
     GeometrySegment,
     GeometryValidationEvidence,
     project_sample,
+    UnsupportedGeometryInterval,
+    unsupported_projection_intervals,
 )
 from .geometry_loader import load_geometry_model
 
@@ -15,8 +17,10 @@ __all__ = [
     "GeometryModel",
     "GeometrySegment",
     "GeometryValidationEvidence",
+    "UnsupportedGeometryInterval",
     "TrackModel",
     "load_geometry_model",
     "load_track_model",
     "project_sample",
+    "unsupported_projection_intervals",
 ]

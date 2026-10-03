@@ -162,6 +162,41 @@ class GeometryModel:
             raise ValueError("geometry artifact checksum must be a lowercase SHA-256")
 
 
+@dataclass(frozen=True, slots=True)
+class UnsupportedGeometryInterval:
+    segment_id: str
+    start_distance_m: float
+    end_distance_m: float
+    reason: str
+
+
+def unsupported_projection_intervals(
+    model: GeometryModel,
+) -> tuple[UnsupportedGeometryInterval, ...]:
+    """Return anchor brackets the point kernel cannot project through."""
+    unsupported: list[UnsupportedGeometryInterval] = []
+    for segment in model.segments:
+        for lower, upper in zip(segment.anchors, segment.anchors[1:]):
+            tangent_dx = upper.x_m - lower.x_m
+            tangent_dz = upper.z_m - lower.z_m
+            tangent_length = math.hypot(tangent_dx, tangent_dz)
+            if not all(math.isfinite(value) for value in (tangent_dx, tangent_dz, tangent_length)):
+                reason = "non_finite_geometry"
+            elif tangent_length <= _TANGENT_EPSILON_M:
+                reason = "degenerate_horizontal_tangent"
+            else:
+                continue
+            unsupported.append(
+                UnsupportedGeometryInterval(
+                    segment_id=segment.identifier,
+                    start_distance_m=lower.distance_m,
+                    end_distance_m=upper.distance_m,
+                    reason=reason,
+                )
+            )
+    return tuple(unsupported)
+
+
 def project_sample(
     model: GeometryModel,
     *,

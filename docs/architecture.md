@@ -489,6 +489,20 @@ An unsupported probe retains the paired path overlay and returns per-side reason
 
 Acceptance covers exact samples, known interpolation, endpoint distinction, shared bracket endpoints, duplicate/repeated distances, overlapping segments, discontinuities, frame wrap, missing Motion, provenance mismatch and source limits. Melbourne invalid attempts and Shanghai Practice 3/2 can validate observed probes and explicit support gaps; preview thinning must not change the result. No new capture is required. Clean eligible Time Trial evidence and independently approved region geometry remain prerequisites for positive coaching acceptance.
 
+## Decision 0036: project stored trajectories against explicit geometry diagnostically
+
+**Status:** accepted
+
+**Date:** 2026-10-04
+
+Connect one checksummed stored attempt to one explicitly selected versioned geometry artifact through a read-only service and CLI export. Keep the artifact separate from distance-region models. Project original source positions before rendering reduction, retain frame/time/game-distance/XYZ anchors on rendered observations, preserve source discontinuities and unsupported geometry spans as separate runs, and report full-source support and reason counts. Bound trace reads to 64 MiB, 100,000 rows, 1,024 context segments and 4 MiB of context; bound geometry to its existing file, segment and anchor limits; reserve no more than 4 million estimated segment/anchor lookups; and emit at most 2,000 points in 256 continuous runs. Reject excess fragmentation instead of joining paths.
+
+The canonical session context does not carry a layout ID. Require the caller to declare it and verify that declaration against the geometry artifact, labelling the source `caller_declared`. Require known, stable packet format, track ID and lap length; accept the established 1 m length tolerance and do not rescale distances. Missing or changing identity, unsupported source spans and geometry gaps make affected evidence unavailable. Preflight every bounded geometry anchor bracket; if any has a degenerate or non-finite horizontal tangent, make the artifact unavailable before emitting a path, even if source samples skip that interval. Include attempt/run/trace checksum/schema and geometry checksum/revision/role/provenance plus independent geometry and calibration review records.
+
+This export is diagnostic for Time Trial, Practice, Qualifying, Race, invalid, partial and abandoned attempts. Describe signed values as residuals against the selected artifact; an observed reference path does not become a reviewed centreline. Set `coaching_eligible` and physical verification to false for every result. Defer paired projected comparison, apex detection, diagnosis, reference-policy changes, API/dashboard geometry selection, and geometry activation until their independent evidence gates are met. No storage migration is needed.
+
+Acceptance uses synthetic straight and curved artifacts through persisted checksummed traces, including known signed residuals, nonzero origin, endpoints, unsupported seams/gaps, skipped unusable anchor brackets, frame wrap, missing Motion and legacy schemas, unstable/mismatched context, layout assertion mismatch, source/work/output limits, continuity-preserving thinning and atomic CLI publication. Existing Melbourne and Shanghai data validate only their recorded diagnostic or unavailable cases; no real geometry is promoted. Physical projection validation still requires independently reviewed geometry and game-distance calibration, while clean eligible Time Trial evidence remains a separate coaching gate.
+
 ## Data flow
 
 ```text
@@ -529,6 +543,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - An observed-trajectory export preserves source attempt/run/checksum/context, units, frame/distance/time anchors, quality, and discontinuity segments. It is a diagnostic driven path and is never identified as a track centreline. The dashboard API reuses this analysis and returns a source-limited, point-bounded preview without changing source coverage or continuity evidence.
 - Selected draft distance regions can be linked to a source-bounded position summary only when region and trajectory reports match on attempt, run, session, player, trace checksum and schema. Full-source position counts are separate from retained preview points; anchors are bounded and continuity fragments remain separate.
 - Geometry artifacts and projection use a separate schema from distance-region `TrackModel`. Projection retains normalized game lap distance, explicit supported segments and independent geometry/calibration evidence; observed paths remain diagnostic and no real centreline is currently activated.
+- `project-trajectory` projects one checksummed attempt against a caller-selected geometry artifact for bounded diagnostics. It preserves source discontinuities and unsupported spans, and all modes remain ineligible for coaching through this command.
 - Standalone attempt trace previews read the checksummed speed/control channels independently of comparison and reference eligibility. Session time remains the plot coordinate; frame/time gaps and missing channel values split runs, and deterministic point/run caps preserve discontinuities and report omitted data.
 - Replay timing is based only on the monotonic intervals stored in the capture; maximum-speed replay skips sleeps.
 - The capture format has a magic value and schema version. Unknown packet IDs remain inspectable.
