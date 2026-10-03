@@ -263,6 +263,96 @@ export interface AttemptTrajectoryPreview {
   };
 }
 
+export type AttemptTraceChannelKey = "speed" | "throttle" | "brake" | "steering";
+
+export interface AttemptTraceChartPoint {
+  frame_identifier: number;
+  session_time_s: number;
+  lap_distance_m: number | null;
+  value: number;
+}
+
+export interface AttemptTraceChannelPreview {
+  label: string;
+  source_field: string;
+  source_unit: string;
+  unit: string;
+  source_sample_count: number;
+  observed_sample_count: number;
+  unsupported_sample_count: number;
+  missing_value_sample_count: number;
+  invalid_anchor_sample_count: number;
+  observed_value_range: [number, number] | null;
+  source_run_count: number;
+  rendered_run_count: number;
+  omitted_run_count: number;
+  rendered_point_count: number;
+  omitted_point_count: number;
+  thinned_sample_count: number;
+  segments: Array<{
+    run_index: number;
+    break_before_reasons: string[];
+    source_sample_count: number;
+    rendered_point_count: number;
+    start_anchor: Omit<AttemptTraceChartPoint, "value">;
+    end_anchor: Omit<AttemptTraceChartPoint, "value">;
+    points: AttemptTraceChartPoint[];
+  }>;
+}
+
+export interface AttemptTraceChartReport {
+  report_version: 1;
+  artifact_kind: "single_attempt_player_trace_preview";
+  diagnostic_only: true;
+  status: "observed" | "no_chartable_samples";
+  source: {
+    attempt_key: string;
+    run_id: string;
+    session_uid: string;
+    car_index: number;
+    attempt_number: number;
+    disposition: string;
+    lap_time_ms: number | null;
+    game_valid: boolean | null;
+    reference_eligible: boolean;
+    start_observed: boolean;
+    pit_encountered: boolean;
+    exclusion_reasons: string[];
+    trace_sha256: string;
+    trace_schema_version: number;
+    trace_row_count: number;
+    trace_checksum_verified: boolean;
+  };
+  context: {
+    segments: Array<{
+      from_frame_identifier: number;
+      game_mode: string | null;
+      session_type: string | null;
+      track_name: string | null;
+    }>;
+    game_modes: string[];
+    session_types: string[];
+    track_names: string[];
+  };
+  channels: Record<AttemptTraceChannelKey, AttemptTraceChannelPreview>;
+  preview: {
+    point_limit_per_channel: number;
+    run_limit_per_channel: number;
+    source_row_limit: number;
+    source_byte_limit: number;
+    source_context_segment_limit: number;
+    source_context_byte_limit: number;
+    thinning_method: string;
+  };
+  continuity_policy: {
+    frame_delta: string;
+    maximum_session_time_gap_s: number;
+    session_time_tolerance: string;
+    missing_channel_values: string;
+    coordinate: string;
+  };
+}
+
 export interface AttemptQualityReport {
   report_version: number;
   analysis_version: string;

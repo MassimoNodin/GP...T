@@ -4,7 +4,9 @@ import argparse
 import asyncio
 import json
 import math
+import os
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -26,6 +28,7 @@ from .analysis.reference_selection import (
 from .analysis.quality import inspect_attempt_quality
 from .analysis.region_service import load_attempt_region_report
 from .analysis.trajectory_service import load_observed_trajectory
+from .analysis.trace_chart_service import load_attempt_trace_chart_preview
 from .storage.importer import (
     DEFAULT_DATABASE,
     get_lap,
@@ -40,6 +43,32 @@ from .tracks.registry import resolve_track_model
 
 def _json_line(value: dict[str, Any]) -> None:
     print(json.dumps(value, separators=(",", ":"), sort_keys=True))
+
+
+def _write_json_document(output: Path, document: dict[str, Any], *, overwrite: bool) -> None:
+    """Atomically publish JSON without clobbering an unapproved destination."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output.name}.", suffix=".tmp", dir=output.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(json.dumps(document, separators=(",", ":"), sort_keys=True))
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        if overwrite:
+            os.replace(temporary, output)
+        else:
+            # A same-directory hard link atomically fails if the destination exists.
+            os.link(temporary, output)
+            temporary.unlink()
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _packet_summary(packet: DecodedPacket) -> dict[str, Any]:
@@ -381,13 +410,11 @@ def _trajectory(args: argparse.Namespace) -> int:
     if output.exists() and not args.overwrite:
         print(f"error: output already exists: {output} (use --overwrite)", file=sys.stderr)
         return 2
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(output.name + ".tmp")
-    temporary.write_text(
-        json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    temporary.replace(output)
+    try:
+        _write_json_document(output, document, overwrite=args.overwrite)
+    except FileExistsError:
+        print(f"error: output already exists: {output} (use --overwrite)", file=sys.stderr)
+        return 2
     _json_line(
         {
             "output": str(output),
@@ -395,6 +422,39 @@ def _trajectory(args: argparse.Namespace) -> int:
             "artifact_kind": document["artifact_kind"],
             "diagnostic_only": document["diagnostic_only"],
             "coverage": document["coverage"],
+        }
+    )
+    return 0
+
+
+def _traces(args: argparse.Namespace) -> int:
+    document = load_attempt_trace_chart_preview(args.database, args.attempt_key)
+    if document is None:
+        print("error: lap attempt not found or its trace is not ready", file=sys.stderr)
+        return 2
+    output = Path(args.output)
+    if output.exists() and not args.overwrite:
+        print(f"error: output already exists: {output} (use --overwrite)", file=sys.stderr)
+        return 2
+    try:
+        _write_json_document(output, document, overwrite=args.overwrite)
+    except FileExistsError:
+        print(f"error: output already exists: {output} (use --overwrite)", file=sys.stderr)
+        return 2
+    _json_line(
+        {
+            "output": str(output),
+            "report_version": document["report_version"],
+            "artifact_kind": document["artifact_kind"],
+            "diagnostic_only": document["diagnostic_only"],
+            "channels": {
+                identifier: {
+                    "observed_sample_count": channel["observed_sample_count"],
+                    "rendered_point_count": channel["rendered_point_count"],
+                    "source_run_count": channel["source_run_count"],
+                }
+                for identifier, channel in document["channels"].items()
+            },
         }
     )
     return 0
@@ -529,6 +589,15 @@ def build_parser() -> argparse.ArgumentParser:
     trajectory.add_argument("--output", required=True, help="destination versioned JSON path")
     trajectory.add_argument("--overwrite", action="store_true", help="replace an existing output file")
     trajectory.set_defaults(handler=_trajectory)
+
+    traces = commands.add_parser(
+        "traces", help="export bounded standalone speed and control traces for an attempt"
+    )
+    traces.add_argument("attempt_key", help="attempt key printed by the laps command")
+    traces.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
+    traces.add_argument("--output", required=True, help="destination versioned JSON path")
+    traces.add_argument("--overwrite", action="store_true", help="replace an existing output file")
+    traces.set_defaults(handler=_traces)
 
     regions = commands.add_parser(
         "regions", help="inspect one attempt against a packaged diagnostic distance-region model"

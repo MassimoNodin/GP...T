@@ -5,6 +5,7 @@ import {
   CornerRegion,
   AttemptTrajectoryPreview,
   AttemptQualityReport,
+  AttemptTraceChartReport,
   LapRecord,
   RegionEvent,
   ReferenceSelection,
@@ -16,6 +17,7 @@ import {
 import RecordingInbox from "./RecordingInbox";
 import AttemptQualityPanel from "./AttemptQualityPanel";
 import DiagnosticEvidencePanels from "./DiagnosticEvidencePanels";
+import AttemptTraceCharts from "./AttemptTraceCharts";
 import type { ImportJobRecord, RecordingSourceRecord } from "@/lib/api";
 
 type SearchParams = {
@@ -131,6 +133,11 @@ export default async function Home({
         `/api/v1/attempts/${encodeURIComponent(target.attempt_key)}/quality`,
       )
     : Promise.resolve(null);
+  const attemptTraceChartRequest = target
+    ? requestApi<AttemptTraceChartReport>(
+        `/api/v1/attempts/${encodeURIComponent(target.attempt_key)}/traces`,
+      )
+    : Promise.resolve(null);
   const trajectoryRequest = target
     ? requestApi<AttemptTrajectoryPreview>(
         `/api/v1/attempts/${encodeURIComponent(target.attempt_key)}/trajectory`,
@@ -150,10 +157,11 @@ export default async function Home({
           `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, manualReference.attempt_key, selectedModel)}`,
         )
       : Promise.resolve(null);
-  const [selectionResponse, manualComparisonResponse, qualityResponse, trajectoryResponse, regionResponse] = await Promise.all([
+  const [selectionResponse, manualComparisonResponse, qualityResponse, traceChartResponse, trajectoryResponse, regionResponse] = await Promise.all([
     selectionRequest,
     manualComparisonRequest,
     attemptQualityRequest,
+    attemptTraceChartRequest,
     trajectoryRequest,
     regionRequest,
   ]);
@@ -497,6 +505,16 @@ export default async function Home({
                     unavailableReason={
                       qualityResponse?.status === "unavailable"
                         ? qualityResponse.reason
+                        : null
+                    }
+                  />
+                ) : null}
+                {target ? (
+                  <AttemptTraceCharts
+                    report={traceChartResponse?.status === "ok" ? traceChartResponse.data : null}
+                    unavailableReason={
+                      traceChartResponse?.status === "unavailable"
+                        ? traceChartResponse.reason
                         : null
                     }
                   />

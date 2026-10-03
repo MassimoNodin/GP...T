@@ -66,6 +66,8 @@ Use `regions ATTEMPT_KEY --track-model-id melbourne-f1-25-time-trial-draft-v1 --
 
 On the dashboard, a selected draft distance region can be highlighted on the same attempt's observed world-space path. Linking checks the attempt, run, session, player, trace checksum, and schema. Full-source position counts and frame/distance/time/XYZ anchors remain distinct from the thinner plotted preview, and no path is joined across recorded discontinuities. This inspection remains diagnostic; it does not validate track geometry or a centreline.
 
+Every selected attempt also exposes standalone speed, throttle, brake, and steering traces on recorded session time, regardless of game mode or comparison eligibility. Missing channel values and frame/time discontinuities split the plotted runs. Export the same bounded versioned preview with `f1-engineer traces ATTEMPT_KEY --output traces.json`; the output preserves source anchors and reports any point or run reduction.
+
 Install the package to use the `f1-engineer` command:
 
 ```powershell

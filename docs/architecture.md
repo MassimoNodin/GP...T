@@ -295,6 +295,18 @@ Keep the existing stable compatible Time Trial model gate for regions. Race and 
 
 Acceptance uses the available Melbourne capture: both invalid completed attempts can link their draft windows to same-trace positions, and the partial attempt exposes only the positions it recorded. Synthetic checks cover half-open bounds, repeated distances, source discontinuities, singleton segments, preview thinning, provenance matching, schema-v1 Motion unavailability and fragment caps. This feature is diagnostic only and does not validate corner boundaries, establish a centreline, infer a driver apex, or enable reference selection. A clean complete capture remains required for positive reference validation. Reliable geometry requires independently justified track boundaries and coordinate/distance alignment evidence; averaging clean driven laps alone yields an average driven path, not a physical circuit centreline.
 
+## Decision 0022: expose standalone player control traces
+
+**Status:** accepted
+
+**Date:** 2026-10-03
+
+Expose a bounded single-attempt trace inspector for speed, throttle, brake and steering without requiring a comparison, eligible reference, or calibrated track model. This advances the basic telemetry-chart milestone and makes practice, qualifying, race and unknown-mode attempts useful for inspecting raw observed driving behavior.
+
+Use stored session time as the chart coordinate and preserve original frame, time and distance anchors. Keep sample order; split output runs at frame/time discontinuities and missing channel values; never join gaps while thinning. Deterministically bound points and runs, preserve their endpoints, and report source counts and preview reduction separately. Reuse checksummed snapshot loading and existing source row, byte and context limits. Support trace schemas v1/v2/v3 and completed, invalid, partial and abandoned attempts.
+
+Keep outputs diagnostic-only and mode labels sourced from persisted context. Charts make no claim that attempts are comparable and calculate no loss, diagnosis, geometry or coaching. Add no trace migration, importer identity change or reference-policy expansion. Validate with existing captures and synthetic chronology, missing-channel, frame-wrap and cap cases; finalize the active Shanghai capture before using it as immutable acceptance evidence.
+
 ## Data flow
 
 ```text
@@ -329,6 +341,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - Completed and partial attempts, context history, participant snapshots, and canonical samples are persisted to SQLite and checksummed Parquet traces. New traces use schema v3; readers preserve compatibility with schemas v1 and v2 and expose unavailable Motion or Car Status fields as null. Imports stream bounded row groups and publish them atomically.
 - An observed-trajectory export preserves source attempt/run/checksum/context, units, frame/distance/time anchors, quality, and discontinuity segments. It is a diagnostic driven path and is never identified as a track centreline. The dashboard API reuses this analysis and returns a source-limited, point-bounded preview without changing source coverage or continuity evidence.
 - Selected draft distance regions can be linked to a source-bounded position summary only when region and trajectory reports match on attempt, run, session, player, trace checksum and schema. Full-source position counts are separate from retained preview points; anchors are bounded and continuity fragments remain separate.
+- Standalone attempt trace previews read the checksummed speed/control channels independently of comparison and reference eligibility. Session time remains the plot coordinate; frame/time gaps and missing channel values split runs, and deterministic point/run caps preserve discontinuities and report omitted data.
 - Replay timing is based only on the monotonic intervals stored in the capture; maximum-speed replay skips sleeps.
 - The capture format has a magic value and schema version. Unknown packet IDs remain inspectable.
 - App-managed recording uses a server-generated staging file and the shared raw-first recorder. Stop finalizes and fsyncs the footer before no-replacement publication into the configured recordings root; import and recording operations are serialized by the controller.
@@ -339,5 +352,5 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - Remaining packet-body parsers are added from EA's official structure files, with their source and revision recorded. Support is explicit per `(packet_format, packet_id, packet_version)`. Current typed body support covers F1 25 Session, Lap Data, Participants, Car Telemetry, Motion, and Car Status v1 plus 2026 Season Pack Session, Lap Data, Participants, Car Telemetry, Motion, and Car Status v1. Session packet adapters populate canonical gameplay context independently of the wire format.
 - Add canonical traces for additional cars only when validated multi-car capture coverage justifies them. Slower packet families will use freshness windows rather than being required in every frame.
 - Distance comparison, run-scoped Time Trial reference selection, and the read-only local historical explorer are implemented for diagnostics. Standalone region observations support stable Time Trial contexts, including invalid, partial, and abandoned attempts; Race/unknown policy, validated circuit geometry, and actionable coaching remain deferred until their supporting evidence and interfaces are ready.
-- The local dashboard starts and stops mode-independent UDP capture and imports finalized `.f1ecap` files through durable jobs. It exposes a bounded observed world-coordinate path and links selected Time Trial distance regions to matching source positions for diagnostic inspection. Track calibration, line comparison, trajectory coaching, race reference policy, live analysis/coaching, and opponent coverage remain deferred.
+- The local dashboard starts and stops mode-independent UDP capture and imports finalized `.f1ecap` files through durable jobs. It exposes bounded standalone player traces and an observed world-coordinate path, then links selected Time Trial distance regions to matching source positions for diagnostic inspection. Track calibration, line comparison, trajectory coaching, race reference policy, live analysis/coaching, and opponent coverage remain deferred.
 - Voice, LLM, and frontend work remain above deterministic analysis; no LLM is needed to capture or inspect telemetry.

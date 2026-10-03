@@ -130,6 +130,48 @@ def test_attempt_trajectory_api_reports_explicit_unavailable_reason(
     assert response.json()["reason"] == "motion_unavailable_for_trace_schema"
 
 
+def test_attempt_traces_api_returns_mode_agnostic_chart_preview(monkeypatch, tmp_path) -> None:
+    preview = {
+        "report_version": 1,
+        "artifact_kind": "single_attempt_player_trace_preview",
+        "diagnostic_only": True,
+        "source": {"session_uid": "14237356543050158953", "game_valid": False},
+        "context": {"game_modes": ["driver_career_25"], "session_types": ["practice_1"]},
+        "channels": {"speed": {"observed_sample_count": 2, "segments": []}},
+    }
+    monkeypatch.setattr(
+        api_module,
+        "load_attempt_trace_chart_preview",
+        lambda _database, attempt_key: preview if attempt_key == "run:42:0:1" else None,
+    )
+
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/attempts/run%3A42%3A0%3A1/traces",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["data"]["artifact_kind"] == "single_attempt_player_trace_preview"
+    assert response.json()["data"]["source"]["session_uid"] == "14237356543050158953"
+    assert response.json()["data"]["context"]["game_modes"] == ["driver_career_25"]
+
+
+def test_attempt_traces_api_maps_source_limit_to_explicit_unavailable(monkeypatch, tmp_path) -> None:
+    def limited(*_args, **_kwargs):
+        raise api_module.TraceChartUnavailable("trace_chart_source_rows_limit_exceeded")
+
+    monkeypatch.setattr(api_module, "load_attempt_trace_chart_preview", limited)
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/attempts/legacy%3A42%3A0%3A1/traces",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "unavailable"
+    assert response.json()["reason"] == "trace_chart_source_rows_limit_exceeded"
+
+
 def test_attempt_regions_api_resolves_registered_model_and_returns_report(
     monkeypatch, tmp_path
 ) -> None:

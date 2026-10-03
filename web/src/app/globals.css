@@ -685,6 +685,176 @@ h1 span {
   margin-bottom: 14px;
   padding: 18px;
 }
+.attempt-traces {
+  margin-bottom: 14px;
+  padding: 18px;
+}
+.attempt-traces-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.attempt-traces-heading h2 {
+  margin: 7px 0 0;
+  font-size: 17px;
+}
+.trace-chart-badge {
+  flex: none;
+  padding: 5px 7px;
+  border: 1px solid #574733;
+  color: #e2bd84;
+  background: rgba(216, 166, 97, 0.06);
+  font: 8px var(--font-mono);
+  letter-spacing: 0.08em;
+}
+.attempt-traces-description,
+.trace-chart-footnote,
+.trace-chart-exclusions,
+.trace-channel-summary,
+.trace-channel-empty {
+  color: #899693;
+  font-size: 9px;
+  line-height: 1.6;
+}
+.attempt-traces-description {
+  margin: 8px 0 0;
+}
+.trace-chart-provenance {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+.trace-chart-provenance > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #252e2f;
+  background: rgba(9, 12, 13, 0.45);
+}
+.trace-chart-provenance span {
+  color: #7d8987;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.06em;
+}
+.trace-chart-provenance strong {
+  overflow-wrap: anywhere;
+  color: #e1e8e4;
+  font: 10px var(--font-mono);
+}
+.trace-chart-exclusions {
+  margin: 10px 0 0;
+  color: #d2ad78;
+}
+.trace-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.trace-channel {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #293334;
+  background: rgba(8, 11, 12, 0.62);
+}
+.trace-channel-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.trace-channel-heading h3 {
+  margin: 0;
+  color: #e3e9e5;
+  font-size: 11px;
+}
+.trace-channel-heading span {
+  color: #7e8987;
+  font: 8px var(--font-mono);
+  text-align: right;
+}
+.trace-channel-chart {
+  display: block;
+  width: 100%;
+  height: 180px;
+  margin-top: 8px;
+  overflow: visible;
+}
+.trace-chart-background {
+  fill: #090d0e;
+}
+.trace-chart-gridline {
+  stroke: #202a2b;
+  stroke-width: 1;
+}
+.trace-chart-axis {
+  stroke: #566260;
+  stroke-width: 1;
+}
+.trace-chart-axis-text,
+.trace-chart-axis-label {
+  fill: #7b8886;
+  font: 9px var(--font-mono);
+}
+.trace-chart-axis-label {
+  fill: #9ba6a2;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+}
+.trace-channel-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.trace-channel-point {
+  stroke: #0c1011;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.trace-channel-speed .trace-channel-line {
+  stroke: #73c5b1;
+}
+.trace-channel-speed .trace-channel-point {
+  stroke: #73c5b1;
+  fill: #73c5b1;
+}
+.trace-channel-throttle .trace-channel-line {
+  stroke: #87a9e9;
+}
+.trace-channel-throttle .trace-channel-point {
+  stroke: #87a9e9;
+  fill: #87a9e9;
+}
+.trace-channel-brake .trace-channel-line {
+  stroke: #e2957d;
+}
+.trace-channel-brake .trace-channel-point {
+  stroke: #e2957d;
+  fill: #e2957d;
+}
+.trace-channel-steering .trace-channel-line {
+  stroke: #c49bdc;
+}
+.trace-channel-steering .trace-channel-point {
+  stroke: #c49bdc;
+  fill: #c49bdc;
+}
+.trace-channel-summary {
+  min-height: 26px;
+  margin: 2px 0 0;
+  font-size: 8px;
+}
+.trace-channel-empty {
+  margin: 14px 0 4px;
+}
+.trace-chart-footnote {
+  margin: 12px 0 0;
+}
 .observed-trajectory {
   margin-bottom: 14px;
   padding: 18px;
@@ -1885,6 +2055,18 @@ h1 span {
   }
   .attempt-quality {
     padding: 13px;
+  }
+  .attempt-traces {
+    padding: 13px;
+  }
+  .trace-chart-provenance {
+    grid-template-columns: 1fr 1fr;
+  }
+  .trace-chart-grid {
+    grid-template-columns: 1fr;
+  }
+  .trace-channel-chart {
+    height: 170px;
   }
   .observed-trajectory {
     padding: 13px;

@@ -16,6 +16,10 @@ from ..analysis.region_service import RegionReportUnavailable, load_attempt_regi
 from ..analysis.service import compare_attempts
 from ..analysis.trajectory import TrajectoryPreviewUnavailable
 from ..analysis.trajectory_service import load_observed_trajectory_preview
+from ..analysis.trace_chart_service import (
+    TraceChartUnavailable,
+    load_attempt_trace_chart_preview,
+)
 from ..storage.import_jobs import list_recording_sources
 from ..storage.importer import DEFAULT_DATABASE, list_laps, list_sessions
 from ..storage.database import DatabaseSchemaError
@@ -289,6 +293,34 @@ def create_app(
                     if isinstance(exc, OSError)
                     else str(exc)
                 ),
+            )
+        if result is None:
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason="attempt_trace_unavailable",
+            )
+        return APIResponse[dict[str, Any]](
+            data=_stringify_session_uids(result)
+        )
+
+    @app.get(
+        "/api/v1/attempts/{attempt_key}/traces",
+        response_model=APIResponse[dict[str, Any]],
+    )
+    def attempt_traces(attempt_key: str) -> APIResponse[dict[str, Any]]:
+        try:
+            result = load_attempt_trace_chart_preview(
+                configured_database_path, attempt_key
+            )
+        except TraceChartUnavailable as exc:
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason=exc.reason_code,
+            )
+        except (ValueError, OSError):
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason="attempt_trace_unavailable",
             )
         if result is None:
             return APIResponse[dict[str, Any]](
