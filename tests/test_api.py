@@ -391,6 +391,64 @@ def test_compare_api_resolves_explicit_model_id_and_revision(monkeypatch, tmp_pa
     assert response.json()["data"]["corner_analysis"]["diagnostic_only"] is True
 
 
+def test_compare_api_requires_and_forwards_the_selected_comparison_policy(
+    monkeypatch, tmp_path
+) -> None:
+    calls: dict[str, object] = {}
+
+    def compare(*_args, **kwargs):
+        calls.update(kwargs)
+        return {"comparison_policy": kwargs["policy"], "diagnostic_only": True}
+
+    monkeypatch.setattr(api_module, "compare_attempts", compare)
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/compare/laps",
+        params={
+            "target_attempt_key": "run:42:7:3",
+            "reference_attempt_key": "run:42:7:2",
+            "comparison_policy": "practice_qualifying",
+        },
+    )
+
+    assert response.status_code == 200
+    assert calls["policy"] == "practice_qualifying"
+    assert response.json()["data"]["comparison_policy"] == "practice_qualifying"
+
+
+def test_compare_api_rejects_unknown_comparison_policy(tmp_path) -> None:
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/compare/laps",
+        params={
+            "target_attempt_key": "run:42:7:3",
+            "reference_attempt_key": "run:42:7:2",
+            "comparison_policy": "race",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_compare_api_reports_missing_trace_as_unavailable(monkeypatch, tmp_path) -> None:
+    def compare(*_args, **_kwargs):
+        raise FileNotFoundError("trace file disappeared")
+
+    monkeypatch.setattr(api_module, "compare_attempts", compare)
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/compare/laps",
+        params={
+            "target_attempt_key": "run:42:7:3",
+            "reference_attempt_key": "run:42:7:2",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "unavailable"
+    assert response.json()["reason"] == "attempt_trace_unavailable"
+
+
 def test_compare_api_rejects_unknown_or_incomplete_track_model_identity(
     monkeypatch, tmp_path
 ) -> None:

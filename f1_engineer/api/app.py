@@ -603,6 +603,7 @@ def create_app(
     def compare_laps(
         target_attempt_key: str = Query(min_length=1),
         reference_attempt_key: str = Query(min_length=1),
+        comparison_policy: Literal["time_trial", "practice_qualifying"] = "time_trial",
         track_model_id: str | None = Query(default=None, min_length=1),
         track_model_revision: int | None = Query(default=None, ge=1),
     ) -> APIResponse[dict[str, Any]]:
@@ -622,9 +623,15 @@ def create_app(
                 target_attempt_key,
                 reference_attempt_key,
                 track_model=track_model,
+                policy=comparison_policy,
             )
         except DatabaseSchemaError:
             raise
+        except OSError:
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason="attempt_trace_unavailable",
+            )
         except ValueError as exc:
             return APIResponse[dict[str, Any]](
                 status="unavailable",

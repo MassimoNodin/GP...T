@@ -737,6 +737,10 @@ export interface AttemptRegionReport {
 
 export interface Comparison {
   analysis_version: string;
+  comparison_policy: "time_trial" | "practice_qualifying";
+  comparison_policy_version: string;
+  diagnostic_only: boolean;
+  policy_limitations: string[];
   config: { max_bracket_time_s: number; [key: string]: number };
   target: {
     attempt_key: string;
@@ -749,6 +753,10 @@ export interface Comparison {
     lap_time_ms: number | null;
     game_valid: boolean | null;
     [key: string]: unknown;
+  };
+  processing_run_evidence?: {
+    target: ProcessingRunSummary | null;
+    reference: ProcessingRunSummary | null;
   };
   track: { track_id: number; track_name: string; track_length_m: number };
   distance_m: number[];

@@ -28,6 +28,7 @@ type SearchParams = {
   session_key?: string | string[];
   target_attempt_key?: string | string[];
   reference_choice?: string | string[];
+  comparison_policy?: string | string[];
   track_model_key?: string | string[];
   import_job_id?: string | string[];
   import_error?: string | string[];
@@ -54,6 +55,7 @@ export default async function Home({
     session_key: firstParam(rawParams.session_key),
     target_attempt_key: firstParam(rawParams.target_attempt_key),
     reference_choice: firstParam(rawParams.reference_choice),
+    comparison_policy: firstParam(rawParams.comparison_policy),
     track_model_key: firstParam(rawParams.track_model_key),
     import_job_id: firstParam(rawParams.import_job_id),
     import_error: firstParam(rawParams.import_error),
@@ -146,6 +148,10 @@ export default async function Home({
       ? [...sessions, session]
       : sessions;
   const isTimeTrial = session?.context?.session_type === "time_trial";
+  const comparisonPolicy =
+    params.comparison_policy === "practice_qualifying"
+      ? "practice_qualifying"
+      : "time_trial";
   const trackModelCatalogUnavailable =
     !trackModelsResponse || trackModelsResponse.status === "unavailable";
   const lapResponse = session
@@ -167,14 +173,19 @@ export default async function Home({
       : requestedTarget;
   const defaultReference =
     completed.find((lap) => lap.attempt_key !== target?.attempt_key) ?? null;
+  const requestedReferenceChoice = params.reference_choice;
   const referenceChoice =
-    params.reference_choice ?? defaultReference?.attempt_key ?? "session_best";
-  const autoReference = referenceChoice === "session_best";
+    requestedReferenceChoice === "session_best" &&
+    comparisonPolicy === "practice_qualifying"
+      ? defaultReference?.attempt_key ?? ""
+      : (requestedReferenceChoice ?? defaultReference?.attempt_key ?? "session_best");
+  const autoReference =
+    comparisonPolicy === "time_trial" && referenceChoice === "session_best";
 
   const manualReference = autoReference
     ? null
     : (completed.find((lap) => lap.attempt_key === referenceChoice) ?? null);
-  const selectionRequest = target
+  const selectionRequest = target && comparisonPolicy === "time_trial"
     ? requestApi<ReferenceSelection>(
         `/api/v1/references/session-best?${new URLSearchParams({ target_attempt_key: target.attempt_key })}`,
       )
@@ -205,7 +216,7 @@ export default async function Home({
   const manualComparisonRequest =
     target && manualReference
       ? requestApi<Comparison>(
-          `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, manualReference.attempt_key, selectedModel)}`,
+          `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, manualReference.attempt_key, selectedModel, comparisonPolicy)}`,
         )
       : Promise.resolve(null);
   const [selectionResponse, manualComparisonResponse, qualityResponse, traceChartResponse, trajectoryResponse, regionResponse] = await Promise.all([
@@ -227,7 +238,7 @@ export default async function Home({
   const comparisonResponse =
     autoReference && target && referenceKey
       ? await requestApi<Comparison>(
-          `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, referenceKey, selectedModel)}`,
+          `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, referenceKey, selectedModel, "time_trial")}`,
         )
       : manualComparisonResponse;
   const comparison =
@@ -245,16 +256,18 @@ export default async function Home({
   const selectionUnavailable =
     !selectionResponse || selectionResponse.status === "unavailable";
   const selectionState = selection?.status;
-  const policyBadge =
-    selectionState === "selected"
+  const policyBadge = comparisonPolicy === "practice_qualifying"
+    ? "MANUAL ONLY"
+    : selectionState === "selected"
       ? "READY"
       : selectionState === "no_eligible_reference"
         ? "ABSTAINED"
         : selectionState
           ? label(selectionState)
           : "UNAVAILABLE";
-  const policyDescription =
-    selection?.status === "selected" && selection.selected_reference
+  const policyDescription = comparisonPolicy === "practice_qualifying"
+    ? "Choose an explicit same-session reference. Automatic reference selection is only available for Time Trial."
+    : selection?.status === "selected" && selection.selected_reference
       ? `Attempt ${selection.selected_reference.attempt_number} · ${lapTime(Number(selection.selected_reference.lap_time_ms))} · same run, session and driver`
       : selection?.reasons.length
         ? selection.reasons.map(reason).join(" · ")
@@ -282,7 +295,10 @@ export default async function Home({
       ? {
           eyebrow: "REFERENCE UNAVAILABLE",
           title: "The selected reference is not in this recording.",
-          body: "Choose an available completed lap or use automatic session best.",
+          body:
+            comparisonPolicy === "practice_qualifying"
+              ? "Choose an available completed attempt from the same session."
+              : "Choose an available completed lap or use automatic session best.",
         }
       : autoReference && !selectionResponse
         ? {
@@ -352,6 +368,8 @@ export default async function Home({
   const urlFor = (values: Record<string, string>) => {
     const query = new URLSearchParams(values);
     if (selectedModel) query.set("track_model_key", modelKey(selectedModel));
+    if (comparisonPolicy !== "time_trial")
+      query.set("comparison_policy", comparisonPolicy);
     return `/?${query.toString()}`;
   };
 
@@ -685,14 +703,30 @@ export default async function Home({
                       </select>
                     </label>
                     <label>
+                      <span>COMPARISON POLICY</span>
+                      <select
+                        name="comparison_policy"
+                        defaultValue={comparisonPolicy}
+                      >
+                        <option value="time_trial">
+                          Time Trial compatible
+                        </option>
+                        <option value="practice_qualifying">
+                          Practice / qualifying diagnostic
+                        </option>
+                      </select>
+                    </label>
+                    <label>
                       <span>REFERENCE</span>
                       <select
                         name="reference_choice"
                         defaultValue={referenceChoice}
                       >
-                        <option value="session_best">
-                          Automatic session best
-                        </option>
+                        {comparisonPolicy === "time_trial" ? (
+                          <option value="session_best">
+                            Automatic session best
+                          </option>
+                        ) : null}
                         {completed
                           .filter(
                             (lap) => lap.attempt_key !== target?.attempt_key,
@@ -760,6 +794,13 @@ export default async function Home({
                       regions to this comparison.
                     </p>
                   )}
+                  {comparisonPolicy === "practice_qualifying" ? (
+                    <p className="model-note">
+                      Manual practice and qualifying comparisons are diagnostic
+                      only. Fuel, tyres, traffic, and cooldown intent are not
+                      controlled; Race comparisons remain unsupported.
+                    </p>
+                  ) : null}
                   {target?.disposition !== "completed" && target ? (
                     <div className="diagnostic-banner">
                       <b>i</b>
@@ -767,6 +808,15 @@ export default async function Home({
                         {label(target.disposition)} attempt · comparison
                         requires a completed lap. The selected attempt is
                         preserved.
+                      </span>
+                    </div>
+                  ) : comparisonPolicy === "practice_qualifying" ? (
+                    <div className="diagnostic-banner">
+                      <b>i</b>
+                      <span>
+                        Diagnostic comparison only · attempts must come from
+                        the same run, session, and player, with a clean start
+                        and no pit encounter.
                       </span>
                     </div>
                   ) : target?.game_valid === false ||
@@ -785,9 +835,15 @@ export default async function Home({
                 <section className="panel reference-panel">
                   <div className="reference-icon">PB</div>
                   <div className="reference-copy">
-                    <div className="eyebrow">AUTOMATIC REFERENCE POLICY</div>
+                    <div className="eyebrow">
+                      {comparisonPolicy === "practice_qualifying"
+                        ? "REFERENCE POLICY"
+                        : "AUTOMATIC REFERENCE POLICY"}
+                    </div>
                     <h3>
-                      {selection?.status === "selected"
+                      {comparisonPolicy === "practice_qualifying"
+                        ? "Manual reference required"
+                        : selection?.status === "selected"
                         ? "Session best identified"
                         : selection
                           ? label(selection.status)
@@ -798,7 +854,7 @@ export default async function Home({
                     <p>{policyDescription}</p>
                   </div>
                   <span
-                    className={`policy-state ${selection?.status === "selected" ? "policy-ready" : selection?.status === "no_eligible_reference" ? "policy-abstain" : "policy-unavailable"}`}
+                    className={`policy-state ${comparisonPolicy === "practice_qualifying" ? "policy-manual" : selection?.status === "selected" ? "policy-ready" : selection?.status === "no_eligible_reference" ? "policy-abstain" : "policy-unavailable"}`}
                   >
                     {policyBadge}
                   </span>
@@ -893,6 +949,18 @@ export default async function Home({
                         tone="neutral"
                       />
                     </section>
+                    <ComparisonRunEvidence
+                      target={comparison.processing_run_evidence?.target ?? null}
+                      reference={comparison.processing_run_evidence?.reference ?? null}
+                      hrefForRun={(runId) =>
+                        urlFor({
+                          run_id: runId,
+                          session_key: session?.session_key ?? "",
+                          target_attempt_key: target?.attempt_key ?? "",
+                          reference_choice: referenceChoice,
+                        })
+                      }
+                    />
                     <div className="chart-stack">
                       <Chart
                         title="Speed trace"
@@ -1067,6 +1135,107 @@ export default async function Home({
         <span>Recorded telemetry only · No generated coaching</span>
       </footer>
     </main>
+  );
+}
+
+function ComparisonRunEvidence({
+  target,
+  reference,
+  hrefForRun,
+}: {
+  target: ProcessingRunSummary | null;
+  reference: ProcessingRunSummary | null;
+  hrefForRun: (runId: string) => string;
+}) {
+  const entries =
+    target && reference && target.run_id === reference.run_id
+      ? [{ label: "TARGET + REFERENCE", summary: target }]
+      : [
+          ...(target ? [{ label: "TARGET CAPTURE", summary: target }] : []),
+          ...(reference
+            ? [{ label: "REFERENCE CAPTURE", summary: reference }]
+            : []),
+        ];
+
+  if (entries.length === 0) {
+    return (
+      <section className="quality-row panel">
+        <div className="quality-title">
+          <span className="eyebrow">CAPTURE EVIDENCE</span>
+          <strong>Source run evidence unavailable</strong>
+        </div>
+        <div>
+          <span>STATUS</span>
+          <strong>Unknown</strong>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <>
+      {entries.map(({ label: sourceLabel, summary }) => (
+        <section
+          className="quality-row capture-evidence-row panel"
+          key={summary.run_id}
+        >
+          <div className="quality-title">
+            <span className="eyebrow">{sourceLabel} · CAPTURE EVIDENCE</span>
+            <strong>Run {summary.run_id.slice(0, 8)}</strong>
+            <a className="capture-evidence-link" href={hrefForRun(summary.run_id)}>
+              Open run summary ↗
+            </a>
+          </div>
+          <div>
+            <span>CAPTURE FOOTER</span>
+            <strong>
+              {summary.capture.complete === true
+                ? "COMPLETE"
+                : summary.capture.complete === false
+                  ? "INCOMPLETE"
+                  : "UNKNOWN"}
+            </strong>
+            <small>{summary.capture.footer_status ?? "status unknown"}</small>
+          </div>
+          <div>
+            <span>CAPTURE PACKETS</span>
+            <strong>
+              {formatEvidenceCount(
+                summary.capture.recording_counters?.recovered_datagrams ??
+                  summary.capture.recording_counters?.recorded ??
+                  summary.processing.import_counters?.packet_count,
+              )}
+            </strong>
+          </div>
+          <div>
+            <span>RECORDING QUEUE DROPS</span>
+            <strong>
+              {formatEvidenceCount(
+                summary.capture.recording_counters?.queue_dropped,
+              )}
+            </strong>
+          </div>
+          <div>
+            <span>REPLAY LATE PACKETS</span>
+            <strong>
+              {formatEvidenceCount(
+                summary.processing.replay_counters
+                  ?.import_late_packets_ignored,
+              )}
+            </strong>
+          </div>
+          <div>
+            <span>REPLAY FRAME DROPS</span>
+            <strong>
+              {formatEvidenceCount(
+                summary.processing.replay_counters
+                  ?.import_frame_overflow_packets_dropped,
+              )}
+            </strong>
+          </div>
+        </section>
+      ))}
+    </>
   );
 }
 
@@ -1672,12 +1841,14 @@ function comparisonQuery(
   targetAttemptKey: string,
   referenceAttemptKey: string,
   model: TrackModelRecord | null,
+  policy: "time_trial" | "practice_qualifying" = "time_trial",
 ) {
   const query = new URLSearchParams({
     target_attempt_key: targetAttemptKey,
     reference_attempt_key: referenceAttemptKey,
+    comparison_policy: policy,
   });
-  if (model) {
+  if (model && policy === "time_trial") {
     query.set("track_model_id", model.model_id);
     query.set("track_model_revision", String(model.revision));
   }
@@ -1699,6 +1870,8 @@ const seconds = (value: number | null | undefined) =>
     : `${value > 0 ? "+" : value < 0 ? "−" : ""}${Math.abs(value).toFixed(3)} s`;
 const percent = (value: number | null | undefined) =>
   value == null ? "—" : `${(value * 100).toFixed(1)}%`;
+const formatEvidenceCount = (value: number | null | undefined) =>
+  typeof value === "number" ? value.toLocaleString() : "Unknown";
 const reason = (value: string) =>
   ({
     no_prior_candidate_passed_policy: "No prior lap meets policy",
@@ -1709,4 +1882,32 @@ const reason = (value: string) =>
     recorded_after_target: "Recorded later",
     import_frame_overflow_drops: "Replay assembler dropped packets",
     import_late_packet_drops: "Replay discarded late packets",
+    practice_qualifying_unsupported_session_type:
+      "This is not a supported practice or qualifying session",
+    practice_qualifying_unknown_context:
+      "Practice or qualifying context is missing or unknown",
+    practice_qualifying_unknown_mode:
+      "Gameplay mode is missing or unknown",
+    practice_qualifying_unsupported_mode_or_ruleset:
+      "This gameplay mode or ruleset is not supported",
+    practice_qualifying_incomplete_context:
+      "Track or assist context is incomplete",
+    practice_qualifying_attempts_have_incompatible_context:
+      "The attempts have different track, mode, session, or assist settings",
+    practice_qualifying_attempts_must_share_processing_run:
+      "The attempts must come from the same imported run",
+    practice_qualifying_attempts_must_share_session:
+      "The attempts must come from the same game session",
+    practice_qualifying_attempts_must_share_player:
+      "The attempts must belong to the same player car",
+    practice_qualifying_attempt_start_unobserved:
+      "The lap start was not observed",
+    practice_qualifying_attempt_encountered_pit:
+      "The lap includes a pit encounter",
+    practice_qualifying_attempt_requires_positive_lap_time:
+      "The lap has no positive official time",
+    practice_qualifying_resampling_grid_limit_exceeded:
+      "The requested distance grid is too large",
+    practice_qualifying_region_analysis_unsupported_for_practice_qualifying:
+      "Track-region analysis is currently limited to Time Trial",
   })[value] ?? value.replaceAll("_", " ");

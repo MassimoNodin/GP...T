@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from enum import Enum
 from pathlib import Path
 from typing import Mapping
 
@@ -13,9 +14,22 @@ from .resampling import (
     common_distance_grid,
     resample_trace,
 )
-from ..storage.query import StoredAttemptTrace, load_attempt_trace
+from ..sessions.context import GameMode, SessionType
+from ..storage.query import (
+    ANALYSIS_TRACE_COLUMNS,
+    AttemptTraceReadLimitError,
+    StoredAttemptTrace,
+    load_attempt_trace,
+)
+from ..storage.run_summaries import get_processing_run_summary
 from ..tracks.loader import load_track_model
 from ..tracks.model import TrackModel
+from .source_limits import (
+    ANALYSIS_SOURCE_CONTEXT_BYTE_LIMIT,
+    ANALYSIS_SOURCE_CONTEXT_SEGMENT_LIMIT,
+    ANALYSIS_SOURCE_TRACE_BYTE_LIMIT,
+    ANALYSIS_SOURCE_TRACE_ROW_LIMIT,
+)
 
 
 _COMPATIBILITY_FIELDS = (
@@ -38,6 +52,29 @@ _AUTO_REFERENCE_CONDITION_FIELDS = (
     "track_temperature_c",
     "air_temperature_c",
 )
+_PRACTICE_QUALIFYING_SESSION_TYPES = frozenset(
+    session_type.value
+    for session_type in SessionType
+    if session_type.value.startswith(("practice_", "qualifying_", "sprint_shootout_"))
+    or session_type.value
+    in {
+        SessionType.SHORT_PRACTICE.value,
+        SessionType.SHORT_QUALIFYING.value,
+        SessionType.ONE_SHOT_QUALIFYING.value,
+        SessionType.SHORT_SPRINT_SHOOTOUT.value,
+        SessionType.ONE_SHOT_SPRINT_SHOOTOUT.value,
+    }
+)
+_KNOWN_GAME_MODES = frozenset(
+    mode.value for mode in GameMode if mode is not GameMode.TIME_TRIAL
+)
+_PRACTICE_QUALIFYING_POLICY_VERSION = "pq-same-session-diagnostic-v1"
+_PRACTICE_QUALIFYING_GRID_POINT_LIMIT = 100_000
+
+
+class ComparisonPolicy(str, Enum):
+    TIME_TRIAL = "time_trial"
+    PRACTICE_QUALIFYING = "practice_qualifying"
 
 
 class TimeTrialContextError(ValueError):
@@ -53,12 +90,25 @@ def compare_attempts(
     *,
     config: ResamplingConfig = ResamplingConfig(),
     track_model: TrackModel | str | Path | None = None,
+    policy: ComparisonPolicy | str = ComparisonPolicy.TIME_TRIAL,
 ) -> dict[str, object]:
-    """Compare two explicitly selected, stored, completed Time Trial attempts."""
+    """Compare explicitly selected stored attempts under a mode-specific policy."""
+    try:
+        policy = ComparisonPolicy(policy)
+    except ValueError as exc:
+        raise ValueError("unsupported_comparison_policy") from exc
     if target_attempt_key == reference_attempt_key:
         raise ValueError("target and reference must be different lap attempts")
-    target = load_attempt_trace(database_path, target_attempt_key)
-    reference = load_attempt_trace(database_path, reference_attempt_key)
+    if policy is ComparisonPolicy.PRACTICE_QUALIFYING and track_model is not None:
+        raise ValueError(
+            "track_model_region_analysis_unsupported_for_practice_qualifying"
+        )
+    if policy is ComparisonPolicy.PRACTICE_QUALIFYING:
+        target = _load_bounded_attempt_trace(database_path, target_attempt_key)
+        reference = _load_bounded_attempt_trace(database_path, reference_attempt_key)
+    else:
+        target = load_attempt_trace(database_path, target_attempt_key)
+        reference = load_attempt_trace(database_path, reference_attempt_key)
     if target is None:
         raise ValueError(f"target attempt {target_attempt_key!r} was not found or is unavailable")
     if reference is None:
@@ -67,12 +117,28 @@ def compare_attempts(
         )
     _require_completed(target)
     _require_completed(reference)
-    target_context, target_signature = stable_time_trial_context(
-        target.context_segments, target.attempt_key
-    )
-    reference_context, reference_signature = stable_time_trial_context(
-        reference.context_segments, reference.attempt_key
-    )
+    if policy is ComparisonPolicy.PRACTICE_QUALIFYING:
+        _require_same_session_player(target, reference)
+        _require_practice_qualifying_attempt(target)
+        _require_practice_qualifying_attempt(reference)
+        target_context, target_signature = stable_practice_qualifying_context(
+            target.context_segments, target.attempt_key
+        )
+        reference_context, reference_signature = stable_practice_qualifying_context(
+            reference.context_segments, reference.attempt_key
+        )
+        if target_signature != reference_signature:
+            raise ValueError(
+                "practice_qualifying_attempts_have_incompatible_context"
+            )
+        _require_bounded_grid(target_context["track_length_m"], config.grid_step_m)
+    else:
+        target_context, target_signature = stable_time_trial_context(
+            target.context_segments, target.attempt_key
+        )
+        reference_context, reference_signature = stable_time_trial_context(
+            reference.context_segments, reference.attempt_key
+        )
     if target_signature != reference_signature:
         raise ValueError("attempts have incompatible track, format, or Time Trial settings")
 
@@ -100,11 +166,37 @@ def compare_attempts(
     if target.lap_time_ms is not None and reference.lap_time_ms is not None:
         official_lap_time_difference_s = (target.lap_time_ms - reference.lap_time_ms) / 1000.0
 
+    processing_run_evidence = _processing_run_evidence(
+        database_path, target.run_id, reference.run_id
+    )
+
     result = {
         "analysis_version": ANALYSIS_VERSION,
+        "comparison_policy": policy.value,
+        "comparison_policy_version": (
+            _PRACTICE_QUALIFYING_POLICY_VERSION
+            if policy is ComparisonPolicy.PRACTICE_QUALIFYING
+            else "tt-explicit-compatible-v1"
+        ),
+        "diagnostic_only": policy is ComparisonPolicy.PRACTICE_QUALIFYING
+        or target.game_valid is not True
+        or reference.game_valid is not True
+        or not target.reference_eligible
+        or not reference.reference_eligible,
+        "policy_limitations": (
+            [
+                "fuel_load_uncontrolled",
+                "tyre_condition_uncontrolled",
+                "traffic_uncontrolled",
+                "cooldown_intent_uncontrolled",
+            ]
+            if policy is ComparisonPolicy.PRACTICE_QUALIFYING
+            else []
+        ),
         "config": config.to_dict(),
         "target": _attempt_summary(target),
         "reference": _attempt_summary(reference),
+        "processing_run_evidence": processing_run_evidence,
         "track": {
             "track_id": target_context["track_id"],
             "track_name": target_context["track_name"],
@@ -157,6 +249,128 @@ def compare_attempts(
             reference_reference_eligible=reference.reference_eligible,
         )
     return result
+
+
+def _load_bounded_attempt_trace(
+    database_path: str | Path, attempt_key: str
+) -> StoredAttemptTrace | None:
+    try:
+        return load_attempt_trace(
+            database_path,
+            attempt_key,
+            columns=ANALYSIS_TRACE_COLUMNS,
+            max_trace_bytes=ANALYSIS_SOURCE_TRACE_BYTE_LIMIT,
+            max_trace_rows=ANALYSIS_SOURCE_TRACE_ROW_LIMIT,
+            max_context_segments=ANALYSIS_SOURCE_CONTEXT_SEGMENT_LIMIT,
+            max_context_bytes=ANALYSIS_SOURCE_CONTEXT_BYTE_LIMIT,
+        )
+    except AttemptTraceReadLimitError as exc:
+        raise ValueError(
+            f"practice_qualifying_source_{exc.limit_kind}_limit_exceeded"
+        ) from exc
+
+
+def _processing_run_evidence(
+    database_path: str | Path, target_run_id: str, reference_run_id: str
+) -> dict[str, object | None]:
+    if not Path(database_path).is_file():
+        return {"target": None, "reference": None}
+    target = get_processing_run_summary(database_path, target_run_id)
+    reference = (
+        target
+        if target_run_id == reference_run_id
+        else get_processing_run_summary(database_path, reference_run_id)
+    )
+    return {"target": target, "reference": reference}
+
+
+def _require_same_session_player(
+    target: StoredAttemptTrace, reference: StoredAttemptTrace
+) -> None:
+    if target.run_id != reference.run_id:
+        raise ValueError("practice_qualifying_attempts_must_share_processing_run")
+    if target.session_uid != reference.session_uid:
+        raise ValueError("practice_qualifying_attempts_must_share_session")
+    if target.car_index != reference.car_index:
+        raise ValueError("practice_qualifying_attempts_must_share_player")
+
+
+def _require_practice_qualifying_attempt(attempt: StoredAttemptTrace) -> None:
+    if (
+        not isinstance(attempt.lap_time_ms, int)
+        or isinstance(attempt.lap_time_ms, bool)
+        or attempt.lap_time_ms <= 0
+    ):
+        raise ValueError("practice_qualifying_attempt_requires_positive_lap_time")
+    if not attempt.start_observed:
+        raise ValueError("practice_qualifying_attempt_start_unobserved")
+    if attempt.pit_encountered:
+        raise ValueError("practice_qualifying_attempt_encountered_pit")
+
+
+def stable_practice_qualifying_context(
+    context_segments: tuple[tuple[int, Mapping[str, object] | None], ...],
+    attempt_key: str,
+) -> tuple[Mapping[str, object], tuple[object, ...]]:
+    if not context_segments:
+        raise ValueError("practice_qualifying_unknown_context")
+    contexts: list[Mapping[str, object]] = []
+    for _, context in context_segments:
+        if context is None:
+            raise ValueError("practice_qualifying_unknown_context")
+        session_type = context.get("session_type")
+        game_mode = context.get("game_mode")
+        rule_set = context.get("rule_set")
+        if (
+            session_type in (None, "unknown")
+            or game_mode in (None, "unknown")
+            or rule_set in (None, "unknown")
+        ):
+            raise ValueError("practice_qualifying_unknown_mode")
+        if session_type not in _PRACTICE_QUALIFYING_SESSION_TYPES:
+            raise ValueError("practice_qualifying_unsupported_session_type")
+        if game_mode not in _KNOWN_GAME_MODES or rule_set != "practice_qualifying":
+            raise ValueError("practice_qualifying_unsupported_mode_or_ruleset")
+        if any(context.get(field) is None for field in _COMPATIBILITY_FIELDS):
+            raise ValueError("practice_qualifying_incomplete_context")
+        track_length = context["track_length_m"]
+        if (
+            not isinstance(track_length, (int, float))
+            or not math.isfinite(track_length)
+            or track_length <= 0
+        ):
+            raise ValueError("practice_qualifying_invalid_track_length")
+        if not isinstance(context["track_name"], str) or not context["track_name"].strip():
+            raise ValueError("practice_qualifying_unknown_track")
+        contexts.append(context)
+
+    signature = tuple(contexts[0][field] for field in _COMPATIBILITY_FIELDS)
+    if any(
+        tuple(context[field] for field in _COMPATIBILITY_FIELDS) != signature
+        for context in contexts[1:]
+    ):
+        raise ValueError(
+            f"practice_qualifying_context_changed_during_attempt:{attempt_key}"
+        )
+    return contexts[-1], signature
+
+
+def _require_bounded_grid(track_length_m: object, grid_step_m: float) -> None:
+    if (
+        not isinstance(track_length_m, (int, float))
+        or isinstance(track_length_m, bool)
+        or not math.isfinite(track_length_m)
+        or track_length_m <= 0
+    ):
+        raise ValueError("practice_qualifying_invalid_track_length")
+    if not math.isfinite(grid_step_m) or grid_step_m <= 0:
+        raise ValueError("practice_qualifying_invalid_grid_step")
+    ratio = (track_length_m + 1e-9) / grid_step_m
+    if not math.isfinite(ratio) or ratio >= _PRACTICE_QUALIFYING_GRID_POINT_LIMIT:
+        raise ValueError("practice_qualifying_resampling_grid_limit_exceeded")
+    point_count = math.floor(ratio) + 1
+    if point_count > _PRACTICE_QUALIFYING_GRID_POINT_LIMIT:
+        raise ValueError("practice_qualifying_resampling_grid_limit_exceeded")
 
 
 def _require_completed(attempt: StoredAttemptTrace) -> None:

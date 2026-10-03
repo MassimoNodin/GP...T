@@ -518,6 +518,19 @@ h1 span {
   color: #ee9b83;
   background: rgba(240, 106, 79, 0.1);
 }
+.policy-manual {
+  color: var(--gold);
+  background: rgba(240, 180, 92, 0.11);
+}
+.capture-evidence-link {
+  width: fit-content;
+  color: var(--mint);
+  font: 8px var(--font-mono);
+  text-decoration: none;
+}
+.capture-evidence-link:hover {
+  text-decoration: underline;
+}
 .candidate-details {
   padding: 0 18px;
 }
@@ -691,6 +704,9 @@ h1 span {
   gap: 12px;
   margin-top: 12px;
   padding: 16px 18px;
+}
+.capture-evidence-row {
+  grid-template-columns: 1.4fr repeat(5, minmax(0, 1fr));
 }
 .quality-row > div {
   display: grid;
@@ -2063,6 +2079,9 @@ h1 span {
     margin-left: 0;
   }
   .quality-row {
+    grid-template-columns: 1fr 1fr;
+  }
+  .capture-evidence-row {
     grid-template-columns: 1fr 1fr;
   }
   .quality-title {

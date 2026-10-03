@@ -18,7 +18,7 @@ from .recording.capture import CaptureReader
 from .recording.service import record_udp_capture
 from .sessions.context import SessionContext
 from .analysis.resampling import ResamplingConfig
-from .analysis.service import compare_attempts
+from .analysis.service import ComparisonPolicy, compare_attempts
 from .analysis.reference_selection import (
     ReferenceKind,
     ReferenceSelectionStatus,
@@ -337,6 +337,7 @@ def _compare(args: argparse.Namespace) -> int:
             args.reference_attempt_key,
             config=config,
             track_model=args.track_model,
+            policy=ComparisonPolicy(args.comparison_policy),
         )
     )
     return 0
@@ -532,11 +533,17 @@ def build_parser() -> argparse.ArgumentParser:
     quality.set_defaults(handler=_quality)
 
     compare = commands.add_parser(
-        "compare", help="compare two completed Time Trial laps by distance"
+        "compare", help="compare two explicitly selected completed laps by distance"
     )
     compare.add_argument("target_attempt_key", help="target attempt key from the laps command")
     compare.add_argument("reference_attempt_key", help="reference attempt key from the laps command")
     compare.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
+    compare.add_argument(
+        "--comparison-policy",
+        choices=[policy.value for policy in ComparisonPolicy],
+        default=ComparisonPolicy.TIME_TRIAL.value,
+        help="explicit comparison ruleset (default: Time Trial)",
+    )
     compare.add_argument("--grid-step-m", type=float, default=1.0, help="distance grid step (default: %(default)s)")
     compare.add_argument("--max-gap-s", type=float, default=0.1, help="maximum interpolation time gap in seconds")
     compare.add_argument("--max-gap-m", type=float, default=25.0, help="maximum interpolation distance gap in metres")

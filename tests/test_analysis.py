@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import struct
+from dataclasses import replace
 
 import pytest
 
@@ -317,6 +318,13 @@ def _stored_attempt(
     speed_mps: float = 30.0,
     throttle: float = 0.75,
     distances_m: tuple[float, float, float] = (0.0, 10.0, 20.0),
+    run_id: str = "run",
+    session_uid: str = "42",
+    car_index: int = 0,
+    lap_time_ms: int | None = None,
+    start_observed: bool = True,
+    pit_encountered: bool = False,
+    disposition: str = "completed",
 ) -> StoredAttemptTrace:
     if context is None:
         context = {
@@ -352,11 +360,15 @@ def _stored_attempt(
     )
     return StoredAttemptTrace(
         attempt_key=attempt_key,
-        run_id="run",
-        session_uid="42",
-        car_index=0,
-        disposition="completed",
-        lap_time_ms=80_000 if attempt_key.startswith("target") else 79_900,
+        run_id=run_id,
+        session_uid=session_uid,
+        car_index=car_index,
+        disposition=disposition,
+        lap_time_ms=(
+            lap_time_ms
+            if lap_time_ms is not None
+            else 80_000 if attempt_key.startswith("target") else 79_900
+        ),
         game_valid=game_valid,
         reference_eligible=game_valid is True,
         exclusion_reasons=("game_marked_invalid",) if game_valid is False else (),
@@ -365,7 +377,262 @@ def _stored_attempt(
         quality={"sample_count": 3},
         context_segments=((10, context),),
         samples=samples,
+        start_observed=start_observed,
+        pit_encountered=pit_encountered,
     )
+
+
+def _practice_context(**overrides: object) -> dict[str, object]:
+    context = {
+        "packet_format": 2025,
+        "track_id": 2,
+        "track_name": "Shanghai",
+        "track_length_m": 20,
+        "weather_id": 1,
+        "weather_name": "light_cloud",
+        "session_type": "practice_1",
+        "game_mode": "driver_career_25",
+        "rule_set": "practice_qualifying",
+        "formula_id": 0,
+        "equal_car_performance_id": 0,
+        "steering_assist_id": 0,
+        "braking_assist_id": 0,
+        "gearbox_assist_id": 1,
+    }
+    context.update(overrides)
+    return context
+
+
+def test_practice_qualifying_comparison_is_explicit_bounded_and_diagnostic(
+    monkeypatch, tmp_path
+) -> None:
+    target = _stored_attempt(
+        "target-practice",
+        (100, 200, 300),
+        context=_practice_context(),
+        game_valid=False,
+        lap_time_ms=80_100,
+    )
+    reference = _stored_attempt(
+        "reference-practice",
+        (100, 150, 200),
+        context=_practice_context(),
+        lap_time_ms=79_900,
+    )
+    attempts = {target.attempt_key: target, reference.attempt_key: reference}
+    load_calls: list[dict[str, object]] = []
+    evidence_calls: list[str] = []
+    database_path = tmp_path / "analysis.sqlite3"
+    database_path.touch()
+    run_evidence = {
+        "run_id": "run",
+        "capture": {"complete": False, "footer_status": "incomplete"},
+        "processing": {"replay_counters": None},
+    }
+
+    def load(_database, key, **kwargs):
+        load_calls.append(kwargs)
+        return attempts.get(key)
+
+    monkeypatch.setattr(service_module, "load_attempt_trace", load)
+    monkeypatch.setattr(
+        service_module,
+        "get_processing_run_summary",
+        lambda _database, run_id: evidence_calls.append(run_id) or run_evidence,
+    )
+    result = service_module.compare_attempts(
+        database_path,
+        target.attempt_key,
+        reference.attempt_key,
+        policy=service_module.ComparisonPolicy.PRACTICE_QUALIFYING,
+    )
+
+    assert result["comparison_policy"] == "practice_qualifying"
+    assert result["comparison_policy_version"] == "pq-same-session-diagnostic-v1"
+    assert result["diagnostic_only"] is True
+    assert result["policy_limitations"] == [
+        "fuel_load_uncontrolled",
+        "tyre_condition_uncontrolled",
+        "traffic_uncontrolled",
+        "cooldown_intent_uncontrolled",
+    ]
+    assert result["official_lap_time_difference_s"] == pytest.approx(0.2)
+    assert result["target"]["trace_sha256"] == "a" * 64
+    assert result["reference"]["trace_sha256"] == "b" * 64
+    assert result["target"]["game_valid"] is False
+    assert result["processing_run_evidence"] == {
+        "target": run_evidence,
+        "reference": run_evidence,
+    }
+    assert evidence_calls == ["run"]
+    assert len(load_calls) == 2
+    assert all(call["max_trace_rows"] == 100_000 for call in load_calls)
+
+
+@pytest.mark.parametrize(
+    ("target_updates", "reference_updates", "message"),
+    [
+        ({"run_id": "other"}, {}, "must_share_processing_run"),
+        ({}, {"session_uid": "other"}, "must_share_session"),
+        ({}, {"car_index": 1}, "must_share_player"),
+    ],
+)
+def test_practice_qualifying_comparison_requires_same_run_session_and_player(
+    monkeypatch, target_updates, reference_updates, message
+) -> None:
+    target = _stored_attempt("target-practice", (100, 200, 300), context=_practice_context())
+    reference = _stored_attempt("reference-practice", (100, 150, 200), context=_practice_context())
+    target = replace(target, **target_updates)
+    reference = replace(reference, **reference_updates)
+    attempts = {target.attempt_key: target, reference.attempt_key: reference}
+    monkeypatch.setattr(
+        service_module,
+        "load_attempt_trace",
+        lambda _database, key, **_kwargs: attempts.get(key),
+    )
+    with pytest.raises(ValueError, match=message):
+        service_module.compare_attempts(
+            "test.sqlite3",
+            target.attempt_key,
+            reference.attempt_key,
+            policy="practice_qualifying",
+        )
+
+
+@pytest.mark.parametrize(
+    ("updates", "message"),
+    [
+        ({"lap_time_ms": 0}, "positive_lap_time"),
+        ({"start_observed": False}, "start_unobserved"),
+        ({"pit_encountered": True}, "encountered_pit"),
+        ({"disposition": "partial"}, "only completed laps"),
+    ],
+)
+def test_practice_qualifying_comparison_requires_completed_started_non_pit_laps(
+    monkeypatch, updates, message
+) -> None:
+    target = _stored_attempt("target-practice", (100, 200, 300), context=_practice_context())
+    reference = _stored_attempt("reference-practice", (100, 150, 200), context=_practice_context())
+    target = replace(target, **updates)
+    attempts = {target.attempt_key: target, reference.attempt_key: reference}
+    monkeypatch.setattr(
+        service_module,
+        "load_attempt_trace",
+        lambda _database, key, **_kwargs: attempts.get(key),
+    )
+    with pytest.raises(ValueError, match=message):
+        service_module.compare_attempts(
+            "test.sqlite3",
+            target.attempt_key,
+            reference.attempt_key,
+            policy="practice_qualifying",
+        )
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        _practice_context(session_type="race", rule_set="race"),
+        _practice_context(session_type="unknown"),
+        _practice_context(track_name=None),
+        _practice_context(game_mode="time_trial"),
+    ],
+)
+def test_practice_qualifying_comparison_rejects_race_unknown_and_incomplete_context(
+    monkeypatch, context
+) -> None:
+    target = _stored_attempt("target-practice", (100, 200, 300), context=context)
+    reference = _stored_attempt("reference-practice", (100, 150, 200), context=context)
+    attempts = {target.attempt_key: target, reference.attempt_key: reference}
+    monkeypatch.setattr(
+        service_module,
+        "load_attempt_trace",
+        lambda _database, key, **_kwargs: attempts.get(key),
+    )
+    with pytest.raises(ValueError):
+        service_module.compare_attempts(
+            "test.sqlite3",
+            target.attempt_key,
+            reference.attempt_key,
+            policy="practice_qualifying",
+        )
+
+
+@pytest.mark.parametrize(
+    ("target_context_segments", "reference_context"),
+    [
+        (
+            (
+                (10, _practice_context()),
+                (20, _practice_context(formula_id=1)),
+            ),
+            _practice_context(),
+        ),
+        (
+            ((10, _practice_context(track_id=3, track_name="Melbourne")),),
+            _practice_context(),
+        ),
+    ],
+)
+def test_practice_qualifying_comparison_rejects_changing_or_mismatched_context(
+    monkeypatch, target_context_segments, reference_context
+) -> None:
+    target = _stored_attempt(
+        "target-practice", (100, 200, 300), context=_practice_context()
+    )
+    target = replace(target, context_segments=target_context_segments)
+    reference = _stored_attempt(
+        "reference-practice", (100, 150, 200), context=reference_context
+    )
+    attempts = {target.attempt_key: target, reference.attempt_key: reference}
+    monkeypatch.setattr(
+        service_module,
+        "load_attempt_trace",
+        lambda _database, key, **_kwargs: attempts.get(key),
+    )
+
+    with pytest.raises(ValueError, match="context_changed|incompatible_context"):
+        service_module.compare_attempts(
+            "test.sqlite3",
+            target.attempt_key,
+            reference.attempt_key,
+            policy="practice_qualifying",
+        )
+
+
+def test_practice_qualifying_comparison_rejects_regions_and_oversized_grid(monkeypatch) -> None:
+    target = _stored_attempt("target-practice", (100, 200, 300), context=_practice_context())
+    reference = _stored_attempt("reference-practice", (100, 150, 200), context=_practice_context())
+    attempts = {target.attempt_key: target, reference.attempt_key: reference}
+    monkeypatch.setattr(
+        service_module,
+        "load_attempt_trace",
+        lambda _database, key, **_kwargs: attempts.get(key),
+    )
+    with pytest.raises(ValueError, match="region_analysis_unsupported"):
+        service_module.compare_attempts(
+            "test.sqlite3",
+            target.attempt_key,
+            reference.attempt_key,
+            policy="practice_qualifying",
+            track_model="unused.json",
+        )
+    with pytest.raises(ValueError, match="resampling_grid_limit_exceeded"):
+        service_module.compare_attempts(
+            "test.sqlite3",
+            target.attempt_key,
+            reference.attempt_key,
+            policy="practice_qualifying",
+            config=ResamplingConfig(grid_step_m=0.0001),
+        )
+    with pytest.raises(ValueError, match="resampling_grid_limit_exceeded"):
+        service_module.compare_attempts(
+            "test.sqlite3",
+            target.attempt_key,
+            reference.attempt_key,
+            policy="practice_qualifying",
+            config=ResamplingConfig(grid_step_m=5e-324),
+        )
 
 
 def test_comparison_reports_absolute_delta_and_keeps_invalid_attempt_visible(monkeypatch) -> None:

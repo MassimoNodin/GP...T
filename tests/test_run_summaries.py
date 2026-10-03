@@ -9,6 +9,7 @@ from f1_engineer.storage.run_summaries import (
     MAX_PAGE_OFFSET,
     MAX_RUN_PAGE_SIZE,
     get_processing_run_detail,
+    get_processing_run_summary,
     list_processing_run_summaries,
 )
 
@@ -270,6 +271,39 @@ def test_run_summary_separates_capture_replay_and_reference_evidence(tmp_path) -
         {"reason": "game_marked_invalid", "attempt_count": 1},
     ]
     assert "selected_reference" not in totals
+
+
+def test_direct_run_summary_preserves_incomplete_footer_and_unknown_counters(tmp_path) -> None:
+    database_path = tmp_path / "summary.sqlite3"
+    run_id = "d" * 64
+    with Database(database_path) as db:
+        with db.connection:
+            _add_run(
+                db.connection,
+                run_id,
+                status="complete",
+                capture_complete=False,
+                completion={"status": "incomplete", "recovered_datagrams": 10},
+                metrics={
+                    "capture_quality": {
+                        "import_late_packets_ignored": 2,
+                    }
+                },
+            )
+
+    summary = get_processing_run_summary(database_path, run_id)
+
+    assert summary is not None
+    assert summary["capture"]["complete"] is False
+    assert summary["capture"]["footer_status"] == "incomplete"
+    assert summary["capture"]["recording_counters"]["recovered_datagrams"] == 10
+    assert summary["capture"]["recording_counters"]["recorded"] is None
+    assert summary["processing"]["replay_counters"] == {
+        "import_late_packets_ignored": 2,
+        "import_frame_overflow_packets_dropped": None,
+    }
+    assert summary["totals"]["attempt_count"] == 0
+    assert get_processing_run_summary(database_path, "missing") is None
 
 
 def test_run_detail_labels_latest_context_and_pages_session_attempt_links(tmp_path) -> None:

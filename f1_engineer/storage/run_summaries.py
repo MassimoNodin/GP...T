@@ -18,6 +18,7 @@ MAX_PAGE_OFFSET = (1 << 63) - 1
 _RECORDING_COUNTERS = (
     "received",
     "recorded",
+    "recovered_datagrams",
     "queue_dropped",
     "unpersisted_on_shutdown",
     "socket_errors",
@@ -116,6 +117,25 @@ def get_processing_run_detail(
             db.connection, run_id, limit=attempt_limit, offset=attempt_offset
         )
     return {"summary": summary, "sessions": sessions, "attempts": attempts}
+
+
+def get_processing_run_summary(
+    database_path: str | Path, run_id: str
+) -> dict[str, object] | None:
+    """Return persisted run evidence without loading session or attempt pages."""
+    with Database(database_path, read_only=True) as db:
+        row = db.connection.execute(
+            """SELECT r.run_id, r.capture_sha256, r.pipeline_version, r.config_json,
+                      r.status, r.started_at_utc, r.finished_at_utc, r.error,
+                      r.metrics_json, c.byte_size, c.complete, c.completion_json
+                 FROM processing_runs r
+                 LEFT JOIN captures c USING(capture_sha256)
+                WHERE r.run_id = ?""",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return _build_run_summary(db.connection, row)
 
 
 def _build_run_summary(
