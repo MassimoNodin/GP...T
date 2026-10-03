@@ -407,6 +407,20 @@ The brief reports what the stored evidence shows. It does not infer causes, reco
 
 Acceptance covers positive, negative, and tied values with stable rounding; invalid sectors; missing, conflicting, and truncated timing evidence; unsupported windows; diagnostic Melbourne invalid laps and their reference abstention; and Shanghai Practice 3/2's -1.232 s official difference, source identities, incomplete capture, and lifecycle warnings. Synthetic tests verify the CLI, API, and dashboard receive the same bounded facts/text and that unavailable comparisons produce no successful brief. No extra trace reads or raw arrays enter the formatter.
 
+## Decision 0030: isolate validated geometry from distance-region models
+
+**Status:** accepted
+
+**Date:** 2026-10-04
+
+Add a bounded, versioned geometry artifact and pure projection kernel, separate from the existing distance-region `TrackModel`. The artifact identifies packet format, track/layout, lap length, game-distance origin, world coordinate frame and units, lateral-sign convention, ordered XYZ anchors, explicit supported segments, source provenance, model role, and independent geometry and distance-calibration validation evidence. Roles distinguish an observed reference path from an independently reviewed centreline.
+
+Use normalized game lap distance as the lookup coordinate, with the model's explicit additive distance-origin transform to an unwrapped one-lap axis; never replace it with Euclidean path length or modulo-alias the lap endpoint to the start. A cyclic lap seam is usable only when the artifact explicitly declares a closed seam and its supported endpoints are position- and tangent-continuous; otherwise exact lap endpoints are unavailable. At supported distances, interpolate XYZ by game distance, derive a local horizontal tangent/normal, and report signed lateral, longitudinal, and vertical residuals with model identity and support state. Reject mismatched format/track/layout, nonfinite or ambiguous anchors, gaps, unsupported seams, degenerate tangents, extrapolation, and work beyond fixed model/query bounds. Return explicit unavailable reasons. Projection support and validation status are separate: observed paths stay diagnostic, and a centreline is reviewed only when both its geometry and distance calibration have separately documented review evidence; lap/reference eligibility remains unevaluated by the kernel.
+
+Keep the kernel independent of database, importer, trace schema, API, dashboard, corner definitions, lap validity, and reference eligibility. Add a local read-only CLI command that checks artifact structure and reports validation evidence without granting it. Do not package or activate real geometry in this decision. Melbourne/Shanghai observations, including averaged driven paths, cannot claim a physical centreline or coaching support. Enabling a real track later requires independently justified geometry and reviewed game-distance alignment. No extra recording or persistence migration is required.
+
+Acceptance uses synthetic straight, curved, and closed-path fixtures with known offsets and numerical tolerances; coordinate/sign convention and distance-origin cases; segment gaps/seams, duplicate/out-of-order distances, degenerate tangents, nonfinite data, identity mismatch, and model/query resource bounds. Existing traces with missing Motion and legacy schemas remain distance-only and unavailable for geometry. Existing comparisons, reference selection, and deterministic briefs remain unchanged. No observed capture is elevated to validated geometry.
+
 ## Data flow
 
 ```text
@@ -446,6 +460,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - Completed and partial attempts, context history, participant snapshots, and canonical samples are persisted to SQLite and checksummed Parquet traces. New traces use schema v3; readers preserve compatibility with schemas v1 and v2 and expose unavailable Motion or Car Status fields as null. Imports stream bounded row groups and publish them atomically.
 - An observed-trajectory export preserves source attempt/run/checksum/context, units, frame/distance/time anchors, quality, and discontinuity segments. It is a diagnostic driven path and is never identified as a track centreline. The dashboard API reuses this analysis and returns a source-limited, point-bounded preview without changing source coverage or continuity evidence.
 - Selected draft distance regions can be linked to a source-bounded position summary only when region and trajectory reports match on attempt, run, session, player, trace checksum and schema. Full-source position counts are separate from retained preview points; anchors are bounded and continuity fragments remain separate.
+- Geometry artifacts and projection use a separate schema from distance-region `TrackModel`. Projection retains normalized game lap distance, explicit supported segments and independent geometry/calibration evidence; observed paths remain diagnostic and no real centreline is currently activated.
 - Standalone attempt trace previews read the checksummed speed/control channels independently of comparison and reference eligibility. Session time remains the plot coordinate; frame/time gaps and missing channel values split runs, and deterministic point/run caps preserve discontinuities and report omitted data.
 - Replay timing is based only on the monotonic intervals stored in the capture; maximum-speed replay skips sleeps.
 - The capture format has a magic value and schema version. Unknown packet IDs remain inspectable.

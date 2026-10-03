@@ -40,6 +40,7 @@ from .storage.importer import (
 from .storage.run_summaries import list_processing_run_lifecycle_events
 from .udp.models import DecodedPacket
 from .udp.source import ReplaySource, UDPSource
+from .tracks.geometry_loader import load_geometry_model
 from .tracks.registry import resolve_track_model
 
 
@@ -494,6 +495,58 @@ def _regions(args: argparse.Namespace) -> int:
     return 0
 
 
+def _geometry_validate(args: argparse.Namespace) -> int:
+    model = load_geometry_model(args.model)
+    _json_line(
+        {
+            "status": "artifact_structure_valid",
+            "verification_scope": "schema_and_internal_consistency_only",
+            "model": {
+                "model_id": model.model_id,
+                "revision": model.revision,
+                "packet_format": model.packet_format,
+                "track_id": model.track_id,
+                "track_name": model.track_name,
+                "layout_id": model.layout_id,
+                "lap_length_m": model.lap_length_m,
+                "game_distance_origin_m": model.game_distance_origin_m,
+                "coordinate_frame": model.coordinate_frame,
+                "coordinate_units": model.coordinate_units,
+                "lateral_sign_convention": model.lateral_sign_convention,
+                "role": model.role,
+                "cyclic_seam_policy": model.cyclic_seam_policy,
+                "artifact_sha256": model.artifact_sha256,
+                "provenance": model.provenance,
+            },
+            "geometry_validation": {
+                "status": model.geometry_validation.status,
+                "reviewer": model.geometry_validation.reviewer,
+                "method": model.geometry_validation.method,
+                "evidence_reference": model.geometry_validation.evidence_reference,
+            },
+            "calibration_validation": {
+                "status": model.calibration_validation.status,
+                "reviewer": model.calibration_validation.reviewer,
+                "method": model.calibration_validation.method,
+                "evidence_reference": model.calibration_validation.evidence_reference,
+            },
+            "segment_count": len(model.segments),
+            "anchor_count": sum(len(segment.anchors) for segment in model.segments),
+            "supported_segments": [
+                {
+                    "identifier": segment.identifier,
+                    "start_distance_m": segment.start_distance_m,
+                    "end_distance_m": segment.end_distance_m,
+                    "anchor_count": len(segment.anchors),
+                }
+                for segment in model.segments
+            ],
+            "physical_geometry_verified_by_command": False,
+        }
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="f1-engineer", description="F1 telemetry capture and replay")
     parser.add_argument("--version", action="version", version=f"f1-engineer {__version__}")
@@ -652,6 +705,13 @@ def build_parser() -> argparse.ArgumentParser:
     regions.add_argument("--track-model-id", required=True, help="registered track model ID")
     regions.add_argument("--track-model-revision", type=int, required=True, help="registered model revision")
     regions.set_defaults(handler=_regions)
+
+    geometry_validate = commands.add_parser(
+        "geometry-validate",
+        help="check a local geometry artifact's schema and internal consistency",
+    )
+    geometry_validate.add_argument("model", help="local versioned geometry JSON artifact")
+    geometry_validate.set_defaults(handler=_geometry_validate)
     return parser
 
 

@@ -37,6 +37,7 @@ python -m f1_engineer lap RUN_ID:SESSION_UID:CAR_INDEX:ATTEMPT_NUMBER
 python -m f1_engineer compare TARGET_ATTEMPT_KEY REFERENCE_ATTEMPT_KEY
 python -m f1_engineer reference TARGET_ATTEMPT_KEY
 python -m f1_engineer trajectory ATTEMPT_KEY --output data/trajectory.json
+python -m f1_engineer geometry-validate path\to\geometry-model.json
 ```
 
 Run the local API and dashboard in separate terminals. The dashboard can start and stop UDP recording directly; finalized captures appear in the inbox for explicit import:
@@ -65,6 +66,8 @@ To inspect one numeric interval within a permitted comparison, pass both `--wind
 The local API's `GET /api/v1/track-models` lists packaged model metadata. Add `track_model_id` and `track_model_revision` to `GET /api/v1/compare/laps` to request region evidence; both are required together and must identify a registered model. The browser never chooses a model by filesystem path. Region evidence remains explicitly diagnostic, and is currently supported only for compatible Time Trial comparisons.
 
 `trajectory` exports a versioned JSON record of observed world-space samples, with frame/distance/time anchors, trace checksum and session-context provenance. Missing Motion, frame gaps, distance/time regressions, session-time gaps over 100 ms, lap-clock rewinds over 20 ms, and position jumps over 25 m split the output into separate segments. The artifact includes those continuity limits, keeps G-forces in lateral/longitudinal/vertical vehicle-relative axes, and is explicitly diagnostic rather than a track centreline; use `--overwrite` to replace an existing output.
+
+`geometry-validate` checks a local versioned geometry artifact's schema, identity and internal segment/anchor consistency. It reports the model's separate geometry and game-distance calibration evidence; it does not establish that either review is physically correct or enable the model for coaching. Geometry uses normalized game lap distance plus an explicit additive origin, preserves unsupported gaps, and never aliases the lap end to the start unless a closed seam is explicitly supported. No real-track geometry is currently activated.
 
 Pass `--track-model f1_engineer/tracks/data/melbourne_f1_25_tt_draft_v1.json` to include the current diagnostic region analysis. Those six regions are draft windows around braking observations in two game-invalid Melbourne laps; they are not verified corner numbers or apex locations. The analysis reports censored braking/throttle onset, minimum-speed support, steering-only turn-in proxies, exit-speed coverage, and delta changes. It does not produce coaching from draft definitions.
 
