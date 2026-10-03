@@ -16,6 +16,7 @@ TRAJECTORY_SCHEMA_VERSION = 1
 TRAJECTORY_PREVIEW_POINT_LIMIT = 2_000
 TRAJECTORY_PREVIEW_SEGMENT_LIMIT = 256
 TRAJECTORY_PREVIEW_EXAMPLE_LIMIT = 20
+REGION_POSITION_EVIDENCE_FRAGMENT_LIMIT = 20
 _PREVIEW_POINT_FIELDS = (
     "frame_identifier",
     "lap_distance_m",
@@ -276,6 +277,158 @@ def build_observed_trajectory_preview(
             "unsupported_examples_omitted_count": len(source_unsupported)
             - len(unsupported_examples),
             "thinning_method": "deterministic_even_spacing_with_segment_endpoints",
+        },
+    }
+
+
+def summarize_observed_position_window(
+    trajectory: Mapping[str, object],
+    source_samples: Sequence[Mapping[str, object]],
+    start_distance_m: float,
+    end_distance_m: float,
+    *,
+    trace_schema_version: int,
+    fragment_limit: int = REGION_POSITION_EVIDENCE_FRAGMENT_LIMIT,
+) -> dict[str, object]:
+    """Summarize exact source positions in a half-open distance window."""
+    if (
+        not math.isfinite(start_distance_m)
+        or not math.isfinite(end_distance_m)
+        or start_distance_m >= end_distance_m
+    ):
+        raise ValueError("position evidence window must have finite increasing bounds")
+    if fragment_limit < 0:
+        raise ValueError("fragment_limit must not be negative")
+
+    def in_window(distance: object) -> bool:
+        value = _finite_number(distance)
+        return value is not None and start_distance_m <= value < end_distance_m
+
+    source_sample_count = sum(
+        1 for sample in source_samples if in_window(sample.get("lap_distance_m"))
+    )
+    base = {
+        "distance_window_m": [start_distance_m, end_distance_m],
+        "boundary": "inclusive_start_exclusive_end",
+        "source_sample_count_in_window": source_sample_count,
+        "fragment_limit": fragment_limit,
+    }
+    if trace_schema_version == 1:
+        return {
+            **base,
+            "status": "motion_unavailable_for_trace_schema",
+            "source_position_sample_count": None,
+            "unsupported_source_sample_count_in_window": None,
+            "source_fragment_count": None,
+            "omitted_fragment_count": 0,
+            "fragments": [],
+        }
+
+    source_segments = trajectory.get("segments")
+    if not isinstance(source_segments, list):
+        raise ValueError("trajectory segments are malformed")
+    fragments: list[dict[str, object]] = []
+    source_position_count = 0
+    source_fragment_count = 0
+    for segment in source_segments:
+        if not isinstance(segment, Mapping):
+            raise ValueError("trajectory segments are malformed")
+        points = segment.get("points")
+        if not isinstance(points, list) or any(not isinstance(point, Mapping) for point in points):
+            raise ValueError("trajectory segment points are malformed")
+        break_reasons = segment.get("break_before_reasons")
+        if not isinstance(break_reasons, list) or any(
+            not isinstance(reason, str) for reason in break_reasons
+        ):
+            raise ValueError("trajectory segment break evidence is malformed")
+        current_run: list[Mapping[str, object]] = []
+        current_run_start_index: int | None = None
+
+        def retain_run() -> None:
+            nonlocal source_fragment_count, source_position_count, current_run_start_index
+            if not current_run:
+                return
+            if current_run_start_index is None:
+                raise ValueError("trajectory fragment index is malformed")
+            first = current_run[0]
+            last = current_run[-1]
+            last_index = current_run_start_index + len(current_run) - 1
+            previous_distance = (
+                _finite_number(points[current_run_start_index - 1].get("lap_distance_m"))
+                if current_run_start_index > 0
+                else None
+            )
+            next_distance = (
+                _finite_number(points[last_index + 1].get("lap_distance_m"))
+                if last_index + 1 < len(points)
+                else None
+            )
+            source_position_count += len(current_run)
+            if len(fragments) < fragment_limit:
+                fragments.append(
+                    {
+                        "fragment_index": source_fragment_count,
+                        "segment_index": segment.get("segment_index"),
+                        "break_before_reasons": (
+                            break_reasons if current_run_start_index == 0 else []
+                        ),
+                        "window_membership_break_before": current_run_start_index > 0,
+                        "window_membership_break_after": last_index < len(points) - 1,
+                        "sample_count": len(current_run),
+                        "clipped_at_window_start": (
+                            previous_distance is not None
+                            and previous_distance < start_distance_m
+                        ),
+                        "clipped_at_window_end": (
+                            next_distance is not None and next_distance >= end_distance_m
+                        ),
+                        "start_anchor": _position_anchor(first),
+                        "end_anchor": _position_anchor(last),
+                    }
+                )
+            source_fragment_count += 1
+            current_run.clear()
+            current_run_start_index = None
+
+        for point_index, point in enumerate(points):
+            if in_window(point.get("lap_distance_m")):
+                if not current_run:
+                    current_run_start_index = point_index
+                current_run.append(point)
+            else:
+                retain_run()
+        retain_run()
+
+    if source_position_count:
+        status = "observed_positions"
+    elif source_sample_count:
+        status = "positions_unavailable_in_window"
+    else:
+        status = "no_source_samples_in_window"
+    return {
+        **base,
+        "status": status,
+        "source_position_sample_count": source_position_count,
+        "unsupported_source_sample_count_in_window": max(
+            0, source_sample_count - source_position_count
+        ),
+        "source_fragment_count": source_fragment_count,
+        "omitted_fragment_count": max(0, source_fragment_count - len(fragments)),
+        "fragments": fragments,
+    }
+
+
+def _position_anchor(point: Mapping[str, object]) -> dict[str, object]:
+    position = point.get("world_position_m")
+    if not isinstance(position, Mapping):
+        raise ValueError("trajectory point position is malformed")
+    return {
+        "frame_identifier": point.get("frame_identifier"),
+        "lap_distance_m": point.get("lap_distance_m"),
+        "session_time_s": point.get("session_time_s"),
+        "lap_time_s": point.get("lap_time_s"),
+        "world_position_m": {
+            axis: position.get(axis) for axis in ("x", "y", "z")
         },
     }
 

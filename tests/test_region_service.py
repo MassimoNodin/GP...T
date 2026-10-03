@@ -128,6 +128,15 @@ def test_single_attempt_report_accepts_invalid_and_partial_time_trial_traces(
     assert report["source"]["trace_schema_version"] == schema_version
     assert report["source"]["trace_sha256"] == "a" * 64
     assert report["regions"][0]["observations"]["minimum_speed"]["speed_kph"] == pytest.approx(54.0)
+    assert calls["columns"] == region_service.REGION_POSITION_TRACE_COLUMNS
+    position_evidence = report["regions"][0]["position_evidence"]
+    if schema_version == 1:
+        assert position_evidence["status"] == "motion_unavailable_for_trace_schema"
+        assert position_evidence["source_position_sample_count"] is None
+    else:
+        assert position_evidence["status"] == "positions_unavailable_in_window"
+        assert position_evidence["source_sample_count_in_window"] == 2
+        assert position_evidence["unsupported_source_sample_count_in_window"] == 2
     assert calls["max_trace_rows"] == 100_000
     assert calls["max_trace_bytes"] == 64 * 1024 * 1024
     assert calls["max_context_segments"] == 1_024

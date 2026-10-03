@@ -15,8 +15,7 @@ import {
 } from "@/lib/api";
 import RecordingInbox from "./RecordingInbox";
 import AttemptQualityPanel from "./AttemptQualityPanel";
-import AttemptRegionsPanel from "./AttemptRegionsPanel";
-import ObservedTrajectoryPanel from "./ObservedTrajectoryPanel";
+import DiagnosticEvidencePanels from "./DiagnosticEvidencePanels";
 import type { ImportJobRecord, RecordingSourceRecord } from "@/lib/api";
 
 type SearchParams = {
@@ -503,31 +502,27 @@ export default async function Home({
                   />
                 ) : null}
                 {target ? (
-                  <ObservedTrajectoryPanel
-                    key={target.attempt_key}
-                    report={trajectoryPreview}
-                    unavailableReason={
+                  <DiagnosticEvidencePanels
+                    key={`${target.attempt_key}:${selectedModel ? modelKey(selectedModel) : "no-model"}`}
+                    trajectoryReport={trajectoryPreview}
+                    trajectoryUnavailableReason={
                       trajectoryResponse?.status === "unavailable"
                         ? trajectoryResponse.reason
                         : null
                     }
-                  />
-                ) : null}
-                {target && selectedModel ? (
-                  <AttemptRegionsPanel
-                    key={`${target.attempt_key}:${modelKey(selectedModel)}`}
-                    report={
+                    regionReport={
                       regionResponse?.status === "ok"
                         ? regionResponse.data
                         : null
                     }
-                    unavailableReason={
+                    regionUnavailableReason={
                       regionResponse?.status === "unavailable"
                         ? regionResponse.reason
                         : regionResponse
                           ? null
                           : "region_analysis_api_unavailable"
                     }
+                    showRegionPanel={selectedModel !== null}
                   />
                 ) : null}
                 <section className="panel compare-panel">

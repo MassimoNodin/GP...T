@@ -8,6 +8,7 @@ from f1_engineer.analysis.trajectory import (
     TrajectoryPreviewUnavailable,
     build_observed_trajectory,
     build_observed_trajectory_preview,
+    summarize_observed_position_window,
 )
 
 
@@ -37,6 +38,143 @@ def _sample(frame: int, distance: float, *, available: bool = True) -> dict[str,
         "pitch_rad": 0.0 if available else None,
         "roll_rad": 0.0 if available else None,
     }
+
+
+def _trajectory(samples: tuple[dict[str, object], ...], *, schema_version: int = 3):
+    return build_observed_trajectory(
+        attempt_key="run:42:0:1",
+        run_id="run",
+        session_uid="42",
+        car_index=0,
+        disposition="completed",
+        lap_time_ms=80_000,
+        game_valid=False,
+        reference_eligible=False,
+        exclusion_reasons=("game_marked_invalid",),
+        trace_sha256="a" * 64,
+        trace_schema_version=schema_version,
+        context_segments=((1, {"track_name": "Melbourne"}),),
+        samples=samples,
+    )
+
+
+def test_position_window_uses_half_open_bounds_and_preserves_source_segments() -> None:
+    samples = (
+        _sample(10, 0.0),
+        _sample(11, 10.0),
+        _sample(12, 20.0),
+        _sample(14, 20.0),
+        _sample(15, 30.0),
+        _sample(16, 40.0),
+    )
+    trajectory = _trajectory(samples)
+
+    evidence = summarize_observed_position_window(
+        trajectory, samples, 10.0, 40.0, trace_schema_version=3
+    )
+
+    assert evidence["boundary"] == "inclusive_start_exclusive_end"
+    assert evidence["source_sample_count_in_window"] == 4
+    assert evidence["source_position_sample_count"] == 4
+    fragments = evidence["fragments"]
+    assert [fragment["sample_count"] for fragment in fragments] == [2, 2]
+    assert fragments[0]["clipped_at_window_start"] is True
+    assert fragments[0]["break_before_reasons"] == []
+    assert fragments[1]["break_before_reasons"] == ["frame_gap"]
+    assert fragments[0]["start_anchor"]["frame_identifier"] == 11
+    assert fragments[0]["start_anchor"]["world_position_m"] == {"x": 11.0, "y": 2.0, "z": 3.0}
+    assert fragments[1]["start_anchor"]["lap_distance_m"] == 20.0
+    assert fragments[1]["end_anchor"]["frame_identifier"] == 15
+
+
+def test_position_window_reports_singleton_fragments_and_legacy_motion_unavailability() -> None:
+    samples = (_sample(10, 4.0), _sample(12, 5.0))
+    trajectory = _trajectory(samples)
+    evidence = summarize_observed_position_window(
+        trajectory, samples, 5.0, 6.0, trace_schema_version=3
+    )
+
+    assert evidence["source_position_sample_count"] == 1
+    fragment = evidence["fragments"][0]
+    assert fragment["sample_count"] == 1
+    assert fragment["break_before_reasons"] == ["frame_gap"]
+    assert fragment["start_anchor"] == fragment["end_anchor"]
+
+    legacy = summarize_observed_position_window(
+        trajectory, samples, 4.0, 6.0, trace_schema_version=1
+    )
+    assert legacy["status"] == "motion_unavailable_for_trace_schema"
+    assert legacy["source_sample_count_in_window"] == 2
+    assert legacy["source_position_sample_count"] is None
+    assert legacy["fragments"] == []
+
+
+def test_position_window_source_count_is_independent_of_thinned_preview_points() -> None:
+    samples = tuple(_sample(frame, float(frame)) for frame in range(20))
+    trajectory = _trajectory(samples)
+    preview = build_observed_trajectory_preview(trajectory, point_limit=2)
+
+    evidence = summarize_observed_position_window(
+        trajectory, samples, 8.0, 10.0, trace_schema_version=3
+    )
+    retained = [
+        point
+        for segment in preview["segments"]
+        for point in segment["points"]
+        if 8.0 <= point["lap_distance_m"] < 10.0
+    ]
+
+    assert evidence["source_position_sample_count"] == 2
+    assert evidence["source_sample_count_in_window"] == 2
+    assert retained == []
+
+
+def test_position_window_keeps_boundary_jitter_reentry_as_separate_fragments_after_thinning() -> None:
+    # The 0.006 m dip is within the source continuity tolerance, but it falls
+    # outside this region and must still separate the two highlighted runs.
+    samples = (
+        _sample(10, 100.004),
+        _sample(11, 99.998),
+        _sample(12, 100.003),
+    )
+    trajectory = _trajectory(samples)
+    preview = build_observed_trajectory_preview(trajectory, point_limit=2)
+
+    evidence = summarize_observed_position_window(
+        trajectory, samples, 100.0, 101.0, trace_schema_version=3
+    )
+
+    assert len(trajectory["segments"]) == 1
+    assert [point["frame_identifier"] for point in preview["segments"][0]["points"]] == [10, 12]
+    assert evidence["source_position_sample_count"] == 2
+    assert evidence["source_fragment_count"] == 2
+    assert [fragment["sample_count"] for fragment in evidence["fragments"]] == [1, 1]
+    assert [fragment["start_anchor"]["frame_identifier"] for fragment in evidence["fragments"]] == [10, 12]
+    assert all(fragment["window_membership_break_before"] == (index == 1) for index, fragment in enumerate(evidence["fragments"]))
+    assert all(fragment["window_membership_break_after"] == (index == 0) for index, fragment in enumerate(evidence["fragments"]))
+    assert [fragment["clipped_at_window_start"] for fragment in evidence["fragments"]] == [False, True]
+    assert [fragment["clipped_at_window_end"] for fragment in evidence["fragments"]] == [False, False]
+
+
+def test_position_window_caps_anchor_fragments_without_dropping_source_counts() -> None:
+    samples = tuple(
+        _sample(frame, float(frame)) for frame in (0, 2, 4, 6)
+    )
+    trajectory = _trajectory(samples)
+
+    evidence = summarize_observed_position_window(
+        trajectory,
+        samples,
+        0.0,
+        7.0,
+        trace_schema_version=3,
+        fragment_limit=1,
+    )
+
+    assert evidence["source_position_sample_count"] == 4
+    assert evidence["source_fragment_count"] == 4
+    assert len(evidence["fragments"]) == 1
+    assert evidence["omitted_fragment_count"] == 3
 
 
 def test_observed_trajectory_preserves_provenance_and_breaks_unsupported_spans() -> None:

@@ -1,15 +1,22 @@
+"use client";
+
 import type {
   AttemptRegionReport,
   AttemptRegionWindow,
+  RegionPositionEvidence,
   RegionEvent,
 } from "@/lib/api";
 
 export default function AttemptRegionsPanel({
   report,
   unavailableReason,
+  selectedRegionId,
+  onSelectRegion,
 }: {
   report: AttemptRegionReport | null;
   unavailableReason: string | null;
+  selectedRegionId: string | null;
+  onSelectRegion?: (identifier: string) => void;
 }) {
   if (!report) {
     return (
@@ -43,7 +50,13 @@ export default function AttemptRegionsPanel({
       </p>
       <div className="region-grid">
         {report.regions.map((region, index) => (
-          <AttemptRegionCard key={region.identifier} region={region} index={index} />
+          <AttemptRegionCard
+            key={region.identifier}
+            region={region}
+            index={index}
+            selected={selectedRegionId === region.identifier}
+            onSelectRegion={onSelectRegion}
+          />
         ))}
       </div>
       <details className="attempt-region-provenance panel">
@@ -80,9 +93,13 @@ export default function AttemptRegionsPanel({
 function AttemptRegionCard({
   region,
   index,
+  selected,
+  onSelectRegion,
 }: {
   region: AttemptRegionWindow;
   index: number;
+  selected: boolean;
+  onSelectRegion?: (identifier: string) => void;
 }) {
   const [start, end] = region.analysis_window_m;
   const observations = region.observations;
@@ -101,7 +118,19 @@ function AttemptRegionCard({
           </div>
           <h3>{region.label}</h3>
         </div>
-        <span className="region-state region-state-draft">DRAFT WINDOW</span>
+        <div className="region-card-actions">
+          {onSelectRegion ? (
+            <button
+              type="button"
+              className="region-inspect-button"
+              aria-pressed={selected}
+              onClick={() => onSelectRegion(region.identifier)}
+            >
+              {selected ? "HIDE PATH HIGHLIGHT" : "INSPECT OBSERVED PATH"}
+            </button>
+          ) : null}
+          <span className="region-state region-state-draft">DRAFT WINDOW</span>
+        </div>
       </header>
 
       <div className="region-stat-grid">
@@ -162,7 +191,29 @@ function AttemptRegionCard({
       <p className="region-apex-note">
         Driver apex: unavailable. Track-relative geometry is not validated.
       </p>
+      <RegionPositionNote evidence={region.position_evidence} />
     </article>
+  );
+}
+
+function RegionPositionNote({ evidence }: { evidence: RegionPositionEvidence }) {
+  if (evidence.status === "motion_unavailable_for_trace_schema") {
+    return <p className="region-position-note">World-position evidence is unavailable in this trace schema.</p>;
+  }
+  if (evidence.source_position_sample_count === 0) {
+    return <p className="region-position-note">No source position samples were recorded inside this half-open distance window.</p>;
+  }
+  return (
+    <p className="region-position-note">
+      Full-source positions: {evidence.source_position_sample_count?.toLocaleString() ?? "unavailable"} of{" "}
+      {evidence.source_sample_count_in_window.toLocaleString()} recorded samples in this window.
+      {evidence.unsupported_source_sample_count_in_window
+        ? ` ${evidence.unsupported_source_sample_count_in_window.toLocaleString()} recorded samples lack usable position evidence.`
+        : ""}
+      {evidence.omitted_fragment_count > 0
+        ? ` ${evidence.omitted_fragment_count} additional continuity fragments are omitted from the anchor list.`
+        : ""}
+    </p>
   );
 }
 

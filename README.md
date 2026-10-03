@@ -64,6 +64,8 @@ Pass `--track-model f1_engineer/tracks/data/melbourne_f1_25_tt_draft_v1.json` to
 
 Use `regions ATTEMPT_KEY --track-model-id melbourne-f1-25-time-trial-draft-v1 --track-model-revision 1` to inspect one Time Trial attempt without selecting a reference. Invalid, partial, and abandoned attempts remain diagnostic; Race, unknown, changing, or model-incompatible contexts return an explicit unavailable reason. Source traces and event examples are bounded by server-controlled limits.
 
+On the dashboard, a selected draft distance region can be highlighted on the same attempt's observed world-space path. Linking checks the attempt, run, session, player, trace checksum, and schema. Full-source position counts and frame/distance/time/XYZ anchors remain distinct from the thinner plotted preview, and no path is joined across recorded discontinuities. This inspection remains diagnostic; it does not validate track geometry or a centreline.
+
 Install the package to use the `f1-engineer` command:
 
 ```powershell

@@ -499,10 +499,47 @@ export interface AttemptRegionWindow {
   direction: string | null;
   complex_id: string | null;
   observations: RegionAttempt;
+  position_evidence: RegionPositionEvidence;
+}
+
+export interface RegionPositionAnchor {
+  frame_identifier: number;
+  lap_distance_m: number;
+  session_time_s: number;
+  lap_time_s: number;
+  world_position_m: { x: number; y: number; z: number };
+}
+
+export interface RegionPositionEvidence {
+  distance_window_m: [number, number];
+  boundary: "inclusive_start_exclusive_end";
+  status:
+    | "observed_positions"
+    | "positions_unavailable_in_window"
+    | "no_source_samples_in_window"
+    | "motion_unavailable_for_trace_schema";
+  source_sample_count_in_window: number;
+  source_position_sample_count: number | null;
+  unsupported_source_sample_count_in_window: number | null;
+  source_fragment_count: number | null;
+  fragment_limit: number;
+  omitted_fragment_count: number;
+  fragments: Array<{
+    fragment_index: number;
+    segment_index: number;
+    break_before_reasons: string[];
+    window_membership_break_before: boolean;
+    window_membership_break_after: boolean;
+    sample_count: number;
+    clipped_at_window_start: boolean;
+    clipped_at_window_end: boolean;
+    start_anchor: RegionPositionAnchor;
+    end_anchor: RegionPositionAnchor;
+  }>;
 }
 
 export interface AttemptRegionReport {
-  schema_version: number;
+  schema_version: 2;
   artifact_kind: "single_attempt_distance_region_observations";
   diagnostic_only: true;
   config: { grid_step_m: number; max_bracket_time_s: number; max_bracket_distance_m: number };

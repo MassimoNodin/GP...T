@@ -14,6 +14,11 @@ from ..tracks.model import TrackModel
 from .corners import REGION_EVENT_EXAMPLE_LIMIT, analyze_attempt_regions
 from .resampling import ResampledTrace, ResamplingConfig, TraceSample, resample_trace
 from .service import TimeTrialContextError, require_track_model_compatible, stable_time_trial_context
+from .trajectory import (
+    REGION_POSITION_EVIDENCE_FRAGMENT_LIMIT,
+    build_observed_trajectory,
+    summarize_observed_position_window,
+)
 from .source_limits import (
     ANALYSIS_SOURCE_CONTEXT_BYTE_LIMIT,
     ANALYSIS_SOURCE_CONTEXT_SEGMENT_LIMIT,
@@ -22,8 +27,15 @@ from .source_limits import (
 )
 
 
-REGION_REPORT_SCHEMA_VERSION = 1
+REGION_REPORT_SCHEMA_VERSION = 2
 REGION_REPORT_GRID_POINT_LIMIT = 100_000
+REGION_POSITION_TRACE_COLUMNS = [
+    *ANALYSIS_TRACE_COLUMNS,
+    "motion_available",
+    "world_position_x_m",
+    "world_position_y_m",
+    "world_position_z_m",
+]
 
 
 class RegionReportUnavailable(ValueError):
@@ -44,7 +56,7 @@ def load_attempt_region_report(
         attempt = load_attempt_trace(
             database_path,
             attempt_key,
-            columns=ANALYSIS_TRACE_COLUMNS,
+            columns=REGION_POSITION_TRACE_COLUMNS,
             max_trace_bytes=ANALYSIS_SOURCE_TRACE_BYTE_LIMIT,
             max_trace_rows=ANALYSIS_SOURCE_TRACE_ROW_LIMIT,
             max_context_segments=ANALYSIS_SOURCE_CONTEXT_SEGMENT_LIMIT,
@@ -84,6 +96,38 @@ def load_attempt_region_report(
         config=config,
         event_example_limit=REGION_EVENT_EXAMPLE_LIMIT,
     )
+    trajectory = build_observed_trajectory(
+        attempt_key=attempt.attempt_key,
+        run_id=attempt.run_id,
+        session_uid=attempt.session_uid,
+        car_index=attempt.car_index,
+        disposition=attempt.disposition,
+        lap_time_ms=attempt.lap_time_ms,
+        game_valid=attempt.game_valid,
+        reference_eligible=attempt.reference_eligible,
+        exclusion_reasons=attempt.exclusion_reasons,
+        trace_sha256=attempt.trace_sha256,
+        trace_schema_version=attempt.trace_schema_version,
+        context_segments=attempt.context_segments,
+        samples=attempt.samples,
+    )
+    for region in observations["regions"]:
+        if not isinstance(region, dict):
+            raise ValueError("region observation is malformed")
+        window = region.get("analysis_window_m")
+        if not isinstance(window, list) or len(window) != 2:
+            raise ValueError("region analysis window is malformed")
+        start_m, end_m = window
+        if not isinstance(start_m, (int, float)) or not isinstance(end_m, (int, float)):
+            raise ValueError("region analysis window is malformed")
+        region["position_evidence"] = summarize_observed_position_window(
+            trajectory,
+            attempt.samples,
+            float(start_m),
+            float(end_m),
+            trace_schema_version=attempt.trace_schema_version,
+            fragment_limit=REGION_POSITION_EVIDENCE_FRAGMENT_LIMIT,
+        )
     return {
         "schema_version": REGION_REPORT_SCHEMA_VERSION,
         "artifact_kind": "single_attempt_distance_region_observations",
