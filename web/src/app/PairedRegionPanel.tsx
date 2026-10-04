@@ -24,6 +24,71 @@ const numberText = (value: number | null | undefined, digits = 2) =>
 const distanceRange = (value: [number, number] | undefined) =>
   value ? `${numberText(value[0], 1)}–${numberText(value[1], 1)} m` : "—";
 
+function intervalTimeChange(difference: PairedRegionDifference | undefined) {
+  if (!difference || difference.status !== "supported") {
+    const rawReason = difference?.unavailable_reason;
+    return {
+      supported: false as const,
+      reason:
+        typeof rawReason === "string" && rawReason.trim()
+          ? rawReason.replaceAll("_", " ")
+          : "time evidence unavailable",
+    };
+  }
+
+  if (
+    typeof difference.value !== "number" ||
+    !Number.isFinite(difference.value) ||
+    difference.unit !== "s"
+  ) {
+    return { supported: false as const, reason: "supported time value malformed" };
+  }
+
+  const sign =
+    difference.value > 0 ? "+" : difference.value < 0 ? "−" : "";
+  const magnitude =
+    difference.value !== 0 && Math.abs(difference.value) < 0.001
+      ? "<0.001"
+      : Math.abs(difference.value).toFixed(3);
+  return {
+    supported: true as const,
+    value: difference.value,
+    text: `${sign}${magnitude} s`,
+    tone:
+      difference.value > 0
+        ? "slower"
+        : difference.value < 0
+          ? "faster"
+          : "even",
+  };
+}
+
+function overviewWindowPosition(
+  bounds: [number, number],
+  trackLengthM: number,
+) {
+  const [start, end] = bounds;
+  if (
+    !Number.isFinite(trackLengthM) ||
+    trackLengthM <= 0 ||
+    !Number.isFinite(start) ||
+    !Number.isFinite(end) ||
+    start < 0 ||
+    end <= start ||
+    end > trackLengthM
+  ) {
+    return null;
+  }
+  return {
+    left: (start / trackLengthM) * 100,
+    width: ((end - start) / trackLengthM) * 100,
+  };
+}
+
+function intervalWindowText(bounds: [number, number]) {
+  return `[${numberText(bounds[0], 1)}, ${numberText(bounds[1], 1)}) m`;
+}
+
 const distanceBracket = (value: [number, number] | undefined) => {
   if (!value) return "—";
   const scale = 10;
@@ -155,6 +220,10 @@ export default function PairedRegionPanel({
         </div>
       ) : null}
 
+      {report.regions.length ? (
+        <PairedRegionTimeOverview report={report} navigation={navigation} />
+      ) : null}
+
       <div className="paired-region-list">
         {report.regions.map((region) => (
           <article className="paired-region-card" key={region.identifier}>
@@ -252,6 +321,110 @@ export default function PairedRegionPanel({
         These are configured distance windows. The report does not identify official corner names, rank losses, or provide coaching.
       </p>
     </section>
+  );
+}
+
+function PairedRegionTimeOverview({
+  report,
+  navigation,
+}: {
+  report: PairedRegionReport;
+  navigation: Props["navigation"];
+}) {
+  const trackLengthM = report.track.track_length_m;
+  const regions = report.regions
+    .map((region, sourceIndex) => ({ region, sourceIndex }))
+    .sort((left, right) => {
+      const leftStart = Number.isFinite(left.region.analysis_window_m?.[0])
+        ? left.region.analysis_window_m[0]
+        : Number.POSITIVE_INFINITY;
+      const rightStart = Number.isFinite(right.region.analysis_window_m?.[0])
+        ? right.region.analysis_window_m[0]
+        : Number.POSITIVE_INFINITY;
+      return leftStart - rightStart || left.sourceIndex - right.sourceIndex;
+    });
+
+  return (
+    <figure className="paired-region-time-overview">
+      <figcaption>
+        <div>
+          <h3>Recorded interval time change</h3>
+          <p>
+            Target − reference in seconds. Positive means the target took
+            longer; negative means it took less time. Each segment locates one
+            configured window. Overlapping windows remain separate and are not
+            additive.
+          </p>
+        </div>
+        <span>CONNECTED INTERVAL</span>
+      </figcaption>
+      <div className="paired-region-time-axis" aria-hidden="true">
+        <span>0 m</span>
+        <span>{numberText(trackLengthM / 2, 0)} m</span>
+        <span>{numberText(trackLengthM, 0)} m</span>
+      </div>
+      <ul className="paired-region-time-rows">
+        {regions.map(({ region }) => {
+          const difference = intervalTimeChange(
+            region.supported_differences.connected_interval_time,
+          );
+          const position = overviewWindowPosition(
+            region.analysis_window_m,
+            trackLengthM,
+          );
+          const timeDescription = difference.supported
+            ? `${difference.text}; ${difference.value > 0 ? "target slower" : difference.value < 0 ? "target faster" : "no measured difference"}`
+            : `time evidence unavailable: ${difference.reason}`;
+          const boundsDescription = intervalWindowText(region.analysis_window_m);
+
+          return (
+            <li key={region.identifier}>
+              <a
+                className="paired-region-time-row"
+                href={pairedRegionInspectionHref(
+                  report,
+                  region.analysis_window_m,
+                  navigation,
+                )}
+                aria-label={`Inspect ${region.label}, ${boundsDescription}. ${timeDescription}. Opens the exact comparison interval charts.`}
+              >
+                <div className="paired-region-time-row-heading">
+                  <span>
+                    {region.identifier} · {region.label}
+                  </span>
+                  {difference.supported ? (
+                    <strong className={`is-${difference.tone}`}>
+                      {difference.text}
+                    </strong>
+                  ) : (
+                    <strong className="is-unavailable">Unavailable</strong>
+                  )}
+                </div>
+                <div className="paired-region-time-track" aria-hidden="true">
+                  {position ? (
+                    <span
+                      className={`paired-region-time-window ${difference.supported ? `is-${difference.tone}` : "is-unavailable"}`}
+                      style={{
+                        left: `${position.left}%`,
+                        width: `${position.width}%`,
+                      }}
+                    />
+                  ) : null}
+                </div>
+                <div className="paired-region-time-row-meta">
+                  <span>{boundsDescription}</span>
+                  {difference.supported ? (
+                    <span>Inspect exact half-open interval ↗</span>
+                  ) : (
+                    <span>{difference.reason}</span>
+                  )}
+                </div>
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+    </figure>
   );
 }
 
