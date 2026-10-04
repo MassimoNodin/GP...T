@@ -39,6 +39,7 @@ import RunEvidencePanel from "./RunEvidencePanel";
 import TrajectoryComparisonPanel from "./TrajectoryComparisonPanel";
 import LinkedComparisonCharts from "./LinkedComparisonCharts";
 import DrivingPatternAssessmentPanel from "./DrivingPatternAssessmentPanel";
+import ThrottlePatternAssessmentPanel from "./ThrottlePatternAssessmentPanel";
 import ObservationSetPanel from "./ObservationSetPanel";
 import PairedRegionPanel from "./PairedRegionPanel";
 import EngineerQueryPanel from "./EngineerQueryPanel";
@@ -1766,6 +1767,9 @@ export default async function Home({
                     ) : null}
                     <DrivingPatternAssessmentPanel
                       report={comparison.driving_pattern_assessment}
+                    />
+                    <ThrottlePatternAssessmentPanel
+                      report={comparison.throttle_pattern_assessment}
                     />
                     {comparison.corner_analysis ? (
                       <RegionAnalysisPanel

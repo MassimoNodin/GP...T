@@ -1465,6 +1465,54 @@ export interface DrivingPatternAssessment {
   limits: Record<string, number>;
 }
 
+export interface ThrottlePatternAssessmentRegion {
+  rank: number;
+  region_id: string;
+  region_label: string;
+  analysis_window_m: [number, number];
+  status: "matched" | "contradicted" | "unavailable";
+  reasons: string[];
+  evidence: {
+    recorded_interval_time_difference_s?: number;
+    throttle_onset?: {
+      threshold_percent: number;
+      target_bracket_m: [number, number];
+      reference_bracket_m: [number, number];
+      target_minus_reference_bounds_m: [number, number];
+    };
+    exit_speed?: {
+      distance_m: number;
+      target_speed_kph: number;
+      reference_speed_kph: number;
+      target_minus_reference_kph: number;
+    };
+  };
+  provenance: CornerComparisonFact["provenance"];
+  action: null;
+  coaching_eligible: false;
+}
+
+export interface ThrottlePatternAssessment {
+  schema_version: 1;
+  analysis_version: "throttle-pattern-assessment-v1";
+  status: "available" | "abstained" | "no_ranked_candidates";
+  rule: { id: string; version: number; description: string };
+  validation_status: "experimental";
+  diagnostic_only: true;
+  coaching_eligible: false;
+  coaching_admission: {
+    status: "not_admitted";
+    eligible: false;
+    reasons: string[];
+  };
+  action: null;
+  source: CornerLossCandidates["source"] | null;
+  gate_reasons: string[];
+  gate_reasons_omitted_count: number;
+  regions: ThrottlePatternAssessmentRegion[];
+  limits: Record<string, number>;
+}
+
 export interface LapDebrief {
   schema_version: 1;
   analysis_version: string;
@@ -1514,6 +1562,7 @@ export interface Comparison {
   comparison_brief: ComparisonBrief;
   corner_comparison_brief: CornerComparisonBrief;
   driving_pattern_assessment?: DrivingPatternAssessment;
+  throttle_pattern_assessment?: ThrottlePatternAssessment;
   lap_debrief?: LapDebrief;
   distance_window_brief?: DistanceWindowBrief;
   comparison_policy: "time_trial" | "practice_qualifying";

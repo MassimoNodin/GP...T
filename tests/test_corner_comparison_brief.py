@@ -9,6 +9,9 @@ from f1_engineer.analysis.corner_comparison_brief import (
 from f1_engineer.analysis.driving_pattern_assessment import (
     build_driving_pattern_assessment,
 )
+from f1_engineer.analysis.throttle_pattern_assessment import (
+    build_throttle_pattern_assessment,
+)
 from f1_engineer.analysis.corners import analyze_corner_regions
 from f1_engineer.analysis.resampling import (
     ResamplingConfig,
@@ -397,6 +400,208 @@ def test_provenance_mismatch_abstains_before_rule_assessment() -> None:
     assert "target_corner_provenance_mismatch" in result["gate_reasons"]
     assert result["coaching_eligible"] is False
     assert result["action"] is None
+
+
+def _throttle_pattern_comparison() -> dict[str, object]:
+    comparison = _comparison()
+    comparison["corner_comparison_brief"] = build_corner_comparison_brief(comparison)
+    return comparison
+
+
+def test_assesses_farther_throttle_onset_and_lower_exit_independently() -> None:
+    comparison = _comparison()
+    target_throttle = comparison["corner_analysis"]["regions"][0]["target"][
+        "throttle_pickup"
+    ]["0.5"]
+    target_throttle["events"][0]["right_censored"] = True
+    comparison["corner_comparison_brief"] = build_corner_comparison_brief(comparison)
+
+    result = build_throttle_pattern_assessment(comparison)
+
+    assert result["analysis_version"] == "throttle-pattern-assessment-v1"
+    assert result["status"] == "available"
+    assert result["validation_status"] == "experimental"
+    assert result["diagnostic_only"] is True
+    assert result["coaching_eligible"] is False
+    assert result["coaching_admission"]["eligible"] is False
+    assert result["action"] is None
+    region = result["regions"][0]
+    assert region["status"] == "matched"
+    assert region["evidence"]["throttle_onset"]["target_minus_reference_bounds_m"] == [
+        3.0,
+        5.0,
+    ]
+    assert region["evidence"]["exit_speed"]["target_minus_reference_kph"] == -4.0
+    assert region["action"] is None
+    assert region["coaching_eligible"] is False
+
+    left_censored = _comparison()
+    left_censored["corner_analysis"]["regions"][0]["target"]["throttle_pickup"][
+        "0.5"
+    ]["events"][0]["left_censored"] = True
+    left_censored["corner_comparison_brief"] = build_corner_comparison_brief(left_censored)
+    unavailable = build_throttle_pattern_assessment(left_censored)["regions"][0]
+    assert unavailable["status"] == "unavailable"
+    assert any(
+        reason.startswith("throttle_onset_measurement_omitted")
+        for reason in unavailable["reasons"]
+    )
+
+
+def test_throttle_rule_is_independent_of_braking_fact_and_contradicts_equal_exit() -> None:
+    no_brake = _throttle_pattern_comparison()
+    no_brake["corner_analysis"]["regions"][0]["target"]["braking"]["events"][0][
+        "left_censored"
+    ] = True
+    no_brake["corner_comparison_brief"] = build_corner_comparison_brief(no_brake)
+    brief_facts = no_brake["corner_comparison_brief"]["regions"][0]["facts"]
+    assert not any(fact["kind"] == "braking_threshold_onset_difference" for fact in brief_facts)
+    assert build_throttle_pattern_assessment(no_brake)["regions"][0]["status"] == "matched"
+
+    equal_exit = _throttle_pattern_comparison()
+    equal_exit["corner_analysis"]["regions"][0]["target"]["exit_speeds"][0][
+        "speed_kph"
+    ] = 180.0
+    equal_exit["corner_comparison_brief"] = build_corner_comparison_brief(equal_exit)
+    contradicted = build_throttle_pattern_assessment(equal_exit)["regions"][0]
+    assert contradicted["status"] == "contradicted"
+    assert "target_exit_speed_not_lower" in contradicted["reasons"]
+
+
+def test_throttle_onset_overlap_and_zero_touch_are_unavailable() -> None:
+    for target_bracket in ([129.0, 131.0], [130.0, 131.0]):
+        comparison = _throttle_pattern_comparison()
+        event = comparison["corner_analysis"]["regions"][0]["target"][
+            "throttle_pickup"
+        ]["0.5"]["events"][0]
+        event["start_distance_m"] = 130.0
+        event["start_distance_bracket_m"] = list(target_bracket)
+        comparison["corner_analysis"]["regions"][0]["target"]["throttle_pickup"][
+            "0.5"
+        ]["distance_m"] = 130.0
+        comparison["corner_comparison_brief"] = build_corner_comparison_brief(comparison)
+        region = build_throttle_pattern_assessment(comparison)["regions"][0]
+        assert region["status"] == "unavailable"
+        assert "throttle_onset_order_unresolved" in region["reasons"]
+
+
+def test_throttle_rule_classifies_from_source_bounds_and_speeds() -> None:
+    zero_touch = _comparison()
+    event = zero_touch["corner_analysis"]["regions"][0]["target"][
+        "throttle_pickup"
+    ]["0.5"]["events"][0]
+    event["start_distance_m"] = 130.0
+    event["start_distance_bracket_m"] = [130.0, 131.0]
+    zero_touch["corner_analysis"]["regions"][0]["target"]["throttle_pickup"][
+        "0.5"
+    ]["distance_m"] = 130.0
+    zero_touch["corner_comparison_brief"] = build_corner_comparison_brief(zero_touch)
+    throttle_fact = next(
+        fact
+        for fact in zero_touch["corner_comparison_brief"]["regions"][0]["facts"]
+        if fact["kind"] == "throttle_50_threshold_onset_difference"
+    )
+    throttle_fact["difference_bounds_m"] = [0.0000005, 2.0000005]
+    region = build_throttle_pattern_assessment(zero_touch)["regions"][0]
+    assert region["status"] == "unavailable"
+    assert "throttle_onset_order_unresolved" in region["reasons"]
+    assert region["evidence"]["throttle_onset"]["target_minus_reference_bounds_m"] == [
+        0.0,
+        2.0,
+    ]
+
+    equal_exit = _comparison()
+    equal_exit["corner_analysis"]["regions"][0]["target"]["exit_speeds"][0][
+        "speed_kph"
+    ] = 180.0
+    equal_exit["corner_comparison_brief"] = build_corner_comparison_brief(equal_exit)
+    exit_fact = next(
+        fact
+        for fact in equal_exit["corner_comparison_brief"]["regions"][0]["facts"]
+        if fact["kind"] == "configured_exit_anchor_speed_difference"
+    )
+    exit_fact["value"] = -0.0000005
+    region = build_throttle_pattern_assessment(equal_exit)["regions"][0]
+    assert region["status"] == "contradicted"
+    assert "target_exit_speed_not_lower" in region["reasons"]
+    assert region["evidence"]["exit_speed"]["target_minus_reference_kph"] == 0.0
+
+
+def test_matching_invalid_windows_abstain_without_raising() -> None:
+    for invalid_window in (None, [90.0], [90.0, 90.0]):
+        comparison = _driving_pattern_comparison()
+        candidate = comparison["corner_loss_candidates"]["ranked_candidates"][0]
+        region = comparison["corner_comparison_brief"]["regions"][0]
+        interval = next(
+            fact
+            for fact in region["facts"]
+            if fact["kind"] == "recorded_interval_time_difference"
+        )
+        candidate["analysis_window_m"] = invalid_window
+        region["analysis_window_m"] = invalid_window
+        interval["analysis_window_m"] = invalid_window
+        driving = build_driving_pattern_assessment(comparison)
+        throttle = build_throttle_pattern_assessment(comparison)
+        assert driving["status"] == "abstained"
+        assert throttle["status"] == "abstained"
+        assert driving["regions"] == []
+        assert throttle["regions"] == []
+
+
+def test_throttle_rule_rejects_malformed_and_duplicate_facts_and_interval_arithmetic() -> None:
+    malformed = _throttle_pattern_comparison()
+    facts = malformed["corner_comparison_brief"]["regions"][0]["facts"]
+    throttle = next(
+        fact for fact in facts if fact["kind"] == "throttle_50_threshold_onset_difference"
+    )
+    throttle["difference_bounds_m"] = [5.0, 3.0]
+    region = build_throttle_pattern_assessment(malformed)["regions"][0]
+    assert region["status"] == "unavailable"
+    assert "throttle_onset_evidence_invalid" in region["reasons"]
+
+    duplicate = _throttle_pattern_comparison()
+    facts = duplicate["corner_comparison_brief"]["regions"][0]["facts"]
+    throttle = next(
+        fact for fact in facts if fact["kind"] == "throttle_50_threshold_onset_difference"
+    )
+    facts.append(deepcopy(throttle))
+    region = build_throttle_pattern_assessment(duplicate)["regions"][0]
+    assert region["status"] == "unavailable"
+    assert "throttle_onset_measurement_omitted" in region["reasons"]
+
+    inconsistent = _throttle_pattern_comparison()
+    interval = next(
+        fact
+        for fact in inconsistent["corner_comparison_brief"]["regions"][0]["facts"]
+        if fact["kind"] == "recorded_interval_time_difference"
+    )
+    interval["boundary_delta_evidence"]["entry_target_minus_reference_s"] = 0.5
+    region = build_throttle_pattern_assessment(inconsistent)["regions"][0]
+    assert region["status"] == "unavailable"
+    assert "recorded_interval_time_evidence_invalid" in region["reasons"]
+
+
+def test_throttle_rule_abstains_on_provenance_or_model_approval_mismatch() -> None:
+    mismatch = _throttle_pattern_comparison()
+    mismatch["corner_loss_candidates"]["source"]["target"]["trace_sha256"] = "f" * 64
+    result = build_throttle_pattern_assessment(mismatch)
+    assert result["status"] == "abstained"
+    assert "target_corner_provenance_mismatch" in result["gate_reasons"]
+
+    unapproved = _throttle_pattern_comparison()
+    unapproved["corner_loss_candidates"]["source"]["model"][
+        "approved_for_candidate_ranking"
+    ] = False
+    result = build_throttle_pattern_assessment(unapproved)
+    assert result["status"] == "abstained"
+    assert any("model" in reason for reason in result["gate_reasons"])
+
+    too_many = _throttle_pattern_comparison()
+    ranked = too_many["corner_loss_candidates"]["ranked_candidates"]
+    ranked.extend({**deepcopy(ranked[0]), "rank": index} for index in (2, 3, 4))
+    result = build_throttle_pattern_assessment(too_many)
+    assert result["status"] == "abstained"
+    assert result["gate_reasons"] == ["ranked_candidate_limit_exceeded"]
 
 
 def test_overlapping_threshold_brackets_report_unresolved_order() -> None:

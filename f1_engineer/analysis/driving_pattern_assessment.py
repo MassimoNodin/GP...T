@@ -376,12 +376,16 @@ def _matching_region(
     expected_provenance: Mapping[str, object],
 ) -> bool:
     connected_support = _mapping(candidate.get("connected_support"))
+    candidate_window = _bounds(candidate.get("analysis_window_m"))
+    region_window = _bounds(region.get("analysis_window_m"))
     if (
         region.get("rank") != rank
         or region.get("region_id") != candidate.get("region_id")
         or region.get("region_label") != candidate.get("region_label")
-        or _bounds(region.get("analysis_window_m"))
-        != _bounds(candidate.get("analysis_window_m"))
+        or candidate_window is None
+        or candidate_window[0] < 0
+        or candidate_window[0] >= candidate_window[1]
+        or region_window != candidate_window
         or _mapping(region.get("provenance")) != expected_provenance
         or region.get("connected_support") != candidate.get("connected_support")
         or connected_support is None

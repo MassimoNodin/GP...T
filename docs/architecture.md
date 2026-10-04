@@ -794,6 +794,22 @@ Acceptance covers synthetic matched and contradicted patterns, exact-zero and ov
 
 **Rationale:** Deterministic pattern assessment is a central Phase E requirement and can advance before additional data is available. Reusing established ranked measurements preserves evidence authority and permits synthetic mechanical validation while keeping real-data validation and actionable coaching gated.
 
+## Decision 0054: assess a deterministic throttle and exit pattern
+
+**Status:** accepted
+
+**Date:** 2026-10-05
+
+Add one independent experimental Phase E assessment over the existing D0032 ranked regions and D0033 structured facts. A region matches only when it has a positive connected interval-time difference, target-minus-reference 50% throttle-onset bracket difference with a strictly positive lower bound, and strictly lower target speed at the matching configured exit anchor. Assess at most the same three ranked regions and preserve their order.
+
+Revalidate ranking authority, exact source/checksum/model-approval/reference provenance, region identity and half-open window. Require all connected-support flags and finite bounded coverage, verify interval boundary arithmetic, validate unique supported throttle onset brackets and matching exit-anchor arithmetic. Overlapping or zero-touching onset brackets are unresolved. A generated supported onset may retain right-censored continuation; a left-censored onset is omitted by D0033 and remains unavailable here. Evaluate each region independently of D0053 braking-pattern availability.
+
+Expose an additive `throttle-pattern-assessment-v1` in service, CLI, API, and dashboard. Use `matched`, `contradicted`, or `unavailable` per region with bounded evidence. Keep the report experimental and diagnostic-only, `action=null`, `coaching_eligible=false`, and coaching admission denied. “Farther along” describes sampled distance only; it does not establish elapsed delay, hesitation, traction limitation, causality, or a driving recommendation. Preserve D0053 behavior and all ranking, warning, selection, and trace-read contracts. Updated clients tolerate responses without this optional report.
+
+Acceptance covers synthetic matched and contradicted patterns, equal exit speed, overlapping and zero-touching onset bounds, omitted and malformed facts, right- and left-censored events, independent assessment when braking evidence is unavailable, duplicate facts, interval arithmetic and provenance mismatch, false model approval, the three-region cap, and service/CLI/API/dashboard parity. Melbourne and Shanghai retain their existing abstentions. Synthetic positives validate mechanics only; actionable coaching still requires a clean eligible Time Trial capture, independently reviewed region definitions, and separately accepted rule/action validation.
+
+**Rationale:** Throttle pickup and exit speed are existing, bracketed comparison measurements and provide a second deterministic pattern that advances Phase E without new data reads or broader coaching authority. Independent outcomes preserve useful evidence when the braking rule lacks one of its required measurements, while explicit censoring and uncertainty gates prevent a descriptive distance pattern from becoming an unsupported diagnosis.
+
 ## Data flow
 
 ```text
@@ -840,6 +856,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - `diagnostic-region-debrief-v1` derives at most five deterministic facts from existing paired-region supported differences; omissions remain explicit, and the additive nested report is diagnostic, coaching-ineligible, and ranking-ineligible.
 - `lap-debrief-v1` composes a verified official lap-time difference and at most three matching D0032/D0033 region interval summaries from one existing comparison response. It preserves prioritized capture, lifecycle, validity, and support limitations, rejects mismatched provenance, and adds no analysis reads or coaching authority.
 - `driving-pattern-assessment-v1` evaluates at most three D0032-ranked regions against provenance-matched D0033 braking-onset, minimum-speed and exit-speed facts. It distinguishes matched, contradicted and unavailable measurements while keeping the experimental rule coaching-ineligible with no action.
+- `throttle-pattern-assessment-v1` independently evaluates at most three D0032-ranked regions against connected interval time, D0033 50% throttle-onset brackets and configured exit-speed facts. It preserves onset uncertainty and censoring while keeping the experimental rule coaching-ineligible with no action.
 - `brake-threshold-release-v1` compares the existing paired braking-event end brackets for the sampled `>=10%` to `<10%` transition. It preserves uncertainty and left-censored onset, abstains on right-censoring or unsupported event evidence, and does not measure complete pedal release or add trace reads.
 - `observation-set` reuses the single-attempt selected-window evaluator across at most eight explicitly selected same-run/session/player attempts. Scalar ranges require two fully supported, lifecycle-assessed completed attempts; onset evidence remains bracketed per lap, and every result is diagnostic and coaching-ineligible.
 - Comparison speed, lap-delta, and driver-input charts share a bounded pointer and keyboard cursor over the original resampled comparison distance grid. Local chart zoom is presentation-only and preserves sampled continuity gaps; analysis, mode policy and comparison outputs are unchanged.

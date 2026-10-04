@@ -29,6 +29,12 @@ def test_compare_cli_forwards_an_explicit_distance_window(monkeypatch, capsys) -
                 "coaching_eligible": False,
                 "action": None,
             },
+            "throttle_pattern_assessment": {
+                "analysis_version": "throttle-pattern-assessment-v1",
+                "status": "abstained",
+                "coaching_eligible": False,
+                "action": None,
+            },
             "lap_debrief": {
                 "analysis_version": "lap-debrief-v1",
                 "status": "partial",
@@ -69,6 +75,10 @@ def test_compare_cli_forwards_an_explicit_distance_window(monkeypatch, capsys) -
         "driving-pattern-assessment-v1"
     )
     assert output["driving_pattern_assessment"]["action"] is None
+    assert output["throttle_pattern_assessment"]["analysis_version"] == (
+        "throttle-pattern-assessment-v1"
+    )
+    assert output["throttle_pattern_assessment"]["action"] is None
     assert output["lap_debrief"]["analysis_version"] == "lap-debrief-v1"
     assert output["distance_window_brief"]["analysis_version"] == (
         "distance-window-brief-v1"
