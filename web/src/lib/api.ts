@@ -276,6 +276,26 @@ export interface AttemptObservedStatus {
   fuel_quantity_unit_note: string;
 }
 
+export interface CarDamageObservationSummary {
+  version: string;
+  authority: string;
+  observation_note: string;
+  status: string;
+  sample_count: number;
+  matched_sample_count: number | null;
+  missing_join_sample_count: number | null;
+  unavailable_reason_counts: Record<string, number> | null;
+  fields: Record<string, {
+    valid_count: number;
+    missing_count: number;
+    invalid_count: number;
+  }> | null;
+  first_last_observed: Record<string, {
+    first: ObservedConditionAnchor | null;
+    last: ObservedConditionAnchor | null;
+  }> | null;
+}
+
 export interface ObservedTrajectoryPoint {
   frame_identifier: number;
   lap_distance_m: number;
@@ -717,6 +737,7 @@ export interface AttemptQualityReport {
   };
   channels: Record<string, AttemptQualityAvailability>;
   observed_status: AttemptObservedStatus;
+  car_damage_observations?: CarDamageObservationSummary;
   continuity: {
     frame_gaps: {
       count: number;
@@ -1358,6 +1379,7 @@ export interface ObservedConditionSummary {
       }
     | null;
   fuel_quantity_unit_note: string;
+  car_damage_observations?: CarDamageObservationSummary;
   environment_context: {
     status: string;
     segment_count: number;

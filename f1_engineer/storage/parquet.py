@@ -8,8 +8,8 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-TRACE_SCHEMA_VERSION = 3
-SUPPORTED_TRACE_SCHEMA_VERSIONS = (1, 2, TRACE_SCHEMA_VERSION)
+TRACE_SCHEMA_VERSION = 4
+SUPPORTED_TRACE_SCHEMA_VERSIONS = (1, 2, 3, TRACE_SCHEMA_VERSION)
 ROW_GROUP_SIZE = 4096
 
 
@@ -71,7 +71,7 @@ TRACE_SCHEMA_V2 = pa.schema(
     ],
     metadata={b"trace_schema_version": b"2"},
 )
-TRACE_SCHEMA = pa.schema(
+TRACE_SCHEMA_V3 = pa.schema(
     [
         *TRACE_SCHEMA_V2,
         _field("car_status_available", pa.bool_()),
@@ -94,6 +94,49 @@ TRACE_SCHEMA = pa.schema(
     ],
     metadata={b"trace_schema_version": b"3"},
 )
+TRACE_SCHEMA = pa.schema(
+    [
+        *TRACE_SCHEMA_V3,
+        _field("car_damage_available", pa.bool_()),
+        _field("car_damage_unavailable_reason", pa.string()),
+        _field("tyre_wear_rl_percent", pa.float32(), unit="percent"),
+        _field("tyre_wear_rr_percent", pa.float32(), unit="percent"),
+        _field("tyre_wear_fl_percent", pa.float32(), unit="percent"),
+        _field("tyre_wear_fr_percent", pa.float32(), unit="percent"),
+        _field("tyre_damage_rl_percent", pa.uint8(), unit="percent"),
+        _field("tyre_damage_rr_percent", pa.uint8(), unit="percent"),
+        _field("tyre_damage_fl_percent", pa.uint8(), unit="percent"),
+        _field("tyre_damage_fr_percent", pa.uint8(), unit="percent"),
+        _field("brake_damage_rl_percent", pa.uint8(), unit="percent"),
+        _field("brake_damage_rr_percent", pa.uint8(), unit="percent"),
+        _field("brake_damage_fl_percent", pa.uint8(), unit="percent"),
+        _field("brake_damage_fr_percent", pa.uint8(), unit="percent"),
+        _field("tyre_blister_rl_percent", pa.uint8(), unit="percent"),
+        _field("tyre_blister_rr_percent", pa.uint8(), unit="percent"),
+        _field("tyre_blister_fl_percent", pa.uint8(), unit="percent"),
+        _field("tyre_blister_fr_percent", pa.uint8(), unit="percent"),
+        _field("front_left_wing_damage_percent", pa.uint8(), unit="percent"),
+        _field("front_right_wing_damage_percent", pa.uint8(), unit="percent"),
+        _field("rear_wing_damage_percent", pa.uint8(), unit="percent"),
+        _field("floor_damage_percent", pa.uint8(), unit="percent"),
+        _field("diffuser_damage_percent", pa.uint8(), unit="percent"),
+        _field("sidepod_damage_percent", pa.uint8(), unit="percent"),
+        _field("drs_fault", pa.bool_()),
+        _field("ers_fault", pa.bool_()),
+        _field("gearbox_damage_percent", pa.uint8(), unit="percent"),
+        _field("engine_damage_percent", pa.uint8(), unit="percent"),
+        _field("engine_mguh_wear_percent", pa.uint8(), unit="percent"),
+        _field("engine_es_wear_percent", pa.uint8(), unit="percent"),
+        _field("engine_ce_wear_percent", pa.uint8(), unit="percent"),
+        _field("engine_ice_wear_percent", pa.uint8(), unit="percent"),
+        _field("engine_mguk_wear_percent", pa.uint8(), unit="percent"),
+        _field("engine_tc_wear_percent", pa.uint8(), unit="percent"),
+        _field("engine_blown", pa.bool_()),
+        _field("engine_seized", pa.bool_()),
+    ],
+    metadata={b"trace_schema_version": b"4"},
+)
+TRACE_SCHEMA_V4 = TRACE_SCHEMA
 
 
 class ParquetTraceWriter:
@@ -119,6 +162,9 @@ class ParquetTraceWriter:
         self._matched_car_status_count = 0
         self._missing_car_status_count = 0
         self._car_status_unavailable_reasons: dict[str, int] = {}
+        self._matched_car_damage_count = 0
+        self._missing_car_damage_count = 0
+        self._car_damage_unavailable_reasons: dict[str, int] = {}
         self._valid_position_count = 0
         self._largest_frame_gap = 0
         self._distance_discontinuities = 0
@@ -158,6 +204,19 @@ class ParquetTraceWriter:
             self._car_status_unavailable_reasons[reason_key] = (
                 self._car_status_unavailable_reasons.get(reason_key, 0) + 1
             )
+        if item.get("car_damage_available") is True:
+            self._matched_car_damage_count += 1
+        else:
+            self._missing_car_damage_count += 1
+            reason = item.get("car_damage_unavailable_reason")
+            reason_key = reason if isinstance(reason, str) and reason else "damage_reason_unavailable"
+            if reason_key not in self._car_damage_unavailable_reasons and len(
+                self._car_damage_unavailable_reasons
+            ) >= 16:
+                reason_key = "__other__"
+            self._car_damage_unavailable_reasons[reason_key] = (
+                self._car_damage_unavailable_reasons.get(reason_key, 0) + 1
+            )
         if all(item.get(field) is not None for field in (
             "world_position_x_m", "world_position_y_m", "world_position_z_m"
         )):
@@ -191,6 +250,9 @@ class ParquetTraceWriter:
                 "matched_car_status_count": self._matched_car_status_count,
                 "missing_car_status_count": self._missing_car_status_count,
                 "car_status_unavailable_reason_counts": self._car_status_unavailable_reasons,
+                "matched_car_damage_count": self._matched_car_damage_count,
+                "missing_car_damage_count": self._missing_car_damage_count,
+                "car_damage_unavailable_reason_counts": self._car_damage_unavailable_reasons,
                 "valid_motion_position_count": self._valid_position_count,
                 "largest_frame_gap": self._largest_frame_gap,
                 "distance_discontinuities": self._distance_discontinuities,

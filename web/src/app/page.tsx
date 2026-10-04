@@ -10,6 +10,7 @@ import {
   AttemptTrajectoryPreview,
   AttemptQualityReport,
   AttemptTraceChartReport,
+  CarDamageObservationSummary,
   LapRecord,
   ObservationSetReport,
   ObservedConditionAnchor,
@@ -1989,6 +1990,7 @@ function ConditionSource({
         <span className="eyebrow">{sourceLabel}</span>
         <strong>{statusLine}</strong>
       </div>
+      <CarDamageObservations summary={summary.car_damage_observations} />
       <div className="condition-observation-list">
         {conditionFields.map(({ title, key, note }) => {
           const counts = field(key);
@@ -2106,6 +2108,81 @@ function ConditionSource({
       </div>
     </article>
   );
+}
+
+function CarDamageObservations({
+  summary,
+}: {
+  summary: CarDamageObservationSummary | undefined;
+}) {
+  if (!summary) return null;
+  const statusLine =
+    summary.status === "available"
+      ? `Matched ${formatEvidenceCount(summary.matched_sample_count)} / ${summary.sample_count} exact-frame samples`
+      : summary.status === "no_joined_samples"
+        ? `No joined samples · ${summary.sample_count} trace samples`
+        : "Unavailable in this trace schema";
+  const fieldRows = Object.entries(summary.fields ?? {});
+
+  return (
+    <details className="condition-damage-observations">
+      <summary>
+        <span>
+          <span className="condition-label">PRIMARY PLAYER · SPARSE DIAGNOSTIC</span>
+          <strong>{statusLine}</strong>
+        </span>
+        <span aria-hidden="true">{fieldRows.length} fields</span>
+      </summary>
+      <p>{summary.observation_note}</p>
+      {fieldRows.length ? (
+        <div className="condition-damage-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>FIELD</th>
+                <th>VALID</th>
+                <th>MISSING</th>
+                <th>INVALID</th>
+                <th>FIRST OBSERVED</th>
+                <th>LAST OBSERVED</th>
+              </tr>
+            </thead>
+            <tbody>
+              {fieldRows.map(([field, counts]) => {
+                const observed = summary.first_last_observed?.[field];
+                return (
+                  <tr key={field}>
+                    <td>{field.replaceAll("_", " ").toUpperCase()}</td>
+                    <td>{counts.valid_count}</td>
+                    <td>{counts.missing_count}</td>
+                    <td>{counts.invalid_count}</td>
+                    <td>{damageObservation(observed?.first ?? null)}</td>
+                    <td>{damageObservation(observed?.last ?? null)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <small>Field values are unavailable for this trace schema.</small>
+      )}
+      <small className="condition-damage-reasons">
+        Unavailable exact-frame joins: {Object.entries(summary.unavailable_reason_counts ?? {})
+          .filter(([, count]) => count > 0)
+          .map(([reason, count]) => `${reason.replaceAll("_", " ")} ${count}`)
+          .join(" · ") || "none reported"}
+      </small>
+    </details>
+  );
+}
+
+function damageObservation(anchor: ObservedConditionAnchor | null) {
+  if (!anchor) return "—";
+  const value = typeof anchor.value === "boolean"
+    ? anchor.value ? "Yes" : "No"
+    : `${anchor.value}%`;
+  return `${value} ${conditionAnchor(anchor)}`;
 }
 
 function formatConditionValue(field: string, value: number | boolean) {

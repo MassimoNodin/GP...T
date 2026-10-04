@@ -15,13 +15,14 @@ from ..sessions.session_history import (
     AttemptTimingEvidence,
     SessionHistoryAccumulator,
 )
+from ..udp.models import PacketId
 from ..telemetry.canonical import CarSample
 from .database import Database
 from .lock import ImportRunLock
 from .parquet import ParquetTraceWriter, TRACE_SCHEMA_VERSION, sha256_file
 
 
-PIPELINE_VERSION = "player-traces-v13-session-history"
+PIPELINE_VERSION = "player-traces-v14-car-damage"
 MAX_STORED_LIFECYCLE_EVENTS = 100_000
 DEFAULT_DATABASE = Path("data") / "f1-engineer.sqlite3"
 IMPORT_CONFIG = {"max_open_frames": 256, "reorder_window_frames": 3}
@@ -53,6 +54,12 @@ class ImportSummary:
     car_status_decode_errors: int = 0
     player_car_status_samples: int = 0
     missing_player_car_status_samples: int = 0
+    car_damage_packets_raw: int = 0
+    car_damage_packets_admitted: int = 0
+    car_damage_packets_decoded: int = 0
+    car_damage_decode_errors: int = 0
+    player_car_damage_samples: int = 0
+    missing_player_car_damage_samples: int = 0
     import_late_packets_ignored: int = 0
     import_frame_overflow_packets_dropped: int = 0
     event_packets: int = 0
@@ -335,6 +342,8 @@ def import_capture(
             participant_error_count = 0
             motion_error_count = 0
             car_status_error_count = 0
+            car_damage_error_count = 0
+            raw_car_damage_packet_count = 0
             session_history_decode_error_count = 0
             capture_metadata: dict[str, object]
             capture_completion: dict[str, object] | None = None
@@ -358,6 +367,8 @@ def import_capture(
                     except ProtocolError:
                         malformed_packets += 1
                         continue
+                    if result.packet.packet_kind is PacketId.CAR_DAMAGE:
+                        raw_car_damage_packet_count += 1
                     attempts.extend(result.lap_attempts)
                     trace_manager.consume(result.car_samples, result.lap_attempts)
                     for attempt in result.lap_attempts:
@@ -378,12 +389,14 @@ def import_capture(
                     participant_error_count += int(result.participants_error is not None)
                     motion_error_count += len(pipeline.motion_decode_errors)
                     car_status_error_count += len(pipeline.car_status_decode_errors)
+                    car_damage_error_count += len(pipeline.car_damage_decode_errors)
                     pipeline.laps.drain_attempts()
                     pipeline.lap_data_decode_errors.clear()
                     pipeline.car_telemetry_decode_errors.clear()
                     pipeline.participants_decode_errors.clear()
                     pipeline.motion_decode_errors.clear()
                     pipeline.car_status_decode_errors.clear()
+                    pipeline.car_damage_decode_errors.clear()
                     uid = result.packet.header.session_uid
                     if (
                         uid != 0
@@ -462,6 +475,8 @@ def import_capture(
                 pipeline.motion_decode_errors.clear()
                 car_status_error_count += len(pipeline.car_status_decode_errors)
                 pipeline.car_status_decode_errors.clear()
+                car_damage_error_count += len(pipeline.car_damage_decode_errors)
+                pipeline.car_damage_decode_errors.clear()
                 trace_manager.finish_all(tuple(attempts))
                 capture_complete = capture.complete
                 capture_completion = capture.completion
@@ -535,6 +550,12 @@ def import_capture(
                 "car_status_decode_errors": car_status_error_count,
                 "player_car_status_sample_count": pipeline.player_car_status_samples,
                 "missing_player_car_status_sample_count": pipeline.missing_player_car_status_samples,
+                "car_damage_packets_admitted": pipeline.car_damage_packets_admitted,
+                "car_damage_packets_raw": raw_car_damage_packet_count,
+                "car_damage_packets_decoded": pipeline.car_damage_packets_decoded,
+                "car_damage_decode_errors": car_damage_error_count,
+                "player_car_damage_sample_count": pipeline.player_car_damage_samples,
+                "missing_player_car_damage_sample_count": pipeline.missing_player_car_damage_samples,
                 "import_late_packets_ignored": pipeline.frames.late_packets_ignored,
                 "import_frame_overflow_packets_dropped": pipeline.frames.overflow_packets_dropped,
                 "lifecycle_analysis_version": "rewind-lifecycle-v1",
@@ -589,6 +610,12 @@ def import_capture(
                 car_status_decode_errors=car_status_error_count,
                 player_car_status_samples=pipeline.player_car_status_samples,
                 missing_player_car_status_samples=pipeline.missing_player_car_status_samples,
+                car_damage_packets_raw=raw_car_damage_packet_count,
+                car_damage_packets_admitted=pipeline.car_damage_packets_admitted,
+                car_damage_packets_decoded=pipeline.car_damage_packets_decoded,
+                car_damage_decode_errors=car_damage_error_count,
+                player_car_damage_samples=pipeline.player_car_damage_samples,
+                missing_player_car_damage_samples=pipeline.missing_player_car_damage_samples,
                 import_late_packets_ignored=pipeline.frames.late_packets_ignored,
                 import_frame_overflow_packets_dropped=pipeline.frames.overflow_packets_dropped,
                 event_packets=pipeline.event_packets_decoded,

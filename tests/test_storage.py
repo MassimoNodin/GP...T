@@ -149,7 +149,7 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert stored_attempt.start_observed is False
     assert stored_attempt.pit_encountered is False
     assert stored_attempt.trace_sha256
-    assert stored_attempt.trace_schema_version == TRACE_SCHEMA_VERSION == 3
+    assert stored_attempt.trace_schema_version == TRACE_SCHEMA_VERSION == 4
     assert stored_attempt.context_segments[0][1]["game_mode"] == "time_trial"
     monkeypatch.setattr(
         query_module,

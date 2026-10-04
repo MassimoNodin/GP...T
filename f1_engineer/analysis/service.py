@@ -14,7 +14,11 @@ from .corner_loss_candidates import build_corner_loss_candidates
 from .corners import analyze_corner_regions
 from .distance_window_brief import build_distance_window_brief
 from .interval_delta import reserve_interval_evaluation_work
-from .quality import OBSERVED_CONDITION_TRACE_COLUMNS, summarize_observed_conditions
+from .quality import (
+    OBSERVED_CONDITION_TRACE_COLUMNS,
+    summarize_car_damage_observations,
+    summarize_observed_conditions,
+)
 from .resampling import (
     ANALYSIS_VERSION,
     ResamplingConfig,
@@ -222,16 +226,18 @@ def compare_attempts(
         reported_timing["target"], reported_timing["reference"]
     )
     observed_conditions = {
-        "target": summarize_observed_conditions(
-            target.samples,
-            trace_schema_version=target.trace_schema_version,
-            context_segments=target.context_segments,
-        ),
-        "reference": summarize_observed_conditions(
-            reference.samples,
-            trace_schema_version=reference.trace_schema_version,
-            context_segments=reference.context_segments,
-        ),
+        side: {
+            **summarize_observed_conditions(
+                attempt.samples,
+                trace_schema_version=attempt.trace_schema_version,
+                context_segments=attempt.context_segments,
+            ),
+            "car_damage_observations": summarize_car_damage_observations(
+                attempt.samples,
+                trace_schema_version=attempt.trace_schema_version,
+            ),
+        }
+        for side, attempt in (("target", target), ("reference", reference))
     }
 
     result = {

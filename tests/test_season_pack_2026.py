@@ -757,7 +757,7 @@ def test_2026_import_persists_motion_and_wide_participant_snapshot(tmp_path) -> 
     assert imported.player_motion_samples == 2
     assert imported.missing_player_motion_samples == 0
     sessions = list_sessions(database_path)
-    assert sessions[0]["pipeline_version"] == "player-traces-v13-session-history"
+    assert sessions[0]["pipeline_version"] == "player-traces-v14-car-damage"
     attempts = list_laps(database_path)
     complete = next(attempt for attempt in attempts if attempt["disposition"] == "completed")
     stored = load_attempt_trace(
@@ -899,7 +899,7 @@ def test_2026_capture_import_query_and_reimport_are_stable(tmp_path) -> None:
     session = list_sessions(database_path)[0]
     assert session["packet_format"] == 2026
     assert session["context"]["track_name"] == "Madrid"
-    assert session["pipeline_version"] == "player-traces-v13-session-history"
+    assert session["pipeline_version"] == "player-traces-v14-car-damage"
     attempts = list_laps(database_path)
     complete = next(
         attempt for attempt in attempts if attempt["disposition"] == "completed"
@@ -908,7 +908,7 @@ def test_2026_capture_import_query_and_reimport_are_stable(tmp_path) -> None:
     assert complete["game_valid"] is True
     assert complete["reference_eligible"] is False
     assert "mode_policy_not_implemented" in complete["exclusion_reasons"]
-    assert complete["trace_schema_version"] == 3
+    assert complete["trace_schema_version"] == 4
 
     stored = load_attempt_trace(
         database_path,
@@ -922,7 +922,7 @@ def test_2026_capture_import_query_and_reimport_are_stable(tmp_path) -> None:
         ],
     )
     assert stored is not None
-    assert stored.trace_schema_version == 3
+    assert stored.trace_schema_version == 4
     assert len(stored.samples) == 1
     assert stored.samples[0]["car_index"] == 23
     assert stored.samples[0]["motion_available"] is False

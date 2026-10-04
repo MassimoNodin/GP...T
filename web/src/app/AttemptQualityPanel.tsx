@@ -41,6 +41,7 @@ export default function AttemptQualityPanel({
   const speed = report.distance_support.channels.speed_mps;
   const observedRange = report.distance_support.observed_distance_range_m;
   const status = report.observed_status;
+  const damage = report.car_damage_observations;
   const validity =
     report.attempt.game_valid === true
       ? "GAME VALID"
@@ -245,6 +246,64 @@ export default function AttemptQualityPanel({
           </>
         )}
       </section>
+      {damage ? (
+      <section className="quality-status-evidence">
+        <div className="quality-panel-heading">
+          <div>
+            <span className="eyebrow">SPARSE EXACT FRAME OBSERVATIONS</span>
+            <h3>Car Damage</h3>
+          </div>
+          <span className="quality-state">
+            {damage.status === "available" ? "DIAGNOSTIC" : damage.status.replaceAll("_", " ").toUpperCase()}
+          </span>
+        </div>
+        <p className="quality-status-summary">
+          {damage.status === "available"
+            ? `Matched ${number(damage.matched_sample_count)} / ${damage.sample_count.toLocaleString()} player samples`
+            : damage.status === "no_joined_samples"
+              ? `No joined samples · ${damage.sample_count.toLocaleString()} trace samples`
+              : "Damage fields were not stored in this trace schema"}
+          {Object.entries(damage.unavailable_reason_counts ?? {}).some(([, count]) => count > 0) && (
+            <> · unavailable joins {Object.entries(damage.unavailable_reason_counts ?? {})
+              .filter(([, count]) => count > 0)
+              .map(([reason, count]) => `${reason.replaceAll("_", " ")}: ${number(count)}`)
+              .join(" · ")}</>
+          )}
+        </p>
+        <p className="quality-unavailable">{damage.observation_note}</p>
+        {damage.fields ? (
+          <div className="quality-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>FIELD</th>
+                  <th>VALID</th>
+                  <th>MISSING</th>
+                  <th>INVALID</th>
+                  <th>FIRST OBSERVED</th>
+                  <th>LAST OBSERVED</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(damage.fields).map(([field, counts]) => {
+                  const observed = damage.first_last_observed?.[field];
+                  return (
+                    <tr key={field}>
+                      <td>{field.replaceAll("_", " ").toUpperCase()}</td>
+                      <td>{number(counts.valid_count)}</td>
+                      <td>{number(counts.missing_count)}</td>
+                      <td>{number(counts.invalid_count)}</td>
+                      <td>{damageObservation(observed?.first ?? null)}</td>
+                      <td>{damageObservation(observed?.last ?? null)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
+      ) : null}
       <div className="quality-provenance">
         <span>
           {report.attempt.disposition.toUpperCase()} · {report.context.game_modes.join(" / ") || "MODE UNKNOWN"}
@@ -261,7 +320,7 @@ export default function AttemptQualityPanel({
         )}
       </div>
       <p className="quality-footnote">
-        Full-track support uses the track length reported in session context. Unobserved distance is unknown and does not establish packet loss. Car Status is joined only to its exact frame; fuel values are {status.fuel_quantity_unit_note}, and the report does not infer fuel consumption or unobserved tyre changes.
+        Full-track support uses the track length reported in session context. Unobserved distance is unknown and does not establish packet loss. Car Status and Car Damage are joined only to their exact frame; fuel values are {status.fuel_quantity_unit_note}. Sparse damage observations do not explain lap-time changes or confirm overall car condition.
       </p>
     </section>
   );
@@ -291,6 +350,23 @@ function observation(value: { value: unknown; frame_identifier: number } | null)
   return value == null
     ? "Unavailable"
     : `${displayValue(value.value)} · frame ${number(value.frame_identifier)}`;
+}
+
+function damageObservation(
+  value: {
+    value: number | boolean;
+    frame_identifier: number | null;
+    session_time_s: number | null;
+    lap_distance_m: number | null;
+  } | null,
+): string {
+  if (value == null) return "Unavailable";
+  const anchor = [
+    value.frame_identifier == null ? null : `frame ${number(value.frame_identifier)}`,
+    value.session_time_s == null ? null : `${value.session_time_s.toFixed(3)} s`,
+    value.lap_distance_m == null ? null : `${value.lap_distance_m.toFixed(1)} m`,
+  ].filter((part): part is string => part !== null);
+  return `${displayValue(value.value)}${typeof value.value === "number" ? "%" : ""}${anchor.length ? ` · ${anchor.join(" · ")}` : ""}`;
 }
 
 function compoundLabels(values: Array<{ raw_id: number; label: string | null }>): string {

@@ -948,20 +948,28 @@ def test_comparison_condition_summary_matches_standalone_quality_semantics(
         "unused.sqlite3", target.attempt_key, reference.attempt_key
     )
 
-    assert result["observed_conditions"]["target"] == quality_module.summarize_observed_conditions(
-        target.samples,
-        trace_schema_version=target.trace_schema_version,
-        context_segments=target.context_segments,
-    )
-    assert result["observed_conditions"]["reference"] == quality_module.summarize_observed_conditions(
-        reference.samples,
-        trace_schema_version=reference.trace_schema_version,
-        context_segments=reference.context_segments,
-    )
+    for side, attempt in (("target", target), ("reference", reference)):
+        observed = result["observed_conditions"][side]
+        assert {
+            key: value
+            for key, value in observed.items()
+            if key != "car_damage_observations"
+        } == quality_module.summarize_observed_conditions(
+            attempt.samples,
+            trace_schema_version=attempt.trace_schema_version,
+            context_segments=attempt.context_segments,
+        )
+        assert observed["car_damage_observations"]["status"] == (
+            "unavailable_in_trace_schema"
+        )
     assert result["observed_conditions"]["target"]["first_last_observed"][
         "fuel_in_tank_reported"
     ]["first"]["lap_distance_m"] == 0.0
-    assert all("car_status_available" in call["columns"] for call in load_calls)
+    assert all(
+        "car_status_available" in call["columns"]
+        and "car_damage_available" in call["columns"]
+        for call in load_calls
+    )
 
 
 def test_comparison_rejects_unknown_context_and_cross_mode_attempts(monkeypatch) -> None:

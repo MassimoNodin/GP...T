@@ -7,6 +7,7 @@ from ..udp.lap_data import CarLapData
 from ..udp.car_telemetry import CarTelemetryData
 from ..udp.motion import CarMotionData
 from ..udp.car_status import CarStatusData
+from ..udp.car_damage import CarDamageData
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +69,42 @@ class CarSample:
     drs_activation_distance_m: int | None = None
     vehicle_fia_flag: int | None = None
     network_paused: bool | None = None
+    car_damage_available: bool = False
+    car_damage_unavailable_reason: str | None = None
+    tyre_wear_rl_percent: float | None = None
+    tyre_wear_rr_percent: float | None = None
+    tyre_wear_fl_percent: float | None = None
+    tyre_wear_fr_percent: float | None = None
+    tyre_damage_rl_percent: int | None = None
+    tyre_damage_rr_percent: int | None = None
+    tyre_damage_fl_percent: int | None = None
+    tyre_damage_fr_percent: int | None = None
+    brake_damage_rl_percent: int | None = None
+    brake_damage_rr_percent: int | None = None
+    brake_damage_fl_percent: int | None = None
+    brake_damage_fr_percent: int | None = None
+    tyre_blister_rl_percent: int | None = None
+    tyre_blister_rr_percent: int | None = None
+    tyre_blister_fl_percent: int | None = None
+    tyre_blister_fr_percent: int | None = None
+    front_left_wing_damage_percent: int | None = None
+    front_right_wing_damage_percent: int | None = None
+    rear_wing_damage_percent: int | None = None
+    floor_damage_percent: int | None = None
+    diffuser_damage_percent: int | None = None
+    sidepod_damage_percent: int | None = None
+    drs_fault: bool | None = None
+    ers_fault: bool | None = None
+    gearbox_damage_percent: int | None = None
+    engine_damage_percent: int | None = None
+    engine_mguh_wear_percent: int | None = None
+    engine_es_wear_percent: int | None = None
+    engine_ce_wear_percent: int | None = None
+    engine_ice_wear_percent: int | None = None
+    engine_mguk_wear_percent: int | None = None
+    engine_tc_wear_percent: int | None = None
+    engine_blown: bool | None = None
+    engine_seized: bool | None = None
 
     def to_record(self) -> dict[str, object]:
         return {
@@ -128,6 +165,42 @@ class CarSample:
             "drs_activation_distance_m": self.drs_activation_distance_m,
             "vehicle_fia_flag": self.vehicle_fia_flag,
             "network_paused": self.network_paused,
+            "car_damage_available": self.car_damage_available,
+            "car_damage_unavailable_reason": self.car_damage_unavailable_reason,
+            "tyre_wear_rl_percent": self.tyre_wear_rl_percent,
+            "tyre_wear_rr_percent": self.tyre_wear_rr_percent,
+            "tyre_wear_fl_percent": self.tyre_wear_fl_percent,
+            "tyre_wear_fr_percent": self.tyre_wear_fr_percent,
+            "tyre_damage_rl_percent": self.tyre_damage_rl_percent,
+            "tyre_damage_rr_percent": self.tyre_damage_rr_percent,
+            "tyre_damage_fl_percent": self.tyre_damage_fl_percent,
+            "tyre_damage_fr_percent": self.tyre_damage_fr_percent,
+            "brake_damage_rl_percent": self.brake_damage_rl_percent,
+            "brake_damage_rr_percent": self.brake_damage_rr_percent,
+            "brake_damage_fl_percent": self.brake_damage_fl_percent,
+            "brake_damage_fr_percent": self.brake_damage_fr_percent,
+            "tyre_blister_rl_percent": self.tyre_blister_rl_percent,
+            "tyre_blister_rr_percent": self.tyre_blister_rr_percent,
+            "tyre_blister_fl_percent": self.tyre_blister_fl_percent,
+            "tyre_blister_fr_percent": self.tyre_blister_fr_percent,
+            "front_left_wing_damage_percent": self.front_left_wing_damage_percent,
+            "front_right_wing_damage_percent": self.front_right_wing_damage_percent,
+            "rear_wing_damage_percent": self.rear_wing_damage_percent,
+            "floor_damage_percent": self.floor_damage_percent,
+            "diffuser_damage_percent": self.diffuser_damage_percent,
+            "sidepod_damage_percent": self.sidepod_damage_percent,
+            "drs_fault": self.drs_fault,
+            "ers_fault": self.ers_fault,
+            "gearbox_damage_percent": self.gearbox_damage_percent,
+            "engine_damage_percent": self.engine_damage_percent,
+            "engine_mguh_wear_percent": self.engine_mguh_wear_percent,
+            "engine_es_wear_percent": self.engine_es_wear_percent,
+            "engine_ce_wear_percent": self.engine_ce_wear_percent,
+            "engine_ice_wear_percent": self.engine_ice_wear_percent,
+            "engine_mguk_wear_percent": self.engine_mguk_wear_percent,
+            "engine_tc_wear_percent": self.engine_tc_wear_percent,
+            "engine_blown": self.engine_blown,
+            "engine_seized": self.engine_seized,
         }
 
 
@@ -143,6 +216,8 @@ def make_car_sample(
     motion: CarMotionData | None = None,
     car_status: CarStatusData | None = None,
     car_status_unavailable_reason: str | None = None,
+    car_damage: CarDamageData | None = None,
+    car_damage_unavailable_reason: str | None = None,
 ) -> CarSample:
     flags: list[str] = []
     lap_distance = _finite(lap.lap_distance_m)
@@ -233,6 +308,8 @@ def make_car_sample(
     if car_status is not None:
         status_values = _canonical_car_status(car_status, flags)
         values.update(status_values)
+    damage_values = _canonical_car_damage(car_damage, flags)
+    values.update(damage_values)
 
     return CarSample(
         session_uid=session_uid,
@@ -250,6 +327,10 @@ def make_car_sample(
         car_status_available=car_status is not None,
         car_status_unavailable_reason=(
             None if car_status is not None else car_status_unavailable_reason
+        ),
+        car_damage_available=car_damage is not None,
+        car_damage_unavailable_reason=(
+            None if car_damage is not None else car_damage_unavailable_reason
         ),
         **values,
     )
@@ -320,6 +401,75 @@ def _canonical_car_status(
         values["network_paused"] = bool(status.network_paused)
     else:
         flags.append("invalid_car_status_network_paused")
+    return values
+
+
+_DAMAGE_WHEEL_SUFFIXES = ("rl", "rr", "fl", "fr")
+_DAMAGE_PERCENT_FIELDS = (
+    "front_left_wing_damage_percent",
+    "front_right_wing_damage_percent",
+    "rear_wing_damage_percent",
+    "floor_damage_percent",
+    "diffuser_damage_percent",
+    "sidepod_damage_percent",
+    "gearbox_damage_percent",
+    "engine_damage_percent",
+    "engine_mguh_wear_percent",
+    "engine_es_wear_percent",
+    "engine_ce_wear_percent",
+    "engine_ice_wear_percent",
+    "engine_mguk_wear_percent",
+    "engine_tc_wear_percent",
+)
+_DAMAGE_FLAG_FIELDS = ("drs_fault", "ers_fault", "engine_blown", "engine_seized")
+
+
+def _canonical_car_damage(
+    damage: CarDamageData | None, flags: list[str]
+) -> dict[str, object]:
+    values: dict[str, object] = {}
+    for prefix in (
+        "tyre_wear",
+        "tyre_damage",
+        "brake_damage",
+        "tyre_blister",
+    ):
+        for suffix in _DAMAGE_WHEEL_SUFFIXES:
+            values[f"{prefix}_{suffix}_percent"] = None
+    for field in (*_DAMAGE_PERCENT_FIELDS, *_DAMAGE_FLAG_FIELDS):
+        values[field] = None
+    if damage is None:
+        return values
+
+    arrays = (
+        ("tyre_wear", damage.tyres_wear_percent),
+        ("tyre_damage", damage.tyres_damage_percent),
+        ("brake_damage", damage.brakes_damage_percent),
+        ("tyre_blister", damage.tyre_blisters_percent),
+    )
+    for prefix, array in arrays:
+        for suffix, raw in zip(_DAMAGE_WHEEL_SUFFIXES, array):
+            field = f"{prefix}_{suffix}_percent"
+            if math.isfinite(float(raw)) and 0.0 <= raw <= 100.0:
+                values[field] = float(raw) if prefix == "tyre_wear" else int(raw)
+            else:
+                flags.append(f"invalid_car_damage_{field}")
+
+    raw_values = {
+        field: getattr(damage, field)
+        for field in _DAMAGE_PERCENT_FIELDS
+    }
+    for field, raw in raw_values.items():
+        if 0 <= raw <= 100:
+            values[field] = raw
+        else:
+            flags.append(f"invalid_car_damage_{field}")
+    for field in _DAMAGE_FLAG_FIELDS:
+        raw = getattr(damage, field)
+        if raw in (0, 1):
+            values[field] = bool(raw)
+        else:
+            flags.append(f"invalid_car_damage_{field}")
     return values
 
 

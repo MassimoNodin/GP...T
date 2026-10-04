@@ -10,7 +10,40 @@ from ..storage.query import StoredAttemptTrace, load_attempt_trace, load_referen
 
 
 QUALITY_REPORT_VERSION = 2
-QUALITY_ANALYSIS_VERSION = "attempt-telemetry-quality-v2-car-status"
+QUALITY_ANALYSIS_VERSION = "attempt-telemetry-quality-v3-car-damage"
+CAR_DAMAGE_OBSERVATION_VERSION = "car-damage-observations-v1"
+_CAR_DAMAGE_UNAVAILABLE_REASONS = (
+    "damage_packet_missing",
+    "wire_format_mismatch",
+    "damage_packet_malformed_or_unsupported",
+    "player_index_mismatch",
+    "conflicting_damage_packets",
+    "__other__",
+)
+CAR_DAMAGE_FIELDS = (
+    *(f"tyre_wear_{wheel}_percent" for wheel in ("rl", "rr", "fl", "fr")),
+    *(f"tyre_damage_{wheel}_percent" for wheel in ("rl", "rr", "fl", "fr")),
+    *(f"brake_damage_{wheel}_percent" for wheel in ("rl", "rr", "fl", "fr")),
+    *(f"tyre_blister_{wheel}_percent" for wheel in ("rl", "rr", "fl", "fr")),
+    "front_left_wing_damage_percent",
+    "front_right_wing_damage_percent",
+    "rear_wing_damage_percent",
+    "floor_damage_percent",
+    "diffuser_damage_percent",
+    "sidepod_damage_percent",
+    "drs_fault",
+    "ers_fault",
+    "gearbox_damage_percent",
+    "engine_damage_percent",
+    "engine_mguh_wear_percent",
+    "engine_es_wear_percent",
+    "engine_ce_wear_percent",
+    "engine_ice_wear_percent",
+    "engine_mguk_wear_percent",
+    "engine_tc_wear_percent",
+    "engine_blown",
+    "engine_seized",
+)
 QUALITY_TRACE_COLUMNS = [
     "validation_flags",
     "frame_identifier",
@@ -48,6 +81,9 @@ QUALITY_TRACE_COLUMNS = [
     "drs_activation_distance_m",
     "vehicle_fia_flag",
     "network_paused",
+    "car_damage_available",
+    "car_damage_unavailable_reason",
+    *CAR_DAMAGE_FIELDS,
 ]
 QUALITY_RESAMPLING = ResamplingConfig()
 _FRAME_MASK = 0xFFFFFFFF
@@ -111,6 +147,9 @@ OBSERVED_CONDITION_TRACE_COLUMNS = [
     "car_status_available",
     "car_status_unavailable_reason",
     *_STATUS_FIELDS,
+    "car_damage_available",
+    "car_damage_unavailable_reason",
+    *CAR_DAMAGE_FIELDS,
 ]
 _ENVIRONMENT_CONTEXT_FIELDS = (
     "weather_id",
@@ -210,6 +249,9 @@ def inspect_attempt_quality(
         samples,
         trace_schema_version=attempt.trace_schema_version,
         context_segments=attempt.context_segments,
+    )
+    car_damage_observations = summarize_car_damage_observations(
+        samples, trace_schema_version=attempt.trace_schema_version
     )
 
     distance_support = _distance_support(
@@ -341,6 +383,7 @@ def inspect_attempt_quality(
         },
         "channels": channels,
         "observed_status": observed_status,
+        "car_damage_observations": car_damage_observations,
         "continuity": continuity,
         "distance_support": {
             "resolution_m": QUALITY_RESAMPLING.grid_step_m,
@@ -501,6 +544,86 @@ def summarize_observed_conditions(
         },
         "fuel_quantity_unit_note": "reported quantity; unit unspecified",
         "environment_context": environment_context,
+    }
+
+
+def summarize_car_damage_observations(
+    samples: Sequence[Mapping[str, object]], *, trace_schema_version: int
+) -> dict[str, object]:
+    base = {
+        "version": CAR_DAMAGE_OBSERVATION_VERSION,
+        "authority": "diagnostic_only_sparse_observation",
+        "observation_note": (
+            "Car Damage is reported only when a packet joins this exact Lap Data frame; "
+            "unjoined samples do not establish packet loss."
+        ),
+        "sample_count": len(samples),
+    }
+    if trace_schema_version < 4:
+        return {
+            **base,
+            "status": "unavailable_in_trace_schema",
+            "matched_sample_count": None,
+            "missing_join_sample_count": None,
+            "unavailable_reason_counts": None,
+            "fields": None,
+            "first_last_observed": None,
+        }
+
+    matched = sum(sample.get("car_damage_available") is True for sample in samples)
+    unavailable_reasons = {reason: 0 for reason in _CAR_DAMAGE_UNAVAILABLE_REASONS}
+    for sample in samples:
+        if sample.get("car_damage_available") is True:
+            continue
+        reason = sample.get("car_damage_unavailable_reason")
+        key = (
+            reason
+            if isinstance(reason, str) and reason in unavailable_reasons
+            else "__other__"
+        )
+        unavailable_reasons[key] += 1
+
+    fields: dict[str, object] = {}
+    first_last: dict[str, object] = {}
+    for field in CAR_DAMAGE_FIELDS:
+        invalid_flag = f"invalid_car_damage_{field}"
+        valid_count = 0
+        invalid_count = 0
+        first: dict[str, object] | None = None
+        last: dict[str, object] | None = None
+        for sample in samples:
+            value = sample.get(field)
+            flags = sample.get("validation_flags")
+            invalid = isinstance(flags, (tuple, list)) and invalid_flag in flags
+            if invalid:
+                invalid_count += 1
+            elif value is not None:
+                valid_count += 1
+            if value is not None and not invalid:
+                observed = {
+                    "value": value,
+                    "frame_identifier": sample.get("frame_identifier"),
+                    "session_time_s": sample.get("session_time_s"),
+                    "lap_distance_m": sample.get("lap_distance_m"),
+                }
+                if first is None:
+                    first = observed
+                last = observed
+        fields[field] = {
+            "valid_count": valid_count,
+            "missing_count": len(samples) - valid_count - invalid_count,
+            "invalid_count": invalid_count,
+        }
+        first_last[field] = {"first": first, "last": last}
+
+    return {
+        **base,
+        "status": "available" if matched else "no_joined_samples",
+        "matched_sample_count": matched,
+        "missing_join_sample_count": len(samples) - matched,
+        "unavailable_reason_counts": unavailable_reasons,
+        "fields": fields,
+        "first_last_observed": first_last,
     }
 
 

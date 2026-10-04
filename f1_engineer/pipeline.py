@@ -18,6 +18,7 @@ from .telemetry.canonical import CarSample, make_car_sample
 from .telemetry.frames import FrameAssembler
 from .udp.car_telemetry import CarTelemetryDecoder
 from .udp.car_status import CarStatusDecoder, CarStatusData, CarStatusPacket
+from .udp.car_damage import CarDamageData, CarDamageDecoder, CarDamagePacket
 from .udp.decoder import PacketDecoder
 from .udp.events import EventData, EventDecoder
 from .udp.models import (
@@ -86,6 +87,7 @@ class TelemetryPipeline:
         self.car_telemetry_decoder = CarTelemetryDecoder()
         self.motion_decoder = MotionDecoder()
         self.car_status_decoder = CarStatusDecoder()
+        self.car_damage_decoder = CarDamageDecoder()
         self.participants_decoder = ParticipantsDecoder()
         self.event_decoder = EventDecoder()
         self.session_history_decoder = SessionHistoryDecoder()
@@ -126,6 +128,11 @@ class TelemetryPipeline:
         self.car_status_decode_errors: list[str] = []
         self.player_car_status_samples = 0
         self.missing_player_car_status_samples = 0
+        self.car_damage_packets_admitted = 0
+        self.car_damage_packets_decoded = 0
+        self.car_damage_decode_errors: list[str] = []
+        self.player_car_damage_samples = 0
+        self.missing_player_car_damage_samples = 0
         self.participants_packets_decoded = 0
         self.participants_decode_errors: list[str] = []
         self.missing_car_telemetry_frame_count = 0
@@ -164,6 +171,9 @@ class TelemetryPipeline:
             car_status_candidates: list[
                 tuple[DecodedPacket, CarStatusPacket | None, str | None]
             ] = []
+            car_damage_candidates: list[
+                tuple[DecodedPacket, CarDamagePacket | None, str | None]
+            ] = []
             missing_telemetry_for_frame = False
             for packet in frame.packets:
                 if packet.packet_kind is PacketId.CAR_TELEMETRY:
@@ -193,6 +203,16 @@ class TelemetryPipeline:
                         self.car_status_packets_decoded += 1
                     car_status_candidates.append(
                         (packet, decoded_status.car_status, decoded_status.error)
+                    )
+                elif packet.packet_kind is PacketId.CAR_DAMAGE:
+                    self.car_damage_packets_admitted += 1
+                    decoded_damage = self.car_damage_decoder.decode(packet)
+                    if decoded_damage.error is not None:
+                        self.car_damage_decode_errors.append(decoded_damage.error)
+                    elif decoded_damage.car_damage is not None:
+                        self.car_damage_packets_decoded += 1
+                    car_damage_candidates.append(
+                        (packet, decoded_damage.car_damage, decoded_damage.error)
                     )
             if conflicting_motion:
                 motion_by_car = None
@@ -278,6 +298,16 @@ class TelemetryPipeline:
                             self.missing_player_car_status_samples += 1
                         else:
                             self.player_car_status_samples += 1
+                    car_damage, car_damage_reason = _join_car_damage(
+                        packet,
+                        car_index,
+                        car_damage_candidates,
+                    )
+                    if car_index == player_car_index:
+                        if car_damage is None:
+                            self.missing_player_car_damage_samples += 1
+                        else:
+                            self.player_car_damage_samples += 1
                     samples.append(
                         make_car_sample(
                             session_uid=frame.session_uid,
@@ -290,6 +320,8 @@ class TelemetryPipeline:
                             motion=motion,
                             car_status=car_status,
                             car_status_unavailable_reason=car_status_reason,
+                            car_damage=car_damage,
+                            car_damage_unavailable_reason=car_damage_reason,
                         )
                     )
             if missing_telemetry_for_frame:
@@ -871,3 +903,41 @@ def _join_car_status(
     if decoded is None or not 0 <= player_car_index < len(decoded.cars):
         return None, "player_index_mismatch"
     return decoded.cars[player_car_index], None
+
+
+def _join_car_damage(
+    lap_packet: DecodedPacket,
+    player_car_index: int,
+    candidates: list[tuple[DecodedPacket, CarDamagePacket | None, str | None]],
+) -> tuple[CarDamageData | None, str | None]:
+    if not candidates:
+        return None, "damage_packet_missing"
+    if any(
+        damage_packet.packet_format is not lap_packet.packet_format
+        for damage_packet, _, _ in candidates
+    ):
+        return None, "wire_format_mismatch"
+    if any(error is not None for _, _, error in candidates):
+        return None, "damage_packet_malformed_or_unsupported"
+    candidate_player_indices = {
+        packet.header.player_car_index for packet, _, _ in candidates
+    }
+    if len(candidate_player_indices) != 1 or (
+        next(iter(candidate_player_indices)) != lap_packet.header.player_car_index
+    ):
+        return None, "player_index_mismatch"
+    decoded_packets = [decoded for _, decoded, _ in candidates if decoded is not None]
+    if len(decoded_packets) != len(candidates):
+        return None, "player_index_mismatch"
+    if not 0 <= player_car_index < min(len(decoded.cars) for decoded in decoded_packets):
+        return None, "player_index_mismatch"
+    selected_records = [
+        decoded.cars[player_car_index]
+        for decoded in decoded_packets
+    ]
+    if not selected_records:
+        return None, "player_index_mismatch"
+    first = selected_records[0]
+    if any(record.raw_record != first.raw_record for record in selected_records[1:]):
+        return None, "conflicting_damage_packets"
+    return first, None
