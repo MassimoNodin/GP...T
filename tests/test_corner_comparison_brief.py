@@ -6,6 +6,9 @@ from f1_engineer.analysis.comparison import calculate_delta_time
 from f1_engineer.analysis.corner_comparison_brief import (
     build_corner_comparison_brief,
 )
+from f1_engineer.analysis.driving_pattern_assessment import (
+    build_driving_pattern_assessment,
+)
 from f1_engineer.analysis.corners import analyze_corner_regions
 from f1_engineer.analysis.resampling import (
     ResamplingConfig,
@@ -201,6 +204,199 @@ def test_summarizes_interval_and_four_supported_control_facts_with_provenance() 
     assert "cause" not in result["text"]
     assert "advice" not in result["text"]
     assert summary["omitted_measurement_count"] == 0
+
+
+def _driving_pattern_comparison() -> dict[str, object]:
+    comparison = _comparison()
+    region = comparison["corner_analysis"]["regions"][0]
+    braking = region["target"]["braking"]
+    braking["distance_m"] = 96.0
+    braking["events"][0]["start_distance_m"] = 96.0
+    braking["events"][0]["start_distance_bracket_m"] = [95.0, 96.0]
+    comparison["corner_comparison_brief"] = build_corner_comparison_brief(comparison)
+    return comparison
+
+
+def test_assesses_the_braking_pattern_without_creating_coaching() -> None:
+    result = build_driving_pattern_assessment(_driving_pattern_comparison())
+
+    assert result["analysis_version"] == "driving-pattern-assessment-v1"
+    assert result["status"] == "available"
+    assert result["validation_status"] == "experimental"
+    assert result["diagnostic_only"] is True
+    assert result["coaching_eligible"] is False
+    assert result["coaching_admission"]["eligible"] is False
+    assert result["action"] is None
+    region = result["regions"][0]
+    assert region["status"] == "matched"
+    assert region["reasons"] == []
+    assert region["evidence"]["brake_onset"]["target_minus_reference_bounds_m"] == [
+        -5.0,
+        -3.0,
+    ]
+    assert region["evidence"]["minimum_speed"]["target_minus_reference_kph"] == -4.0
+    assert region["evidence"]["exit_speed"]["target_minus_reference_kph"] == -4.0
+    assert region["action"] is None
+    assert region["coaching_eligible"] is False
+    assert "cause" not in str(region).lower()
+
+
+def test_later_braking_contradicts_pattern_and_overlapping_brackets_are_unavailable() -> None:
+    later = _comparison()
+    later["corner_comparison_brief"] = build_corner_comparison_brief(later)
+    contradicted = build_driving_pattern_assessment(later)["regions"][0]
+    assert contradicted["status"] == "contradicted"
+    assert "target_brake_onset_not_earlier" in contradicted["reasons"]
+
+    overlapping = _driving_pattern_comparison()
+    braking = overlapping["corner_analysis"]["regions"][0]["target"]["braking"]
+    braking["distance_m"] = 100.0
+    braking["events"][0]["start_distance_m"] = 100.0
+    braking["events"][0]["start_distance_bracket_m"] = [99.0, 101.0]
+    overlapping["corner_comparison_brief"] = build_corner_comparison_brief(overlapping)
+    unresolved = build_driving_pattern_assessment(overlapping)["regions"][0]
+    assert unresolved["status"] == "unavailable"
+    assert "brake_onset_order_unresolved" in unresolved["reasons"]
+
+
+def test_measurement_omissions_exit_advantage_and_zero_boundary_are_explicit() -> None:
+    incomplete = _driving_pattern_comparison()
+    incomplete["corner_analysis"]["regions"][0]["target"]["minimum_speed"]["status"] = (
+        "observed_minimum_partial_window"
+    )
+    incomplete["corner_comparison_brief"] = build_corner_comparison_brief(incomplete)
+    unavailable = build_driving_pattern_assessment(incomplete)["regions"][0]
+    assert unavailable["status"] == "unavailable"
+    assert any(reason.startswith("minimum_speed_measurement_omitted:") for reason in unavailable["reasons"])
+
+    exit_advantage = _driving_pattern_comparison()
+    exit_advantage["corner_analysis"]["regions"][0]["target"]["exit_speeds"][0][
+        "speed_kph"
+    ] = 185.0
+    exit_advantage["corner_comparison_brief"] = build_corner_comparison_brief(exit_advantage)
+    contradicted = build_driving_pattern_assessment(exit_advantage)["regions"][0]
+    assert contradicted["status"] == "contradicted"
+    assert "target_exit_speed_advantage_observed" in contradicted["reasons"]
+
+    equal_onset = _driving_pattern_comparison()
+    for side in ("target", "reference"):
+        event = equal_onset["corner_analysis"]["regions"][0][side]["braking"]["events"][0]
+        event["start_distance_m"] = 99.0
+        event["start_distance_bracket_m"] = [99.0, 99.0]
+    equal_onset["corner_analysis"]["regions"][0]["target"]["braking"][
+        "distance_m"
+    ] = 99.0
+    equal_onset["corner_analysis"]["regions"][0]["reference"]["braking"][
+        "distance_m"
+    ] = 99.0
+    equal_onset["corner_comparison_brief"] = build_corner_comparison_brief(equal_onset)
+    boundary = build_driving_pattern_assessment(equal_onset)["regions"][0]
+    assert boundary["status"] == "contradicted"
+    assert "target_brake_onset_not_earlier" in boundary["reasons"]
+
+
+def test_left_censoring_is_unavailable_while_right_censoring_keeps_observed_onset() -> None:
+    right_censored = _driving_pattern_comparison()
+    right_censored["corner_analysis"]["regions"][0]["target"]["braking"]["events"][0][
+        "right_censored"
+    ] = True
+    right_censored["corner_comparison_brief"] = build_corner_comparison_brief(right_censored)
+    assert build_driving_pattern_assessment(right_censored)["regions"][0]["status"] == "matched"
+
+    left_censored = _driving_pattern_comparison()
+    left_censored["corner_analysis"]["regions"][0]["target"]["braking"]["events"][0][
+        "left_censored"
+    ] = True
+    left_censored["corner_comparison_brief"] = build_corner_comparison_brief(left_censored)
+    assessment = build_driving_pattern_assessment(left_censored)["regions"][0]
+    assert assessment["status"] == "unavailable"
+    assert any(reason.startswith("braking_measurement_omitted:") for reason in assessment["reasons"])
+
+
+def test_malformed_or_duplicate_facts_cannot_match() -> None:
+    malformed = _driving_pattern_comparison()
+    facts = malformed["corner_comparison_brief"]["regions"][0]["facts"]
+    brake = next(fact for fact in facts if fact["kind"] == "braking_threshold_onset_difference")
+    brake["difference_bounds_m"] = [2.0, -2.0]
+    assessment = build_driving_pattern_assessment(malformed)["regions"][0]
+    assert assessment["status"] == "unavailable"
+    assert "brake_onset_evidence_invalid" in assessment["reasons"]
+
+    duplicate = _driving_pattern_comparison()
+    facts = duplicate["corner_comparison_brief"]["regions"][0]["facts"]
+    brake = next(fact for fact in facts if fact["kind"] == "braking_threshold_onset_difference")
+    facts.append(deepcopy(brake))
+    assessment = build_driving_pattern_assessment(duplicate)["regions"][0]
+    assert assessment["status"] == "unavailable"
+    assert "braking_measurement_omitted" in assessment["reasons"]
+
+
+def test_connected_support_and_interval_boundary_arithmetic_are_required() -> None:
+    disconnected = _driving_pattern_comparison()
+    candidate = disconnected["corner_loss_candidates"]["ranked_candidates"][0]
+    region = disconnected["corner_comparison_brief"]["regions"][0]
+    candidate["connected_support"]["shared_delta_time_connected"] = False
+    region["connected_support"]["shared_delta_time_connected"] = False
+    interval = next(
+        fact
+        for fact in region["facts"]
+        if fact["kind"] == "recorded_interval_time_difference"
+    )
+    interval["connected_support"]["shared_delta_time_connected"] = False
+    result = build_driving_pattern_assessment(disconnected)
+    assert result["status"] == "abstained"
+    assert result["regions"] == []
+
+    missing_coverage = _driving_pattern_comparison()
+    candidate = missing_coverage["corner_loss_candidates"]["ranked_candidates"][0]
+    region = missing_coverage["corner_comparison_brief"]["regions"][0]
+    candidate["connected_support"]["target_time_coverage"] = None
+    region["connected_support"]["target_time_coverage"] = None
+    interval = next(
+        fact
+        for fact in region["facts"]
+        if fact["kind"] == "recorded_interval_time_difference"
+    )
+    interval["connected_support"]["target_time_coverage"] = None
+    unsupported = build_driving_pattern_assessment(missing_coverage)
+    assert unsupported["status"] == "abstained"
+    assert unsupported["regions"] == []
+
+    inconsistent = _driving_pattern_comparison()
+    interval = next(
+        fact
+        for fact in inconsistent["corner_comparison_brief"]["regions"][0]["facts"]
+        if fact["kind"] == "recorded_interval_time_difference"
+    )
+    interval["boundary_delta_evidence"]["exit_target_minus_reference_s"] = 0.5
+    assessment = build_driving_pattern_assessment(inconsistent)["regions"][0]
+    assert assessment["status"] == "unavailable"
+    assert "recorded_interval_time_evidence_invalid" in assessment["reasons"]
+
+
+def test_region_assessment_limit_is_three() -> None:
+    comparison = _driving_pattern_comparison()
+    ranked = comparison["corner_loss_candidates"]["ranked_candidates"]
+    ranked.extend({**deepcopy(ranked[0]), "rank": index} for index in (2, 3, 4))
+
+    result = build_driving_pattern_assessment(comparison)
+
+    assert result["status"] == "abstained"
+    assert result["regions"] == []
+    assert result["gate_reasons"] == ["ranked_candidate_limit_exceeded"]
+
+
+def test_provenance_mismatch_abstains_before_rule_assessment() -> None:
+    comparison = _driving_pattern_comparison()
+    comparison["corner_loss_candidates"]["source"]["target"]["trace_sha256"] = "f" * 64
+
+    result = build_driving_pattern_assessment(comparison)
+
+    assert result["status"] == "abstained"
+    assert result["regions"] == []
+    assert "target_corner_provenance_mismatch" in result["gate_reasons"]
+    assert result["coaching_eligible"] is False
+    assert result["action"] is None
 
 
 def test_overlapping_threshold_brackets_report_unresolved_order() -> None:

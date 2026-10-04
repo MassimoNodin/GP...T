@@ -803,6 +803,14 @@ def test_compare_api_returns_the_shared_structured_brief(monkeypatch, tmp_path) 
         "diagnostic_only": True,
         "coaching_eligible": False,
     }
+    driving_pattern_assessment = {
+        "schema_version": 1,
+        "analysis_version": "driving-pattern-assessment-v1",
+        "status": "abstained",
+        "diagnostic_only": True,
+        "coaching_eligible": False,
+        "action": None,
+    }
     distance_window_brief = {
         "schema_version": 1,
         "analysis_version": "distance-window-brief-v1",
@@ -817,6 +825,7 @@ def test_compare_api_returns_the_shared_structured_brief(monkeypatch, tmp_path) 
             "comparison_brief": brief,
             "corner_comparison_brief": corner_brief,
             "lap_debrief": lap_debrief,
+            "driving_pattern_assessment": driving_pattern_assessment,
             "distance_window_brief": distance_window_brief,
         },
     )
@@ -834,6 +843,7 @@ def test_compare_api_returns_the_shared_structured_brief(monkeypatch, tmp_path) 
     assert response.json()["data"]["comparison_brief"] == brief
     assert response.json()["data"]["corner_comparison_brief"] == corner_brief
     assert response.json()["data"]["lap_debrief"] == lap_debrief
+    assert response.json()["data"]["driving_pattern_assessment"] == driving_pattern_assessment
     assert response.json()["data"]["distance_window_brief"] == distance_window_brief
 
 

@@ -38,6 +38,7 @@ import AttemptTraceCharts from "./AttemptTraceCharts";
 import RunEvidencePanel from "./RunEvidencePanel";
 import TrajectoryComparisonPanel from "./TrajectoryComparisonPanel";
 import LinkedComparisonCharts from "./LinkedComparisonCharts";
+import DrivingPatternAssessmentPanel from "./DrivingPatternAssessmentPanel";
 import ObservationSetPanel from "./ObservationSetPanel";
 import PairedRegionPanel from "./PairedRegionPanel";
 import EngineerQueryPanel from "./EngineerQueryPanel";
@@ -1763,6 +1764,9 @@ export default async function Home({
                         report={comparison.corner_comparison_brief}
                       />
                     ) : null}
+                    <DrivingPatternAssessmentPanel
+                      report={comparison.driving_pattern_assessment}
+                    />
                     {comparison.corner_analysis ? (
                       <RegionAnalysisPanel
                         analysis={comparison.corner_analysis}

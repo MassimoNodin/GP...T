@@ -554,6 +554,10 @@ def test_practice_qualifying_comparison_is_explicit_bounded_and_diagnostic(
     assert result["corner_comparison_brief"]["gate_reasons"] == [
         "unsupported_comparison_policy"
     ]
+    assert result["driving_pattern_assessment"]["status"] == "abstained"
+    assert result["driving_pattern_assessment"]["gate_reasons"] == [
+        "unsupported_comparison_policy"
+    ]
     assert result["lap_debrief"]["analysis_version"] == "lap-debrief-v1"
     assert result["lap_debrief"]["diagnostic_only"] is True
     assert result["lap_debrief"]["coaching_eligible"] is False
@@ -1068,6 +1072,8 @@ def test_corner_region_analysis_keeps_draft_and_invalid_laps_diagnostic(monkeypa
     }
     assert corner_analysis["diagnostic_only"] is True
     assert corner_analysis["model"]["validation_status"] == "draft"
+    assert result["driving_pattern_assessment"]["status"] == "abstained"
+    assert result["driving_pattern_assessment"]["coaching_eligible"] is False
     region = corner_analysis["regions"][0]
     assert region["label"] == "Draft region 1"
     assert region["diagnostic_only"] is True

@@ -776,6 +776,24 @@ Acceptance covers Melbourne invalid and partial evidence and Shanghai incomplete
 
 **Rationale:** The deterministic reports provide a suitable evidence source for spoken delivery. Manual, local read-aloud improves access to recorded results without requiring new captures, adding analysis authority, or adding automatic live speech.
 
+## Decision 0053: separate deterministic driving-pattern assessment from coaching admission
+
+**Status:** accepted
+
+**Date:** 2026-10-05
+
+Add one bounded, pure Phase E rule over the existing D0032 ranked regions and D0033 structured comparison facts. Assess at most the three ranked regions in their existing order. The initial rule matches only when the connected interval-time difference is positive, target brake-onset difference bounds have a strictly negative upper bound, target minimum speed is below reference, and target speed at the configured exit anchor is no greater than reference.
+
+Preserve region identity, half-open distance window, target/reference attempt and trace checksum, model approval fingerprint, session-best reference identity, measurement units, source brackets, and numeric facts. Revalidate the existing ranking authority and exact structured-fact provenance before assessment. Require all connected-support flags and finite target, reference, and shared coverage values within `[0, 1]`; verify recorded interval time against its entry and exit delta arithmetic. Missing, malformed, ambiguous, conflicting, unsupported, or left-censored brake-onset evidence yields an explicit unavailable assessment. A right-censored continuation remains usable when the onset bracket itself is supported. A fully supported measurement that does not match yields contradicted. A zero-straddling brake-onset difference is unresolved and cannot match.
+
+Version the additive result as `driving-pattern-assessment-v1`. Report `matched`, `contradicted`, or `unavailable` per region with bounded reasons and evidence. Label the rule experimental and diagnostic-only. Keep `action=null`, `coaching_eligible=false`, and the separate coaching-admission contract denied with reasons for experimental rule validation, clean real-capture validation, and unvalidated action mapping. A measured pattern is not a causal diagnosis, recoverable-time claim, confidence score, priority, or driving recommendation.
+
+Expose the same assessment in the comparison service result consumed by CLI, API, and dashboard. Build it after D0032 and D0033 from their already loaded results; add no source or trace reads, persistence, migration, reference selection, ranking, speech, or changes to existing briefs. Updated clients tolerate omission for older responses. D0032 remains the authority for Time Trial, capture, reference, and approved-model admission; Practice/Qualifying, Race, unknown mode, draft/unapproved model, invalid or incomplete capture, and other failed gates abstain.
+
+Acceptance covers synthetic matched and contradicted patterns, exact-zero and overlapping onset bounds, incomplete/missing facts, exit-speed advantage, malformed facts, duplicated or mismatched region/provenance, top-three bounds, and deterministic output. Current Melbourne and Shanghai captures remain abstained at their existing eligibility/capture/model gates. Confirm service/CLI/API/dashboard parity and unchanged trace-read counts. Synthetic positives validate rule mechanics only; a clean eligible Time Trial capture, independently reviewed region definitions, and a separately accepted validation decision remain prerequisites for actionable coaching.
+
+**Rationale:** Deterministic pattern assessment is a central Phase E requirement and can advance before additional data is available. Reusing established ranked measurements preserves evidence authority and permits synthetic mechanical validation while keeping real-data validation and actionable coaching gated.
+
 ## Data flow
 
 ```text
@@ -821,6 +839,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - `distance_window_brief` derives at most five measured facts from the already computed selected-window comparison. Complete coverage, source anchors and event uncertainty remain explicit; all results are diagnostic and coaching-ineligible.
 - `diagnostic-region-debrief-v1` derives at most five deterministic facts from existing paired-region supported differences; omissions remain explicit, and the additive nested report is diagnostic, coaching-ineligible, and ranking-ineligible.
 - `lap-debrief-v1` composes a verified official lap-time difference and at most three matching D0032/D0033 region interval summaries from one existing comparison response. It preserves prioritized capture, lifecycle, validity, and support limitations, rejects mismatched provenance, and adds no analysis reads or coaching authority.
+- `driving-pattern-assessment-v1` evaluates at most three D0032-ranked regions against provenance-matched D0033 braking-onset, minimum-speed and exit-speed facts. It distinguishes matched, contradicted and unavailable measurements while keeping the experimental rule coaching-ineligible with no action.
 - `brake-threshold-release-v1` compares the existing paired braking-event end brackets for the sampled `>=10%` to `<10%` transition. It preserves uncertainty and left-censored onset, abstains on right-censoring or unsupported event evidence, and does not measure complete pedal release or add trace reads.
 - `observation-set` reuses the single-attempt selected-window evaluator across at most eight explicitly selected same-run/session/player attempts. Scalar ranges require two fully supported, lifecycle-assessed completed attempts; onset evidence remains bracketed per lap, and every result is diagnostic and coaching-ineligible.
 - Comparison speed, lap-delta, and driver-input charts share a bounded pointer and keyboard cursor over the original resampled comparison distance grid. Local chart zoom is presentation-only and preserves sampled continuity gaps; analysis, mode policy and comparison outputs are unchanged.
