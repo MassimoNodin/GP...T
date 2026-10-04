@@ -23,10 +23,15 @@ type Difference = {
 };
 
 type ChartSpec = {
+  id: string;
   title: string;
   subtitle: string;
   unit: string;
   series: Series[];
+  optional?: boolean;
+  overlayLabel?: string;
+  renderMode?: "line" | "step";
+  valueFormat?: "gear";
   range?: [number, number];
   zero?: boolean;
   percentAxis?: boolean;
@@ -50,6 +55,7 @@ const PLOT_HEIGHT = HEIGHT - TOP - BOTTOM;
 const MAX_GRID_POINTS = 100_000;
 const MAX_RENDERED_POINTS = 2_000;
 const MAX_RENDERED_RUNS = 256;
+const GEAR_TICKS = [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8];
 
 export default function LinkedComparisonCharts({
   distance,
@@ -71,8 +77,15 @@ export default function LinkedComparisonCharts({
   const [analysisWindowView, setAnalysisWindowView] = useState(
     initialWindow?.status === "range",
   );
+  const [visibleOptionalCharts, setVisibleOptionalCharts] = useState<
+    Set<string>
+  >(() => new Set());
   const [zoomMode, setZoomMode] = useState(false);
   const [dragStart, setDragStart] = useState<number | null>(null);
+  const optionalCharts = charts.filter((chart) => chart.optional);
+  const visibleCharts = charts.filter(
+    (chart) => !chart.optional || visibleOptionalCharts.has(chart.id),
+  );
 
   const invalidReason = useMemo(
     () => validateGrid(distance, charts),
@@ -146,7 +159,16 @@ export default function LinkedComparisonCharts({
   const selectedValues =
     selectedIndex == null
       ? null
-      : charts.map((chart) => readoutForChart(chart, selectedIndex));
+      : visibleCharts.map((chart) => readoutForChart(chart, selectedIndex));
+
+  const toggleOptionalChart = (chartId: string, visible: boolean) => {
+    setVisibleOptionalCharts((current) => {
+      const next = new Set(current);
+      if (visible) next.add(chartId);
+      else next.delete(chartId);
+      return next;
+    });
+  };
 
   const chooseCursor = (index: number, requested: number | null) => {
     setSelectedIndex(index);
@@ -256,6 +278,27 @@ export default function LinkedComparisonCharts({
             Reset zoom
           </button>
         </div>
+        {optionalCharts.length ? (
+          <div
+            className="linked-chart-overlays"
+            role="group"
+            aria-label="Optional comparison channels"
+          >
+            <strong>OPTIONAL CHANNELS</strong>
+            {optionalCharts.map((chart) => (
+              <label key={chart.id}>
+                <input
+                  type="checkbox"
+                  checked={visibleOptionalCharts.has(chart.id)}
+                  onChange={(event) =>
+                    toggleOptionalChart(chart.id, event.currentTarget.checked)
+                  }
+                />
+                {chart.overlayLabel ?? chart.title}
+              </label>
+            ))}
+          </div>
+        ) : null}
         <p className="linked-chart-mode" role="status">
           {zoomMode
             ? dragStart == null
@@ -298,9 +341,9 @@ export default function LinkedComparisonCharts({
         ) : null}
         {selectedValues ? (
           <div className="linked-readout-grid">
-            {charts.map((chart, chartIndex) => (
+            {visibleCharts.map((chart, chartIndex) => (
               <section
-                key={chart.title}
+                key={chart.id}
                 className="linked-readout-group"
                 aria-label={`${chart.title} values`}
               >
@@ -330,9 +373,9 @@ export default function LinkedComparisonCharts({
       </section>
 
       <div className="chart-stack">
-        {charts.map((chart) => (
+        {visibleCharts.map((chart) => (
           <LinkedChart
-            key={chart.title}
+            key={chart.id}
             chart={chart}
             distance={distance}
             visibleRange={visibleRange}
@@ -347,8 +390,8 @@ export default function LinkedComparisonCharts({
       </div>
       <p className="chart-footnote linked-chart-footnote">
         Lines stop at unsupported samples. Paths are rendered from at most{" "}
-        {MAX_RENDERED_POINTS.toLocaleString()}{" "}existing points per series
-        and{" "}{MAX_RENDERED_RUNS}{" "}supported runs; omissions are reported. The cursor
+        {MAX_RENDERED_POINTS.toLocaleString()} existing points per series and{" "}
+        {MAX_RENDERED_RUNS} supported runs; omissions are reported. The cursor
         reads the original resampled comparison grid.
       </p>
     </section>
@@ -378,9 +421,19 @@ function LinkedChart({
 }) {
   const suppressZoomClick = useRef(false);
   const renderData = useMemo(
-    () => chart.series.map((series) => buildRenderRuns(series, visibleRange)),
-    [chart.series, distance, visibleRange.first, visibleRange.last],
+    () =>
+      chart.series.map((series) =>
+        buildRenderRuns(series, visibleRange, chart.renderMode ?? "line"),
+      ),
+    [
+      chart.series,
+      chart.renderMode,
+      distance,
+      visibleRange.first,
+      visibleRange.last,
+    ],
   );
+  const hasSupportedRun = renderData.some((item) => item.runs.length > 0);
   const [min, max] = useMemo(() => {
     let low = chart.range?.[0] ?? (chart.zero ? 0 : Infinity);
     let high = chart.range?.[1] ?? (chart.zero ? 0 : -Infinity);
@@ -412,10 +465,13 @@ function LinkedChart({
   const span = Math.max(Number.EPSILON, maxDistance - minDistance);
   const x = (value: number) =>
     LEFT + ((value - minDistance) / span) * PLOT_WIDTH;
-  const ticks = Array.from(
-    { length: 4 },
-    (_, index) => min + ((max - min) * index) / 3,
-  );
+  const ticks =
+    chart.valueFormat === "gear"
+      ? GEAR_TICKS
+      : Array.from(
+          { length: 4 },
+          (_, index) => min + ((max - min) * index) / 3,
+        );
   const cursorDistance = selectedIndex == null ? null : distance[selectedIndex];
 
   const requestedAt = (event: ReactPointerEvent<SVGRectElement>) => {
@@ -506,7 +562,11 @@ function LinkedChart({
                 y={y(tick) + 4}
                 textAnchor="end"
               >
-                {chart.percentAxis ? Math.round(tick * 100) : tick.toFixed(1)}
+                {chart.valueFormat === "gear"
+                  ? gearLabel(tick)
+                  : chart.percentAxis
+                    ? Math.round(tick * 100)
+                    : tick.toFixed(1)}
               </text>
             </g>
           ))}
@@ -538,12 +598,14 @@ function LinkedChart({
                 return (
                   <path
                     key={runIndex}
-                    d={run
-                      .map((index, pointIndex) => {
-                        const value = chart.series[seriesIndex].values[index]!;
-                        return `${pointIndex ? "L" : "M"}${x(distance[index]).toFixed(2)},${y(value).toFixed(2)}`;
-                      })
-                      .join(" ")}
+                    d={renderRunPath(
+                      run,
+                      chart.series[seriesIndex],
+                      distance,
+                      x,
+                      y,
+                      chart.renderMode ?? "line",
+                    )}
                     fill="none"
                     stroke={chart.series[seriesIndex].color}
                     strokeWidth="2.5"
@@ -608,6 +670,12 @@ function LinkedChart({
           />
         </svg>
       </div>
+      {!hasSupportedRun ? (
+        <p className="linked-chart-empty" role="status">
+          No supported samples in this interval. Missing values and gaps remain
+          unavailable.
+        </p>
+      ) : null}
       <div className="chart-legend">
         {chart.series.map((series) => (
           <span key={series.label}>
@@ -632,22 +700,54 @@ function RenderOmissions({
     (total, item) => total + item.omittedPoints,
     0,
   );
-  if (!omittedRuns && !omittedPoints) return null;
+  const omittedTransitions = data.reduce(
+    (total, item) => total + item.omittedTransitions,
+    0,
+  );
+  const omittedTailEndpoints = data.reduce(
+    (total, item) => total + item.omittedTailEndpoints,
+    0,
+  );
+  const omissions = [
+    omittedRuns
+      ? countLabel(omittedRuns, "supported run", "supported runs")
+      : null,
+    omittedPoints
+      ? countLabel(omittedPoints, "grid point", "grid points")
+      : null,
+    omittedTransitions
+      ? countLabel(omittedTransitions, "gear transition", "gear transitions")
+      : null,
+    omittedTailEndpoints
+      ? countLabel(
+          omittedTailEndpoints,
+          "gear trace tail endpoint",
+          "gear trace tail endpoints",
+        )
+      : null,
+  ].filter((item): item is string => item != null);
+  if (!omissions.length) return null;
   return (
     <p className="linked-chart-omissions" role="status">
-      Rendered view omits{" "}
-      {omittedRuns ? `${omittedRuns.toLocaleString()} supported runs` : ""}
-      {omittedRuns && omittedPoints ? " and " : ""}
-      {omittedPoints
-        ? `${omittedPoints.toLocaleString()} grid points`
-        : ""}{" "}
-      across plotted series to stay within display limits. Cursor values still
-      use the full resampled grid.
+      Rendered view omits {omissions.join(", ")} across plotted series to stay
+      within display limits. Cursor values still use the full resampled grid.
+      {omittedTransitions
+        ? " Any capped gear trace stops before omitted shifts and does not carry values across them."
+        : null}
     </p>
   );
 }
 
-function buildRenderRuns(series: Series, visibleRange: RangeIndex) {
+function countLabel(count: number, singular: string, plural: string) {
+  return `${count.toLocaleString()} ${count === 1 ? singular : plural}`;
+}
+
+function buildRenderRuns(
+  series: Series,
+  visibleRange: RangeIndex,
+  renderMode: "line" | "step",
+) {
+  if (renderMode === "step") return buildStepRuns(series, visibleRange);
   const runs: number[][] = [];
   let current: number[] = [];
   for (let index = visibleRange.first; index <= visibleRange.last; index += 1) {
@@ -698,7 +798,108 @@ function buildRenderRuns(series: Series, visibleRange: RangeIndex) {
     runs: renderedRuns,
     omittedRuns,
     omittedPoints: Math.max(0, totalRetained - renderedPoints),
+    omittedTransitions: 0,
+    omittedTailEndpoints: 0,
   };
+}
+
+function buildStepRuns(series: Series, visibleRange: RangeIndex) {
+  const sourceRuns: number[][] = [];
+  let current: number[] | null = null;
+  let previousValue: number | null = null;
+  let totalTransitions = 0;
+
+  const finishRun = (endIndex: number) => {
+    if (!current) return;
+    if (current.at(-1) !== endIndex) current.push(endIndex);
+    sourceRuns.push(current);
+    current = null;
+    previousValue = null;
+  };
+
+  for (let index = visibleRange.first; index <= visibleRange.last; index += 1) {
+    const value = series.values[index];
+    if (
+      !supported(series, index) ||
+      typeof value !== "number" ||
+      !Number.isInteger(value) ||
+      value < -1 ||
+      value > 8
+    ) {
+      finishRun(index - 1);
+      continue;
+    }
+    if (!current) {
+      current = [index];
+    } else if (value !== previousValue) {
+      current.push(index);
+      totalTransitions += 1;
+    }
+    previousValue = value;
+    if (index === visibleRange.last) finishRun(index);
+  }
+
+  const renderedRuns: number[][] = [];
+  let remainingPoints = MAX_RENDERED_POINTS;
+  let retainedTransitions = 0;
+  let omittedTailEndpoints = 0;
+  for (const run of sourceRuns.slice(0, MAX_RENDERED_RUNS)) {
+    if (remainingPoints === 0) break;
+    const retained = run.slice(0, remainingPoints);
+    if (!retained.length) continue;
+    renderedRuns.push(retained);
+    remainingPoints -= retained.length;
+    if (
+      retained.length < run.length &&
+      run.length > 1 &&
+      series.values[run[run.length - 1]] === series.values[run[run.length - 2]]
+    ) {
+      omittedTailEndpoints += 1;
+    }
+    for (let index = 1; index < retained.length; index += 1) {
+      if (
+        series.values[retained[index]] !== series.values[retained[index - 1]]
+      ) {
+        retainedTransitions += 1;
+      }
+    }
+  }
+
+  return {
+    runs: renderedRuns,
+    omittedRuns: Math.max(0, sourceRuns.length - renderedRuns.length),
+    omittedPoints: 0,
+    omittedTransitions: Math.max(0, totalTransitions - retainedTransitions),
+    omittedTailEndpoints,
+  };
+}
+
+function renderRunPath(
+  run: number[],
+  series: Series,
+  distance: number[],
+  x: (value: number) => number,
+  y: (value: number) => number,
+  renderMode: "line" | "step",
+) {
+  const first = run[0];
+  let path = `M${x(distance[first]).toFixed(2)},${y(series.values[first]!).toFixed(2)}`;
+  for (let point = 1; point < run.length; point += 1) {
+    const previousIndex = run[point - 1];
+    const currentIndex = run[point];
+    const previousValue = series.values[previousIndex]!;
+    const currentValue = series.values[currentIndex]!;
+    const currentX = x(distance[currentIndex]).toFixed(2);
+    if (renderMode === "step") {
+      path += ` L${currentX},${y(previousValue).toFixed(2)}`;
+      if (currentValue !== previousValue) {
+        path += ` L${currentX},${y(currentValue).toFixed(2)}`;
+      }
+    } else {
+      path += ` L${currentX},${y(currentValue).toFixed(2)}`;
+    }
+  }
+  return path;
 }
 
 function sampleRun(run: number[], count: number) {
@@ -792,11 +993,20 @@ function readValue(
   unit: string,
   signed = false,
   precision = 1,
+  valueFormat?: "gear",
 ) {
   if (!supported(series, index)) return "Unavailable";
   const value = series.values[index]! * scale;
+  if (valueFormat === "gear") return gearLabel(value);
   const sign = value > 0 && signed ? "+" : value < 0 ? "−" : "";
   return `${sign}${Math.abs(value).toFixed(precision)} ${unit}`;
+}
+
+function gearLabel(value: number) {
+  if (!Number.isInteger(value) || value < -1 || value > 8) return "Unavailable";
+  if (value === -1) return "R";
+  if (value === 0) return "N";
+  return String(value);
 }
 
 function readoutForChart(chart: ChartSpec, index: number) {
@@ -810,6 +1020,7 @@ function readoutForChart(chart: ChartSpec, index: number) {
       chart.valueUnit,
       chart.signedValues,
       chart.precision ?? 1,
+      chart.valueFormat,
     ),
   }));
   const differences = (chart.differences ?? []).map((difference) => {

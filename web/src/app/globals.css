@@ -712,6 +712,35 @@ h1 span {
   grid-column: 1 / -1;
   font-family: var(--font-mono);
 }
+.linked-chart-overlays {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  grid-column: 1 / -1;
+  padding-top: 8px;
+  border-top: 1px solid #273031;
+}
+.linked-chart-overlays strong {
+  color: #7d8986;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+.linked-chart-overlays label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #c2ccc7;
+  font-size: 10px;
+  cursor: pointer;
+}
+.linked-chart-overlays input {
+  accent-color: var(--mint);
+}
+.linked-chart-overlays input:focus-visible {
+  outline: 2px solid #71c7b5;
+  outline-offset: 2px;
+}
 .linked-cursor-readout {
   padding: 13px 16px;
 }
@@ -789,6 +818,7 @@ h1 span {
   pointer-events: all;
 }
 .linked-chart-omissions,
+.linked-chart-empty,
 .linked-chart-unavailable p {
   margin: 7px 0 0;
   color: #d2ae72;

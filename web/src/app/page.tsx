@@ -1276,6 +1276,7 @@ export default async function Home({
                       )}
                       charts={[
                         {
+                          id: "speed",
                           title: "Speed trace",
                           subtitle: "Vehicle speed · km/h",
                           unit: "KM/H",
@@ -1308,6 +1309,7 @@ export default async function Home({
                           ],
                         },
                         {
+                          id: "delta",
                           title: "Lap delta",
                           subtitle: "Positive means target is slower · seconds",
                           unit: "SECONDS",
@@ -1325,6 +1327,7 @@ export default async function Home({
                           ],
                         },
                         {
+                          id: "inputs",
                           title: "Driver inputs",
                           subtitle: "Brake and throttle · percent",
                           unit: "%",
@@ -1380,6 +1383,101 @@ export default async function Home({
                               right: 3,
                               unit: "percentage points",
                               scale: 100,
+                            },
+                          ],
+                        },
+                        {
+                          id: "steering",
+                          optional: true,
+                          overlayLabel: "Steering input",
+                          title: "Steering input",
+                          subtitle:
+                            "Signed normalized player input · not steering angle",
+                          unit: "NORMALIZED",
+                          valueUnit: "input",
+                          range: [-1, 1],
+                          signedValues: true,
+                          precision: 2,
+                          series: [
+                            {
+                              label: "Target steering input",
+                              color: "#f06a4f",
+                              values: comparisonChannelValues(
+                                comparison.target_trace,
+                                "steering",
+                                comparison.distance_m.length,
+                              ),
+                              mask: comparisonChannelMask(
+                                comparison.target_trace,
+                                "steering",
+                                comparison.distance_m.length,
+                              ),
+                            },
+                            {
+                              label: "Reference steering input",
+                              color: "#71c7b5",
+                              values: comparisonChannelValues(
+                                comparison.reference_trace,
+                                "steering",
+                                comparison.distance_m.length,
+                              ),
+                              mask: comparisonChannelMask(
+                                comparison.reference_trace,
+                                "steering",
+                                comparison.distance_m.length,
+                              ),
+                            },
+                          ],
+                          differences: [
+                            {
+                              label: "Target − reference",
+                              left: 0,
+                              right: 1,
+                              unit: "input",
+                              precision: 2,
+                            },
+                          ],
+                        },
+                        {
+                          id: "gear",
+                          optional: true,
+                          overlayLabel: "Gear",
+                          title: "Gear changes",
+                          subtitle:
+                            "Discrete reported gear · shifts shown as steps",
+                          unit: "GEAR",
+                          valueUnit: "gear",
+                          valueFormat: "gear",
+                          renderMode: "step",
+                          range: [-1, 8],
+                          series: [
+                            {
+                              label: "Target gear",
+                              color: "#f06a4f",
+                              values: comparisonChannelValues(
+                                comparison.target_trace,
+                                "gear",
+                                comparison.distance_m.length,
+                              ),
+                              mask: comparisonChannelMask(
+                                comparison.target_trace,
+                                "gear",
+                                comparison.distance_m.length,
+                              ),
+                            },
+                            {
+                              label: "Reference gear",
+                              color: "#71c7b5",
+                              values: comparisonChannelValues(
+                                comparison.reference_trace,
+                                "gear",
+                                comparison.distance_m.length,
+                              ),
+                              mask: comparisonChannelMask(
+                                comparison.reference_trace,
+                                "gear",
+                                comparison.distance_m.length,
+                              ),
                             },
                           ],
                         },
@@ -2827,6 +2925,26 @@ function comparisonQuery(
 }
 const numeric = (values: Array<number | boolean | null>) =>
   values.map((value) => (typeof value === "number" ? value : null));
+function comparisonChannelValues(
+  trace: Comparison["target_trace"],
+  channel: string,
+  gridLength: number,
+) {
+  const values = trace.values[channel];
+  return Array.isArray(values) && values.length === gridLength
+    ? numeric(values)
+    : Array.from({ length: gridLength }, () => null);
+}
+function comparisonChannelMask(
+  trace: Comparison["target_trace"],
+  channel: string,
+  gridLength: number,
+) {
+  const mask = trace.masks[channel];
+  return Array.isArray(mask) && mask.length === gridLength
+    ? mask
+    : Array.from({ length: gridLength }, () => false);
+}
 const label = (value: unknown) =>
   typeof value === "string" && value
     ? value.replaceAll("_", " ").toUpperCase()
