@@ -62,6 +62,8 @@ type SearchParams = {
   attempt_offset?: string | string[];
   lifecycle_event_offset?: string | string[];
   observation_session_uid?: string | string[];
+  observation_car_index?: string | string[];
+  observation_offset?: string | string[];
   engineer_intent?: string | string[];
   engineer_region_identifier?: string | string[];
 };
@@ -97,6 +99,8 @@ export default async function Home({
     attempt_offset: firstParam(rawParams.attempt_offset),
     lifecycle_event_offset: firstParam(rawParams.lifecycle_event_offset),
     observation_session_uid: firstParam(rawParams.observation_session_uid),
+    observation_car_index: firstParam(rawParams.observation_car_index),
+    observation_offset: firstParam(rawParams.observation_offset),
     engineer_intent: firstParam(rawParams.engineer_intent),
     engineer_region_identifier: firstParam(rawParams.engineer_region_identifier),
   };
@@ -166,22 +170,55 @@ export default async function Home({
     observationInventoryResponse?.status === "ok"
       ? observationInventoryResponse.data
       : null;
-  const selectedObservationSlot =
-    observationInventory?.slots.items.find(
-      (slot) => slot.header_player_count === 0 && slot.nonzero_speed_count > 0,
-    ) ??
-    observationInventory?.slots.items.find((slot) => slot.nonzero_speed_count > 0) ??
-    observationInventory?.slots.items[0] ??
-    null;
-  const observationPreviewResponse = selectedRunId && observationSession && selectedObservationSlot
+  const observationCarIndexParam = params.observation_car_index?.trim()
+    ? params.observation_car_index
+    : null;
+  const requestedObservationCarIndex = parseObservationCarIndex(
+    observationCarIndexParam,
+  );
+  const observationOffsetParam = params.observation_offset;
+  const observationOffset = parseObservationOffset(observationOffsetParam);
+  const selectedObservationSlot = requestedObservationCarIndex === null
+    ? null
+    : observationInventory?.slots.items.find(
+        (slot) => slot.car_index === requestedObservationCarIndex,
+      ) ?? null;
+  const observationInventoryFailure = selectedRunId && observationSession
+    ? observationInventoryResponse === null
+      ? { kind: "request_failed" as const, reason: null }
+      : observationInventoryResponse.status !== "ok" || !observationInventoryResponse.data
+        ? {
+            kind: "unavailable" as const,
+            reason: observationInventoryResponse.reason,
+          }
+        : null
+    : null;
+  const shouldLoadObservationPreview = Boolean(
+    selectedRunId &&
+    observationSession &&
+    selectedObservationSlot &&
+    observationInventory?.archive_status === "available" &&
+    observationOffset !== null,
+  );
+  const observationPreviewResponse = shouldLoadObservationPreview && selectedRunId && observationSession && selectedObservationSlot
     ? await requestApi<CarObservationPreview>(
-        `/api/v1/processing-runs/${encodeURIComponent(selectedRunId)}/sessions/${encodeURIComponent(observationSession.session_uid)}/cars/${selectedObservationSlot.car_index}/observations?limit=200&offset=0`,
+        `/api/v1/processing-runs/${encodeURIComponent(selectedRunId)}/sessions/${encodeURIComponent(observationSession.session_uid)}/cars/${selectedObservationSlot.car_index}/observations?limit=50&offset=${observationOffset}`,
       )
     : null;
   const observationPreview =
     observationPreviewResponse?.status === "ok"
       ? observationPreviewResponse.data
       : null;
+  const observationPreviewFailure = shouldLoadObservationPreview
+    ? observationPreviewResponse === null
+      ? { kind: "request_failed" as const, reason: null }
+      : observationPreviewResponse.status !== "ok" || !observationPreviewResponse.data
+        ? {
+            kind: "unavailable" as const,
+            reason: observationPreviewResponse.reason,
+          }
+        : null
+    : null;
   const trackModels = trackModelsResponse?.data ?? [];
   const selectedModel =
     trackModels.find((item) => modelKey(item) === params.track_model_key) ??
@@ -726,6 +763,12 @@ export default async function Home({
           observationInventory={observationInventory}
           observationPreview={observationPreview}
           observationSessionUid={observationSessionUid}
+          observationCarIndexParam={observationCarIndexParam}
+          observationCarIndex={requestedObservationCarIndex}
+          observationOffset={observationOffset}
+          observationOffsetParam={observationOffsetParam ?? null}
+          observationInventoryFailure={observationInventoryFailure}
+          observationPreviewFailure={observationPreviewFailure}
           runId={selectedRunId}
           runOffset={runOffset}
           sessionOffset={sessionOffset}
@@ -3132,6 +3175,17 @@ const allParams = (value: string | string[] | undefined) =>
 const pageOffset = (value: string | undefined) => {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? Math.min(parsed, 1_000_000) : 0;
+};
+const parseObservationCarIndex = (value: string | null) => {
+  if (value === null || !/^(?:0|[1-9]\d*)$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed <= 23 ? parsed : null;
+};
+const parseObservationOffset = (value: string | undefined) => {
+  if (value === undefined) return 0;
+  if (!/^(?:0|[1-9]\d*)$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed <= 100_000 ? parsed : null;
 };
 const modelKey = (model: TrackModelRecord) =>
   `${model.model_id}@${model.revision}`;

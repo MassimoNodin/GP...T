@@ -101,7 +101,14 @@ On the dashboard, a selected draft distance region can be highlighted on the sam
 
 Every selected attempt also exposes standalone speed, throttle, brake, and steering traces on recorded session time, regardless of game mode or comparison eligibility. Missing channel values and frame/time discontinuities split the plotted runs. Export the same bounded versioned preview with `f1-engineer traces ATTEMPT_KEY --output traces.json`; the output preserves source anchors and reports any point or run reduction.
 
-The dashboard's run summaries review persisted capture size/hash, recorder losses, replay assembly counters, decoder/import counts, session and attempt status, and stored reference-eligibility flags. The summary pages link to bounded session and attempt pages and do not reread capture files or telemetry traces. Capture completion, game validity, and reference eligibility remain separate evidence; the summary does not certify a capture as ready for coaching.
+The dashboard's run summaries review persisted capture size/hash, recorder losses, replay assembly counters, decoder/import counts, session and attempt status, and stored reference-eligibility flags. The summary pages link to bounded session and attempt pages without rereading capture files or player attempt traces. Their optional all-car archive browser lets you select a session and slot, then inspect ordered pages of up to 50 checksummed observations. It shows source footer and replay-quality evidence, frame ordinals, lifecycle epochs, wire formats, and nullable telemetry and Motion channels. Slot numbers are session-local diagnostics; they do not identify opponents or grant reference, ranking, comparison, or coaching eligibility. Legacy runs marked `not_archived`, empty archives, read-limit abstentions, and failed requests are reported separately. Capture completion, game validity, and reference eligibility remain separate evidence; the summary does not certify a capture as ready for coaching.
+
+Inspect the same archived slots and bounded observation pages from the CLI:
+
+```powershell
+python -m f1_engineer cars --database data/f1-engineer.sqlite3 --run-id RUN_ID --session-uid SESSION_UID --limit 24 --offset 0
+python -m f1_engineer car-observations --database data/f1-engineer.sqlite3 --run-id RUN_ID --session-uid SESSION_UID --car-index 7 --limit 200 --offset 0
+```
 
 The dashboard, read-only `POST /api/v1/engineer/query`, and `engineer` CLI expose two deterministic queries over recorded evidence: an explicitly selected attempt summary and one explicitly selected region comparison. Attempt summaries read bounded SQLite metadata only and mark their scope `metadata_only`; region queries reuse the paired-region analysis once and retain its exact selected measurements and warnings. Responses cap facts at six and warnings at eight, preserve source links and provenance, and remain diagnostic-only with no generated coaching.
 

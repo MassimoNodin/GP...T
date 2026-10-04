@@ -10,12 +10,29 @@ import type {
   ProcessingRunSummary,
 } from "@/lib/api";
 
+type ObservationRequestFailure = {
+  kind: "request_failed" | "unavailable";
+  reason: string | null;
+};
+
+type ObservationUrlState = {
+  sessionUid: string | null;
+  carIndexParam: string | null;
+  offsetParam: string | null;
+};
+
 export default function RunEvidencePanel({
   runsPage,
   detail,
   observationInventory,
   observationPreview,
   observationSessionUid,
+  observationCarIndexParam,
+  observationCarIndex,
+  observationOffset,
+  observationOffsetParam,
+  observationInventoryFailure,
+  observationPreviewFailure,
   runId,
   runOffset,
   sessionOffset,
@@ -27,6 +44,12 @@ export default function RunEvidencePanel({
   observationInventory: CarObservationInventory | null;
   observationPreview: CarObservationPreview | null;
   observationSessionUid: string | null;
+  observationCarIndexParam: string | null;
+  observationCarIndex: number | null;
+  observationOffset: number | null;
+  observationOffsetParam: string | null;
+  observationInventoryFailure: ObservationRequestFailure | null;
+  observationPreviewFailure: ObservationRequestFailure | null;
   runId: string | null;
   runOffset: number;
   sessionOffset: number;
@@ -88,7 +111,11 @@ export default function RunEvidencePanel({
             total={runsPage.total}
             hrefForOffset={(offset) =>
               runId
-                ? runUrl(runId, offset, sessionOffset, attemptOffset)
+                ? runUrl(runId, offset, sessionOffset, attemptOffset, lifecycleEventOffset, {
+                    sessionUid: observationSessionUid,
+                    carIndexParam: observationCarIndexParam,
+                    offsetParam: observationOffsetParam,
+                  })
                 : `/?run_offset=${offset}`
             }
           />
@@ -105,6 +132,17 @@ export default function RunEvidencePanel({
           observationInventory={observationInventory}
           observationPreview={observationPreview}
           observationSessionUid={observationSessionUid}
+          observationCarIndexParam={observationCarIndexParam}
+          observationCarIndex={observationCarIndex}
+          observationOffset={observationOffset}
+          observationOffsetParam={observationOffsetParam}
+          observationInventoryFailure={observationInventoryFailure}
+          observationPreviewFailure={observationPreviewFailure}
+          observationUrlState={{
+            sessionUid: observationSessionUid,
+            carIndexParam: observationCarIndexParam,
+            offsetParam: observationOffsetParam,
+          }}
           runOffset={runOffset}
           sessionOffset={sessionOffset}
           attemptOffset={attemptOffset}
@@ -120,6 +158,13 @@ function RunDetail({
   observationInventory,
   observationPreview,
   observationSessionUid,
+  observationCarIndexParam,
+  observationCarIndex,
+  observationOffset,
+  observationOffsetParam,
+  observationInventoryFailure,
+  observationPreviewFailure,
+  observationUrlState,
   runOffset,
   sessionOffset,
   attemptOffset,
@@ -129,6 +174,13 @@ function RunDetail({
   observationInventory: CarObservationInventory | null;
   observationPreview: CarObservationPreview | null;
   observationSessionUid: string | null;
+  observationCarIndexParam: string | null;
+  observationCarIndex: number | null;
+  observationOffset: number | null;
+  observationOffsetParam: string | null;
+  observationInventoryFailure: ObservationRequestFailure | null;
+  observationPreviewFailure: ObservationRequestFailure | null;
+  observationUrlState: ObservationUrlState;
   runOffset: number;
   sessionOffset: number;
   attemptOffset: number;
@@ -239,6 +291,12 @@ function RunDetail({
         inventory={observationInventory}
         preview={observationPreview}
         selectedSessionUid={observationSessionUid}
+        selectedCarIndexParam={observationCarIndexParam}
+        selectedCarIndex={observationCarIndex}
+        offset={observationOffset}
+        offsetParam={observationOffsetParam}
+        inventoryFailure={observationInventoryFailure}
+        previewFailure={observationPreviewFailure}
         sessions={sessions.items}
         runId={summary.run_id}
         runOffset={runOffset}
@@ -299,7 +357,7 @@ function RunDetail({
             limit={sessions.limit}
             total={sessions.total}
             hrefForOffset={(offset) =>
-              runUrl(summary.run_id, runOffset, offset, attemptOffset)
+              runUrl(summary.run_id, runOffset, offset, attemptOffset, lifecycleEventOffset, observationUrlState)
             }
           />
         </section>
@@ -327,7 +385,7 @@ function RunDetail({
             limit={attempts.limit}
             total={attempts.total}
             hrefForOffset={(offset) =>
-              runUrl(summary.run_id, runOffset, sessionOffset, offset)
+              runUrl(summary.run_id, runOffset, sessionOffset, offset, lifecycleEventOffset, observationUrlState)
             }
           />
         </section>
@@ -355,7 +413,7 @@ function RunDetail({
             limit={lifecycleEvents.limit}
             total={lifecycleEvents.total}
             hrefForOffset={(offset) =>
-              runUrl(summary.run_id, runOffset, sessionOffset, attemptOffset, offset)
+              runUrl(summary.run_id, runOffset, sessionOffset, attemptOffset, offset, observationUrlState)
             }
           />
         </section>
@@ -368,6 +426,12 @@ function CarObservationArchive({
   inventory,
   preview,
   selectedSessionUid,
+  selectedCarIndexParam,
+  selectedCarIndex,
+  offset,
+  offsetParam,
+  inventoryFailure,
+  previewFailure,
   sessions,
   runId,
   runOffset,
@@ -378,6 +442,12 @@ function CarObservationArchive({
   inventory: CarObservationInventory | null;
   preview: CarObservationPreview | null;
   selectedSessionUid: string | null;
+  selectedCarIndexParam: string | null;
+  selectedCarIndex: number | null;
+  offset: number | null;
+  offsetParam: string | null;
+  inventoryFailure: ObservationRequestFailure | null;
+  previewFailure: ObservationRequestFailure | null;
   sessions: ProcessingRunDetail["sessions"]["items"];
   runId: string;
   runOffset: number;
@@ -417,20 +487,51 @@ function CarObservationArchive({
               </option>
             ))}
           </select>
-          <button className="run-observation-submit" type="submit">Load observations</button>
+          <label htmlFor="observation-car-index">Car slot</label>
+          <select
+            id="observation-car-index"
+            name="observation_car_index"
+            defaultValue={selectedCarIndexParam ?? ""}
+          >
+            <option value="">Choose a slot</option>
+            {selectedCarIndexParam !== null &&
+            !inventory?.slots.items.some(
+              (slot) => String(slot.car_index) === selectedCarIndexParam,
+            ) ? (
+              <option value={selectedCarIndexParam}>
+                Requested slot {selectedCarIndexParam} · unavailable
+              </option>
+            ) : null}
+            {inventory?.slots.items.map((slot) => (
+              <option key={slot.car_index} value={slot.car_index}>
+                Slot {slot.car_index} · {slot.observation_count.toLocaleString()} observations · {slot.nonzero_speed_count.toLocaleString()} nonzero-speed samples
+              </option>
+            ))}
+          </select>
+          <button className="run-observation-submit" type="submit">Load selection</button>
         </form>
       ) : null}
       {!inventory ? (
         <p className="run-evidence-empty">
           {selectedSessionUid && !sessions.some((session) => session.session_uid === selectedSessionUid)
             ? `Session ${selectedSessionUid} is not present on this run detail page, so its observation inventory was not loaded.`
-            : "Car observation inventory is unavailable for the selected session."}
+            : inventoryFailure
+              ? observationRequestFailureText("inventory", inventoryFailure)
+              : "Car observation inventory is unavailable for the selected session."}
         </p>
       ) : (
         <>
           <p className="run-evidence-empty">
-            Session {inventory.session_uid} · {inventory.capture.complete ? "capture finalized" : `capture ${inventory.capture.footer_status ?? "incomplete"}`} · {inventory.replay_quality.conflicting_observation_frames === null ? "replay conflict count unknown" : `${inventory.replay_quality.conflicting_observation_frames.toLocaleString()} conflicting observation frame(s)`}
+            Session {inventory.session_uid} · footer {humanize(inventory.capture.footer_status ?? "unknown")} · capture completion {inventory.capture.complete ? "complete" : "incomplete"}
           </p>
+          <p className="run-evidence-empty">
+            Replay quality · late packets ignored {countText(inventory.replay_quality.late_packets_ignored)} · frame overflow drops {countText(inventory.replay_quality.frame_overflow_packets_dropped)} · conflicting observation frames {countText(inventory.replay_quality.conflicting_observation_frames)}
+          </p>
+          {!inventory.capture.complete ? (
+            <p className="run-evidence-error" role="status">
+              The source capture is incomplete; archived observations remain diagnostic evidence.
+            </p>
+          ) : null}
           {inventory.archive_status === "not_archived" ? (
             <p className="run-evidence-empty">This run predates the all-car observation archive. Replay quality and slot counts are unavailable for this run.</p>
           ) : inventory.archive_status === "empty" ? (
@@ -467,53 +568,130 @@ function CarObservationArchive({
               </table>
             </div>
           )}
-          {inventory.archive_status === "available" ? (preview ? (
+          {inventory.archive_status === "available" && selectedCarIndexParam === null ? (
+            <p className="run-evidence-empty">
+              Choose a car slot to inspect its ordered observation pages. Slot numbers are session-local and do not identify a driver.
+            </p>
+          ) : null}
+          {inventory.archive_status === "available" && selectedCarIndexParam !== null && selectedCarIndex === null ? (
+            <p className="run-evidence-error" role="status">
+              Requested slot “{selectedCarIndexParam}” is invalid. Choose a slot from the selected session; no other slot was selected.
+            </p>
+          ) : null}
+          {inventory.archive_status === "available" && selectedCarIndex !== null && !inventory.slots.items.some((slot) => slot.car_index === selectedCarIndex) ? (
+            <p className="run-evidence-error" role="status">
+              Slot {selectedCarIndex} is not present in this session inventory; no other slot was selected.
+            </p>
+          ) : null}
+          {inventory.archive_status === "available" && selectedCarIndex !== null && selectedCarIndexParam !== null && inventory.slots.items.some((slot) => slot.car_index === selectedCarIndex) && offset === null ? (
+            <p className="run-evidence-error" role="status">
+              Observation offset “{offsetParam}” is invalid or exceeds the 100,000-row request bound. The selected session and slot are preserved.
+              <a href={observationPageUrl(runId, runOffset, sessionOffset, attemptOffset, lifecycleEventOffset, inventory.session_uid, selectedCarIndex, 0)}>Open the first page</a>.
+            </p>
+          ) : null}
+          {inventory.archive_status === "available" && selectedCarIndex !== null && previewFailure ? (
+            <p className="run-evidence-error" role="status">
+              {observationRequestFailureText("preview", previewFailure)}
+            </p>
+          ) : null}
+          {inventory.archive_status === "available" && selectedCarIndex !== null ? (preview ? (
+            preview.archive_status === "available" ? (
             <div className="run-observation-preview">
               <h5>
-                Slot {preview.car_index} · first {preview.observations.returned} of {preview.observations.total.toLocaleString()} observations
+                Slot {preview.car_index} · {preview.observations.total.toLocaleString()} observations in this session
               </h5>
               <p>
                 This bounded preview is diagnostic. Zero-valued slots are retained without being marked as active cars or eligible opponents.
               </p>
+              <nav className="run-page-navigation" aria-label="Car observation pages">
+                <span>
+                  {preview.observations.items.length.toLocaleString()} displayed · {preview.observations.returned.toLocaleString()} returned · {preview.observations.total.toLocaleString()} total
+                  {preview.observations.returned > 0
+                    ? ` · rows ${preview.observations.offset + 1}–${preview.observations.offset + preview.observations.returned}`
+                    : ` · no rows at offset ${preview.observations.offset.toLocaleString()}`}
+                </span>
+                <div>
+                  {preview.observations.offset > 0 ? (
+                    <a href={observationPageUrl(
+                      runId,
+                      runOffset,
+                      sessionOffset,
+                      attemptOffset,
+                      lifecycleEventOffset,
+                      preview.session_uid,
+                      preview.car_index,
+                      previousObservationOffset(preview.observations.offset, preview.observations.total, preview.observations.limit),
+                    )}>Previous page</a>
+                  ) : null}
+                  {preview.observations.offset + preview.observations.limit <= 100_000 &&
+                  preview.observations.offset + preview.observations.returned < preview.observations.total ? (
+                    <a href={observationPageUrl(
+                      runId,
+                      runOffset,
+                      sessionOffset,
+                      attemptOffset,
+                      lifecycleEventOffset,
+                      preview.session_uid,
+                      preview.car_index,
+                      preview.observations.offset + preview.observations.limit,
+                    )}>Next page</a>
+                  ) : null}
+                </div>
+              </nav>
+              {preview.observations.offset + preview.observations.returned < preview.observations.total &&
+              preview.observations.offset + preview.observations.limit > 100_000 ? (
+                <p className="run-evidence-empty">The next page is outside the API offset bound of 100,000; later observations are beyond the current preview range.</p>
+              ) : null}
+              {preview.observations.offset >= preview.observations.total && preview.observations.total > 0 ? (
+                <p className="run-evidence-empty">This requested page is past the end of the observation list. Use Previous page to return to the final available page.</p>
+              ) : null}
               <div className="run-observation-table-wrap">
                 <table className="run-observation-table">
                   <thead>
                     <tr>
+                      <th scope="col">Frame ordinal</th>
                       <th scope="col">Frame</th>
                       <th scope="col">Time (s)</th>
+                      <th scope="col">Epoch</th>
+                      <th scope="col">Wire format</th>
                       <th scope="col">Lap</th>
                       <th scope="col">Distance (m)</th>
                       <th scope="col">Speed (km/h)</th>
                       <th scope="col">Throttle</th>
                       <th scope="col">Brake</th>
+                      <th scope="col">Steering</th>
+                      <th scope="col">Gear</th>
+                      <th scope="col">Car Telemetry</th>
                       <th scope="col">Motion</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {preview.observations.items.slice(0, 12).map((item) => (
+                    {preview.observations.items.map((item) => (
                       <tr key={`${item.frame_ordinal}:${item.frame_identifier}`}>
+                        <td>{item.frame_ordinal.toLocaleString()}</td>
                         <td>{item.frame_identifier}</td>
                         <td>{item.session_time_s.toFixed(3)}</td>
+                        <td>{item.lifecycle_epoch}</td>
+                        <td>{item.packet_format}</td>
                         <td>{item.lap_number}</td>
                         <td>{item.lap_distance_m?.toFixed(1) ?? "—"}</td>
                         <td>{item.speed_mps === null ? "—" : (item.speed_mps * 3.6).toFixed(1)}</td>
                         <td>{item.throttle === null ? "—" : `${(item.throttle * 100).toFixed(0)}%`}</td>
                         <td>{item.brake === null ? "—" : `${(item.brake * 100).toFixed(0)}%`}</td>
-                        <td>{item.motion_available ? "available" : item.motion_unavailable_reason ?? "unknown"}</td>
+                        <td>{item.steering === null ? "—" : item.steering.toFixed(3)}</td>
+                        <td>{item.gear ?? "—"}</td>
+                        <td>{availabilityText(item.car_telemetry_available, item.car_telemetry_unavailable_reason)}</td>
+                        <td>{availabilityText(item.motion_available, item.motion_unavailable_reason)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              {!preview.capture.complete ? (
-                <p className="run-evidence-error" role="status">
-                  Source capture footer is {preview.capture.footer_status ?? "incomplete"}; these observations remain diagnostic.
-                </p>
-              ) : null}
             </div>
-          ) : (
-            <p className="run-evidence-empty">No bounded slot preview is available.</p>
-          )) : null}
+            ) : (
+              <p className="run-evidence-empty">The selected slot reports archive state {humanize(preview.archive_status)}; no observation rows were substituted.</p>
+            )
+          ) : null) : null}
         </>
       )}
     </section>
@@ -652,6 +830,7 @@ function runUrl(
   sessionOffset: number,
   attemptOffset: number,
   lifecycleEventOffset = 0,
+  observationState?: ObservationUrlState,
 ) {
   const params = new URLSearchParams({
     run_id: runId,
@@ -660,7 +839,64 @@ function runUrl(
     attempt_offset: String(attemptOffset),
     lifecycle_event_offset: String(lifecycleEventOffset),
   });
+  if (observationState?.sessionUid !== null && observationState?.sessionUid !== undefined) {
+    params.set("observation_session_uid", observationState.sessionUid);
+  }
+  if (observationState?.carIndexParam !== null && observationState?.carIndexParam !== undefined) {
+    params.set("observation_car_index", observationState.carIndexParam);
+  }
+  if (observationState?.offsetParam !== null && observationState?.offsetParam !== undefined) {
+    params.set("observation_offset", observationState.offsetParam);
+  }
   return `/?${params.toString()}`;
+}
+
+function observationPageUrl(
+  runId: string,
+  runOffset: number,
+  sessionOffset: number,
+  attemptOffset: number,
+  lifecycleEventOffset: number,
+  sessionUid: string,
+  carIndex: number,
+  observationOffset: number,
+) {
+  const params = new URLSearchParams({
+    run_id: runId,
+    run_offset: String(runOffset),
+    session_offset: String(sessionOffset),
+    attempt_offset: String(attemptOffset),
+    lifecycle_event_offset: String(lifecycleEventOffset),
+    observation_session_uid: sessionUid,
+    observation_car_index: String(carIndex),
+    observation_offset: String(observationOffset),
+  });
+  return `/?${params.toString()}`;
+}
+
+function previousObservationOffset(offset: number, total: number, limit: number) {
+  if (offset >= total && total > 0) {
+    return Math.floor((total - 1) / limit) * limit;
+  }
+  return Math.max(0, offset - limit);
+}
+
+function observationRequestFailureText(
+  resource: "inventory" | "preview",
+  failure: ObservationRequestFailure,
+) {
+  if (failure.kind === "request_failed") {
+    return `The local API request for the selected ${resource} failed. The requested session and slot remain selected.`;
+  }
+  const reason = failure.reason ?? `${resource}_unavailable`;
+  if (reason.includes("limit") || reason.includes("bounds")) {
+    return `Read-limit abstention for the selected ${resource}: ${humanize(reason)}. The requested session and slot remain selected.`;
+  }
+  return `The selected ${resource} is unavailable: ${humanize(reason)}. The requested session and slot remain selected.`;
+}
+
+function availabilityText(available: boolean, reason: string | null) {
+  return available ? "available" : reason ? humanize(reason) : "unknown";
 }
 
 function contextLabel(context: Record<string, unknown> | null, prefix: string) {

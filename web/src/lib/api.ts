@@ -1779,10 +1779,22 @@ export async function requestApi<T>(
   ).replace(/\/+$/, "");
   try {
     const response = await fetch(`${base}${path}`, { cache: "no-store" });
-    return (await response.json()) as ApiResponse<T>;
+    const body: unknown = await response.json();
+    return isApiResponseEnvelope(body) ? (body as ApiResponse<T>) : null;
   } catch {
     return null;
   }
+}
+
+function isApiResponseEnvelope(value: unknown): value is ApiResponse<unknown> {
+  if (!value || typeof value !== "object") return false;
+  const response = value as Partial<ApiResponse<unknown>>;
+  return (
+    response.api_version === "v1" &&
+    (response.status === "ok" || response.status === "unavailable") &&
+    "data" in response &&
+    (response.reason === null || typeof response.reason === "string")
+  );
 }
 
 export async function requestApiPost<T>(
