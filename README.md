@@ -24,6 +24,8 @@ The selected-window observation set compares 2–8 explicitly selected attempts 
 
 The dashboard can replay an available inbox capture at 0.5×, 1×, 2×, or 4× through the same bounded player monitors used during UDP recording. Replay is temporary and read-only: it leaves the source packet timestamps and footer evidence unchanged, measures monitor freshness from playback delivery time, and creates no capture, import, or database record. Import, UDP recording, and replay share one exclusive operation reservation.
 
+The deterministic engineer query and recorded-lap debrief can be read aloud on request using a browser voice explicitly identified as local. The dashboard shows the exact bounded speech preview; Stop, changing the report, navigation, or hiding the page cancels playback. If no local browser voice is available, read-aloud stays unavailable. This does not use a microphone or generate coaching.
+
 ## Requirements
 
 - Python 3.11 or newer

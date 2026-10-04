@@ -757,6 +757,25 @@ Carry forward the existing validity, lifecycle, capture, replay, and delta-suppo
 
 Acceptance covers verified lap-time facts, top-three ranked-order and provenance parity, mismatch abstention, draft-model rejection, Practice/Qualifying and Race/unknown abstention, capture/lifecycle/support limitation priority, bounded text and arrays, CLI/API/dashboard parity, older response compatibility, and unchanged trace-read counts.
 
+**Rationale:** A bounded deterministic debrief composes existing approved evidence and makes post-lap results easier to understand without granting new analysis or coaching authority.
+
+## Decision 0052: deliver recorded engineer evidence through explicit local speech
+
+**Status:** accepted
+**Date:** 2026-10-05
+
+Add user-triggered local speech delivery for the currently displayed `engineer-query-v1` report and `lap-debrief-v1`. Build a bounded, versioned delivery plan directly from each displayed report. Preserve its selected attempt and reference identities, policy and region where present; place status, qualifications, warnings, abstention, and omitted-detail counts before measured facts. Show the exact utterance sequence in the dashboard before playback. Reject malformed or oversized plans instead of silently dropping qualifications.
+
+Limit plans to 5,000 characters, 24 utterance chunks, and 240 characters per chunk. Use only a browser voice that explicitly reports `localService === true`; report local speech as unavailable when the browser cannot provide one, with no remote fallback. Keep one active sequence for the dashboard. A new request replaces it; Stop, source selection/report changes, navigation, unmount, or page hiding cancel it, and stale callbacks cannot resume a canceled sequence. Playback state and utterances remain transient and client-owned.
+
+This changes presentation only. Add no backend request, trace read, persistence, microphone, STT, LLM, automatic post-lap speech, or live speech scheduler. Attempt summaries retain D0049's mode-independent scope; region answers and lap debriefs retain their existing Time Trial and Practice/Qualifying gates. Speaking does not grant reference, geometry, ranking, or coaching authority.
+
+Acceptance covers Melbourne invalid and partial evidence and Shanghai incomplete-capture/lifecycle qualifications; spoken ranking abstention; exact displayed-preview parity; malformed and oversized input rejection; empty and delayed voice discovery; remote-only voices; synthesis errors; replacement, Stop, selection changes, navigation, unmount and hidden-page cancellation; keyboard access and visible state; and a supported-browser audible check. No new capture is required. Clean eligible Time Trial evidence and independently reviewed real region/geometry definitions remain separate MVP gates.
+
+**Implementation verification (2026-10-05):** `npm --prefix web run test:speech` covers bounded/canonical report identity, warning sides and order, malformed/cyclic/oversized reports, speech limits, delayed, remote-only, empty, and failed voice discovery, replacement, stale callbacks, Stop, source/page cancellation, synthesis errors, and completion. `npm --prefix web run build` passes. A Chromium local-voice smoke check used Microsoft George (`localService === true`) to play a synthetic sentence without telemetry; the controller reported completion. The browser status confirms playback completion, but physical output audibility was not independently observable.
+
+**Rationale:** The deterministic reports provide a suitable evidence source for spoken delivery. Manual, local read-aloud improves access to recorded results without requiring new captures, adding analysis authority, or adding automatic live speech.
+
 ## Data flow
 
 ```text

@@ -1,4 +1,6 @@
 import type { EngineerQueryReport } from "@/lib/api";
+import RecordedEvidenceSpeech from "./RecordedEvidenceSpeech";
+import { buildRecordedSpeechPlan } from "@/lib/recorded-speech-plan";
 
 type RegionOption = { identifier: string; label: string };
 
@@ -186,6 +188,14 @@ export default function EngineerQueryPanel({
             : "Choose an action to summarize the explicit attempt selection or explain one configured region."}
         </p>
       )}
+      {submitted && report ? (
+        <RecordedEvidenceSpeech
+          planResult={buildRecordedSpeechPlan({
+            kind: "engineer_query",
+            report,
+          })}
+        />
+      ) : null}
     </section>
   );
 }

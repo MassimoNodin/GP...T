@@ -4097,11 +4097,7 @@ h1 span {
   background: #b39d64;
 }
 .paired-region-time-window.is-unavailable {
-  background: repeating-linear-gradient(
-    135deg,
-    #777f79 0 3px,
-    #414a45 3px 6px
-  );
+  background: repeating-linear-gradient(135deg, #777f79 0 3px, #414a45 3px 6px);
 }
 .paired-region-time-row-meta {
   color: #79867f;
@@ -4255,7 +4251,9 @@ h1 span {
   margin: 20px 5.5vw;
   padding: 17px;
   border-color: #2c3834;
-  background: linear-gradient(135deg, rgba(113, 199, 181, 0.045), transparent 42%), #111516;
+  background:
+    linear-gradient(135deg, rgba(113, 199, 181, 0.045), transparent 42%),
+    #111516;
 }
 .engineer-query-heading {
   display: flex;
@@ -4420,6 +4418,90 @@ h1 span {
 .engineer-query-state.is-unavailable {
   border-color: rgba(203, 168, 98, 0.25);
 }
+.recorded-speech {
+  display: grid;
+  gap: 8px;
+  padding-top: 11px;
+  border-top: 1px solid #27302d;
+}
+.recorded-speech-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.recorded-speech-availability,
+.recorded-speech-playback,
+.recorded-speech-error {
+  margin: 4px 0 0;
+  color: #9caaa3;
+  font-size: 9px;
+  line-height: 1.45;
+}
+.recorded-speech-error {
+  color: #c7ad77;
+}
+.recorded-speech-buttons {
+  display: flex;
+  gap: 7px;
+}
+.recorded-speech-buttons button {
+  min-height: 31px;
+  padding: 0 10px;
+  border: 1px solid #4a6b60;
+  border-radius: 3px;
+  background: #172320;
+  color: #bce5d8;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.recorded-speech-buttons button:hover:not(:disabled) {
+  border-color: var(--mint);
+  background: #1c2d28;
+}
+.recorded-speech-buttons button:focus-visible {
+  outline: 2px solid var(--mint);
+  outline-offset: 2px;
+}
+.recorded-speech-buttons button:disabled {
+  border-color: #343a38;
+  background: #171a19;
+  color: #6e7974;
+  cursor: not-allowed;
+}
+.recorded-speech-preview {
+  padding: 9px 10px;
+  border: 1px solid #28312e;
+  border-radius: 5px;
+  background: #0b0f0f;
+}
+.recorded-speech-preview > strong {
+  color: #b7c9c1;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.recorded-speech-note {
+  margin: 4px 0 0;
+  color: #7f8d86;
+  font-size: 8px;
+}
+.recorded-speech-preview ol {
+  display: grid;
+  gap: 5px;
+  max-height: 190px;
+  margin: 8px 0 0;
+  padding-left: 23px;
+  overflow: auto;
+  color: #cdd6d1;
+  font-size: 9px;
+  line-height: 1.5;
+}
+.recorded-speech-preview li {
+  padding-left: 3px;
+  overflow-wrap: anywhere;
+}
 @media (max-width: 740px) {
   .paired-region-heading,
   .paired-region-card > header,
@@ -4447,6 +4529,10 @@ h1 span {
   }
   .engineer-query-actions form {
     align-items: stretch;
+    flex-direction: column;
+  }
+  .recorded-speech-controls {
+    align-items: flex-start;
     flex-direction: column;
   }
 }

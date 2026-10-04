@@ -41,6 +41,8 @@ import LinkedComparisonCharts from "./LinkedComparisonCharts";
 import ObservationSetPanel from "./ObservationSetPanel";
 import PairedRegionPanel from "./PairedRegionPanel";
 import EngineerQueryPanel from "./EngineerQueryPanel";
+import RecordedEvidenceSpeech from "./RecordedEvidenceSpeech";
+import { buildRecordedSpeechPlan } from "@/lib/recorded-speech-plan";
 import type { ChartSpec } from "./LinkedComparisonCharts";
 import type { ImportJobRecord, RecordingSourceRecord } from "@/lib/api";
 
@@ -1396,6 +1398,16 @@ export default async function Home({
                               <li key={item.code}>{item.text}</li>
                             ))}
                           </ul>
+                        ) : null}
+                        {target?.attempt_key && reference?.attempt_key ? (
+                          <RecordedEvidenceSpeech
+                            planResult={buildRecordedSpeechPlan({
+                              kind: "lap_debrief",
+                              report: comparison.lap_debrief,
+                              targetAttemptKey: target.attempt_key,
+                              referenceAttemptKey: reference.attempt_key,
+                            })}
+                          />
                         ) : null}
                       </section>
                     ) : null}
