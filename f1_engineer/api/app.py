@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, select_reference
 from ..analysis.comparison_window import optional_distance_window
+from ..analysis.observation_set import build_observation_set
 from ..analysis.quality import inspect_attempt_quality
 from ..analysis.region_service import RegionReportUnavailable, load_attempt_region_report
 from ..analysis.service import compare_attempts
@@ -749,6 +750,40 @@ def create_app(
         return APIResponse[ReferenceSelectionData](
             data=_stringify_session_uids(result.to_dict())
         )
+
+    @app.get(
+        "/api/v1/analysis/observation-set",
+        response_model=APIResponse[dict[str, Any]],
+    )
+    def observation_set(
+        attempt_key: list[str] = Query(default=[], alias="attempt_key", max_length=8),
+        comparison_policy: Literal["time_trial", "practice_qualifying"] = "time_trial",
+        window_start_m: float | None = Query(default=None),
+        window_end_m: float | None = Query(default=None),
+    ) -> APIResponse[dict[str, Any]]:
+        try:
+            distance_window = optional_distance_window(window_start_m, window_end_m)
+            if distance_window is None:
+                return APIResponse[dict[str, Any]](
+                    status="unavailable", reason="observation_set_window_required"
+                )
+            result = build_observation_set(
+                configured_database_path,
+                attempt_key,
+                distance_window,
+                policy=comparison_policy,
+            )
+        except DatabaseSchemaError:
+            raise
+        except (OSError, sqlite3.Error):
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="observation_set_source_unavailable"
+            )
+        except ValueError as exc:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason=str(exc)
+            )
+        return APIResponse[dict[str, Any]](data=_stringify_session_uids(result))
 
     return app
 

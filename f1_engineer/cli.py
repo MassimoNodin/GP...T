@@ -19,6 +19,7 @@ from .recording.service import record_udp_capture
 from .sessions.context import SessionContext
 from .analysis.resampling import ResamplingConfig
 from .analysis.comparison_window import optional_distance_window
+from .analysis.observation_set import build_observation_set
 from .analysis.service import ComparisonPolicy, compare_attempts
 from .analysis.reference_selection import (
     ReferenceKind,
@@ -365,6 +366,21 @@ def _compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _observation_set(args: argparse.Namespace) -> int:
+    window = optional_distance_window(args.window_start_m, args.window_end_m)
+    if window is None:
+        raise ValueError("observation_set_window_required")
+    _json_line(
+        build_observation_set(
+            args.database,
+            args.attempt_keys,
+            window,
+            policy=ComparisonPolicy(args.comparison_policy),
+        )
+    )
+    return 0
+
+
 def _reference(args: argparse.Namespace) -> int:
     selection = select_reference(
         args.database,
@@ -703,6 +719,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="versioned JSON track model; adds diagnostic corner-region analysis",
     )
     compare.set_defaults(handler=_compare)
+
+    observation_set = commands.add_parser(
+        "observation-set",
+        help="inspect repeated observations in one selected distance window",
+    )
+    observation_set.add_argument(
+        "attempt_keys",
+        nargs="+",
+        help="2-8 explicitly selected attempt keys from one run, session and player",
+    )
+    observation_set.add_argument(
+        "--database", default=str(DEFAULT_DATABASE), help="SQLite database path"
+    )
+    observation_set.add_argument(
+        "--comparison-policy",
+        choices=[policy.value for policy in ComparisonPolicy],
+        default=ComparisonPolicy.TIME_TRIAL.value,
+        help="explicit mode rules (Race and unknown modes are unsupported)",
+    )
+    observation_set.add_argument(
+        "--window-start-m", type=float, required=True, help="selected interval start in metres"
+    )
+    observation_set.add_argument(
+        "--window-end-m", type=float, required=True, help="selected interval end in metres"
+    )
+    observation_set.set_defaults(handler=_observation_set)
 
     reference = commands.add_parser(
         "reference", help="select the best eligible prior Time Trial lap and compare it"

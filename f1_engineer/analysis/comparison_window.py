@@ -96,9 +96,11 @@ def analyze_comparison_window(
     config: ResamplingConfig,
 ) -> dict[str, object]:
     start_m, end_m = window.start_m, window.end_m
-    target = _attempt_window_summary(target_samples, target_resampled, window, config)
-    reference = _attempt_window_summary(
-        reference_samples, reference_resampled, window, config
+    target = analyze_single_attempt_window(
+        target_samples, target_resampled, window, config=config
+    )
+    reference = analyze_single_attempt_window(
+        reference_samples, reference_resampled, window, config=config
     )
     interval = evaluate_interval_delta(
         target_samples,
@@ -159,12 +161,14 @@ def analyze_comparison_window(
     }
 
 
-def _attempt_window_summary(
+def analyze_single_attempt_window(
     samples: Sequence[TraceSample],
     resampled: ResampledTrace,
     window: DistanceWindow,
+    *,
     config: ResamplingConfig,
 ) -> dict[str, object]:
+    """Build the same bounded single-attempt observations used by paired analysis."""
     in_window = [
         sample
         for sample in samples

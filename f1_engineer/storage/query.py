@@ -72,6 +72,31 @@ class StoredAttemptTrace:
 
 
 @dataclass(frozen=True, slots=True)
+class AttemptTraceResourceEstimate:
+    attempt_key: str
+    run_id: str
+    session_uid: str
+    car_index: int
+    attempt_number: int
+    disposition: str
+    lap_time_ms: int | None
+    game_valid: bool | None
+    start_observed: bool
+    pit_encountered: bool
+    superseded: bool | None
+    lifecycle_assessed: bool
+    exclusion_reasons: tuple[str, ...]
+    trace_ready: bool
+    trace_row_count: int | None
+    trace_sha256: str | None
+    trace_schema_version: int | None
+    trace_size_bytes: int | None
+    context_segment_count: int
+    context_bytes: int
+    context_segments: tuple[tuple[int, Mapping[str, object] | None], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class StoredAttemptInventoryEntry:
     attempt_key: str
     run_id: str
@@ -257,6 +282,125 @@ def load_attempt_trace(
         ),
         source_sample_count=int(row["row_count"]),
     )
+
+
+def load_attempt_trace_resource_estimates(
+    database_path: str | Path,
+    attempt_keys: tuple[str, ...] | list[str],
+    *,
+    max_context_segments: int,
+    max_context_bytes: int,
+) -> tuple[AttemptTraceResourceEstimate, ...]:
+    """Read selected trace/context sizes before a bounded multi-trace analysis."""
+    if not attempt_keys or len(set(attempt_keys)) != len(attempt_keys):
+        raise ValueError("attempt_keys_must_be_nonempty_and_unique")
+    for name, limit in (
+        ("max_context_segments", max_context_segments),
+        ("max_context_bytes", max_context_bytes),
+    ):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+            raise ValueError(f"{name} must be a non-negative integer")
+
+    placeholders = ",".join("?" for _ in attempt_keys)
+    with Database(database_path, read_only=True) as db:
+        rows = db.connection.execute(
+            f"""SELECT l.attempt_key, l.attempt_number, l.car_index, l.disposition,
+                      l.lap_time_ms, l.game_valid, l.start_observed, l.pit_encountered,
+                      l.superseded, l.lifecycle_assessed, l.exclusion_reasons_json,
+                      s.run_id, s.session_uid, t.ready, t.row_count, t.sha256,
+                      t.schema_version, t.relative_path,
+                      (SELECT COUNT(*) FROM lap_context_segments c
+                        WHERE c.attempt_key = l.attempt_key) AS context_segment_count,
+                      (SELECT COALESCE(SUM(LENGTH(CAST(c.context_json AS BLOB))), 0)
+                         FROM lap_context_segments c
+                        WHERE c.attempt_key = l.attempt_key) AS context_bytes
+                 FROM lap_attempts l JOIN sessions s USING(session_key)
+                 JOIN processing_runs r USING(run_id)
+                 LEFT JOIN telemetry_files t USING(attempt_key)
+                WHERE l.attempt_key IN ({placeholders}) AND r.status = 'complete'""",
+            tuple(attempt_keys),
+        ).fetchall()
+        row_by_key = {str(row["attempt_key"]): row for row in rows}
+        present_keys = [key for key in attempt_keys if key in row_by_key]
+        if not present_keys:
+            return ()
+        aggregate_segments = sum(
+            int(row_by_key[key]["context_segment_count"]) for key in present_keys
+        )
+        aggregate_context_bytes = sum(
+            int(row_by_key[key]["context_bytes"]) for key in present_keys
+        )
+        if aggregate_segments > max_context_segments:
+            raise AttemptTraceReadLimitError("context_segments")
+        if aggregate_context_bytes > max_context_bytes:
+            raise AttemptTraceReadLimitError("context_bytes")
+        present_placeholders = ",".join("?" for _ in present_keys)
+        context_rows = db.connection.execute(
+            f"""SELECT attempt_key, from_frame_identifier, context_json
+                   FROM lap_context_segments
+                  WHERE attempt_key IN ({present_placeholders})
+                  ORDER BY attempt_key, ordinal""",
+            tuple(present_keys),
+        ).fetchall()
+
+    contexts_by_attempt: dict[
+        str, list[tuple[int, Mapping[str, object] | None]]
+    ] = {}
+    for context_row in context_rows:
+        value = (
+            json.loads(context_row["context_json"])
+            if context_row["context_json"] is not None
+            else None
+        )
+        context = value if isinstance(value, Mapping) else None
+        contexts_by_attempt.setdefault(str(context_row["attempt_key"]), []).append(
+            (int(context_row["from_frame_identifier"]), context)
+        )
+
+    database_path = Path(database_path)
+    estimates: dict[str, AttemptTraceResourceEstimate] = {}
+    for key in present_keys:
+        row = row_by_key[key]
+        estimates[key] = AttemptTraceResourceEstimate(
+            attempt_key=key,
+            run_id=str(row["run_id"]),
+            session_uid=str(row["session_uid"]),
+            car_index=int(row["car_index"]),
+            attempt_number=int(row["attempt_number"]),
+            disposition=str(row["disposition"]),
+            lap_time_ms=(
+                int(row["lap_time_ms"]) if row["lap_time_ms"] is not None else None
+            ),
+            game_valid=(
+                None if row["game_valid"] is None else bool(row["game_valid"])
+            ),
+            start_observed=bool(row["start_observed"]),
+            pit_encountered=bool(row["pit_encountered"]),
+            superseded=(
+                None if row["superseded"] is None else bool(row["superseded"])
+            ),
+            lifecycle_assessed=bool(row["lifecycle_assessed"]),
+            exclusion_reasons=tuple(json.loads(row["exclusion_reasons_json"])),
+            trace_ready=bool(row["ready"]),
+            trace_row_count=(
+                int(row["row_count"]) if row["row_count"] is not None else None
+            ),
+            trace_sha256=(str(row["sha256"]) if row["sha256"] is not None else None),
+            trace_schema_version=(
+                int(row["schema_version"])
+                if row["schema_version"] is not None
+                else None
+            ),
+            trace_size_bytes=(
+                _trace_file_size(database_path, row["relative_path"])
+                if bool(row["ready"])
+                else None
+            ),
+            context_segment_count=int(row["context_segment_count"]),
+            context_bytes=int(row["context_bytes"]),
+            context_segments=tuple(contexts_by_attempt.get(key, ())),
+        )
+    return tuple(estimates[key] for key in attempt_keys if key in estimates)
 
 
 def load_attempt_policy_metadata(

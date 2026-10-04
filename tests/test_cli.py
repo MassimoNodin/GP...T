@@ -69,6 +69,39 @@ def test_compare_cli_rejects_an_incomplete_window(monkeypatch) -> None:
         cli._compare(args)
 
 
+def test_observation_set_cli_forwards_explicit_attempts_and_window(
+    monkeypatch, capsys
+) -> None:
+    calls: dict[str, object] = {}
+    monkeypatch.setattr(
+        cli,
+        "build_observation_set",
+        lambda *args, **kwargs: calls.update(args=args, kwargs=kwargs)
+        or {"artifact_kind": "selected_window_observation_set"},
+    )
+    args = cli.build_parser().parse_args(
+        [
+            "observation-set",
+            "attempt-2",
+            "attempt-1",
+            "--comparison-policy",
+            "practice_qualifying",
+            "--window-start-m",
+            "500",
+            "--window-end-m",
+            "1200",
+        ]
+    )
+
+    assert cli._observation_set(args) == 0
+    assert calls["args"][1] == ["attempt-2", "attempt-1"]
+    assert calls["args"][2] == DistanceWindow(500.0, 1200.0)
+    assert calls["kwargs"] == {"policy": "practice_qualifying"}
+    assert json.loads(capsys.readouterr().out)["artifact_kind"] == (
+        "selected_window_observation_set"
+    )
+
+
 def test_compare_trajectories_cli_exports_versioned_json(monkeypatch, capsys, tmp_path) -> None:
     output_path = tmp_path / "paired-paths.json"
     calls: dict[str, object] = {}

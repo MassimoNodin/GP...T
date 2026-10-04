@@ -12,7 +12,12 @@ from f1_engineer.analysis.comparison_window import DistanceWindow
 from f1_engineer.api.app import create_app
 
 
-def _get(app, path: str, *, params: dict[str, str] | None = None) -> httpx.Response:
+def _get(
+    app,
+    path: str,
+    *,
+    params: dict[str, str] | list[tuple[str, str]] | None = None,
+) -> httpx.Response:
     async def request() -> httpx.Response:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -629,6 +634,60 @@ def test_compare_api_reports_missing_trace_as_unavailable(monkeypatch, tmp_path)
     assert response.status_code == 200
     assert response.json()["status"] == "unavailable"
     assert response.json()["reason"] == "attempt_trace_unavailable"
+
+
+def test_observation_set_api_accepts_repeated_attempt_keys_and_window(
+    monkeypatch, tmp_path
+) -> None:
+    calls: dict[str, object] = {}
+    document = {
+        "artifact_kind": "selected_window_observation_set",
+        "diagnostic_only": True,
+        "session_uid": 18446744073709551615,
+    }
+
+    def build(database, attempt_keys, window, **kwargs):
+        calls.update(
+            database=database,
+            attempt_keys=attempt_keys,
+            window=window,
+            kwargs=kwargs,
+        )
+        return document
+
+    monkeypatch.setattr(api_module, "build_observation_set", build)
+    app = create_app(tmp_path / "unused.sqlite3")
+    response = _get(
+        app,
+        "/api/v1/analysis/observation-set",
+        params=[
+            ("attempt_key", "attempt-1"),
+            ("attempt_key", "attempt-2"),
+            ("comparison_policy", "practice_qualifying"),
+            ("window_start_m", "500"),
+            ("window_end_m", "1200"),
+        ],
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["session_uid"] == "18446744073709551615"
+    assert calls["attempt_keys"] == ["attempt-1", "attempt-2"]
+    assert calls["window"] == DistanceWindow(500.0, 1200.0)
+    assert calls["kwargs"] == {"policy": "practice_qualifying"}
+
+
+def test_observation_set_api_caps_repeated_attempt_keys(tmp_path) -> None:
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/analysis/observation-set",
+        params=[
+            *(("attempt_key", f"attempt-{index}") for index in range(9)),
+            ("window_start_m", "1"),
+            ("window_end_m", "2"),
+        ],
+    )
+
+    assert response.status_code == 422
 
 
 def test_compare_api_rejects_unknown_or_incomplete_track_model_identity(

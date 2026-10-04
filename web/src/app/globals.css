@@ -3394,6 +3394,187 @@ h1 span {
   font: 8px var(--font-mono);
   line-height: 1.5;
 }
+.observation-set {
+  display: grid;
+  gap: 15px;
+  margin-top: 14px;
+}
+.observation-set-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.observation-set-heading h2 {
+  margin: 5px 0 0;
+  color: #e2ebe5;
+  font-size: 17px;
+  font-weight: 560;
+}
+.observation-set-heading p,
+.observation-set-note,
+.observation-set-unavailable,
+.observation-set-caveat,
+.observation-set-onset-note {
+  margin: 7px 0 0;
+  color: #929f99;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.observation-set-form {
+  display: grid;
+  gap: 11px;
+}
+.observation-attempt-picker {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid #2a3733;
+}
+.observation-attempt-picker legend {
+  padding: 0 5px;
+  color: #9ba9a2;
+  font: 8px var(--font-mono);
+  text-transform: uppercase;
+}
+.observation-attempt-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+  padding: 8px;
+  background: #151d1b;
+  border: 1px solid #27332f;
+  cursor: pointer;
+}
+.observation-attempt-option input {
+  accent-color: #7dc9a6;
+  margin: 2px 0 0;
+}
+.observation-attempt-option > span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.observation-attempt-option strong {
+  color: #d2ded6;
+  font-size: 9px;
+  font-weight: 600;
+}
+.observation-attempt-option small {
+  color: #85938c;
+  font: 7px var(--font-mono);
+  line-height: 1.4;
+}
+.observation-set-report {
+  display: grid;
+  gap: 10px;
+}
+.observation-set-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.observation-metric {
+  display: grid;
+  gap: 5px;
+  padding: 11px;
+  background: #141c19;
+  border: 1px solid #293631;
+}
+.observation-metric > span {
+  color: #83928a;
+  font: 8px var(--font-mono);
+  text-transform: uppercase;
+}
+.observation-metric strong {
+  color: #dbe7de;
+  font-size: 17px;
+  font-weight: 560;
+}
+.observation-metric small,
+.observation-set-warning,
+.observation-warning-code {
+  color: #94a199;
+  font: 8px var(--font-mono);
+  line-height: 1.5;
+}
+.observation-set-warning {
+  margin: 0;
+  padding: 8px 10px;
+  color: #d4bc83;
+  background: #211e15;
+  border-left: 2px solid #ac8e48;
+}
+.observation-set-caveat {
+  margin: 0;
+  color: #a6b1ab;
+}
+.observation-set-table-wrap {
+  overflow: auto;
+  border: 1px solid #2a3733;
+}
+.observation-set-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.observation-set-table th,
+.observation-set-table td {
+  min-width: 105px;
+  padding: 9px;
+  border-bottom: 1px solid #26322e;
+  vertical-align: top;
+}
+.observation-set-table th {
+  color: #788780;
+  background: #141b19;
+  font: 7px var(--font-mono);
+  white-space: nowrap;
+}
+.observation-set-table td {
+  color: #cad6cf;
+  font-size: 9px;
+}
+.observation-set-table td:first-child {
+  min-width: 145px;
+}
+.observation-set-table td > strong,
+.observation-set-table td > small {
+  display: block;
+}
+.observation-set-table td > strong {
+  font-weight: 580;
+}
+.observation-set-table td > small {
+  margin-top: 4px;
+  color: #87948e;
+  font: 7px var(--font-mono);
+  line-height: 1.45;
+}
+.observation-set-table td > .observation-warning-code {
+  color: #d0b476;
+}
+.observation-event-list {
+  display: grid;
+  gap: 4px;
+}
+.observation-event-list small {
+  color: #becbc3;
+  font: 7px var(--font-mono);
+  white-space: nowrap;
+}
+.observation-set-onset-note {
+  margin: 0;
+}
+.observation-set-note {
+  color: #d4bc83;
+}
+.observation-set-unavailable {
+  color: #d4bc83;
+}
 .run-page-navigation {
   display: flex;
   align-items: center;
@@ -3432,6 +3613,12 @@ h1 span {
   .run-evidence-groups,
   .run-evidence-pages,
   .run-exclusion-summary ul {
+    grid-template-columns: 1fr;
+  }
+  .observation-attempt-picker {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .observation-set-summary {
     grid-template-columns: 1fr;
   }
   .run-detail {

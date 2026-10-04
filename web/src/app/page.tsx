@@ -11,6 +11,7 @@ import {
   AttemptQualityReport,
   AttemptTraceChartReport,
   LapRecord,
+  ObservationSetReport,
   ObservedConditionAnchor,
   ObservedConditionSummary,
   ObservedTrajectoryComparisonPreview,
@@ -31,6 +32,7 @@ import AttemptTraceCharts from "./AttemptTraceCharts";
 import RunEvidencePanel from "./RunEvidencePanel";
 import TrajectoryComparisonPanel from "./TrajectoryComparisonPanel";
 import LinkedComparisonCharts from "./LinkedComparisonCharts";
+import ObservationSetPanel from "./ObservationSetPanel";
 import type { ChartSpec } from "./LinkedComparisonCharts";
 import type { ImportJobRecord, RecordingSourceRecord } from "@/lib/api";
 
@@ -41,6 +43,7 @@ type SearchParams = {
   comparison_policy?: string | string[];
   window_start_m?: string | string[];
   window_end_m?: string | string[];
+  observation_attempt_key?: string | string[];
   track_model_key?: string | string[];
   position_probe_m?: string | string[];
   import_job_id?: string | string[];
@@ -72,6 +75,7 @@ export default async function Home({
     comparison_policy: firstParam(rawParams.comparison_policy),
     window_start_m: firstParam(rawParams.window_start_m),
     window_end_m: firstParam(rawParams.window_end_m),
+    observation_attempt_keys: allParams(rawParams.observation_attempt_key),
     track_model_key: firstParam(rawParams.track_model_key),
     position_probe_m: firstParam(rawParams.position_probe_m),
     import_job_id: firstParam(rawParams.import_job_id),
@@ -192,6 +196,25 @@ export default async function Home({
     params.target_attempt_key === undefined
       ? laps.at(-1) ?? null
       : requestedTarget;
+  const observationSetQuery = new URLSearchParams();
+  for (const attemptKey of params.observation_attempt_keys) {
+    observationSetQuery.append("attempt_key", attemptKey);
+  }
+  observationSetQuery.set("comparison_policy", comparisonPolicy);
+  if (params.window_start_m?.trim()) {
+    observationSetQuery.set("window_start_m", params.window_start_m);
+  }
+  if (params.window_end_m?.trim()) {
+    observationSetQuery.set("window_end_m", params.window_end_m);
+  }
+  const observationSetRequest =
+    params.observation_attempt_keys.length >= 2 &&
+    params.observation_attempt_keys.length <= 8 &&
+    Boolean(params.window_start_m?.trim() && params.window_end_m?.trim())
+      ? requestApi<ObservationSetReport>(
+          `/api/v1/analysis/observation-set?${observationSetQuery.toString()}`,
+        )
+      : Promise.resolve(null);
   const defaultReference =
     completed.find((lap) => lap.attempt_key !== target?.attempt_key) ?? null;
   const requestedReferenceChoice = params.reference_choice;
@@ -240,13 +263,14 @@ export default async function Home({
           `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, manualReference.attempt_key, selectedModel, comparisonPolicy, params.window_start_m, params.window_end_m)}`,
         )
       : Promise.resolve(null);
-  const [selectionResponse, manualComparisonResponse, qualityResponse, traceChartResponse, trajectoryResponse, regionResponse] = await Promise.all([
+  const [selectionResponse, manualComparisonResponse, qualityResponse, traceChartResponse, trajectoryResponse, regionResponse, observationSetResponse] = await Promise.all([
     selectionRequest,
     manualComparisonRequest,
     attemptQualityRequest,
     attemptTraceChartRequest,
     trajectoryRequest,
     regionRequest,
+    observationSetRequest,
   ]);
   const attemptQuality =
     qualityResponse?.status === "ok" ? qualityResponse.data : null;
@@ -264,6 +288,8 @@ export default async function Home({
       : manualComparisonResponse;
   const comparison =
     comparisonResponse?.status === "ok" ? comparisonResponse.data : null;
+  const observationSet =
+    observationSetResponse?.status === "ok" ? observationSetResponse.data : null;
   const trajectoryComparisonQuery = new URLSearchParams();
   if (target) trajectoryComparisonQuery.set("target_attempt_key", target.attempt_key);
   if (referenceKey) trajectoryComparisonQuery.set("reference_attempt_key", referenceKey);
@@ -280,11 +306,20 @@ export default async function Home({
           `/api/v1/compare/trajectories?${trajectoryComparisonQuery}`,
         )
       : null;
-  const trajectoryComparisonFormParams: Record<string, string> = {};
+  const trajectoryComparisonFormParams: Record<string, string | string[]> = {};
   for (const [name, value] of Object.entries(params)) {
-    if (name !== "position_probe_m" && value) {
+    if (
+      name !== "position_probe_m" &&
+      name !== "observation_attempt_keys" &&
+      typeof value === "string" &&
+      value
+    ) {
       trajectoryComparisonFormParams[name] = value;
     }
+  }
+  if (params.observation_attempt_keys.length) {
+    trajectoryComparisonFormParams.observation_attempt_key =
+      params.observation_attempt_keys;
   }
   if (session) trajectoryComparisonFormParams.session_key = session.session_key;
   if (target) trajectoryComparisonFormParams.target_attempt_key = target.attempt_key;
@@ -948,6 +983,25 @@ export default async function Home({
                     </div>
                   ) : null}
                 </section>
+
+                <ObservationSetPanel
+                  laps={laps}
+                  report={observationSet}
+                  unavailableReason={
+                    observationSetResponse?.status === "unavailable"
+                      ? observationSetResponse.reason
+                      : null
+                  }
+                  selectedAttemptKeys={params.observation_attempt_keys}
+                  sessionKey={session?.session_key ?? null}
+                  targetAttemptKey={target?.attempt_key ?? null}
+                  referenceChoice={referenceChoice || null}
+                  comparisonPolicy={comparisonPolicy}
+                  windowStartM={params.window_start_m ?? null}
+                  windowEndM={params.window_end_m ?? null}
+                  trackModelKey={selectedModel ? modelKey(selectedModel) : null}
+                  positionProbeM={params.position_probe_m ?? null}
+                />
 
                 <section className="panel reference-panel">
                   <div className="reference-icon">PB</div>
@@ -2663,6 +2717,8 @@ const speed = (values: Array<number | boolean | null>) =>
   values.map((value) => (typeof value === "number" ? value * 3.6 : null));
 const firstParam = (value: string | string[] | undefined) =>
   Array.isArray(value) ? value[0] : value;
+const allParams = (value: string | string[] | undefined) =>
+  Array.isArray(value) ? value : value === undefined ? [] : [value];
 const pageOffset = (value: string | undefined) => {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? Math.min(parsed, 1_000_000) : 0;

@@ -12,13 +12,17 @@ export default function TrajectoryComparisonPanel({
   report: ObservedTrajectoryComparisonPreview | null;
   unavailableReason: string | null;
   probeDistanceM: string;
-  formParams: Record<string, string>;
+  formParams: Record<string, string | string[]>;
 }) {
   const probeForm = (
     <form className="trajectory-probe-form" action="/" method="get">
-      {Object.entries(formParams).map(([name, value]) => (
-        <input key={name} type="hidden" name={name} value={value} />
-      ))}
+      {Object.entries(formParams).flatMap(([name, value]) =>
+        Array.isArray(value)
+          ? value.map((item, index) => (
+              <input key={`${name}-${index}`} type="hidden" name={name} value={item} />
+            ))
+          : [<input key={name} type="hidden" name={name} value={value} />],
+      )}
       <label htmlFor="position-probe-m">Position probe · lap distance (m)</label>
       <input
         id="position-probe-m"

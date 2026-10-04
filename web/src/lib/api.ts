@@ -1283,6 +1283,86 @@ export interface DistanceWindowBrief {
   limits: Record<string, number>;
 }
 
+export interface ObservationSetAttempt {
+  attempt_key: string;
+  attempt_number: number;
+  run_id: string;
+  session_uid: string;
+  car_index: number;
+  disposition: string;
+  lap_time_ms: number | null;
+  game_valid: boolean | null;
+  superseded: boolean | null;
+  lifecycle_assessed: boolean;
+  attempt_exclusion_reasons: string[];
+  trace_sha256: string | null;
+  trace_schema_version: number | null;
+  source_sample_count: number | null;
+  observed_context?: {
+    weather_id: number | null;
+    weather_name: string | null;
+    track_temperature_c: number | null;
+    air_temperature_c: number | null;
+    [key: string]: unknown;
+  };
+  analysis_status: "available" | "unavailable";
+  analysis_reason: string | null;
+  aggregate_exclusion_reasons: string[];
+  warnings: Array<{ code: string; text: string }>;
+  measurements?: {
+    source_sample_count: number;
+    speed_sample_count: number;
+    brake_sample_count: number;
+    minimum_speed: { status: string; speed_kph: number | null; anchor: Record<string, unknown> | null };
+    peak_brake: { status: string; value: number | null; anchor: Record<string, unknown> | null };
+    coverage: Record<string, number>;
+    threshold_events: Record<string, ObservationThresholdEventSummary>;
+  };
+  [key: string]: unknown;
+}
+
+export interface ObservationThresholdEventSummary {
+  status: string;
+  events: Array<Record<string, unknown>>;
+  event_count: number;
+  events_truncated: boolean;
+  left_censored_event_count: number;
+  right_censored_event_count: number;
+  rejected_short_event_count: number;
+  unsupported_break_count: number;
+}
+
+export interface ObservationSetMetric {
+  status: "supported" | "insufficient_contributors";
+  required_contributor_count: number;
+  contributor_count: number;
+  unit: string;
+  minimum: number | null;
+  maximum: number | null;
+  range: number | null;
+  contributors: Array<{ attempt_key: string; value: number }>;
+  exclusion_counts: Array<{ reason: string; attempt_count: number }>;
+}
+
+export interface ObservationSetReport {
+  schema_version: 1;
+  artifact_kind: "selected_window_observation_set";
+  analysis_version: string;
+  status: "available";
+  comparison_policy: "time_trial" | "practice_qualifying";
+  diagnostic_only: true;
+  coaching_eligible: false;
+  consistency_claim: false;
+  interval_convention: "[start_m, end_m)";
+  window_m: { start_m: number; end_m: number };
+  track: { track_id: number | null; track_name: string | null; track_length_m: number };
+  scope: { run_id: string; session_uid: string; car_index: number };
+  attempts: ObservationSetAttempt[];
+  aggregates: { minimum_speed: ObservationSetMetric; peak_brake: ObservationSetMetric };
+  warnings: Array<{ code: string; text: string }>;
+  limits: Record<string, number>;
+}
+
 export interface ComparisonWindowAttempt {
   source_sample_count: number;
   speed_sample_count: number;
