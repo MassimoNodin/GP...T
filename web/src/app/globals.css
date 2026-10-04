@@ -913,6 +913,40 @@ h1 span {
   margin-top: 12px;
   padding: 19px 22px;
 }
+.lap-debrief {
+  margin-top: 12px;
+  padding: 19px 22px;
+  border-color: rgba(101, 195, 154, 0.34);
+}
+.lap-debrief-regions {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0 0 0 20px;
+  color: #9faea6;
+}
+.lap-debrief-regions li {
+  padding-left: 4px;
+}
+.lap-debrief-regions strong,
+.lap-debrief-regions small {
+  display: block;
+}
+.lap-debrief-regions strong {
+  color: #cbd7d0;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.55;
+}
+.lap-debrief-regions small {
+  margin-top: 4px;
+  color: #77837f;
+  font: 8px/1.5 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.lap-debrief-limitations {
+  margin-top: 14px !important;
+}
 .comparison-brief-heading {
   display: flex;
   align-items: flex-start;

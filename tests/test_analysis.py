@@ -554,6 +554,11 @@ def test_practice_qualifying_comparison_is_explicit_bounded_and_diagnostic(
     assert result["corner_comparison_brief"]["gate_reasons"] == [
         "unsupported_comparison_policy"
     ]
+    assert result["lap_debrief"]["analysis_version"] == "lap-debrief-v1"
+    assert result["lap_debrief"]["diagnostic_only"] is True
+    assert result["lap_debrief"]["coaching_eligible"] is False
+    assert result["lap_debrief"]["ranked_regions"] == []
+    assert result["lap_debrief"]["official_lap_time"]["value_s"] == pytest.approx(0.2)
     assert result["target"]["trace_sha256"] == "a" * 64
     assert result["reference"]["trace_sha256"] == "b" * 64
     assert result["target"]["game_valid"] is False

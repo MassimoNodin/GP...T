@@ -1411,10 +1411,55 @@ export interface CornerComparisonBrief {
   limits: Record<string, number>;
 }
 
+export interface LapDebrief {
+  schema_version: 1;
+  analysis_version: string;
+  status: "available" | "partial" | "abstained";
+  comparison_policy: "time_trial" | "practice_qualifying" | null;
+  diagnostic_only: true;
+  coaching_eligible: false;
+  text: string;
+  official_lap_time: {
+    value_s: number;
+    direction: "target_minus_reference";
+    text: string;
+    source_fields: Record<string, string>;
+    provenance: {
+      target: Record<string, unknown>;
+      reference: Record<string, unknown>;
+    };
+  } | null;
+  ranked_regions: Array<{
+    rank: number;
+    region_id: string;
+    region_label: string;
+    analysis_window_m: [number, number];
+    recorded_time_difference_s: number;
+    text: string;
+    source_fields: Record<string, string>;
+    connected_support: Record<string, boolean | number | null>;
+    provenance: {
+      target?: Record<string, unknown> & { attempt_key?: string };
+      reference?: Record<string, unknown> & { attempt_key?: string };
+      model?: Record<string, unknown> & { model_id?: string; revision?: number };
+      reference_selection?: Record<string, unknown>;
+    };
+  }>;
+  omitted_region_count: number;
+  limitations: Array<{ code: string; text: string }>;
+  omitted_limitation_count: number;
+  limits: {
+    region_limit: number;
+    limitation_limit: number;
+    text_characters: number;
+  };
+}
+
 export interface Comparison {
   analysis_version: string;
   comparison_brief: ComparisonBrief;
   corner_comparison_brief: CornerComparisonBrief;
+  lap_debrief?: LapDebrief;
   distance_window_brief?: DistanceWindowBrief;
   comparison_policy: "time_trial" | "practice_qualifying";
   comparison_policy_version: string;

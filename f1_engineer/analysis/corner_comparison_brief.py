@@ -30,7 +30,7 @@ def build_corner_comparison_brief(
 ) -> dict[str, object]:
     """Summarize only D0032-ranked, provenance-matched corner measurements."""
     ranking = _mapping(comparison.get("corner_loss_candidates"))
-    gates = _validate_ranking_source(comparison, ranking)
+    gates = validate_corner_ranking_source(comparison)
     if gates:
         upstream_omitted = (
             _nonnegative_integer(ranking.get("gate_reasons_omitted_count"))
@@ -126,6 +126,13 @@ def build_corner_comparison_brief(
         "omitted_region_count": _nonnegative_integer(ranking.get("omitted_candidate_count")) or 0,
         "limits": _limits(),
     }
+
+
+def validate_corner_ranking_source(comparison: Mapping[str, object]) -> list[str]:
+    """Return D0033's pure authority/provenance gates for the existing D0032 result."""
+    return _validate_ranking_source(
+        comparison, _mapping(comparison.get("corner_loss_candidates"))
+    )
 
 
 def _validate_ranking_source(

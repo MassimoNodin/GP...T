@@ -746,6 +746,17 @@ Acceptance covers reconciliation against raw and admitted Shanghai packet counts
 
 **Rationale:** Keeping multi-car archival observations separate from lap attempts preserves a usable path to Race and opponent diagnostics without extending identity, lifecycle, reference, comparison, or coaching guarantees beyond their validated scope. Shanghai provides enough multi-car evidence to justify the bounded archive now, while the current incomplete capture remains diagnostic-only.
 
+## Decision 0051: compose a bounded recorded-lap debrief
+
+**Status:** accepted
+**Date:** 2026-10-05
+
+Add `lap-debrief-v1` as an additive summary built only after the existing lap comparison, deterministic comparison brief, D0032 ranked-candidate gate, and D0033 corner brief have completed. Reuse D0033's pure authority/provenance validator. Include a verified official target-minus-reference lap-time difference and at most three region interval-time summaries whose descending rank order, boundary-delta arithmetic, connected support, attempt identity, trace checksums, model approval/digest, and selected-reference provenance agree across those existing results. Any mismatch rejects the ranked region list; never substitute draft or standalone diagnostic regions.
+
+Carry forward the existing validity, lifecycle, capture, replay, and delta-support limitations in priority order with explicit count and text bounds. Ranking abstention remains visible with its existing gate reasons. Preserve the same versioned object in the comparison service result for CLI, API, and dashboard consumers. Keep the report diagnostic-only and coaching-ineligible; it reports recorded differences but does not assign causes, recommend driving changes, add persistence, read traces, rerun analysis, or change mode, reference-selection, or ranking policy.
+
+Acceptance covers verified lap-time facts, top-three ranked-order and provenance parity, mismatch abstention, draft-model rejection, Practice/Qualifying and Race/unknown abstention, capture/lifecycle/support limitation priority, bounded text and arrays, CLI/API/dashboard parity, older response compatibility, and unchanged trace-read counts.
+
 ## Data flow
 
 ```text
@@ -790,6 +801,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - `project-trajectory` projects one checksummed attempt against a caller-selected geometry artifact for bounded diagnostics. It preserves source discontinuities and unsupported spans, and all modes remain ineligible for coaching through this command.
 - `distance_window_brief` derives at most five measured facts from the already computed selected-window comparison. Complete coverage, source anchors and event uncertainty remain explicit; all results are diagnostic and coaching-ineligible.
 - `diagnostic-region-debrief-v1` derives at most five deterministic facts from existing paired-region supported differences; omissions remain explicit, and the additive nested report is diagnostic, coaching-ineligible, and ranking-ineligible.
+- `lap-debrief-v1` composes a verified official lap-time difference and at most three matching D0032/D0033 region interval summaries from one existing comparison response. It preserves prioritized capture, lifecycle, validity, and support limitations, rejects mismatched provenance, and adds no analysis reads or coaching authority.
 - `brake-threshold-release-v1` compares the existing paired braking-event end brackets for the sampled `>=10%` to `<10%` transition. It preserves uncertainty and left-censored onset, abstains on right-censoring or unsupported event evidence, and does not measure complete pedal release or add trace reads.
 - `observation-set` reuses the single-attempt selected-window evaluator across at most eight explicitly selected same-run/session/player attempts. Scalar ranges require two fully supported, lifecycle-assessed completed attempts; onset evidence remains bracketed per lap, and every result is diagnostic and coaching-ineligible.
 - Comparison speed, lap-delta, and driver-input charts share a bounded pointer and keyboard cursor over the original resampled comparison distance grid. Local chart zoom is presentation-only and preserves sampled continuity gaps; analysis, mode policy and comparison outputs are unchanged.

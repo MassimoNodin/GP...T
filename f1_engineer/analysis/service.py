@@ -13,6 +13,7 @@ from .corner_comparison_brief import build_corner_comparison_brief
 from .corner_loss_candidates import build_corner_loss_candidates
 from .corners import analyze_corner_regions
 from .distance_window_brief import build_distance_window_brief
+from .lap_debrief import build_lap_debrief
 from .interval_delta import reserve_interval_evaluation_work
 from .quality import (
     OBSERVED_CONDITION_TRACE_COLUMNS,
@@ -409,6 +410,7 @@ def compare_attempts(
     if distance_window is not None:
         result["distance_window_brief"] = build_distance_window_brief(result)
     result["corner_comparison_brief"] = build_corner_comparison_brief(result)
+    result["lap_debrief"] = build_lap_debrief(result)
     return result
 
 

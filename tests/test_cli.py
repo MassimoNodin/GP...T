@@ -23,6 +23,11 @@ def test_compare_cli_forwards_an_explicit_distance_window(monkeypatch, capsys) -
                 "analysis_version": "corner-comparison-brief-v1",
                 "status": "abstained",
             },
+            "lap_debrief": {
+                "analysis_version": "lap-debrief-v1",
+                "status": "partial",
+                "coaching_eligible": False,
+            },
             "distance_window_brief": {
                 "analysis_version": "distance-window-brief-v1",
                 "status": "available",
@@ -54,6 +59,7 @@ def test_compare_cli_forwards_an_explicit_distance_window(monkeypatch, capsys) -
     assert output["corner_comparison_brief"]["analysis_version"] == (
         "corner-comparison-brief-v1"
     )
+    assert output["lap_debrief"]["analysis_version"] == "lap-debrief-v1"
     assert output["distance_window_brief"]["analysis_version"] == (
         "distance-window-brief-v1"
     )

@@ -110,6 +110,8 @@ python -m f1_engineer cars --database data/f1-engineer.sqlite3 --run-id RUN_ID -
 python -m f1_engineer car-observations --database data/f1-engineer.sqlite3 --run-id RUN_ID --session-uid SESSION_UID --car-index 7 --limit 200 --offset 0
 ```
 
+Each lap comparison also carries one `lap-debrief-v1` summary through the CLI, API, and dashboard. It verifies the official lap-time difference, includes at most three region interval measurements only when the existing D0032/D0033 ranking and provenance gates agree, and prioritizes validity, lifecycle, capture, replay, and support limitations. It adds no trace reads, cause attribution, advice, or coaching eligibility.
+
 The dashboard, read-only `POST /api/v1/engineer/query`, and `engineer` CLI expose two deterministic queries over recorded evidence: an explicitly selected attempt summary and one explicitly selected region comparison. Attempt summaries read bounded SQLite metadata only and mark their scope `metadata_only`; region queries reuse the paired-region analysis once and retain its exact selected measurements and warnings. Responses cap facts at six and warnings at eight, preserve source links and provenance, and remain diagnostic-only with no generated coaching.
 
 Examples:
