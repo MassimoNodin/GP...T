@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import json
 from dataclasses import dataclass
 
 from ..udp.lap_data import CarLapData
@@ -204,6 +205,112 @@ class CarSample:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class CarObservation:
+    """Session/frame-scoped canonical car data without lap-attempt ownership."""
+
+    session_uid: int
+    frame_identifier: int
+    session_time_s: float
+    car_index: int
+    frame_ordinal: int
+    packet_format: int
+    lifecycle_epoch: int
+    header_player_car_index: int
+    lap_number: int
+    lap_distance_m: float | None
+    total_distance_m: float | None
+    current_lap_time_ms: int
+    speed_mps: float | None
+    throttle: float | None
+    brake: float | None
+    steering: float | None
+    gear: int | None
+    engine_rpm: int | None
+    drs_active: bool | None
+    clutch_percent: int | None
+    rev_lights_percent: int | None
+    rev_lights_bit_value: int | None
+    car_telemetry_available: bool
+    validation_flags: tuple[str, ...]
+    motion_available: bool
+    world_position_x_m: float | None
+    world_position_y_m: float | None
+    world_position_z_m: float | None
+    world_velocity_x_mps: float | None
+    world_velocity_y_mps: float | None
+    world_velocity_z_mps: float | None
+    world_forward_x: float | None
+    world_forward_y: float | None
+    world_forward_z: float | None
+    world_right_x: float | None
+    world_right_y: float | None
+    world_right_z: float | None
+    g_force_lateral: float | None
+    g_force_longitudinal: float | None
+    g_force_vertical: float | None
+    yaw_rad: float | None
+    pitch_rad: float | None
+    roll_rad: float | None
+    context_json: str | None
+    car_telemetry_unavailable_reason: str | None = None
+    motion_unavailable_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.frame_ordinal < 0 or self.lifecycle_epoch < 0:
+            raise ValueError("observation provenance ordinals must be non-negative")
+
+    def to_record(self) -> dict[str, object]:
+        return {
+            "session_uid": str(self.session_uid),
+            "frame_identifier": self.frame_identifier,
+            "session_time_s": self.session_time_s,
+            "car_index": self.car_index,
+            "frame_ordinal": self.frame_ordinal,
+            "packet_format": self.packet_format,
+            "lifecycle_epoch": self.lifecycle_epoch,
+            "header_player_car_index": self.header_player_car_index,
+            "lap_number": self.lap_number,
+            "lap_distance_m": self.lap_distance_m,
+            "total_distance_m": self.total_distance_m,
+            "current_lap_time_ms": self.current_lap_time_ms,
+            "speed_mps": self.speed_mps,
+            "throttle": self.throttle,
+            "brake": self.brake,
+            "steering": self.steering,
+            "gear": self.gear,
+            "engine_rpm": self.engine_rpm,
+            "drs_active": self.drs_active,
+            "clutch_percent": self.clutch_percent,
+            "rev_lights_percent": self.rev_lights_percent,
+            "rev_lights_bit_value": self.rev_lights_bit_value,
+            "car_telemetry_available": self.car_telemetry_available,
+            "validation_flags": list(self.validation_flags),
+            "motion_available": self.motion_available,
+            "world_position_x_m": self.world_position_x_m,
+            "world_position_y_m": self.world_position_y_m,
+            "world_position_z_m": self.world_position_z_m,
+            "world_velocity_x_mps": self.world_velocity_x_mps,
+            "world_velocity_y_mps": self.world_velocity_y_mps,
+            "world_velocity_z_mps": self.world_velocity_z_mps,
+            "world_forward_x": self.world_forward_x,
+            "world_forward_y": self.world_forward_y,
+            "world_forward_z": self.world_forward_z,
+            "world_right_x": self.world_right_x,
+            "world_right_y": self.world_right_y,
+            "world_right_z": self.world_right_z,
+            "g_force_lateral": self.g_force_lateral,
+            "g_force_longitudinal": self.g_force_longitudinal,
+            "g_force_vertical": self.g_force_vertical,
+            "yaw_rad": self.yaw_rad,
+            "pitch_rad": self.pitch_rad,
+            "roll_rad": self.roll_rad,
+            "context_json": self.context_json,
+            "car_telemetry_unavailable_reason": self.car_telemetry_unavailable_reason,
+            "motion_unavailable_reason": self.motion_unavailable_reason,
+        }
+
+
 def make_car_sample(
     *,
     session_uid: int,
@@ -333,6 +440,137 @@ def make_car_sample(
             None if car_damage is not None else car_damage_unavailable_reason
         ),
         **values,
+    )
+
+
+def make_car_observation(
+    *,
+    session_uid: int,
+    frame_identifier: int,
+    session_time_s: float,
+    car_index: int,
+    frame_ordinal: int,
+    packet_format: int,
+    lifecycle_epoch: int,
+    header_player_car_index: int,
+    context_json: str | None,
+    lap: CarLapData,
+    telemetry: CarTelemetryData | None,
+    motion: CarMotionData | None,
+    car_telemetry_unavailable_reason: str | None,
+    motion_unavailable_reason: str | None,
+) -> CarObservation:
+    """Normalize the archive's smaller session-scoped schema without attempt fields."""
+    flags: list[str] = []
+    lap_distance = _finite(lap.lap_distance_m)
+    total_distance = _finite(lap.total_distance_m)
+    if lap_distance is None:
+        flags.append("invalid_lap_distance")
+    if total_distance is None:
+        flags.append("invalid_total_distance")
+
+    speed_mps = throttle = brake = steering = None
+    gear = engine_rpm = drs_active = None
+    clutch_percent = rev_lights_percent = rev_lights_bit_value = None
+    if telemetry is not None:
+        for name, value, minimum, maximum in (
+            ("speed_mps", telemetry.speed_kph / 3.6, 0.0, 500.0 / 3.6),
+            ("throttle", telemetry.throttle, 0.0, 1.0),
+            ("brake", telemetry.brake, 0.0, 1.0),
+            ("steering", telemetry.steering, -1.0, 1.0),
+        ):
+            normalized = _finite(float(value))
+            if normalized is None or not minimum <= normalized <= maximum:
+                flags.append(f"invalid_{name}")
+            elif name == "speed_mps":
+                speed_mps = normalized
+            elif name == "throttle":
+                throttle = normalized
+            elif name == "brake":
+                brake = normalized
+            else:
+                steering = normalized
+        if -1 <= telemetry.gear <= 8:
+            gear = telemetry.gear
+        else:
+            flags.append("invalid_gear")
+        if 0 <= telemetry.engine_rpm <= 20_000:
+            engine_rpm = telemetry.engine_rpm
+        else:
+            flags.append("invalid_engine_rpm")
+        if telemetry.drs in (0, 1):
+            drs_active = bool(telemetry.drs)
+        else:
+            flags.append("invalid_drs")
+        if 0 <= telemetry.clutch <= 100:
+            clutch_percent = telemetry.clutch
+        else:
+            flags.append("invalid_clutch")
+        if 0 <= telemetry.rev_lights_percent <= 100:
+            rev_lights_percent = telemetry.rev_lights_percent
+        else:
+            flags.append("invalid_rev_lights_percent")
+        rev_lights_bit_value = telemetry.rev_lights_bit_value
+
+    if motion is not None:
+        flags.extend(motion.validation_flags)
+
+    position = motion.world_position_m if motion is not None else None
+    velocity = motion.world_velocity_mps if motion is not None else None
+    forward = motion.world_forward if motion is not None else None
+    right = motion.world_right if motion is not None else None
+    g_force = motion.g_force if motion is not None else None
+    return CarObservation(
+        session_uid=session_uid,
+        frame_identifier=frame_identifier,
+        session_time_s=session_time_s,
+        car_index=car_index,
+        frame_ordinal=frame_ordinal,
+        packet_format=packet_format,
+        lifecycle_epoch=lifecycle_epoch,
+        header_player_car_index=header_player_car_index,
+        lap_number=lap.current_lap_number,
+        lap_distance_m=lap_distance,
+        total_distance_m=total_distance,
+        current_lap_time_ms=lap.current_lap_time_ms,
+        speed_mps=speed_mps,
+        throttle=throttle,
+        brake=brake,
+        steering=steering,
+        gear=gear,
+        engine_rpm=engine_rpm,
+        drs_active=drs_active,
+        clutch_percent=clutch_percent,
+        rev_lights_percent=rev_lights_percent,
+        rev_lights_bit_value=rev_lights_bit_value,
+        car_telemetry_available=telemetry is not None,
+        validation_flags=tuple(flags),
+        motion_available=motion is not None,
+        world_position_x_m=position[0] if position is not None else None,
+        world_position_y_m=position[1] if position is not None else None,
+        world_position_z_m=position[2] if position is not None else None,
+        world_velocity_x_mps=velocity[0] if velocity is not None else None,
+        world_velocity_y_mps=velocity[1] if velocity is not None else None,
+        world_velocity_z_mps=velocity[2] if velocity is not None else None,
+        world_forward_x=forward[0] if forward is not None else None,
+        world_forward_y=forward[1] if forward is not None else None,
+        world_forward_z=forward[2] if forward is not None else None,
+        world_right_x=right[0] if right is not None else None,
+        world_right_y=right[1] if right is not None else None,
+        world_right_z=right[2] if right is not None else None,
+        g_force_lateral=g_force[0] if g_force is not None else None,
+        g_force_longitudinal=g_force[1] if g_force is not None else None,
+        g_force_vertical=g_force[2] if g_force is not None else None,
+        yaw_rad=motion.yaw_rad if motion is not None else None,
+        pitch_rad=motion.pitch_rad if motion is not None else None,
+        roll_rad=motion.roll_rad if motion is not None else None,
+        context_json=context_json,
+        car_telemetry_unavailable_reason=(
+            None if telemetry is not None else car_telemetry_unavailable_reason
+        ),
+        motion_unavailable_reason=(
+            None if motion is not None else motion_unavailable_reason
+        ),
     )
 
 

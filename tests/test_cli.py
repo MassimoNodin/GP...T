@@ -69,6 +69,82 @@ def test_compare_cli_rejects_an_incomplete_window(monkeypatch) -> None:
         cli._compare(args)
 
 
+def test_car_observation_cli_commands_forward_bounded_selection(
+    monkeypatch, capsys
+) -> None:
+    calls = {}
+    monkeypatch.setattr(
+        cli,
+        "list_car_observation_inventory",
+        lambda database, run_id, session_uid, *, limit, offset: calls.update(
+            inventory=(database, run_id, session_uid, limit, offset)
+        )
+        or {"status": "available", "slots": {"total": 0, "items": []}},
+    )
+    monkeypatch.setattr(
+        cli,
+        "load_car_observation_preview",
+        lambda database, run_id, session_uid, car_index, *, limit, offset: calls.update(
+            preview=(database, run_id, session_uid, car_index, limit, offset)
+        )
+        or {"status": "available", "observations": {"total": 0, "items": []}},
+    )
+    cars_args = cli.build_parser().parse_args(
+        [
+            "cars",
+            "--database",
+            "state.sqlite3",
+            "--run-id",
+            "r" * 64,
+            "--session-uid",
+            "18446744073709550001",
+            "--limit",
+            "24",
+        ]
+    )
+    preview_args = cli.build_parser().parse_args(
+        [
+            "car-observations",
+            "--database",
+            "state.sqlite3",
+            "--run-id",
+            "r" * 64,
+            "--session-uid",
+            "18446744073709550001",
+            "--car-index",
+            "23",
+            "--limit",
+            "120",
+            "--offset",
+            "40",
+        ]
+    )
+
+    assert cli._cars(cars_args) == 0
+    inventory_output = json.loads(capsys.readouterr().out)
+    assert inventory_output["slots"]["total"] == 0
+    assert cli._car_observations(preview_args) == 0
+    preview_output = json.loads(capsys.readouterr().out)
+    assert preview_output["observations"]["total"] == 0
+    assert calls == {
+        "inventory": (
+            "state.sqlite3",
+            "r" * 64,
+            "18446744073709550001",
+            24,
+            0,
+        ),
+        "preview": (
+            "state.sqlite3",
+            "r" * 64,
+            "18446744073709550001",
+            23,
+            120,
+            40,
+        ),
+    }
+
+
 def test_observation_set_cli_forwards_explicit_attempts_and_window(
     monkeypatch, capsys
 ) -> None:

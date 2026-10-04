@@ -3544,6 +3544,73 @@ h1 span {
   padding-top: 12px;
   border-top: 1px solid #283330;
 }
+.run-observation-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  margin-top: 9px;
+  border: 1px solid #283330;
+  background: #111716;
+}
+.run-observation-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.run-observation-controls label {
+  color: #91a29d;
+  font: 8px var(--font-mono);
+}
+.run-observation-controls select {
+  max-width: min(520px, 100%);
+  padding: 6px 8px;
+  border: 1px solid #34413d;
+  border-radius: 2px;
+  background: #111716;
+  color: #dce9e4;
+  font: 8px var(--font-mono);
+}
+.run-observation-submit {
+  padding: 6px 9px;
+  border: 1px solid #537669;
+  border-radius: 2px;
+  background: #14211d;
+  color: #a9d9c7;
+  font: 8px var(--font-mono);
+  cursor: pointer;
+}
+.run-observation-table {
+  width: 100%;
+  border-collapse: collapse;
+  white-space: nowrap;
+  font: 8px/1.4 var(--font-mono, "IBM Plex Mono", monospace);
+}
+.run-observation-table th,
+.run-observation-table td {
+  padding: 7px 9px;
+  border-bottom: 1px solid #202a28;
+  text-align: right;
+}
+.run-observation-table thead th {
+  color: #91a29d;
+  font-weight: 500;
+}
+.run-observation-table tbody th {
+  color: #cfe2db;
+  font-weight: 600;
+}
+.run-observation-preview {
+  margin-top: 18px;
+}
+.run-observation-preview h5 {
+  margin: 0;
+  color: #dce9e4;
+  font-size: 10px;
+}
+.run-observation-preview p {
+  margin-top: 5px;
+}
 .run-page-heading {
   align-items: center;
 }

@@ -112,6 +112,10 @@ def test_completion_reset_sample_belongs_to_incoming_lap_attempt() -> None:
     assert result.car_samples[0].frame_identifier == 11
     assert result.car_samples[0].attempt_id == f"{SESSION_UID}:0:2"
     assert result.car_samples[0].car_telemetry_available is False
+    assert len(result.car_observations) == 22
+    assert {row.car_index for row in result.car_observations} == set(range(22))
+    assert all("attempt_id" not in row.to_record() for row in result.car_observations)
+    assert {row.frame_identifier for row in result.car_observations} == {11}
 
 
 def test_pipeline_joins_reordered_motion_by_same_frame_and_player_index() -> None:
@@ -145,6 +149,21 @@ def test_pipeline_joins_reordered_motion_by_same_frame_and_player_index() -> Non
     assert sample.world_position_x_m == 100.0
     assert sample.world_position_y_m == 20.0
     assert sample.world_forward_x == 1.0
+    observations_by_slot = {
+        item.car_index: item for item in result.car_observations
+    }
+    assert len(observations_by_slot) == 22
+    assert observations_by_slot[1].motion_available is True
+    assert observations_by_slot[1].world_position_x_m == 101.0
+    assert observations_by_slot[0].header_player_car_index == 0
+    assert "attempt_id" not in observations_by_slot[0].to_record()
+    player_record = result.car_samples[0].to_record()
+    observation_record = observations_by_slot[0].to_record()
+    assert {
+        key: value for key, value in player_record.items() if key in observation_record
+    } == {
+        key: value for key, value in observation_record.items() if key in player_record
+    }
     assert pipeline.motion_packets_decoded == 1
     assert pipeline.missing_player_motion_samples == 0
 

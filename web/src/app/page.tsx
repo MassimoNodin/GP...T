@@ -12,6 +12,8 @@ import {
   AttemptQualityReport,
   AttemptTraceChartReport,
   CarDamageObservationSummary,
+  CarObservationInventory,
+  CarObservationPreview,
   LapRecord,
   ObservationSetReport,
   ObservedConditionAnchor,
@@ -59,6 +61,7 @@ type SearchParams = {
   session_offset?: string | string[];
   attempt_offset?: string | string[];
   lifecycle_event_offset?: string | string[];
+  observation_session_uid?: string | string[];
   engineer_intent?: string | string[];
   engineer_region_identifier?: string | string[];
 };
@@ -93,6 +96,7 @@ export default async function Home({
     session_offset: firstParam(rawParams.session_offset),
     attempt_offset: firstParam(rawParams.attempt_offset),
     lifecycle_event_offset: firstParam(rawParams.lifecycle_event_offset),
+    observation_session_uid: firstParam(rawParams.observation_session_uid),
     engineer_intent: firstParam(rawParams.engineer_intent),
     engineer_region_identifier: firstParam(rawParams.engineer_region_identifier),
   };
@@ -132,11 +136,51 @@ export default async function Home({
         )
       : Promise.resolve(null),
   ]);
-  const jobResponse =
+  const selectedRunDetail =
+    processingRunDetailResponse?.status === "ok"
+      ? processingRunDetailResponse.data
+      : null;
+  const observationSession = params.observation_session_uid !== undefined
+    ? selectedRunDetail?.sessions.items.find(
+        (item) => item.session_uid === params.observation_session_uid,
+      ) ?? null
+    : selectedRunDetail?.sessions.items[0] ?? null;
+  const observationSessionUid =
+    params.observation_session_uid ?? observationSession?.session_uid ?? null;
+  const observationInventoryPromise = selectedRunId && observationSession
+    ? requestApi<CarObservationInventory>(
+        `/api/v1/processing-runs/${encodeURIComponent(selectedRunId)}/sessions/${encodeURIComponent(observationSession.session_uid)}/cars?limit=24&offset=0`,
+      )
+    : Promise.resolve(null);
+  const jobResponsePromise =
     params.import_job_id && /^[a-f0-9]{32}$/.test(params.import_job_id)
-      ? await requestApi<ImportJobRecord>(
+      ? requestApi<ImportJobRecord>(
           `/api/v1/import-jobs/${params.import_job_id}`,
         )
+      : Promise.resolve(null);
+  const [observationInventoryResponse, jobResponse] = await Promise.all([
+    observationInventoryPromise,
+    jobResponsePromise,
+  ]);
+  const observationInventory =
+    observationInventoryResponse?.status === "ok"
+      ? observationInventoryResponse.data
+      : null;
+  const selectedObservationSlot =
+    observationInventory?.slots.items.find(
+      (slot) => slot.header_player_count === 0 && slot.nonzero_speed_count > 0,
+    ) ??
+    observationInventory?.slots.items.find((slot) => slot.nonzero_speed_count > 0) ??
+    observationInventory?.slots.items[0] ??
+    null;
+  const observationPreviewResponse = selectedRunId && observationSession && selectedObservationSlot
+    ? await requestApi<CarObservationPreview>(
+        `/api/v1/processing-runs/${encodeURIComponent(selectedRunId)}/sessions/${encodeURIComponent(observationSession.session_uid)}/cars/${selectedObservationSlot.car_index}/observations?limit=200&offset=0`,
+      )
+    : null;
+  const observationPreview =
+    observationPreviewResponse?.status === "ok"
+      ? observationPreviewResponse.data
       : null;
   const trackModels = trackModelsResponse?.data ?? [];
   const selectedModel =
@@ -679,6 +723,9 @@ export default async function Home({
         <RunEvidencePanel
           runsPage={processingRunsResponse?.status === "ok" ? processingRunsResponse.data : null}
           detail={processingRunDetailResponse?.status === "ok" ? processingRunDetailResponse.data : null}
+          observationInventory={observationInventory}
+          observationPreview={observationPreview}
+          observationSessionUid={observationSessionUid}
           runId={selectedRunId}
           runOffset={runOffset}
           sessionOffset={sessionOffset}

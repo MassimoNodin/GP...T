@@ -11,6 +11,7 @@ import pyarrow.parquet as pq
 TRACE_SCHEMA_VERSION = 4
 SUPPORTED_TRACE_SCHEMA_VERSIONS = (1, 2, 3, TRACE_SCHEMA_VERSION)
 ROW_GROUP_SIZE = 4096
+MAX_OBSERVATION_CHUNK_ROWS = 131_072
 
 
 def _field(name: str, data_type: pa.DataType, *, unit: str | None = None) -> pa.Field:
@@ -137,6 +138,77 @@ TRACE_SCHEMA = pa.schema(
     metadata={b"trace_schema_version": b"4"},
 )
 TRACE_SCHEMA_V4 = TRACE_SCHEMA
+
+_OBSERVATION_EXCLUDED_FIELDS = {
+    "attempt_id",
+    "car_status_available",
+    "car_status_unavailable_reason",
+    "traction_control",
+    "anti_lock_brakes",
+    "fuel_mix",
+    "front_brake_bias_percent",
+    "pit_limiter_active",
+    "fuel_in_tank_reported",
+    "fuel_capacity_reported",
+    "fuel_remaining_laps",
+    "actual_tyre_compound",
+    "visual_tyre_compound",
+    "tyre_age_laps",
+    "drs_allowed",
+    "drs_activation_distance_m",
+    "vehicle_fia_flag",
+    "network_paused",
+    "car_damage_available",
+    "car_damage_unavailable_reason",
+    "tyre_wear_rl_percent",
+    "tyre_wear_rr_percent",
+    "tyre_wear_fl_percent",
+    "tyre_wear_fr_percent",
+    "tyre_damage_rl_percent",
+    "tyre_damage_rr_percent",
+    "tyre_damage_fl_percent",
+    "tyre_damage_fr_percent",
+    "brake_damage_rl_percent",
+    "brake_damage_rr_percent",
+    "brake_damage_fl_percent",
+    "brake_damage_fr_percent",
+    "tyre_blister_rl_percent",
+    "tyre_blister_rr_percent",
+    "tyre_blister_fl_percent",
+    "tyre_blister_fr_percent",
+    "front_left_wing_damage_percent",
+    "front_right_wing_damage_percent",
+    "rear_wing_damage_percent",
+    "floor_damage_percent",
+    "diffuser_damage_percent",
+    "sidepod_damage_percent",
+    "drs_fault",
+    "ers_fault",
+    "gearbox_damage_percent",
+    "engine_damage_percent",
+    "engine_mguh_wear_percent",
+    "engine_es_wear_percent",
+    "engine_ce_wear_percent",
+    "engine_ice_wear_percent",
+    "engine_mguk_wear_percent",
+    "engine_tc_wear_percent",
+    "engine_blown",
+    "engine_seized",
+}
+OBSERVATION_SCHEMA_V1 = pa.schema(
+    [
+        *[field for field in TRACE_SCHEMA if field.name not in _OBSERVATION_EXCLUDED_FIELDS],
+        _field("frame_ordinal", pa.uint64()),
+        _field("packet_format", pa.uint16()),
+        _field("lifecycle_epoch", pa.uint32()),
+        _field("header_player_car_index", pa.uint8()),
+        _field("context_json", pa.string()),
+        _field("car_telemetry_unavailable_reason", pa.string()),
+        _field("motion_unavailable_reason", pa.string()),
+    ],
+    metadata={b"observation_schema_version": b"1"},
+)
+OBSERVATION_SCHEMA_VERSION = 1
 
 
 class ParquetTraceWriter:
@@ -271,6 +343,123 @@ class ParquetTraceWriter:
         finally:
             self.temporary.unlink(missing_ok=True)
             self._closed = True
+
+
+class ParquetObservationWriter:
+    """Write one bounded session/lifecycle observation chunk atomically."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.temporary = self.path.with_name(self.path.name + ".tmp")
+        self.temporary.unlink(missing_ok=True)
+        self.writer = pq.ParquetWriter(
+            self.temporary,
+            OBSERVATION_SCHEMA_V1,
+            compression="zstd",
+            use_dictionary=["session_uid", "context_json"],
+            write_statistics=True,
+        )
+        self._field_names = tuple(OBSERVATION_SCHEMA_V1.names)
+        self._buffer: list[dict[str, Any]] = []
+        self._sample_count = 0
+        self._slot_metrics: dict[int, dict[str, int | None]] = {}
+        self._first_frame_ordinal: int | None = None
+        self._last_frame_ordinal: int | None = None
+        self._closed = False
+
+    @property
+    def row_count(self) -> int:
+        return self._sample_count
+
+    def write(self, record: dict[str, Any]) -> None:
+        if self._closed:
+            raise ValueError("observation writer is closed")
+        item = {name: record.get(name) for name in self._field_names}
+        car_index = int(item["car_index"])
+        frame_ordinal = int(item["frame_ordinal"])
+        self._first_frame_ordinal = (
+            frame_ordinal
+            if self._first_frame_ordinal is None
+            else min(self._first_frame_ordinal, frame_ordinal)
+        )
+        self._last_frame_ordinal = (
+            frame_ordinal
+            if self._last_frame_ordinal is None
+            else max(self._last_frame_ordinal, frame_ordinal)
+        )
+        metrics = self._slot_metrics.setdefault(
+            car_index,
+            {
+                "observation_count": 0,
+                "car_telemetry_count": 0,
+                "motion_count": 0,
+                "nonzero_speed_count": 0,
+                "header_player_count": 0,
+                "first_frame_ordinal": frame_ordinal,
+                "last_frame_ordinal": frame_ordinal,
+            },
+        )
+        metrics["observation_count"] = int(metrics["observation_count"] or 0) + 1
+        if item["car_telemetry_available"] is True:
+            metrics["car_telemetry_count"] = int(metrics["car_telemetry_count"] or 0) + 1
+        if item["motion_available"] is True:
+            metrics["motion_count"] = int(metrics["motion_count"] or 0) + 1
+        if isinstance(item["speed_mps"], (int, float)) and float(item["speed_mps"]) > 0:
+            metrics["nonzero_speed_count"] = int(metrics["nonzero_speed_count"] or 0) + 1
+        if item["header_player_car_index"] == car_index:
+            metrics["header_player_count"] = int(metrics["header_player_count"] or 0) + 1
+        metrics["first_frame_ordinal"] = min(
+            int(metrics["first_frame_ordinal"] or frame_ordinal), frame_ordinal
+        )
+        metrics["last_frame_ordinal"] = max(
+            int(metrics["last_frame_ordinal"] or frame_ordinal), frame_ordinal
+        )
+        self._sample_count += 1
+        self._buffer.append(item)
+        if len(self._buffer) >= ROW_GROUP_SIZE:
+            self._flush_group()
+
+    def _flush_group(self) -> None:
+        if not self._buffer:
+            return
+        table = pa.Table.from_pylist(self._buffer, schema=OBSERVATION_SCHEMA_V1)
+        self.writer.write_table(table, row_group_size=ROW_GROUP_SIZE)
+        self._buffer.clear()
+
+    def close(self) -> tuple[int, str, dict[str, Any]]:
+        if self._closed:
+            raise ValueError("observation writer is already closed")
+        try:
+            self._flush_group()
+            self.writer.close()
+            with self.temporary.open("r+b") as stream:
+                os.fsync(stream.fileno())
+            os.replace(self.temporary, self.path)
+            digest = _sha256(self.path)
+            quality = {
+                "observation_count": self._sample_count,
+                "first_frame_ordinal": self._first_frame_ordinal,
+                "last_frame_ordinal": self._last_frame_ordinal,
+                "slots": {
+                    str(car_index): metrics
+                    for car_index, metrics in sorted(self._slot_metrics.items())
+                },
+            }
+            self._closed = True
+            return self._sample_count, digest, quality
+        except BaseException:
+            self.abort()
+            raise
+
+    def abort(self) -> None:
+        if not self._closed:
+            try:
+                self.writer.close()
+            except Exception:
+                pass
+        self.temporary.unlink(missing_ok=True)
+        self._closed = True
 
 
 def sha256_file(path: str | Path) -> str:

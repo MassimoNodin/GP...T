@@ -673,6 +673,7 @@ def test_2026_packet_16_does_not_poison_live_packet_6_snapshot() -> None:
 def test_2026_pipeline_joins_motion_by_frame_and_player_without_carry_forward() -> None:
     pipeline = TelemetryPipeline(reorder_window_frames=1)
     outputs = []
+    observations = []
     datagrams = (
         _packet(1, _session_body(), frame=1, sequence=1),
         _packet(0, _motion_body(), frame=10, sequence=2),
@@ -694,8 +695,12 @@ def test_2026_pipeline_joins_motion_by_frame_and_player_without_carry_forward() 
         _packet(255, b"advance", frame=14, sequence=7),
     )
     for datagram in datagrams:
-        outputs.extend(pipeline.process(datagram).car_samples)
-    outputs.extend(pipeline.finish_with_outputs().car_samples)
+        result = pipeline.process(datagram)
+        outputs.extend(result.car_samples)
+        observations.extend(result.car_observations)
+    flushed = pipeline.finish_with_outputs()
+    outputs.extend(flushed.car_samples)
+    observations.extend(flushed.car_observations)
 
     by_frame = {sample.frame_identifier: sample for sample in outputs}
     assert by_frame[11].car_index == 23
@@ -709,6 +714,17 @@ def test_2026_pipeline_joins_motion_by_frame_and_player_without_carry_forward() 
     assert by_frame[12].world_position_x_m is None
     assert by_frame[12].car_status_available is False
     assert by_frame[12].car_status_unavailable_reason == "status_packet_missing"
+    observation_by_frame_slot = {
+        (item.frame_identifier, item.car_index): item
+        for item in observations
+    }
+    assert len([key for key in observation_by_frame_slot if key[0] == 11]) == 24
+    assert (11, 23) in observation_by_frame_slot
+    assert observation_by_frame_slot[11, 23].motion_available is True
+    assert observation_by_frame_slot[11, 23].world_position_x_m == 123.0
+    assert observation_by_frame_slot[12, 23].motion_available is False
+    assert observation_by_frame_slot[12, 23].motion_unavailable_reason == "motion_packet_missing"
+    assert "attempt_id" not in observation_by_frame_slot[11, 23].to_record()
     assert pipeline.player_motion_samples == 2
     assert pipeline.missing_player_motion_samples == 1
     assert pipeline.player_car_status_samples == 1
@@ -757,7 +773,7 @@ def test_2026_import_persists_motion_and_wide_participant_snapshot(tmp_path) -> 
     assert imported.player_motion_samples == 2
     assert imported.missing_player_motion_samples == 0
     sessions = list_sessions(database_path)
-    assert sessions[0]["pipeline_version"] == "player-traces-v14-car-damage"
+    assert sessions[0]["pipeline_version"] == "player-traces-v15-car-observations"
     attempts = list_laps(database_path)
     complete = next(attempt for attempt in attempts if attempt["disposition"] == "completed")
     stored = load_attempt_trace(
@@ -899,7 +915,7 @@ def test_2026_capture_import_query_and_reimport_are_stable(tmp_path) -> None:
     session = list_sessions(database_path)[0]
     assert session["packet_format"] == 2026
     assert session["context"]["track_name"] == "Madrid"
-    assert session["pipeline_version"] == "player-traces-v14-car-damage"
+    assert session["pipeline_version"] == "player-traces-v15-car-observations"
     attempts = list_laps(database_path)
     complete = next(
         attempt for attempt in attempts if attempt["disposition"] == "completed"

@@ -16,16 +16,26 @@ from ..sessions.session_history import (
     SessionHistoryAccumulator,
 )
 from ..udp.models import PacketId
-from ..telemetry.canonical import CarSample
+from ..telemetry.canonical import CarObservation, CarSample
 from .database import Database
 from .lock import ImportRunLock
-from .parquet import ParquetTraceWriter, TRACE_SCHEMA_VERSION, sha256_file
+from .parquet import (
+    MAX_OBSERVATION_CHUNK_ROWS,
+    OBSERVATION_SCHEMA_VERSION,
+    ParquetObservationWriter,
+    ParquetTraceWriter,
+    TRACE_SCHEMA_VERSION,
+    sha256_file,
+)
 
 
-PIPELINE_VERSION = "player-traces-v14-car-damage"
+PIPELINE_VERSION = "player-traces-v15-car-observations"
 MAX_STORED_LIFECYCLE_EVENTS = 100_000
 DEFAULT_DATABASE = Path("data") / "f1-engineer.sqlite3"
 IMPORT_CONFIG = {"max_open_frames": 256, "reorder_window_frames": 3}
+MAX_OPEN_OBSERVATION_WRITERS = 4
+MAX_OBSERVATION_CHUNKS_PER_IMPORT = 4096
+MAX_OBSERVATIONS_PER_CHUNK = MAX_OBSERVATION_CHUNK_ROWS
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +50,8 @@ class ImportSummary:
     participant_packets: int = 0
     attempts: int = 0
     samples: int = 0
+    car_observations: int = 0
+    car_observation_chunks: int = 0
     missing_car_telemetry_samples: int = 0
     lap_data_packets: int = 0
     missing_car_telemetry_frames: tuple[tuple[int, int], ...] = ()
@@ -143,6 +155,8 @@ class _TraceWriterManager:
         )
 
     def write_sample(self, sample: CarSample) -> None:
+        if sample.attempt_id is None:
+            raise ValueError("player trace samples require a lap-attempt identity")
         session_uid, car_index, ordinal = self._identity(sample.attempt_id)
         if (session_uid, car_index) != (sample.session_uid, sample.car_index):
             raise ValueError("sample and lap attempt identities disagree")
@@ -196,6 +210,113 @@ class _TraceWriterManager:
         self.writers.clear()
 
 
+@dataclass(frozen=True, slots=True)
+class _ObservationChunkResult:
+    session_uid: int
+    packet_format: int
+    lifecycle_epoch: int
+    chunk_ordinal: int
+    relative_path: str
+    row_count: int
+    sha256: str
+    quality: dict[str, Any]
+
+
+class _ObservationWriterManager:
+    """Publish bounded all-car chunks independently of attempt-owned traces."""
+
+    def __init__(self, database_path: Path, run_id: str, trace_namespace: str) -> None:
+        self.database_path = database_path
+        self.run_id = run_id
+        self.trace_namespace = trace_namespace
+        self.writers: dict[tuple[int, int, int], tuple[int, ParquetObservationWriter]] = {}
+        self.next_chunk_ordinal: dict[tuple[int, int, int], int] = {}
+        self.stream_keys: set[tuple[int, int, int]] = set()
+        self.results: list[_ObservationChunkResult] = []
+
+    def _relative_path(
+        self, key: tuple[int, int, int], chunk_ordinal: int
+    ) -> Path:
+        session_uid, packet_format, lifecycle_epoch = key
+        return (
+            Path(self.trace_namespace)
+            / self.run_id
+            / "observations"
+            / (
+                f"session-{session_uid}-format-{packet_format}-epoch-"
+                f"{lifecycle_epoch}-chunk-{chunk_ordinal:05d}.parquet"
+            )
+        )
+
+    def _open(self, key: tuple[int, int, int]) -> ParquetObservationWriter:
+        if key not in self.stream_keys:
+            if len(self.stream_keys) >= MAX_OBSERVATION_CHUNKS_PER_IMPORT:
+                raise ValueError("observation_archive_chunk_limit_exceeded")
+            self.stream_keys.add(key)
+        if key not in self.writers and len(self.writers) >= MAX_OPEN_OBSERVATION_WRITERS:
+            oldest_key = next(iter(self.writers))
+            self._close_key(oldest_key)
+        ordinal = self.next_chunk_ordinal.get(key, 0)
+        relative = self._relative_path(key, ordinal)
+        writer = ParquetObservationWriter(self.database_path.parent / relative)
+        self.writers[key] = (ordinal, writer)
+        return writer
+
+    def write_observation(self, observation: CarObservation) -> None:
+        key = (observation.session_uid, observation.packet_format, observation.lifecycle_epoch)
+        entry = self.writers.get(key)
+        writer = entry[1] if entry is not None else self._open(key)
+        writer.write(observation.to_record())
+        if writer.row_count >= MAX_OBSERVATIONS_PER_CHUNK:
+            self._close_key(key)
+
+    def consume(self, observations: tuple[CarObservation, ...]) -> None:
+        for observation in observations:
+            self.write_observation(observation)
+
+    def _close_key(self, key: tuple[int, int, int]) -> None:
+        ordinal, writer = self.writers.pop(key)
+        rows, digest, quality = writer.close()
+        relative = self._relative_path(key, ordinal)
+        if len(self.results) >= MAX_OBSERVATION_CHUNKS_PER_IMPORT:
+            (self.database_path.parent / relative).unlink(missing_ok=True)
+            raise ValueError("observation_archive_chunk_limit_exceeded")
+        self.results.append(
+            _ObservationChunkResult(
+                session_uid=key[0],
+                packet_format=key[1],
+                lifecycle_epoch=key[2],
+                chunk_ordinal=ordinal,
+                relative_path=relative.as_posix(),
+                row_count=rows,
+                sha256=digest,
+                quality=quality,
+            )
+        )
+        self.next_chunk_ordinal[key] = ordinal + 1
+
+    def finish_all(self) -> tuple[_ObservationChunkResult, ...]:
+        for key in tuple(self.writers):
+            self._close_key(key)
+        return tuple(self.results)
+
+    def abort(self) -> None:
+        for _, writer in self.writers.values():
+            try:
+                writer.abort()
+            except OSError:
+                pass
+        self.writers.clear()
+        for result in self.results:
+            try:
+                (self.database_path.parent / result.relative_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+        self.results.clear()
+        self.next_chunk_ordinal.clear()
+        self.stream_keys.clear()
+
+
 def _ensure_capture_and_run(
     db: Database,
     *,
@@ -226,6 +347,33 @@ def _ensure_capture_and_run(
             _valid_trace_file(output_root, trace["relative_path"], trace["sha256"])
             for trace in traces
         ) and all(trace["ready"] == 1 for trace in traces)
+        observation_chunks = connection.execute(
+            """SELECT c.relative_path, c.sha256, c.ready, c.row_count
+                 FROM car_observation_chunks c JOIN sessions s USING(session_key)
+                WHERE s.run_id = ?""",
+            (run_id,),
+        ).fetchall()
+        metrics_row = connection.execute(
+            "SELECT metrics_json FROM processing_runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        metrics = json.loads(metrics_row["metrics_json"]) if metrics_row and metrics_row["metrics_json"] else {}
+        expected_observations = int(
+            metrics.get("capture_quality", {}).get("car_observation_count", 0)
+        )
+        expected_chunks = int(
+            metrics.get("capture_quality", {}).get("car_observation_chunk_count", 0)
+        )
+        observations_valid = (
+            len(observation_chunks) == expected_chunks
+            and sum(int(chunk["row_count"]) for chunk in observation_chunks)
+            == expected_observations
+            and all(
+                chunk["ready"] == 1
+                and _valid_trace_file(output_root, chunk["relative_path"], chunk["sha256"])
+                for chunk in observation_chunks
+            )
+        )
+        outputs_valid = outputs_valid and observations_valid
         if outputs_valid:
             return True
     connection.execute(
@@ -314,6 +462,7 @@ def import_capture(
         # crash at any later point then leaves a run that the next import can resume.
         db.connection.commit()
         trace_manager: _TraceWriterManager | None = None
+        observation_manager: _ObservationWriterManager | None = None
         try:
             trace_root.mkdir(parents=True, exist_ok=True)
             resolved_root = trace_root.resolve()
@@ -324,6 +473,9 @@ def import_capture(
                 shutil.rmtree(run_trace_dir)
             run_trace_dir.mkdir(parents=True, exist_ok=True)
             trace_manager = _TraceWriterManager(database_path, run_id, trace_namespace)
+            observation_manager = _ObservationWriterManager(
+                database_path, run_id, trace_namespace
+            )
             pipeline = TelemetryPipeline(**IMPORT_CONFIG)
             session_history = SessionHistoryAccumulator()
             sessions: dict[int, int] = {}
@@ -371,6 +523,7 @@ def import_capture(
                         raw_car_damage_packet_count += 1
                     attempts.extend(result.lap_attempts)
                     trace_manager.consume(result.car_samples, result.lap_attempts)
+                    observation_manager.consume(result.car_observations)
                     for attempt in result.lap_attempts:
                         session_history.register_attempt(attempt)
                     for observation in result.session_history:
@@ -452,6 +605,7 @@ def import_capture(
                 flushed = pipeline.finish_with_outputs()
                 attempts.extend(flushed.lap_attempts)
                 trace_manager.consume(flushed.car_samples, flushed.lap_attempts)
+                observation_manager.consume(flushed.car_observations)
                 for attempt in flushed.lap_attempts:
                     session_history.register_attempt(attempt)
                 for observation in flushed.session_history:
@@ -478,6 +632,7 @@ def import_capture(
                 car_damage_error_count += len(pipeline.car_damage_decode_errors)
                 pipeline.car_damage_decode_errors.clear()
                 trace_manager.finish_all(tuple(attempts))
+                observation_chunks = observation_manager.finish_all()
                 capture_complete = capture.complete
                 capture_completion = capture.completion
                 if progress_callback is not None:
@@ -533,11 +688,18 @@ def import_capture(
                 result[3]["missing_car_telemetry_count"]
                 for result in trace_results.values()
             )
+            car_observation_count = sum(chunk.row_count for chunk in observation_chunks)
 
             missing_capture_frames = tuple(pipeline.missing_car_telemetry_frame_examples)
             capture_quality = {
                 "lap_data_packets_decoded": pipeline.lap_data_packets_decoded,
                 "car_telemetry_packets_decoded": pipeline.car_telemetry_packets_decoded,
+                "car_observation_count": car_observation_count,
+                "car_observation_chunk_count": len(observation_chunks),
+                "car_observation_conflict_count": pipeline.car_observation_conflict_frames,
+                "car_observation_conflict_examples": [
+                    list(frame) for frame in pipeline.car_observation_conflict_examples
+                ],
                 "missing_car_telemetry_frame_count": pipeline.missing_car_telemetry_frame_count,
                 "missing_car_telemetry_frames": [list(frame) for frame in missing_capture_frames],
                 "canonical_lap_sample_count": sample_count,
@@ -596,6 +758,8 @@ def import_capture(
                 participant_packets=pipeline.participants_packets_decoded,
                 attempts=len(attempts),
                 samples=sample_count,
+                car_observations=car_observation_count,
+                car_observation_chunks=len(observation_chunks),
                 missing_car_telemetry_samples=missing_samples,
                 lap_data_packets=pipeline.lap_data_packets_decoded,
                 missing_car_telemetry_frames=missing_capture_frames,
@@ -666,6 +830,67 @@ def import_capture(
                             _json(latest_contexts[uid]) if uid in latest_contexts else None,
                         ),
                     )
+                for chunk in observation_chunks:
+                    session_key = f"{run_id}:{chunk.session_uid}"
+                    chunk_key = (
+                        f"{run_id}:observation:{chunk.session_uid}:"
+                        f"{chunk.packet_format}:{chunk.lifecycle_epoch}:"
+                        f"{chunk.chunk_ordinal}"
+                    )
+                    connection.execute(
+                        """INSERT INTO car_observation_chunks(chunk_key,session_key,
+                                  packet_format,lifecycle_epoch,chunk_ordinal,relative_path,
+                                  schema_version,row_count,sha256,quality_json,ready)
+                             VALUES (?,?,?,?,?,?,?,?,?,?,1)""",
+                        (
+                            chunk_key,
+                            session_key,
+                            chunk.packet_format,
+                            chunk.lifecycle_epoch,
+                            chunk.chunk_ordinal,
+                            chunk.relative_path,
+                            OBSERVATION_SCHEMA_VERSION,
+                            chunk.row_count,
+                            chunk.sha256,
+                            _json(chunk.quality),
+                        ),
+                    )
+                    for car_index, raw_metrics in chunk.quality["slots"].items():
+                        metrics = {
+                            name: int(value)
+                            for name, value in raw_metrics.items()
+                            if value is not None
+                        }
+                        connection.execute(
+                            """INSERT INTO car_observation_slots(session_key,
+                                      packet_format,lifecycle_epoch,car_index,
+                                      observation_count,car_telemetry_count,motion_count,
+                                      nonzero_speed_count,header_player_count,
+                                      first_frame_ordinal,last_frame_ordinal)
+                                 VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                                 ON CONFLICT(session_key,packet_format,lifecycle_epoch,car_index)
+                                 DO UPDATE SET
+                                   observation_count=observation_count+excluded.observation_count,
+                                   car_telemetry_count=car_telemetry_count+excluded.car_telemetry_count,
+                                   motion_count=motion_count+excluded.motion_count,
+                                   nonzero_speed_count=nonzero_speed_count+excluded.nonzero_speed_count,
+                                   header_player_count=header_player_count+excluded.header_player_count,
+                                   first_frame_ordinal=min(first_frame_ordinal,excluded.first_frame_ordinal),
+                                   last_frame_ordinal=max(last_frame_ordinal,excluded.last_frame_ordinal)""",
+                            (
+                                session_key,
+                                chunk.packet_format,
+                                chunk.lifecycle_epoch,
+                                int(car_index),
+                                metrics["observation_count"],
+                                metrics["car_telemetry_count"],
+                                metrics["motion_count"],
+                                metrics["nonzero_speed_count"],
+                                metrics["header_player_count"],
+                                metrics["first_frame_ordinal"],
+                                metrics["last_frame_ordinal"],
+                            ),
+                        )
                 for (uid, effective_frame), context in sorted(context_updates.items()):
                     connection.execute(
                         "INSERT INTO session_contexts(session_key,effective_frame,context_json) VALUES (?,?,?)",
@@ -832,14 +1057,26 @@ def import_capture(
                 )
             return import_summary
         except Exception as exc:
+            try:
+                db.connection.execute(
+                    """UPDATE processing_runs SET status='failed',
+                              finished_at_utc=CURRENT_TIMESTAMP, error=? WHERE run_id=?""",
+                    (str(exc), run_id),
+                )
+                db.connection.commit()
+            except Exception:
+                # Preserve the original failure; cleanup must not mask it.
+                pass
             if trace_manager is not None:
-                trace_manager.abort()
-            db.connection.execute(
-                """UPDATE processing_runs SET status='failed',
-                          finished_at_utc=CURRENT_TIMESTAMP, error=? WHERE run_id=?""",
-                (str(exc), run_id),
-            )
-            db.connection.commit()
+                try:
+                    trace_manager.abort()
+                except OSError:
+                    pass
+            if observation_manager is not None:
+                try:
+                    observation_manager.abort()
+                except OSError:
+                    pass
             raise
 
 

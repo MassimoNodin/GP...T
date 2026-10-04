@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Generic, Literal, TypeVar
 
-from fastapi import FastAPI, Header, Query
+from fastapi import FastAPI, Header, Path as ApiPath, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -32,7 +32,11 @@ from ..analysis.trace_chart_service import (
 )
 from ..storage.import_jobs import list_recording_sources
 from ..storage.importer import DEFAULT_DATABASE, list_laps, list_sessions
-from ..storage.query import load_attempt_timing_evidence
+from ..storage.query import (
+    list_car_observation_inventory,
+    load_attempt_timing_evidence,
+    load_car_observation_preview,
+)
 from ..storage.run_summaries import (
     DEFAULT_ATTEMPT_PAGE_SIZE,
     DEFAULT_LIFECYCLE_EVENT_PAGE_SIZE,
@@ -468,6 +472,72 @@ def create_app(
         if result is None:
             return APIResponse[dict[str, Any]](
                 status="unavailable", reason="processing_run_unavailable"
+            )
+        return APIResponse[dict[str, Any]](data=_stringify_session_uids(result))
+
+    @app.get(
+        "/api/v1/processing-runs/{run_id}/sessions/{session_uid}/cars",
+        response_model=APIResponse[dict[str, Any]],
+    )
+    def car_observation_inventory(
+        run_id: str,
+        session_uid: str,
+        limit: int = Query(default=24, ge=1, le=100),
+        offset: int = Query(default=0, ge=0, le=100_000),
+    ) -> APIResponse[dict[str, Any]]:
+        try:
+            result = list_car_observation_inventory(
+                configured_database_path,
+                run_id,
+                session_uid,
+                limit=limit,
+                offset=offset,
+            )
+        except ValueError as exc:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason=str(exc)
+            )
+        except OSError:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="car_observation_inventory_unavailable"
+            )
+        if result is None:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="car_observation_inventory_unavailable"
+            )
+        return APIResponse[dict[str, Any]](data=_stringify_session_uids(result))
+
+    @app.get(
+        "/api/v1/processing-runs/{run_id}/sessions/{session_uid}/cars/{car_index}/observations",
+        response_model=APIResponse[dict[str, Any]],
+    )
+    def car_observation_preview(
+        run_id: str,
+        session_uid: str,
+        car_index: int = ApiPath(ge=0, le=23),
+        limit: int = Query(default=200, ge=1, le=500),
+        offset: int = Query(default=0, ge=0, le=100_000),
+    ) -> APIResponse[dict[str, Any]]:
+        try:
+            result = load_car_observation_preview(
+                configured_database_path,
+                run_id,
+                session_uid,
+                car_index,
+                limit=limit,
+                offset=offset,
+            )
+        except ValueError as exc:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason=str(exc)
+            )
+        except OSError:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="car_observation_preview_unavailable"
+            )
+        if result is None:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="car_observation_preview_unavailable"
             )
         return APIResponse[dict[str, Any]](data=_stringify_session_uids(result))
 

@@ -60,6 +60,7 @@ export default function ImportJobStatus({
   const result = job.result;
   const importedSessions = numericResult(result, "session_count");
   const importedAttempts = numericResult(result, "attempts");
+  const importedCarObservations = numericResult(result, "car_observations");
 
   return (
     <section className="import-job panel" aria-live="polite">
@@ -115,7 +116,7 @@ export default function ImportJobStatus({
         <p className="import-job-copy">
           {result?.already_imported === true
             ? "The capture checksum matches an existing completed import. The archive is up to date."
-            : `${importedSessions ?? 0} session${importedSessions === 1 ? "" : "s"} and ${importedAttempts ?? 0} lap attempts are now in the local archive.`}
+            : `${importedSessions ?? 0} session${importedSessions === 1 ? "" : "s"}, ${importedAttempts ?? 0} lap attempts, and ${importedCarObservations ?? 0} car-slot observations are now in the local archive.`}
         </p>
       ) : (
         <>

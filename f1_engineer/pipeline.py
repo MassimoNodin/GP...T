@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 from dataclasses import dataclass
 
@@ -14,7 +15,12 @@ from .sessions.session_history import SessionHistoryObservation
 from .sessions.context import SessionContext
 from .sessions.manager import ContextHistoryChange, SessionTracker
 from .analysis.continuity import float32_ulp, session_time_discontinuity
-from .telemetry.canonical import CarSample, make_car_sample
+from .telemetry.canonical import (
+    CarObservation,
+    CarSample,
+    make_car_observation,
+    make_car_sample,
+)
 from .telemetry.frames import FrameAssembler
 from .udp.car_telemetry import CarTelemetryDecoder
 from .udp.car_status import CarStatusDecoder, CarStatusData, CarStatusPacket
@@ -49,6 +55,7 @@ class PipelineResult:
     lap_attempts: tuple[LapAttempt, ...] = ()
     lap_data_errors: tuple[str, ...] = ()
     car_samples: tuple[CarSample, ...] = ()
+    car_observations: tuple[CarObservation, ...] = ()
     car_telemetry_errors: tuple[str, ...] = ()
     participants: ParticipantsPacket | None = None
     participants_error: str | None = None
@@ -63,6 +70,7 @@ class PipelineFlushResult:
     completed_frames: tuple[PacketFrame, ...]
     lap_attempts: tuple[LapAttempt, ...]
     car_samples: tuple[CarSample, ...]
+    car_observations: tuple[CarObservation, ...]
     lap_data_errors: tuple[str, ...]
     car_telemetry_errors: tuple[str, ...]
     lifecycle_events: tuple[LifecycleEvent, ...] = ()
@@ -120,6 +128,8 @@ class TelemetryPipeline:
         self.lap_data_decode_errors: list[str] = []
         self.car_telemetry_packets_decoded = 0
         self.car_telemetry_decode_errors: list[str] = []
+        self.car_observation_conflict_frames = 0
+        self.car_observation_conflict_examples: list[tuple[int, int]] = []
         self.motion_packets_decoded = 0
         self.motion_decode_errors: list[str] = []
         self.player_motion_samples = 0
@@ -140,10 +150,17 @@ class TelemetryPipeline:
 
     def _process_frames(
         self, frames: tuple[PacketFrame, ...]
-    ) -> tuple[tuple[LapAttempt, ...], tuple[str, ...], tuple[CarSample, ...], tuple[str, ...]]:
+    ) -> tuple[
+        tuple[LapAttempt, ...],
+        tuple[str, ...],
+        tuple[CarSample, ...],
+        tuple[CarObservation, ...],
+        tuple[str, ...],
+    ]:
         attempts: list[LapAttempt] = []
         errors: list[str] = []
         samples: list[CarSample] = []
+        observations: list[CarObservation] = []
         telemetry_errors: list[str] = []
         for frame in frames:
             frame_ordinal = self._frame_ordinal_by_uid.get(frame.session_uid, 0) + 1
@@ -166,7 +183,11 @@ class TelemetryPipeline:
                     association_scope_assessable=association_scope_assessable,
                 )
             telemetry_by_car: dict[int, object] = {}
+            telemetry_candidates: list[tuple[DecodedPacket, object]] = []
+            raw_telemetry_candidates: list[DecodedPacket] = []
             motion_by_car: tuple[CarMotionData, ...] | None = None
+            motion_candidates: list[tuple[DecodedPacket, tuple[CarMotionData, ...]]] = []
+            raw_motion_candidates: list[DecodedPacket] = []
             conflicting_motion = False
             car_status_candidates: list[
                 tuple[DecodedPacket, CarStatusPacket | None, str | None]
@@ -177,20 +198,24 @@ class TelemetryPipeline:
             missing_telemetry_for_frame = False
             for packet in frame.packets:
                 if packet.packet_kind is PacketId.CAR_TELEMETRY:
+                    raw_telemetry_candidates.append(packet)
                     decoded_telemetry = self.car_telemetry_decoder.decode(packet)
                     if decoded_telemetry.error is not None:
                         telemetry_errors.append(decoded_telemetry.error)
                         self.car_telemetry_decode_errors.append(decoded_telemetry.error)
                     elif decoded_telemetry.telemetry is not None:
                         self.car_telemetry_packets_decoded += 1
+                        telemetry_candidates.append((packet, decoded_telemetry.telemetry))
                         for car_index, car in enumerate(decoded_telemetry.telemetry.cars):
                             telemetry_by_car[car_index] = car
                 elif packet.packet_kind is PacketId.MOTION:
+                    raw_motion_candidates.append(packet)
                     decoded_motion = self.motion_decoder.decode(packet)
                     if decoded_motion.error is not None:
                         self.motion_decode_errors.append(decoded_motion.error)
                     elif decoded_motion.motion is not None:
                         self.motion_packets_decoded += 1
+                        motion_candidates.append((packet, decoded_motion.motion.cars))
                         if motion_by_car is None:
                             motion_by_car = decoded_motion.motion.cars
                         elif motion_by_car != decoded_motion.motion.cars:
@@ -224,6 +249,7 @@ class TelemetryPipeline:
                 continue
             if quarantine_lap_data:
                 continue
+            observation_lap_data: list[tuple[DecodedPacket, object]] = []
             for packet in frame.packets:
                 if packet.packet_kind is not PacketId.LAP_DATA:
                     continue
@@ -241,6 +267,7 @@ class TelemetryPipeline:
                     errors.append(error)
                     self.lap_data_decode_errors.append(error)
                     continue
+                observation_lap_data.append((packet, result.lap_data))
                 frame_identifier = frame.overall_frame_identifier
                 if car_index not in telemetry_by_car:
                     missing_telemetry_for_frame = True
@@ -324,13 +351,151 @@ class TelemetryPipeline:
                             car_damage_unavailable_reason=car_damage_reason,
                         )
                     )
+            frame_observation_conflicted = False
+            if observation_lap_data:
+                observation_signatures = {
+                    (
+                        int(packet.packet_format),
+                        packet.header.player_car_index,
+                        packet.header.session_time,
+                        lap_data,
+                    )
+                    for packet, lap_data in observation_lap_data
+                }
+                if len(observation_signatures) != 1:
+                    frame_observation_conflicted = True
+                else:
+                    lap_packet, lap_data_packet = observation_lap_data[-1]
+                    player_index = lap_packet.header.player_car_index
+                    matching_telemetry = [
+                        decoded
+                        for candidate, decoded in telemetry_candidates
+                        if candidate.packet_format is lap_packet.packet_format
+                        and candidate.header.player_car_index == player_index
+                    ]
+                    telemetry_conflict = (
+                        len(matching_telemetry) > 1
+                        and any(
+                            candidate.cars != matching_telemetry[0].cars
+                            for candidate in matching_telemetry[1:]
+                        )
+                    )
+                    if telemetry_conflict:
+                        frame_observation_conflicted = True
+                    observation_telemetry = (
+                        matching_telemetry[-1]
+                        if matching_telemetry and not telemetry_conflict
+                        else None
+                    )
+                    telemetry_reason = None
+                    if observation_telemetry is None:
+                        if telemetry_conflict:
+                            telemetry_reason = "conflicting_car_telemetry_packets"
+                        elif any(
+                            candidate.packet_format is lap_packet.packet_format
+                            and candidate.header.player_car_index == player_index
+                            for candidate in raw_telemetry_candidates
+                        ):
+                            telemetry_reason = "car_telemetry_malformed_or_unsupported"
+                        elif raw_telemetry_candidates:
+                            telemetry_reason = "car_telemetry_association_mismatch"
+                        else:
+                            telemetry_reason = "car_telemetry_packet_missing"
+                    matching_motion = [
+                        decoded
+                        for candidate, decoded in motion_candidates
+                        if candidate.packet_format is lap_packet.packet_format
+                        and candidate.header.player_car_index == player_index
+                    ]
+                    motion_conflict = (
+                        conflicting_motion
+                        or (
+                            len(matching_motion) > 1
+                            and any(
+                                candidate != matching_motion[0]
+                                for candidate in matching_motion[1:]
+                            )
+                        )
+                    )
+                    if motion_conflict:
+                        frame_observation_conflicted = True
+                    observation_motion = (
+                        matching_motion[-1]
+                        if matching_motion and not motion_conflict
+                        else None
+                    )
+                    motion_reason = None
+                    if observation_motion is None:
+                        if motion_conflict:
+                            motion_reason = "conflicting_motion_packets"
+                        elif any(
+                            candidate.packet_format is lap_packet.packet_format
+                            and candidate.header.player_car_index == player_index
+                            for candidate in raw_motion_candidates
+                        ):
+                            motion_reason = "motion_malformed_or_unsupported"
+                        elif raw_motion_candidates:
+                            motion_reason = "motion_association_mismatch"
+                        else:
+                            motion_reason = "motion_packet_missing"
+                    context, _ = self.sessions.context_at(
+                        frame.overall_frame_identifier, session_uid=frame.session_uid
+                    )
+                    context_json = (
+                        json.dumps(context.to_dict(), separators=(",", ":"), sort_keys=True)
+                        if context is not None
+                        else None
+                    )
+                    for car_index, lap_data in enumerate(lap_data_packet.cars):
+                        telemetry = (
+                            observation_telemetry.cars[car_index]
+                            if observation_telemetry is not None
+                            and car_index < len(observation_telemetry.cars)
+                            else None
+                        )
+                        motion = (
+                            observation_motion[car_index]
+                            if observation_motion is not None
+                            and car_index < len(observation_motion)
+                            else None
+                        )
+                        observations.append(
+                            make_car_observation(
+                                session_uid=frame.session_uid,
+                                frame_identifier=frame.overall_frame_identifier,
+                                session_time_s=lap_packet.header.session_time,
+                                car_index=car_index,
+                                frame_ordinal=frame_ordinal,
+                                packet_format=int(lap_packet.packet_format),
+                                lifecycle_epoch=association_epoch,
+                                header_player_car_index=player_index,
+                                context_json=context_json,
+                                lap=lap_data,
+                                telemetry=telemetry,
+                                motion=motion,
+                                car_telemetry_unavailable_reason=telemetry_reason,
+                                motion_unavailable_reason=motion_reason,
+                            )
+                        )
+            if frame_observation_conflicted:
+                self.car_observation_conflict_frames += 1
+                if len(self.car_observation_conflict_examples) < 128:
+                    self.car_observation_conflict_examples.append(
+                        (frame.session_uid, frame.overall_frame_identifier)
+                    )
             if missing_telemetry_for_frame:
                 self.missing_car_telemetry_frame_count += 1
                 if len(self.missing_car_telemetry_frame_examples) < 128:
                     self.missing_car_telemetry_frame_examples.append(
                         (frame.session_uid, frame.overall_frame_identifier)
                     )
-        return tuple(attempts), tuple(errors), tuple(samples), tuple(telemetry_errors)
+        return (
+            tuple(attempts),
+            tuple(errors),
+            tuple(samples),
+            tuple(observations),
+            tuple(telemetry_errors),
+        )
 
     def _process_lifecycle(
         self, frame: PacketFrame, frame_ordinal: int
@@ -764,6 +929,7 @@ class TelemetryPipeline:
         lap_attempts: list[LapAttempt] = []
         lap_data_errors: list[str] = []
         car_samples: list[CarSample] = []
+        car_observations: list[CarObservation] = []
         car_telemetry_errors: list[str] = []
         participant_result = self.participants_decoder.decode(packet)
         participants = participant_result.participants
@@ -775,10 +941,11 @@ class TelemetryPipeline:
             if event.kind == "session_ended":
                 retired_frames = self.frames.retire_session(event.session_uid)
                 completed_frames.extend(retired_frames)
-                attempts, errors, samples, telemetry_errors = self._process_frames(retired_frames)
+                attempts, errors, samples, observations, telemetry_errors = self._process_frames(retired_frames)
                 lap_attempts.extend(attempts)
                 lap_data_errors.extend(errors)
                 car_samples.extend(samples)
+                car_observations.extend(observations)
                 car_telemetry_errors.extend(telemetry_errors)
                 lap_attempts.extend(self.laps.end_session(event.session_uid))
             elif event.kind == "session_started":
@@ -794,10 +961,11 @@ class TelemetryPipeline:
             elif event.kind == "session_context_invalidated":
                 old_format_frames = self.frames.flush_session(event.session_uid)
                 completed_frames.extend(old_format_frames)
-                attempts, errors, samples, telemetry_errors = self._process_frames(old_format_frames)
+                attempts, errors, samples, observations, telemetry_errors = self._process_frames(old_format_frames)
                 lap_attempts.extend(attempts)
                 lap_data_errors.extend(errors)
                 car_samples.extend(samples)
+                car_observations.extend(observations)
                 car_telemetry_errors.extend(telemetry_errors)
                 lap_attempts.extend(
                     self.laps.close_segment(
@@ -822,10 +990,11 @@ class TelemetryPipeline:
         else:
             ready_frames = self.frames.add(packet)
             completed_frames.extend(ready_frames)
-            attempts, errors, samples, telemetry_errors = self._process_frames(ready_frames)
+            attempts, errors, samples, observations, telemetry_errors = self._process_frames(ready_frames)
             lap_attempts.extend(attempts)
             lap_data_errors.extend(errors)
             car_samples.extend(samples)
+            car_observations.extend(observations)
             car_telemetry_errors.extend(telemetry_errors)
         return PipelineResult(
             packet=packet,
@@ -836,6 +1005,7 @@ class TelemetryPipeline:
             lap_attempts=tuple(lap_attempts),
             lap_data_errors=tuple(lap_data_errors),
             car_samples=tuple(car_samples),
+            car_observations=tuple(car_observations),
             car_telemetry_errors=tuple(car_telemetry_errors),
             participants=participants,
             participants_error=participant_result.error,
@@ -850,7 +1020,7 @@ class TelemetryPipeline:
 
     def finish_with_outputs(self) -> PipelineFlushResult:
         frames = self.frames.flush()
-        attempts, errors, samples, telemetry_errors = self._process_frames(frames)
+        attempts, errors, samples, observations, telemetry_errors = self._process_frames(frames)
         start_attempt_count = len(self.laps.attempts)
         self.laps.finish()
         attempts = (*attempts, *self.laps.attempts[start_attempt_count:])
@@ -858,6 +1028,7 @@ class TelemetryPipeline:
             completed_frames=frames,
             lap_attempts=tuple(attempts),
             car_samples=samples,
+            car_observations=observations,
             lap_data_errors=errors,
             car_telemetry_errors=telemetry_errors,
             lifecycle_events=self.drain_lifecycle_events(),

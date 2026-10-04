@@ -41,6 +41,8 @@ _IMPORT_SUMMARY_COUNTERS = (
     "participant_packets",
     "attempts",
     "samples",
+    "car_observations",
+    "car_observation_chunks",
     "missing_car_telemetry_samples",
     "lap_data_packets",
     "lap_data_errors",

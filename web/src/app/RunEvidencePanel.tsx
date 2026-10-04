@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import type {
+  CarObservationInventory,
+  CarObservationPreview,
   ProcessingRunAttempt,
   ProcessingRunDetail,
   ProcessingRunPage,
@@ -11,6 +13,9 @@ import type {
 export default function RunEvidencePanel({
   runsPage,
   detail,
+  observationInventory,
+  observationPreview,
+  observationSessionUid,
   runId,
   runOffset,
   sessionOffset,
@@ -19,6 +24,9 @@ export default function RunEvidencePanel({
 }: {
   runsPage: ProcessingRunPage<ProcessingRunSummary> | null;
   detail: ProcessingRunDetail | null;
+  observationInventory: CarObservationInventory | null;
+  observationPreview: CarObservationPreview | null;
+  observationSessionUid: string | null;
   runId: string | null;
   runOffset: number;
   sessionOffset: number;
@@ -94,6 +102,9 @@ export default function RunEvidencePanel({
       ) : detail ? (
         <RunDetail
           detail={detail}
+          observationInventory={observationInventory}
+          observationPreview={observationPreview}
+          observationSessionUid={observationSessionUid}
           runOffset={runOffset}
           sessionOffset={sessionOffset}
           attemptOffset={attemptOffset}
@@ -106,12 +117,18 @@ export default function RunEvidencePanel({
 
 function RunDetail({
   detail,
+  observationInventory,
+  observationPreview,
+  observationSessionUid,
   runOffset,
   sessionOffset,
   attemptOffset,
   lifecycleEventOffset,
 }: {
   detail: ProcessingRunDetail;
+  observationInventory: CarObservationInventory | null;
+  observationPreview: CarObservationPreview | null;
+  observationSessionUid: string | null;
   runOffset: number;
   sessionOffset: number;
   attemptOffset: number;
@@ -217,6 +234,18 @@ function RunDetail({
           <EvidenceValue label="Uncertain events" value={totals.uncertain_lifecycle_event_count} />
         </EvidenceGroup>
       </div>
+
+      <CarObservationArchive
+        inventory={observationInventory}
+        preview={observationPreview}
+        selectedSessionUid={observationSessionUid}
+        sessions={sessions.items}
+        runId={summary.run_id}
+        runOffset={runOffset}
+        sessionOffset={sessionOffset}
+        attemptOffset={attemptOffset}
+        lifecycleEventOffset={lifecycleEventOffset}
+      />
 
       <p className="run-evidence-note">
         Stored eligibility flags are not successful reference selections. Import
@@ -332,6 +361,162 @@ function RunDetail({
         </section>
       </div>
     </div>
+  );
+}
+
+function CarObservationArchive({
+  inventory,
+  preview,
+  selectedSessionUid,
+  sessions,
+  runId,
+  runOffset,
+  sessionOffset,
+  attemptOffset,
+  lifecycleEventOffset,
+}: {
+  inventory: CarObservationInventory | null;
+  preview: CarObservationPreview | null;
+  selectedSessionUid: string | null;
+  sessions: ProcessingRunDetail["sessions"]["items"];
+  runId: string;
+  runOffset: number;
+  sessionOffset: number;
+  attemptOffset: number;
+  lifecycleEventOffset: number;
+}) {
+  return (
+    <section className="run-page-group" aria-labelledby="car-observations-title">
+      <div className="run-page-heading">
+        <div>
+          <h4 id="car-observations-title">All-car observation archive</h4>
+          <p>
+            Frame-aligned slot observations are stored separately from player lap attempts. A slot is not a stable driver identity, and opponent eligibility has not been assessed.
+          </p>
+        </div>
+      </div>
+      {sessions.length > 0 ? (
+        <form className="run-observation-controls" action="/" method="get">
+          <input type="hidden" name="run_id" value={runId} />
+          <input type="hidden" name="run_offset" value={runOffset} />
+          <input type="hidden" name="session_offset" value={sessionOffset} />
+          <input type="hidden" name="attempt_offset" value={attemptOffset} />
+          <input type="hidden" name="lifecycle_event_offset" value={lifecycleEventOffset} />
+          <label htmlFor="observation-session">Session</label>
+          <select
+            id="observation-session"
+            name="observation_session_uid"
+            defaultValue={selectedSessionUid ?? inventory?.session_uid ?? sessions[0].session_uid}
+          >
+            {selectedSessionUid && !sessions.some((session) => session.session_uid === selectedSessionUid) ? (
+              <option value={selectedSessionUid}>Requested session {selectedSessionUid} · outside this page</option>
+            ) : null}
+            {sessions.map((session) => (
+              <option key={session.session_key} value={session.session_uid}>
+                {session.session_uid} · {contextLabel(session.latest_context_snapshot, "Context")}
+              </option>
+            ))}
+          </select>
+          <button className="run-observation-submit" type="submit">Load observations</button>
+        </form>
+      ) : null}
+      {!inventory ? (
+        <p className="run-evidence-empty">
+          {selectedSessionUid && !sessions.some((session) => session.session_uid === selectedSessionUid)
+            ? `Session ${selectedSessionUid} is not present on this run detail page, so its observation inventory was not loaded.`
+            : "Car observation inventory is unavailable for the selected session."}
+        </p>
+      ) : (
+        <>
+          <p className="run-evidence-empty">
+            Session {inventory.session_uid} · {inventory.capture.complete ? "capture finalized" : `capture ${inventory.capture.footer_status ?? "incomplete"}`} · {inventory.replay_quality.conflicting_observation_frames === null ? "replay conflict count unknown" : `${inventory.replay_quality.conflicting_observation_frames.toLocaleString()} conflicting observation frame(s)`}
+          </p>
+          {inventory.archive_status === "not_archived" ? (
+            <p className="run-evidence-empty">This run predates the all-car observation archive. Replay quality and slot counts are unavailable for this run.</p>
+          ) : inventory.archive_status === "empty" ? (
+            <p className="run-evidence-empty">The run records the all-car archive, but it contains no admitted Lap Data observations.</p>
+          ) : inventory.archive_status === "unavailable" ? (
+            <p className="run-evidence-empty">Archive metadata could not be verified, so slot counts and replay quality are unavailable.</p>
+          ) : (
+            <div className="run-observation-table-wrap">
+              <table className="run-observation-table">
+              <thead>
+                <tr>
+                  <th scope="col">Slot</th>
+                  <th scope="col">Observations</th>
+                  <th scope="col">Telemetry</th>
+                  <th scope="col">Motion</th>
+                  <th scope="col">Nonzero speed</th>
+                  <th scope="col">Header player</th>
+                  <th scope="col">Participant snapshots</th>
+                </tr>
+              </thead>
+              <tbody>
+                {inventory.slots.items.map((slot) => (
+                  <tr key={slot.car_index}>
+                    <th scope="row">{slot.car_index}</th>
+                    <td>{slot.observation_count.toLocaleString()}</td>
+                    <td>{slot.car_telemetry_count.toLocaleString()}</td>
+                    <td>{slot.motion_count.toLocaleString()}</td>
+                    <td>{slot.nonzero_speed_count.toLocaleString()}</td>
+                    <td>{slot.header_player_count.toLocaleString()}</td>
+                    <td>{slot.participant_snapshot_count.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+              </table>
+            </div>
+          )}
+          {inventory.archive_status === "available" ? (preview ? (
+            <div className="run-observation-preview">
+              <h5>
+                Slot {preview.car_index} · first {preview.observations.returned} of {preview.observations.total.toLocaleString()} observations
+              </h5>
+              <p>
+                This bounded preview is diagnostic. Zero-valued slots are retained without being marked as active cars or eligible opponents.
+              </p>
+              <div className="run-observation-table-wrap">
+                <table className="run-observation-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Frame</th>
+                      <th scope="col">Time (s)</th>
+                      <th scope="col">Lap</th>
+                      <th scope="col">Distance (m)</th>
+                      <th scope="col">Speed (km/h)</th>
+                      <th scope="col">Throttle</th>
+                      <th scope="col">Brake</th>
+                      <th scope="col">Motion</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.observations.items.slice(0, 12).map((item) => (
+                      <tr key={`${item.frame_ordinal}:${item.frame_identifier}`}>
+                        <td>{item.frame_identifier}</td>
+                        <td>{item.session_time_s.toFixed(3)}</td>
+                        <td>{item.lap_number}</td>
+                        <td>{item.lap_distance_m?.toFixed(1) ?? "—"}</td>
+                        <td>{item.speed_mps === null ? "—" : (item.speed_mps * 3.6).toFixed(1)}</td>
+                        <td>{item.throttle === null ? "—" : `${(item.throttle * 100).toFixed(0)}%`}</td>
+                        <td>{item.brake === null ? "—" : `${(item.brake * 100).toFixed(0)}%`}</td>
+                        <td>{item.motion_available ? "available" : item.motion_unavailable_reason ?? "unknown"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {!preview.capture.complete ? (
+                <p className="run-evidence-error" role="status">
+                  Source capture footer is {preview.capture.footer_status ?? "incomplete"}; these observations remain diagnostic.
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <p className="run-evidence-empty">No bounded slot preview is available.</p>
+          )) : null}
+        </>
+      )}
+    </section>
   );
 }
 

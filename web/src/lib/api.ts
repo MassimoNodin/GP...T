@@ -714,6 +714,90 @@ export interface ProcessingRunDetail {
   lifecycle_events: ProcessingRunPage<ProcessingRunLifecycleEvent>;
 }
 
+export interface CarObservationSlot {
+  car_index: number;
+  observation_count: number;
+  car_telemetry_count: number;
+  motion_count: number;
+  nonzero_speed_count: number;
+  header_player_count: number;
+  participant_snapshot_count: number;
+  first_frame_ordinal: number;
+  last_frame_ordinal: number;
+  activity_evidence: "nonzero_speed_observed" | "no_nonzero_speed_observed";
+}
+
+export interface CarObservationInventory {
+  run_id: string;
+  session_uid: string;
+  status: "available";
+  archive_status: "available" | "empty" | "not_archived" | "unavailable";
+  verification_scope: "session_car_observations";
+  opponent_eligibility: "not_assessed";
+  capture: { complete: boolean; footer_status: string | null };
+  replay_quality: {
+    late_packets_ignored: number | null;
+    frame_overflow_packets_dropped: number | null;
+    conflicting_observation_frames: number | null;
+  };
+  slots: ProcessingRunPage<CarObservationSlot>;
+}
+
+export interface CarObservationPreviewItem {
+  frame_identifier: number;
+  frame_ordinal: number;
+  session_time_s: number;
+  car_index: number;
+  header_player_car_index: number;
+  packet_format: number;
+  lifecycle_epoch: number;
+  lap_number: number;
+  lap_distance_m: number | null;
+  total_distance_m: number | null;
+  current_lap_time_ms: number;
+  speed_mps: number | null;
+  throttle: number | null;
+  brake: number | null;
+  steering: number | null;
+  gear: number | null;
+  engine_rpm: number | null;
+  drs_active: boolean | null;
+  car_telemetry_available: boolean;
+  car_telemetry_unavailable_reason: string | null;
+  motion_available: boolean;
+  motion_unavailable_reason: string | null;
+  world_position_x_m: number | null;
+  world_position_y_m: number | null;
+  world_position_z_m: number | null;
+  world_velocity_x_mps: number | null;
+  world_velocity_y_mps: number | null;
+  world_velocity_z_mps: number | null;
+  g_force_lateral: number | null;
+  g_force_longitudinal: number | null;
+  g_force_vertical: number | null;
+  context: Record<string, unknown> | null;
+  validation_flags: string[];
+}
+
+export interface CarObservationPreview {
+  run_id: string;
+  session_uid: string;
+  car_index: number;
+  status: "available";
+  archive_status: "available" | "empty" | "not_archived" | "unavailable";
+  verification_scope: "session_car_observations";
+  opponent_eligibility: "not_assessed";
+  capture: { complete: boolean; footer_status: string | null };
+  observations: {
+    limit: number;
+    offset: number;
+    total: number;
+    returned: number;
+    source_chunks_read: number;
+    items: CarObservationPreviewItem[];
+  };
+}
+
 export interface AttemptQualityReport {
   report_version: number;
   analysis_version: string;

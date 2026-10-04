@@ -2,12 +2,38 @@ from __future__ import annotations
 
 import json
 import hashlib
+import io
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
+
 from .database import Database
-from .parquet import SUPPORTED_TRACE_SCHEMA_VERSIONS, read_trace
+from .parquet import (
+    MAX_OBSERVATION_CHUNK_ROWS,
+    ROW_GROUP_SIZE,
+    OBSERVATION_SCHEMA_VERSION,
+    SUPPORTED_TRACE_SCHEMA_VERSIONS,
+    read_trace,
+    sha256_file,
+)
+
+
+MAX_OBSERVATION_PREVIEW_CHUNKS = 256
+MAX_OBSERVATION_PREVIEW_MANIFEST_BYTES = 16 * 1024
+MAX_OBSERVATION_PREVIEW_MANIFEST_TOTAL_BYTES = 4 * 1024 * 1024
+MAX_OBSERVATION_SESSION_METRICS_BYTES = 1024 * 1024
+MAX_OBSERVATION_CAPTURE_COMPLETION_BYTES = 64 * 1024
+MAX_OBSERVATION_PREVIEW_CHUNK_BYTES = 16 * 1024 * 1024
+MAX_OBSERVATION_PREVIEW_SOURCE_BYTES = 64 * 1024 * 1024
+MAX_OBSERVATION_PREVIEW_ROW_GROUP_BYTES = 16 * 1024 * 1024
+MAX_OBSERVATION_PREVIEW_ROW_GROUPS = 1024
+MAX_OBSERVATION_PREVIEW_ROWS_READ = 4_194_304
+MAX_OBSERVATION_PREVIEW_PATH_BYTES = 512
+MAX_OBSERVATION_PREVIEW_SHA256_BYTES = 64
 
 
 ANALYSIS_TRACE_COLUMNS = [
@@ -896,3 +922,421 @@ def _trace_file_size(database_path: Path, relative_path_value: object) -> int | 
     if not trace_path.is_relative_to(root) or not trace_path.is_file():
         return None
     return trace_path.stat().st_size
+
+
+def _car_observation_archive_status(metrics_json: str | None) -> str:
+    metrics = json.loads(metrics_json) if metrics_json else {}
+    quality = metrics.get("capture_quality", {}) if isinstance(metrics, dict) else {}
+    observation_count = (
+        quality.get("car_observation_count") if isinstance(quality, dict) else None
+    )
+    if not isinstance(quality, dict) or "car_observation_count" not in quality:
+        return "not_archived"
+    if type(observation_count) is not int or observation_count < 0:
+        return "unavailable"
+    return "empty" if int(observation_count) == 0 else "available"
+
+
+def list_car_observation_inventory(
+    database_path: str | Path,
+    run_id: str,
+    session_uid: str | int,
+    *,
+    limit: int = 24,
+    offset: int = 0,
+) -> dict[str, object] | None:
+    """Return observed slot coverage; counts do not assert opponent eligibility."""
+    if not 1 <= limit <= 100 or not 0 <= offset <= 100_000:
+        raise ValueError("car observation inventory page is out of range")
+    database_path = Path(database_path)
+    with Database(database_path, read_only=True) as db:
+        session = db.connection.execute(
+            """SELECT s.session_key, s.session_uid, r.status,
+                      CASE WHEN length(CAST(r.metrics_json AS BLOB)) <= ?
+                           THEN r.metrics_json ELSE NULL END AS metrics_json,
+                      length(CAST(r.metrics_json AS BLOB)) AS metrics_json_bytes,
+                      c.complete,
+                      CASE WHEN length(CAST(c.completion_json AS BLOB)) <= ?
+                           THEN c.completion_json ELSE NULL END AS completion_json,
+                      length(CAST(c.completion_json AS BLOB)) AS completion_json_bytes
+                 FROM sessions s JOIN processing_runs r USING(run_id)
+                 JOIN captures c USING(capture_sha256)
+                WHERE s.run_id=? AND s.session_uid=?""",
+            (
+                MAX_OBSERVATION_SESSION_METRICS_BYTES,
+                MAX_OBSERVATION_CAPTURE_COMPLETION_BYTES,
+                run_id,
+                str(session_uid),
+            ),
+        ).fetchone()
+        if session is None or session["status"] != "complete":
+            return None
+        if (
+            session["metrics_json_bytes"] is not None
+            and session["metrics_json_bytes"] > MAX_OBSERVATION_SESSION_METRICS_BYTES
+        ):
+            raise ValueError("observation_session_metrics_limit_exceeded")
+        if (
+            session["completion_json_bytes"] is not None
+            and session["completion_json_bytes"] > MAX_OBSERVATION_CAPTURE_COMPLETION_BYTES
+        ):
+            raise ValueError("observation_capture_completion_limit_exceeded")
+        total = int(
+            db.connection.execute(
+                "SELECT COUNT(DISTINCT car_index) FROM car_observation_slots WHERE session_key=?",
+                (session["session_key"],),
+            ).fetchone()[0]
+        )
+        rows = db.connection.execute(
+            """SELECT car_index, SUM(observation_count) AS observation_count,
+                      SUM(car_telemetry_count) AS car_telemetry_count,
+                      SUM(motion_count) AS motion_count,
+                      SUM(nonzero_speed_count) AS nonzero_speed_count,
+                      SUM(header_player_count) AS header_player_count,
+                      MIN(first_frame_ordinal) AS first_frame_ordinal,
+                      MAX(last_frame_ordinal) AS last_frame_ordinal
+                 FROM car_observation_slots WHERE session_key=?
+                GROUP BY car_index ORDER BY car_index LIMIT ? OFFSET ?""",
+            (session["session_key"], limit, offset),
+        ).fetchall()
+        participant_counts = {
+            int(row["car_index"]): int(row["snapshot_count"])
+            for row in db.connection.execute(
+                """SELECT car_index, COUNT(*) AS snapshot_count FROM driver_snapshots
+                     WHERE session_key=? GROUP BY car_index""",
+                (session["session_key"],),
+            ).fetchall()
+        }
+        metrics = json.loads(session["metrics_json"]) if session["metrics_json"] else {}
+        quality = metrics.get("capture_quality", {}) if isinstance(metrics, dict) else {}
+        archive_status = _car_observation_archive_status(session["metrics_json"])
+        def assessed_counter(name: str) -> int | None:
+            if not isinstance(quality, dict):
+                return None
+            value = quality.get(name)
+            return value if type(value) is int and value >= 0 else None
+
+        completion = (
+            json.loads(session["completion_json"])
+            if session["completion_json"]
+            else {}
+        )
+    return {
+        "run_id": run_id,
+        "session_uid": str(session["session_uid"]),
+        "status": "available",
+        "archive_status": archive_status,
+        "verification_scope": "session_car_observations",
+        "opponent_eligibility": "not_assessed",
+        "capture": {
+            "complete": bool(session["complete"]),
+            "footer_status": completion.get("status"),
+        },
+        "replay_quality": {
+            "late_packets_ignored": assessed_counter("import_late_packets_ignored"),
+            "frame_overflow_packets_dropped": assessed_counter(
+                "import_frame_overflow_packets_dropped"
+            ),
+            "conflicting_observation_frames": assessed_counter(
+                "car_observation_conflict_count"
+            ),
+        },
+        "slots": {
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+            "items": [
+                {
+                    "car_index": int(row["car_index"]),
+                    "observation_count": int(row["observation_count"]),
+                    "car_telemetry_count": int(row["car_telemetry_count"]),
+                    "motion_count": int(row["motion_count"]),
+                    "nonzero_speed_count": int(row["nonzero_speed_count"]),
+                    "header_player_count": int(row["header_player_count"]),
+                    "participant_snapshot_count": participant_counts.get(
+                        int(row["car_index"]), 0
+                    ),
+                    "first_frame_ordinal": int(row["first_frame_ordinal"]),
+                    "last_frame_ordinal": int(row["last_frame_ordinal"]),
+                    "activity_evidence": (
+                        "nonzero_speed_observed"
+                        if int(row["nonzero_speed_count"]) > 0
+                        else "no_nonzero_speed_observed"
+                    ),
+                }
+                for row in rows
+            ],
+        },
+    }
+
+
+def load_car_observation_preview(
+    database_path: str | Path,
+    run_id: str,
+    session_uid: str | int,
+    car_index: int,
+    *,
+    limit: int = 200,
+    offset: int = 0,
+) -> dict[str, object] | None:
+    """Read a bounded per-slot preview from checksummed observation chunks."""
+    if not 0 <= car_index <= 23:
+        raise ValueError("car index is out of range")
+    if not 1 <= limit <= 500 or not 0 <= offset <= 100_000:
+        raise ValueError("car observation preview page is out of range")
+    database_path = Path(database_path)
+    with Database(database_path, read_only=True) as db:
+        session = db.connection.execute(
+            """SELECT s.session_key, s.session_uid, r.status,
+                      CASE WHEN length(CAST(r.metrics_json AS BLOB)) <= ?
+                           THEN r.metrics_json ELSE NULL END AS metrics_json,
+                      length(CAST(r.metrics_json AS BLOB)) AS metrics_json_bytes,
+                      c.complete,
+                      CASE WHEN length(CAST(c.completion_json AS BLOB)) <= ?
+                           THEN c.completion_json ELSE NULL END AS completion_json,
+                      length(CAST(c.completion_json AS BLOB)) AS completion_json_bytes
+                 FROM sessions s JOIN processing_runs r USING(run_id)
+                 JOIN captures c USING(capture_sha256)
+                WHERE s.run_id=? AND s.session_uid=?""",
+            (
+                MAX_OBSERVATION_SESSION_METRICS_BYTES,
+                MAX_OBSERVATION_CAPTURE_COMPLETION_BYTES,
+                run_id,
+                str(session_uid),
+            ),
+        ).fetchone()
+        if session is None or session["status"] != "complete":
+            return None
+        if (
+            session["metrics_json_bytes"] is not None
+            and session["metrics_json_bytes"] > MAX_OBSERVATION_SESSION_METRICS_BYTES
+        ):
+            raise ValueError("observation_session_metrics_limit_exceeded")
+        if (
+            session["completion_json_bytes"] is not None
+            and session["completion_json_bytes"] > MAX_OBSERVATION_CAPTURE_COMPLETION_BYTES
+        ):
+            raise ValueError("observation_capture_completion_limit_exceeded")
+        raw_chunks = db.connection.execute(
+            """WITH candidate_chunks AS (
+                     SELECT packet_format,lifecycle_epoch,chunk_ordinal,
+                            CASE WHEN length(CAST(relative_path AS BLOB)) <= ?
+                                 THEN relative_path ELSE NULL END AS relative_path,
+                            length(CAST(relative_path AS BLOB)) AS relative_path_bytes,
+                            schema_version,row_count,
+                            CASE WHEN length(CAST(sha256 AS BLOB)) <= ?
+                                 THEN sha256 ELSE NULL END AS sha256,
+                            length(CAST(sha256 AS BLOB)) AS sha256_bytes,
+                            quality_json,
+                            length(CAST(quality_json AS BLOB)) AS manifest_bytes
+                       FROM car_observation_chunks
+                      WHERE session_key=? AND ready=1
+                      ORDER BY lifecycle_epoch,chunk_ordinal,packet_format LIMIT ?
+                 ), sized_chunks AS (
+                     SELECT *, SUM(manifest_bytes) OVER() AS total_manifest_bytes
+                       FROM candidate_chunks
+                 )
+                 SELECT packet_format,lifecycle_epoch,chunk_ordinal,relative_path,
+                        relative_path_bytes,schema_version,row_count,sha256,sha256_bytes,manifest_bytes,
+                        total_manifest_bytes,
+                        CASE WHEN manifest_bytes <= ? AND total_manifest_bytes <= ?
+                             THEN quality_json ELSE NULL END AS quality_json
+                   FROM sized_chunks
+                  ORDER BY lifecycle_epoch,chunk_ordinal,packet_format""",
+            (
+                MAX_OBSERVATION_PREVIEW_PATH_BYTES,
+                MAX_OBSERVATION_PREVIEW_SHA256_BYTES,
+                session["session_key"],
+                MAX_OBSERVATION_PREVIEW_CHUNKS + 1,
+                MAX_OBSERVATION_PREVIEW_MANIFEST_BYTES,
+                MAX_OBSERVATION_PREVIEW_MANIFEST_TOTAL_BYTES,
+            ),
+        ).fetchall()
+        if len(raw_chunks) > MAX_OBSERVATION_PREVIEW_CHUNKS:
+            raise ValueError("observation_preview_chunk_limit_exceeded")
+        if raw_chunks and raw_chunks[0]["total_manifest_bytes"] > MAX_OBSERVATION_PREVIEW_MANIFEST_TOTAL_BYTES:
+            raise ValueError("observation_preview_manifest_total_limit_exceeded")
+        chunks = []
+        total = 0
+        for chunk in raw_chunks:
+            if (
+                chunk["relative_path"] is None
+                or chunk["relative_path_bytes"] > MAX_OBSERVATION_PREVIEW_PATH_BYTES
+                or chunk["sha256"] is None
+                or chunk["sha256_bytes"] != MAX_OBSERVATION_PREVIEW_SHA256_BYTES
+            ):
+                raise ValueError("observation_preview_manifest_invalid")
+            raw_quality = chunk["quality_json"]
+            if raw_quality is None or chunk["manifest_bytes"] > MAX_OBSERVATION_PREVIEW_MANIFEST_BYTES:
+                raise ValueError("observation_preview_manifest_limit_exceeded")
+            if len(raw_quality.encode("utf-8")) > MAX_OBSERVATION_PREVIEW_MANIFEST_BYTES:
+                raise ValueError("observation_preview_manifest_limit_exceeded")
+            quality = json.loads(raw_quality)
+            if not isinstance(quality, dict) or not isinstance(quality.get("slots"), dict):
+                raise ValueError("observation_preview_manifest_invalid")
+            slot = quality.get("slots", {}).get(str(car_index), {})
+            raw_count = slot.get("observation_count", 0)
+            if type(raw_count) is not int or raw_count < 0:
+                raise ValueError("observation_preview_manifest_invalid")
+            row_count = int(chunk["row_count"])
+            if not 0 <= row_count <= MAX_OBSERVATION_CHUNK_ROWS or raw_count > row_count:
+                raise ValueError("observation_preview_manifest_invalid")
+            if int(chunk["schema_version"]) != OBSERVATION_SCHEMA_VERSION:
+                raise ValueError("observation_preview_schema_mismatch")
+            count = raw_count
+            if count:
+                chunks.append((chunk, quality, count))
+                total += count
+        chunks.sort(
+            key=lambda item: (
+                int(item[1].get("first_frame_ordinal", 0) or 0),
+                int(item[0]["lifecycle_epoch"]),
+                int(item[0]["packet_format"]),
+                int(item[0]["chunk_ordinal"]),
+            )
+        )
+        completion = (
+            json.loads(session["completion_json"])
+            if session["completion_json"]
+            else {}
+        )
+
+    root = database_path.parent.resolve()
+    remaining_skip = offset
+    selected_rows: list[dict[str, object]] = []
+    selected_chunks: set[str] = set()
+    source_bytes_read = 0
+    row_groups_read = 0
+    rows_read = 0
+    columns = (
+        "frame_identifier",
+        "frame_ordinal",
+        "session_time_s",
+        "car_index",
+        "header_player_car_index",
+        "packet_format",
+        "lifecycle_epoch",
+        "lap_number",
+        "lap_distance_m",
+        "total_distance_m",
+        "current_lap_time_ms",
+        "speed_mps",
+        "throttle",
+        "brake",
+        "steering",
+        "gear",
+        "engine_rpm",
+        "drs_active",
+        "car_telemetry_available",
+        "car_telemetry_unavailable_reason",
+        "motion_available",
+        "motion_unavailable_reason",
+        "world_position_x_m",
+        "world_position_y_m",
+        "world_position_z_m",
+        "world_velocity_x_mps",
+        "world_velocity_y_mps",
+        "world_velocity_z_mps",
+        "g_force_lateral",
+        "g_force_longitudinal",
+        "g_force_vertical",
+        "context_json",
+        "validation_flags",
+    )
+    for chunk, _, slot_count in chunks:
+        if remaining_skip >= slot_count:
+            remaining_skip -= slot_count
+            continue
+        relative = Path(chunk["relative_path"])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("stored observation path is invalid")
+        path = (database_path.parent / relative).resolve()
+        if not path.is_relative_to(root) or not path.is_file():
+            raise ValueError("observation chunk is missing")
+        try:
+            with path.open("rb") as stream:
+                source_size = os.fstat(stream.fileno()).st_size
+                if source_size > MAX_OBSERVATION_PREVIEW_CHUNK_BYTES:
+                    raise ValueError("observation_preview_chunk_bytes_limit_exceeded")
+                if source_bytes_read + source_size > MAX_OBSERVATION_PREVIEW_SOURCE_BYTES:
+                    raise ValueError("observation_preview_source_bytes_limit_exceeded")
+                source_bytes = stream.read(MAX_OBSERVATION_PREVIEW_CHUNK_BYTES + 1)
+        except OSError:
+            raise
+        if (
+            len(source_bytes) != source_size
+            or len(source_bytes) > MAX_OBSERVATION_PREVIEW_CHUNK_BYTES
+        ):
+            raise ValueError("observation_preview_chunk_changed_during_read")
+        source_bytes_read += len(source_bytes)
+        actual_hash = hashlib.sha256(source_bytes).hexdigest()
+        if actual_hash != chunk["sha256"]:
+            raise ValueError("observation chunk checksum does not match SQLite")
+        parquet = pq.ParquetFile(io.BytesIO(source_bytes))
+        metadata = parquet.metadata
+        raw_version = (metadata.metadata or {}).get(b"observation_schema_version")
+        if (
+            raw_version is None
+            or int(raw_version) != OBSERVATION_SCHEMA_VERSION
+            or int(chunk["schema_version"]) != OBSERVATION_SCHEMA_VERSION
+            or metadata.num_rows != int(chunk["row_count"])
+            or metadata.num_rows > MAX_OBSERVATION_CHUNK_ROWS
+            or metadata.num_row_groups
+            > (MAX_OBSERVATION_CHUNK_ROWS + ROW_GROUP_SIZE - 1) // ROW_GROUP_SIZE
+            or int(chunk["row_count"]) > MAX_OBSERVATION_CHUNK_ROWS
+        ):
+            raise ValueError("observation chunk schema or row count does not match SQLite")
+        selected_chunks.add(str(relative))
+        for row_group in range(metadata.num_row_groups):
+            row_group_metadata = metadata.row_group(row_group)
+            if row_groups_read >= MAX_OBSERVATION_PREVIEW_ROW_GROUPS:
+                raise ValueError("observation_preview_row_group_limit_exceeded")
+            if (
+                row_group_metadata.num_rows > ROW_GROUP_SIZE
+                or row_group_metadata.total_byte_size > MAX_OBSERVATION_PREVIEW_ROW_GROUP_BYTES
+            ):
+                raise ValueError("observation_preview_row_group_bounds_exceeded")
+            if rows_read + row_group_metadata.num_rows > MAX_OBSERVATION_PREVIEW_ROWS_READ:
+                raise ValueError("observation_preview_rows_limit_exceeded")
+            row_groups_read += 1
+            rows_read += row_group_metadata.num_rows
+            table = parquet.read_row_group(row_group, columns=list(columns))
+            filtered = table.filter(pc.equal(table["car_index"], car_index))
+            if filtered.num_rows == 0:
+                continue
+            rows = filtered.to_pylist()
+            if remaining_skip >= len(rows):
+                remaining_skip -= len(rows)
+                continue
+            rows = rows[remaining_skip:]
+            remaining_skip = 0
+            selected_rows.extend(rows[: limit - len(selected_rows)])
+            if len(selected_rows) >= limit:
+                break
+        if len(selected_rows) >= limit:
+            break
+
+    for row in selected_rows:
+        context_raw = row.pop("context_json", None)
+        row["context"] = json.loads(context_raw) if context_raw else None
+    return {
+        "run_id": run_id,
+        "session_uid": str(session["session_uid"]),
+        "car_index": car_index,
+        "status": "available",
+        "archive_status": _car_observation_archive_status(session["metrics_json"]),
+        "verification_scope": "session_car_observations",
+        "opponent_eligibility": "not_assessed",
+        "capture": {
+            "complete": bool(session["complete"]),
+            "footer_status": completion.get("status"),
+        },
+        "observations": {
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+            "returned": len(selected_rows),
+            "source_chunks_read": len(selected_chunks),
+            "items": selected_rows,
+        },
+    }

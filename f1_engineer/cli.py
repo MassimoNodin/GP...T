@@ -42,6 +42,10 @@ from .storage.importer import (
     list_laps,
     list_sessions,
 )
+from .storage.query import (
+    list_car_observation_inventory,
+    load_car_observation_preview,
+)
 from .storage.run_summaries import list_processing_run_lifecycle_events
 from .udp.models import DecodedPacket
 from .udp.source import ReplaySource, UDPSource
@@ -323,6 +327,37 @@ def _lifecycle(args: argparse.Namespace) -> int:
     )
     if result is None:
         _json_line({"status": "unavailable", "reason": "processing_run_unavailable"})
+        return 1
+    _json_line(result)
+    return 0
+
+
+def _cars(args: argparse.Namespace) -> int:
+    result = list_car_observation_inventory(
+        args.database,
+        args.run_id,
+        args.session_uid,
+        limit=args.limit,
+        offset=args.offset,
+    )
+    if result is None:
+        _json_line({"status": "unavailable", "reason": "car_observation_inventory_unavailable"})
+        return 1
+    _json_line(result)
+    return 0
+
+
+def _car_observations(args: argparse.Namespace) -> int:
+    result = load_car_observation_preview(
+        args.database,
+        args.run_id,
+        args.session_uid,
+        args.car_index,
+        limit=args.limit,
+        offset=args.offset,
+    )
+    if result is None:
+        _json_line({"status": "unavailable", "reason": "car_observation_preview_unavailable"})
         return 1
     _json_line(result)
     return 0
@@ -732,6 +767,29 @@ def build_parser() -> argparse.ArgumentParser:
     lifecycle.add_argument("--limit", type=int, default=50, help="page size (1-100)")
     lifecycle.add_argument("--offset", type=int, default=0, help="event ordinal page offset")
     lifecycle.set_defaults(handler=_lifecycle)
+
+    cars = commands.add_parser(
+        "cars", help="list observed car-slot coverage for an imported session"
+    )
+    cars.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
+    cars.add_argument("--run-id", required=True, help="processing run ID")
+    cars.add_argument("--session-uid", required=True, help="EA session UID")
+    cars.add_argument("--limit", type=int, default=24, help="page size (1-100)")
+    cars.add_argument("--offset", type=int, default=0, help="slot page offset")
+    cars.set_defaults(handler=_cars)
+
+    car_observations = commands.add_parser(
+        "car-observations", help="preview observations for one session car slot"
+    )
+    car_observations.add_argument(
+        "--database", default=str(DEFAULT_DATABASE), help="SQLite database path"
+    )
+    car_observations.add_argument("--run-id", required=True, help="processing run ID")
+    car_observations.add_argument("--session-uid", required=True, help="EA session UID")
+    car_observations.add_argument("--car-index", type=int, required=True, help="car slot index")
+    car_observations.add_argument("--limit", type=int, default=200, help="rows per page (1-500)")
+    car_observations.add_argument("--offset", type=int, default=0, help="observation page offset")
+    car_observations.set_defaults(handler=_car_observations)
 
     lap = commands.add_parser("lap", help="inspect a lap attempt and its trace")
     lap.add_argument("attempt_key", help="attempt key printed by the laps command")

@@ -171,6 +171,82 @@ def test_processing_run_api_bounds_pages_and_preserves_unsigned_session_uids(
     assert oversized_attempt_offset_response.status_code == 422
 
 
+def test_car_observation_api_exposes_bounded_inventory_and_preview(
+    monkeypatch, tmp_path
+) -> None:
+    run_id = "c" * 64
+    calls = {}
+    monkeypatch.setattr(
+        api_module,
+        "list_car_observation_inventory",
+        lambda _database, requested_run, session_uid, *, limit, offset: calls.update(
+            inventory=(requested_run, session_uid, limit, offset)
+        )
+        or {
+            "run_id": requested_run,
+            "session_uid": session_uid,
+            "status": "available",
+            "opponent_eligibility": "not_assessed",
+        },
+    )
+    monkeypatch.setattr(
+        api_module,
+        "load_car_observation_preview",
+        lambda _database, requested_run, session_uid, car_index, *, limit, offset: calls.update(
+            preview=(requested_run, session_uid, car_index, limit, offset)
+        )
+        or {
+            "run_id": requested_run,
+            "session_uid": session_uid,
+            "car_index": car_index,
+            "status": "available",
+            "opponent_eligibility": "not_assessed",
+        },
+    )
+    app = create_app(tmp_path / "unused.sqlite3")
+
+    inventory = _get(
+        app,
+        f"/api/v1/processing-runs/{run_id}/sessions/18446744073709550001/cars",
+        params={"limit": "24", "offset": "0"},
+    )
+    preview = _get(
+        app,
+        f"/api/v1/processing-runs/{run_id}/sessions/18446744073709550001/cars/23/observations",
+        params={"limit": "120", "offset": "40"},
+    )
+    invalid_preview = _get(
+        app,
+        f"/api/v1/processing-runs/{run_id}/sessions/18446744073709550001/cars/24/observations",
+    )
+
+    assert inventory.status_code == 200
+    assert inventory.json()["data"]["session_uid"] == "18446744073709550001"
+    assert inventory.json()["data"]["opponent_eligibility"] == "not_assessed"
+    assert preview.status_code == 200
+    assert preview.json()["data"]["car_index"] == 23
+    assert calls == {
+        "inventory": (run_id, "18446744073709550001", 24, 0),
+        "preview": (run_id, "18446744073709550001", 23, 120, 40),
+    }
+
+    def preview_limit(_database, _run, _session, _car, *, limit, offset):
+        raise ValueError("observation_preview_source_bytes_limit_exceeded")
+
+    monkeypatch.setattr(api_module, "load_car_observation_preview", preview_limit)
+    limited_preview = _get(
+        app,
+        f"/api/v1/processing-runs/{run_id}/sessions/18446744073709550001/cars/23/observations",
+    )
+    assert limited_preview.json() == {
+        "api_version": "v1",
+        "status": "unavailable",
+        "reason": "observation_preview_source_bytes_limit_exceeded",
+        "data": None,
+    }
+    assert invalid_preview.status_code == 422
+
+
 def test_recording_sources_api_preserves_latest_completed_run_id(
     monkeypatch, tmp_path
 ) -> None:

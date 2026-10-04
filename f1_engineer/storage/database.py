@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 class DatabaseSchemaError(ValueError):
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS schema_info (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     version INTEGER NOT NULL
 );
-INSERT OR IGNORE INTO schema_info(singleton, version) VALUES (1, 9);
+INSERT OR IGNORE INTO schema_info(singleton, version) VALUES (1, 10);
 
 CREATE TABLE IF NOT EXISTS captures (
     capture_sha256 TEXT PRIMARY KEY,
@@ -149,6 +149,36 @@ CREATE TABLE IF NOT EXISTS telemetry_files (
     ready INTEGER NOT NULL CHECK (ready IN (0, 1))
 );
 
+CREATE TABLE IF NOT EXISTS car_observation_chunks (
+    chunk_key TEXT PRIMARY KEY,
+    session_key TEXT NOT NULL REFERENCES sessions(session_key) ON DELETE CASCADE,
+    packet_format INTEGER NOT NULL,
+    lifecycle_epoch INTEGER NOT NULL,
+    chunk_ordinal INTEGER NOT NULL,
+    relative_path TEXT NOT NULL,
+    schema_version INTEGER NOT NULL,
+    row_count INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    quality_json TEXT NOT NULL,
+    ready INTEGER NOT NULL CHECK (ready IN (0, 1)),
+    UNIQUE(session_key, packet_format, lifecycle_epoch, chunk_ordinal)
+);
+
+CREATE TABLE IF NOT EXISTS car_observation_slots (
+    session_key TEXT NOT NULL REFERENCES sessions(session_key) ON DELETE CASCADE,
+    packet_format INTEGER NOT NULL,
+    lifecycle_epoch INTEGER NOT NULL,
+    car_index INTEGER NOT NULL,
+    observation_count INTEGER NOT NULL,
+    car_telemetry_count INTEGER NOT NULL,
+    motion_count INTEGER NOT NULL,
+    nonzero_speed_count INTEGER NOT NULL,
+    header_player_count INTEGER NOT NULL,
+    first_frame_ordinal INTEGER NOT NULL,
+    last_frame_ordinal INTEGER NOT NULL,
+    PRIMARY KEY(session_key, packet_format, lifecycle_epoch, car_index)
+);
+
 CREATE TABLE IF NOT EXISTS attempt_timing_evidence (
     attempt_key TEXT PRIMARY KEY REFERENCES lap_attempts(attempt_key) ON DELETE CASCADE,
     status TEXT NOT NULL CHECK (status IN ('matched', 'ambiguous', 'conflicting', 'unavailable', 'truncated')),
@@ -210,6 +240,10 @@ CREATE INDEX IF NOT EXISTS idx_lifecycle_events_session_ordinal
 CREATE INDEX IF NOT EXISTS idx_lifecycle_events_session_frame
     ON lifecycle_events(session_key, frame_ordinal);
 CREATE INDEX IF NOT EXISTS idx_attempt_lifecycle_event ON attempt_lifecycle_links(event_key);
+CREATE INDEX IF NOT EXISTS idx_car_observation_chunks_session
+    ON car_observation_chunks(session_key, packet_format, lifecycle_epoch);
+CREATE INDEX IF NOT EXISTS idx_car_observation_slots_session
+    ON car_observation_slots(session_key, car_index);
 """
 
 
@@ -358,6 +392,46 @@ class Database:
             )
             self.connection.commit()
             version = 9
+        if version == 9:
+            self.connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS car_observation_chunks (
+                    chunk_key TEXT PRIMARY KEY,
+                    session_key TEXT NOT NULL REFERENCES sessions(session_key) ON DELETE CASCADE,
+                    packet_format INTEGER NOT NULL,
+                    lifecycle_epoch INTEGER NOT NULL,
+                    chunk_ordinal INTEGER NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    row_count INTEGER NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    quality_json TEXT NOT NULL,
+                    ready INTEGER NOT NULL CHECK (ready IN (0, 1)),
+                    UNIQUE(session_key, packet_format, lifecycle_epoch, chunk_ordinal)
+                );
+                CREATE TABLE IF NOT EXISTS car_observation_slots (
+                    session_key TEXT NOT NULL REFERENCES sessions(session_key) ON DELETE CASCADE,
+                    packet_format INTEGER NOT NULL,
+                    lifecycle_epoch INTEGER NOT NULL,
+                    car_index INTEGER NOT NULL,
+                    observation_count INTEGER NOT NULL,
+                    car_telemetry_count INTEGER NOT NULL,
+                    motion_count INTEGER NOT NULL,
+                    nonzero_speed_count INTEGER NOT NULL,
+                    header_player_count INTEGER NOT NULL,
+                    first_frame_ordinal INTEGER NOT NULL,
+                    last_frame_ordinal INTEGER NOT NULL,
+                    PRIMARY KEY(session_key, packet_format, lifecycle_epoch, car_index)
+                );
+                CREATE INDEX IF NOT EXISTS idx_car_observation_chunks_session
+                    ON car_observation_chunks(session_key, packet_format, lifecycle_epoch);
+                CREATE INDEX IF NOT EXISTS idx_car_observation_slots_session
+                    ON car_observation_slots(session_key, car_index);
+                UPDATE schema_info SET version = 10 WHERE singleton = 1;
+                """
+            )
+            self.connection.commit()
+            version = 10
         if version != SCHEMA_VERSION:
             self.connection.close()
             raise ValueError(f"database schema {version} is not supported")

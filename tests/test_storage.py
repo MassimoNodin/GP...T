@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 from io import BytesIO
 from pathlib import Path
 
@@ -19,6 +20,8 @@ from f1_engineer.storage.query import (
     AttemptTraceReadLimitError,
     load_attempt_policy_metadata,
     load_attempt_trace,
+    list_car_observation_inventory,
+    load_car_observation_preview,
     load_reference_inventory,
 )
 from f1_engineer.storage.parquet import (
@@ -120,6 +123,8 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert imported.already_imported is False
     assert imported.attempts == 1
     assert imported.samples == 3
+    assert imported.car_observations == 66
+    assert imported.car_observation_chunks >= 1
     assert imported.import_late_packets_ignored == 0
     assert imported.import_frame_overflow_packets_dropped == 0
     assert imported.missing_car_telemetry_samples == 1
@@ -151,6 +156,137 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert stored_attempt.trace_sha256
     assert stored_attempt.trace_schema_version == TRACE_SCHEMA_VERSION == 4
     assert stored_attempt.context_segments[0][1]["game_mode"] == "time_trial"
+    observation_inventory = list_car_observation_inventory(
+        database_path, imported.run_id, SESSION_UID
+    )
+    assert observation_inventory is not None
+    assert observation_inventory["archive_status"] == "available"
+    assert observation_inventory["opponent_eligibility"] == "not_assessed"
+    assert observation_inventory["replay_quality"] == {
+        "late_packets_ignored": 0,
+        "frame_overflow_packets_dropped": 0,
+        "conflicting_observation_frames": 0,
+    }
+    assert observation_inventory["slots"]["total"] == 22
+    slot_zero = observation_inventory["slots"]["items"][0]
+    assert slot_zero["car_index"] == 0
+    assert slot_zero["observation_count"] == 3
+    assert slot_zero["car_telemetry_count"] == 2
+    assert slot_zero["header_player_count"] == 3
+    assert slot_zero["participant_snapshot_count"] == 1
+    observation_preview = load_car_observation_preview(
+        database_path, imported.run_id, SESSION_UID, 0, limit=3
+    )
+    assert observation_preview is not None
+    assert observation_preview["archive_status"] == "available"
+    assert observation_preview["observations"]["total"] == 3
+    assert observation_preview["observations"]["returned"] == 3
+    assert [
+        row["car_telemetry_available"]
+        for row in observation_preview["observations"]["items"]
+    ] == [True, False, True]
+    assert observation_preview["observations"]["items"][1][
+        "car_telemetry_unavailable_reason"
+    ] == "car_telemetry_packet_missing"
+
+    with Database(database_path, read_only=True) as db:
+        observation_relative_path = db.connection.execute(
+            "SELECT relative_path FROM car_observation_chunks LIMIT 1"
+        ).fetchone()[0]
+        original_run_metrics = db.connection.execute(
+            "SELECT metrics_json FROM processing_runs WHERE run_id = ?",
+            (imported.run_id,),
+        ).fetchone()[0]
+    observation_path = database_path.parent / observation_relative_path
+    original_observation_bytes = observation_path.read_bytes()
+    actual_parquet_file = query_module.pq.ParquetFile
+
+    def replace_observation_after_snapshot(source):
+        assert isinstance(source, BytesIO)
+        observation_path.write_bytes(b"replaced after the reader snapshot")
+        return actual_parquet_file(source)
+
+    monkeypatch.setattr(
+        query_module.pq, "ParquetFile", replace_observation_after_snapshot
+    )
+    try:
+        raced_preview = load_car_observation_preview(
+            database_path, imported.run_id, SESSION_UID, 0, limit=1
+        )
+    finally:
+        observation_path.write_bytes(original_observation_bytes)
+        monkeypatch.setattr(query_module.pq, "ParquetFile", actual_parquet_file)
+    assert raced_preview is not None
+    assert raced_preview["observations"]["items"][0]["frame_identifier"] == 10
+
+    with monkeypatch.context() as bounds:
+        bounds.setattr(query_module, "MAX_OBSERVATION_PREVIEW_CHUNK_BYTES", 1)
+        with pytest.raises(ValueError, match="observation_preview_chunk_bytes_limit_exceeded"):
+            load_car_observation_preview(
+                database_path, imported.run_id, SESSION_UID, 0, limit=1
+            )
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "UPDATE processing_runs SET metrics_json = ? WHERE run_id = ?",
+            ('{"capture_quality":{}}', imported.run_id),
+        )
+    try:
+        legacy_inventory = list_car_observation_inventory(
+            database_path, imported.run_id, SESSION_UID
+        )
+    finally:
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                "UPDATE processing_runs SET metrics_json = ? WHERE run_id = ?",
+                (original_run_metrics, imported.run_id),
+            )
+    assert legacy_inventory is not None
+    assert legacy_inventory["archive_status"] == "not_archived"
+    assert legacy_inventory["replay_quality"] == {
+        "late_packets_ignored": None,
+        "frame_overflow_packets_dropped": None,
+        "conflicting_observation_frames": None,
+    }
+
+    invalid_counter_metrics = json.loads(original_run_metrics)
+    invalid_quality = invalid_counter_metrics["capture_quality"]
+    invalid_quality["import_late_packets_ignored"] = None
+    invalid_quality["import_frame_overflow_packets_dropped"] = True
+    invalid_quality["car_observation_conflict_count"] = -1
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "UPDATE processing_runs SET metrics_json = ? WHERE run_id = ?",
+            (json.dumps(invalid_counter_metrics), imported.run_id),
+        )
+    try:
+        invalid_counter_inventory = list_car_observation_inventory(
+            database_path, imported.run_id, SESSION_UID
+        )
+    finally:
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                "UPDATE processing_runs SET metrics_json = ? WHERE run_id = ?",
+                (original_run_metrics, imported.run_id),
+            )
+    assert invalid_counter_inventory is not None
+    assert invalid_counter_inventory["archive_status"] == "available"
+    assert invalid_counter_inventory["replay_quality"] == {
+        "late_packets_ignored": None,
+        "frame_overflow_packets_dropped": None,
+        "conflicting_observation_frames": None,
+    }
+
+    with monkeypatch.context() as bounds:
+        bounds.setattr(query_module, "MAX_OBSERVATION_SESSION_METRICS_BYTES", 1)
+        with pytest.raises(ValueError, match="observation_session_metrics_limit_exceeded"):
+            list_car_observation_inventory(database_path, imported.run_id, SESSION_UID)
+    with monkeypatch.context() as bounds:
+        bounds.setattr(query_module, "MAX_OBSERVATION_PREVIEW_MANIFEST_BYTES", 1)
+        with pytest.raises(ValueError, match="observation_preview_manifest_limit_exceeded"):
+            load_car_observation_preview(
+                database_path, imported.run_id, SESSION_UID, 0, limit=1
+            )
     monkeypatch.setattr(
         query_module,
         "read_trace",
@@ -289,6 +425,9 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     with sqlite3.connect(database_path) as connection:
         uid = connection.execute("SELECT session_uid FROM sessions").fetchone()[0]
         driver_rows = connection.execute("SELECT COUNT(*) FROM driver_snapshots").fetchone()[0]
+        observation_path = connection.execute(
+            "SELECT relative_path FROM car_observation_chunks LIMIT 1"
+        ).fetchone()[0]
     assert uid == str(SESSION_UID)  # EA UID exceeds SQLite's signed integer range.
     assert driver_rows == 22
 
@@ -299,10 +438,16 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert len(list_laps(database_path)) == 1
 
     (database_path.parent / details["trace_path"]).unlink()
+    (database_path.parent / observation_path).write_bytes(b"corrupt observation chunk")
     repaired = import_capture(capture_path, database_path)
     assert repaired.already_imported is False
     assert repaired.run_id == imported.run_id
     assert len(list_laps(database_path)) == 1
+    repaired_observations = load_car_observation_preview(
+        database_path, imported.run_id, SESSION_UID, 0, limit=1
+    )
+    assert repaired_observations is not None
+    assert repaired_observations["observations"]["total"] == 3
 
     other_database = tmp_path / "state" / "other.sqlite3"
     other_import = import_capture(capture_path, other_database)
@@ -312,6 +457,18 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert other_details is not None
     assert other_details["trace_path"] != details["trace_path"]
     assert get_lap(database_path, laps[0]["attempt_key"]) is not None
+
+
+def test_observation_import_bounds_distinct_session_streams(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(importer_module, "MAX_OBSERVATION_CHUNKS_PER_IMPORT", 1)
+    manager = importer_module._ObservationWriterManager(
+        tmp_path / "state.sqlite3", "run-id", "traces"
+    )
+    manager._open((1, 2025, 0))
+    with pytest.raises(ValueError, match="observation_archive_chunk_limit_exceeded"):
+        manager._open((1, 2025, 1))
+    manager.abort()
+    assert list(tmp_path.rglob("*.tmp")) == []
 
 
 def test_trace_reader_adapts_v1_rows_with_unavailable_motion_fields() -> None:
@@ -472,11 +629,20 @@ def test_import_fails_if_capture_changes_while_it_is_being_read(tmp_path, monkey
                 stream.write(b"late recorder data")
         return original_hash(path)
 
+    def abort_with_unlink_error(_manager) -> None:
+        raise OSError("observation cleanup failed")
+
     monkeypatch.setattr(importer_module, "_capture_hash", append_before_final_hash)
+    monkeypatch.setattr(
+        importer_module._ObservationWriterManager, "abort", abort_with_unlink_error
+    )
 
     with pytest.raises(ValueError, match="capture changed during import"):
         import_capture(capture_path, database_path)
 
     with sqlite3.connect(database_path) as connection:
-        status = connection.execute("SELECT status FROM processing_runs").fetchone()[0]
+        status, error = connection.execute(
+            "SELECT status, error FROM processing_runs"
+        ).fetchone()
     assert status == "failed"
+    assert "capture changed during import" in error
