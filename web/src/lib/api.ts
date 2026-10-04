@@ -49,6 +49,7 @@ export interface RecordingProgressRecord {
   latest_context: SessionContext | null;
   live_telemetry: LiveTelemetryRecord;
   live_car_status?: LiveCarStatusRecord | null;
+  live_lap_timing?: LiveLapTimingRecord | null;
 }
 
 export interface LiveTelemetryRecord {
@@ -86,6 +87,23 @@ export interface LiveCarStatusRecord {
   tyre_age_laps?: number | null;
   front_brake_bias_percent?: number | null;
   pit_limiter_active?: boolean | null;
+  validation_flags?: string[];
+}
+
+export interface LiveLapTimingRecord {
+  status: "waiting" | "fresh" | "stale" | "unsupported" | "unavailable";
+  reason: string | null;
+  age_ms: number | null;
+  session_uid?: string | null;
+  frame_identifier?: number | null;
+  packet_format?: number | null;
+  player_car_index?: number | null;
+  lap_number?: number | null;
+  current_lap_time_ms?: number | null;
+  current_sector?: number | null;
+  previous_lap_time_ms?: number | null;
+  sector1_time_ms?: number | null;
+  sector2_time_ms?: number | null;
   validation_flags?: string[];
 }
 

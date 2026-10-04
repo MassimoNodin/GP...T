@@ -174,6 +174,23 @@ class LiveCarStatusRecord(BaseModel):
     validation_flags: list[str] = Field(default_factory=list)
 
 
+class LiveLapTimingRecord(BaseModel):
+    status: Literal["waiting", "fresh", "stale", "unsupported", "unavailable"]
+    reason: str | None
+    age_ms: int | None
+    session_uid: str | None = None
+    frame_identifier: int | None = None
+    packet_format: int | None = None
+    player_car_index: int | None = None
+    lap_number: int | None = None
+    current_lap_time_ms: int | None = None
+    current_sector: int | None = None
+    previous_lap_time_ms: int | None = None
+    sector1_time_ms: int | None = None
+    sector2_time_ms: int | None = None
+    validation_flags: list[str] = Field(default_factory=list)
+
+
 class RecordingProgressRecord(BaseModel):
     state: str
     elapsed_ms: int
@@ -185,6 +202,7 @@ class RecordingProgressRecord(BaseModel):
     latest_context: dict[str, Any] | None
     live_telemetry: LiveTelemetryRecord
     live_car_status: LiveCarStatusRecord | None = None
+    live_lap_timing: LiveLapTimingRecord | None = None
 
 
 class RecordingJobRecord(BaseModel):

@@ -641,6 +641,20 @@ Use the existing capture, frame assembly, observer, status response, and same-or
 
 Acceptance covers F1 25 and 2026 exact-frame player joins against capture/import evidence; Time Trial, Practice/Qualifying, Race, and unknown modes; missing, malformed, unsupported, mismatched, conflicting, delayed, duplicate, and individually invalid Status packets; receive-time eviction; frame wrap; and session, format, player, and rewind resets. Verify that speed/control remains available without Status, Status remains available without Car Telemetry, each group expires independently, memory stays bounded, optional API/UI fields are tolerated, raw payload order is unchanged, and stopping clears live state. No new capture is required. This is live diagnostic visibility only; fuel/tyre strategy, consumption estimates, comparisons, and coaching remain out of scope.
 
+## Decision 0045: expose live reported lap timing independently
+
+**Status:** accepted
+
+**Date:** 2026-10-04
+
+Extend the bounded app-managed acquisition monitor with a separate player Lap Data timing group. Reuse the existing F1 25 and 2026 Season Pack Lap Data v1 decoders and accepted assembled frames. Show current lap number and current-lap clock, current sector, game-reported previous-lap time, and reported sector-one and sector-two times. Convert the documented sector code `0/1/2` to display sector `1/2/3`; the EA F1 25 v3 and Season Pack Season 8 v1.2 specifications use this mapping. Zero timing values and lap number zero remain unavailable. Label the previous-lap value as game-reported; do not infer its validity from current-lap validity.
+
+Update only from valid selected-player Lap Data and require receive-time provenance for that packet. Keep one snapshot with session, frame, wire-format, and player provenance and its own `waiting`, `fresh`, `stale`, `unsupported`, or `unavailable` state and 500 ms freshness limit. It remains usable without Car Telemetry or Car Status and expires independently. Clear prior values on malformed/unsupported selected-player Lap Data and across player, session, format, or rewind boundaries. Keep modes independent and do not infer completion, sector three, live delta, a personal best, or advice.
+
+Expose the optional group through the existing recording-status API and dashboard. Add no route, persistence, migration, history, or capture changes. Imported attempts and Session History remain authoritative for historical timing association, validity, and eligibility.
+
+Acceptance covers F1 25 and 2026 synthetic layouts; Time Trial, Practice/Qualifying, Race, and unknown contexts; lap and sector transitions; zero/missing values; malformed and unsupported packets; duplicates and late frames; frame wrap; timestamp eviction; pause freshness; player/session/format/rewind resets; independence from telemetry and Status; optional API/UI compatibility; bounded memory; and hiding live data after Stop. Replay Melbourne and Shanghai against selected admitted Lap Data records. No new capture is required; real 2026 validation remains pending.
+
 ## Data flow
 
 ```text
@@ -690,7 +704,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - Replay timing is based only on the monotonic intervals stored in the capture; maximum-speed replay skips sleeps.
 - The capture format has a magic value and schema version. Unknown packet IDs remain inspectable.
 - App-managed recording uses a server-generated staging file and the shared raw-first recorder. Stop finalizes and fsyncs the footer before no-replacement publication into the configured recordings root; import and recording operations are serialized by the controller.
-- The app-managed acquisition observer retains one latest same-frame player telemetry snapshot and a separate latest player Car Status snapshot. Recording status calculates each group's freshness from selected monotonic receive-time provenance; history remains the importer's responsibility.
+- The app-managed acquisition observer retains separate bounded player telemetry, Car Status, and Lap Data timing snapshots. Recording status calculates each group's freshness from its selected monotonic receive-time provenance; history remains the importer's responsibility.
 
 ## Deferred decisions
 

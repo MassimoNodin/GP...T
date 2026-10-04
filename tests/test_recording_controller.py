@@ -68,6 +68,7 @@ def test_recording_start_stop_is_idempotent_and_publishes_to_inbox(tmp_path):
                 assert first_job["published"] is False
                 assert first_job["progress"]["live_telemetry"]["status"] == "waiting"
                 assert first_job["progress"]["live_car_status"]["status"] == "waiting"
+                assert first_job["progress"]["live_lap_timing"]["status"] == "waiting"
 
                 repeated = await client.post("/api/v1/recordings/start", headers=_auth())
                 assert repeated.status_code == 202

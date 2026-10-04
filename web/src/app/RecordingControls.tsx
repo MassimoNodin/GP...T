@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type {
   ApiResponse,
   LiveCarStatusRecord,
+  LiveLapTimingRecord,
   LiveTelemetryRecord,
   RecordingJobRecord,
 } from "@/lib/api";
@@ -198,6 +199,9 @@ export default function RecordingControls({
           {progress.live_car_status ? (
             <LiveCarStatusPanel telemetry={progress.live_car_status} />
           ) : null}
+          {progress.live_lap_timing ? (
+            <LiveLapTimingPanel telemetry={progress.live_lap_timing} />
+          ) : null}
         </>
       )}
     </div>
@@ -367,6 +371,78 @@ function LiveCarStatusPanel({ telemetry }: { telemetry: LiveCarStatusRecord }) {
   );
 }
 
+function LiveLapTimingPanel({ telemetry }: { telemetry: LiveLapTimingRecord }) {
+  const statusCopy: Record<LiveLapTimingRecord["status"], string> = {
+    waiting: "Waiting for selected-player Lap Data.",
+    fresh: "Game-reported lap timing is updating for the selected player.",
+    stale: `Last Lap Data timing update was ${formatAge(telemetry.age_ms)} ago.`,
+    unsupported:
+      "Recording continues. This Lap Data packet version is unsupported.",
+    unavailable: liveLapTimingUnavailableReason(telemetry.reason),
+  };
+  const invalidFields = (telemetry.validation_flags ?? []).map((flag) =>
+    flag.replaceAll("_", " "),
+  );
+
+  return (
+    <section
+      className="live-telemetry live-lap-timing"
+      data-state={telemetry.status}
+      aria-label="Live reported lap timing"
+    >
+      <div className="live-telemetry-heading">
+        <div>
+          <div className="eyebrow">LIVE REPORTED LAP TIMING</div>
+          <p>{statusCopy[telemetry.status]}</p>
+        </div>
+        <span className={`live-telemetry-state state-${telemetry.status}`}>
+          {telemetry.status.toUpperCase()}
+        </span>
+      </div>
+      {telemetry.status !== "waiting" && (
+        <>
+          <div className="live-telemetry-grid">
+            <LiveMetric label="LAP" value={display(telemetry.lap_number)} />
+            <LiveMetric
+              label="CURRENT LAP CLOCK"
+              value={formatLapClock(telemetry.current_lap_time_ms)}
+            />
+            <LiveMetric
+              label="CURRENT SECTOR"
+              value={
+                telemetry.current_sector == null
+                  ? "—"
+                  : `SECTOR ${telemetry.current_sector}`
+              }
+            />
+            <LiveMetric
+              label="GAME-REPORTED PREVIOUS LAP"
+              value={formatLapClock(telemetry.previous_lap_time_ms)}
+            />
+            <LiveMetric
+              label="REPORTED SECTOR 1"
+              value={formatLapClock(telemetry.sector1_time_ms)}
+            />
+            <LiveMetric
+              label="REPORTED SECTOR 2"
+              value={formatLapClock(telemetry.sector2_time_ms)}
+            />
+          </div>
+          <p className="live-car-status-note">
+            Timing is shown as reported by the game; this panel does not assess
+            lap validity or infer lap completion.
+          </p>
+          {invalidFields.length ? (
+            <p className="live-car-status-invalid" role="status">
+              Unavailable fields: {invalidFields.join(", ")}.
+            </p>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
+}
+
 function recordingStatus(
   recording: RecordingJobRecord | null,
   receiving: boolean,
@@ -477,4 +553,22 @@ function liveCarStatusUnavailableReason(reason: string | null) {
   if (reason === "lap_data_decode_failed" || reason === "lap_data_adapter_unsupported")
     return "The same-frame player Lap Data packet is unavailable.";
   return "The current player Car Status is unavailable.";
+}
+
+function liveLapTimingUnavailableReason(reason: string | null) {
+  if (reason === "receive_provenance_unavailable")
+    return "Receive-time evidence for the selected Lap Data frame is unavailable.";
+  if (reason === "lap_data_decode_failed")
+    return "The selected player's Lap Data packet was malformed.";
+  if (reason === "player_car_index_out_of_range")
+    return "Lap Data identifies a player car outside the supported range.";
+  if (reason === "conflicting_lap_data_packets")
+    return "Conflicting selected-player Lap Data updates arrived in this frame.";
+  if (reason === "flashback_boundary")
+    return "Timing was cleared at a flashback boundary.";
+  if (reason === "session_time_regression")
+    return "Timing was cleared after a session clock regression.";
+  if (reason === "event_evidence_unknown")
+    return "Timing was cleared because the event boundary could not be identified.";
+  return "The selected player's Lap Data timing is unavailable.";
 }

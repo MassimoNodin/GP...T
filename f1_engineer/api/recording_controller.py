@@ -13,6 +13,7 @@ from typing import Any
 from ..recording.capture import CaptureReader
 from ..recording.service import (
     LIVE_CAR_STATUS_FRESHNESS_LIMIT_MS,
+    LIVE_LAP_TIMING_FRESHNESS_LIMIT_MS,
     LIVE_TELEMETRY_FRESHNESS_LIMIT_MS,
     RecordingSnapshot,
     record_udp_capture,
@@ -141,6 +142,11 @@ class RecordingController:
                         "age_ms": None,
                     },
                     "live_car_status": {
+                        "status": "waiting",
+                        "reason": None,
+                        "age_ms": None,
+                    },
+                    "live_lap_timing": {
                         "status": "waiting",
                         "reason": None,
                         "age_ms": None,
@@ -456,6 +462,7 @@ class RecordingController:
         freshness_limits = {
             "live_telemetry": LIVE_TELEMETRY_FRESHNESS_LIMIT_MS,
             "live_car_status": LIVE_CAR_STATUS_FRESHNESS_LIMIT_MS,
+            "live_lap_timing": LIVE_LAP_TIMING_FRESHNESS_LIMIT_MS,
         }
         for name, freshness_limit_ms in freshness_limits.items():
             live = progress.get(name)

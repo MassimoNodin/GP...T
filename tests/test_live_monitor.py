@@ -21,6 +21,7 @@ from tests.test_lap_tracking import SESSION_UID, _lap_packet, _session_packet
 
 
 _TELEMETRY_CAR = struct.Struct("<HfffBbHBBH4H4B4BH4f4B")
+_LAP_DATA_CAR = struct.Struct("<IIHBHBHBHBfff15BHHBfB")
 _CONTROL_TOKEN = "live-monitor-test-token"
 
 
@@ -144,12 +145,16 @@ def _queue_frame(
     )
 
 
-def _session_packet_for_mode(*, race: bool):
+def _session_packet_for_mode(
+    *, race: bool = False, session_type_id: int | None = None
+):
     body = bytearray(_session_packet().payload[29:])
     if race:
         body[6] = 15
         body[665] = 27
         body[666] = 1
+    elif session_type_id is not None:
+        body[6] = session_type_id
     return make_datagram(
         packet_id=1,
         session_uid=SESSION_UID,
@@ -169,6 +174,12 @@ def _publish_frame(
     car_status: bool = False,
     car_status_bodies: tuple[bytes, ...] | None = None,
     car_status_player_index: int | None = None,
+    lap_number: int = 3,
+    current_lap_time_ms: int = 34_567,
+    last_lap_time_ms: int = 0,
+    sector1_time_ms: int = 12_345,
+    sector2_time_ms: int = 45_678,
+    sector_id: int = 0,
     throttle: float = 0.75,
     brake: float = 0.2,
 ) -> None:
@@ -190,10 +201,14 @@ def _publish_frame(
     _process(observer,
         _lap_packet(
             frame=frame,
-            lap_number=3,
+            lap_number=lap_number,
             distance_m=120.0,
             session_time=12.0,
-            current_lap_time_ms=34_567,
+            current_lap_time_ms=current_lap_time_ms,
+            last_lap_time_ms=last_lap_time_ms,
+            sector1_time_ms=sector1_time_ms,
+            sector2_time_ms=sector2_time_ms,
+            sector_id=sector_id,
             invalid=invalid,
             pit_status=2,
             driver_status=2,
@@ -287,6 +302,223 @@ def test_live_car_status_joins_the_same_player_frame_and_exposes_canonical_value
     assert status["front_brake_bias_percent"] == 54
     assert status["pit_limiter_active"] is False
     assert status["validation_flags"] == []
+
+
+def test_live_lap_timing_is_exact_frame_and_independent_of_other_live_groups():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(
+        observer,
+        frame=100,
+        telemetry=False,
+        lap_number=4,
+        current_lap_time_ms=82_345,
+        last_lap_time_ms=80_123,
+        sector1_time_ms=26_500,
+        sector2_time_ms=30_250,
+        sector_id=1,
+    )
+
+    timing = observer.live_lap_timing_snapshot()
+    assert timing["status"] == "fresh"
+    assert timing["reason"] is None
+    assert timing["session_uid"] == str(SESSION_UID)
+    assert timing["frame_identifier"] == 100
+    assert timing["packet_format"] == 2025
+    assert timing["player_car_index"] == 0
+    assert timing["lap_number"] == 4
+    assert timing["current_lap_time_ms"] == 82_345
+    assert timing["current_sector"] == 2
+    assert timing["previous_lap_time_ms"] == 80_123
+    assert timing["sector1_time_ms"] == 26_500
+    assert timing["sector2_time_ms"] == 30_250
+    assert timing["validation_flags"] == []
+    assert observer.live_telemetry_snapshot()["status"] == "unavailable"
+    assert observer.live_car_status_snapshot()["status"] == "unavailable"
+
+
+@pytest.mark.parametrize(
+    ("sector_code", "expected_sector", "expected_flags"),
+    ((0, 1, []), (1, 2, []), (2, 3, []), (255, None, ["invalid_current_sector"])),
+)
+def test_live_lap_timing_maps_and_validates_sector_codes(
+    sector_code: int, expected_sector: int | None, expected_flags: list[str]
+):
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(observer, frame=100, telemetry=False, sector_id=sector_code)
+
+    timing = observer.live_lap_timing_snapshot()
+    assert timing["status"] == "fresh"
+    assert timing["current_sector"] == expected_sector
+    assert timing["validation_flags"] == expected_flags
+
+
+def test_live_lap_timing_treats_zero_reported_values_as_unavailable():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(
+        observer,
+        frame=100,
+        telemetry=False,
+        lap_number=0,
+        current_lap_time_ms=0,
+        last_lap_time_ms=0,
+        sector1_time_ms=0,
+        sector2_time_ms=0,
+        sector_id=0,
+    )
+
+    timing = observer.live_lap_timing_snapshot()
+    assert timing["status"] == "fresh"
+    assert timing["lap_number"] is None
+    assert timing["current_lap_time_ms"] is None
+    assert timing["current_sector"] == 1
+    assert timing["previous_lap_time_ms"] is None
+    assert timing["sector1_time_ms"] is None
+    assert timing["sector2_time_ms"] is None
+
+
+def test_live_lap_timing_clears_malformed_and_unsupported_player_packets():
+    malformed = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(malformed, frame=100, telemetry=False)
+    _process(
+        malformed,
+        make_datagram(
+            packet_format=2025,
+            packet_id=2,
+            session_uid=SESSION_UID,
+            frame=103,
+            player_car_index=0,
+            body=b"malformed lap data",
+            sequence=30,
+        ),
+    )
+    _process(malformed, _advance(104, 31))
+    malformed_timing = malformed.live_lap_timing_snapshot()
+    assert malformed_timing["status"] == "unavailable"
+    assert malformed_timing["reason"] == "lap_data_decode_failed"
+    assert malformed_timing["current_lap_time_ms"] is None
+    assert malformed_timing["previous_lap_time_ms"] is None
+
+    unsupported = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(unsupported, frame=100, telemetry=False)
+    _process(
+        unsupported,
+        _lap_packet(
+            frame=103,
+            lap_number=4,
+            distance_m=130.0,
+            session_time=12.1,
+            current_lap_time_ms=45_000,
+            sequence=30,
+            packet_version=2,
+        ),
+    )
+    _process(unsupported, _advance(104, 31))
+    unsupported_timing = unsupported.live_lap_timing_snapshot()
+    assert unsupported_timing["status"] == "unsupported"
+    assert unsupported_timing["reason"] == "lap_data_adapter_unsupported"
+    assert unsupported_timing["current_lap_time_ms"] is None
+
+
+def test_live_lap_timing_rejects_conflicting_same_frame_updates():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _process(
+        observer,
+        _lap_packet(
+            frame=100,
+            lap_number=4,
+            distance_m=120.0,
+            session_time=12.0,
+            current_lap_time_ms=80_000,
+            sequence=10,
+            sector_id=0,
+        ),
+    )
+    _process(
+        observer,
+        _lap_packet(
+            frame=100,
+            lap_number=4,
+            distance_m=120.0,
+            session_time=12.0,
+            current_lap_time_ms=81_000,
+            sequence=11,
+            sector_id=1,
+        ),
+    )
+    _process(observer, _advance(101, 12))
+
+    timing = observer.live_lap_timing_snapshot()
+    assert timing["status"] == "unavailable"
+    assert timing["reason"] == "conflicting_lap_data_packets"
+    assert timing["frame_identifier"] == 100
+    assert timing["current_lap_time_ms"] is None
+
+
+def test_live_lap_timing_ignores_other_car_changes_in_same_frame():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    first = _lap_packet(
+        frame=100,
+        lap_number=4,
+        distance_m=120.0,
+        session_time=12.0,
+        current_lap_time_ms=80_000,
+        sequence=10,
+    )
+    changed_other_car = bytearray(first.payload)
+    struct.pack_into("<I", changed_other_car, 29 + _LAP_DATA_CAR.size, 99_999)
+    second = replace(first, sequence=11, payload=bytes(changed_other_car))
+
+    observer.process(replace(first, monotonic_ns=1_000_000_000))
+    observer.process(replace(second, monotonic_ns=1_200_000_000))
+    observer.process(replace(_advance(101, 12), monotonic_ns=1_300_000_000))
+
+    timing = observer.live_lap_timing_snapshot(1_500_000_000)
+    assert timing["status"] == "fresh"
+    assert timing["reason"] is None
+    assert timing["frame_identifier"] == 100
+    assert timing["current_lap_time_ms"] == 80_000
+    assert timing["age_ms"] == 300
+    assert timing["_observed_monotonic_ns"] == 1_200_000_000
+
+
+def test_live_lap_timing_uses_its_own_receive_time_and_staleness():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    received_ns = 1_000_000_000
+    observer.process(
+        replace(
+            _lap_packet(
+                frame=100,
+                lap_number=4,
+                distance_m=120.0,
+                session_time=12.0,
+                current_lap_time_ms=80_000,
+                sequence=10,
+            ),
+            monotonic_ns=received_ns,
+        )
+    )
+    observer.process(
+        replace(_advance(101, 11), monotonic_ns=received_ns + 10_000_000)
+    )
+
+    at_limit = observer.live_lap_timing_snapshot(received_ns + 500_000_000)
+    assert at_limit["status"] == "fresh"
+    assert at_limit["age_ms"] == 500
+    assert at_limit["_observed_monotonic_ns"] == received_ns
+    stale = observer.live_lap_timing_snapshot(received_ns + 501_000_000)
+    assert stale["status"] == "stale"
+    assert stale["age_ms"] == 501
+
+
+def test_live_lap_timing_requires_receive_provenance_for_fresh_status():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    observer._max_receive_time_entries = 1
+    _publish_frame(observer, frame=100, telemetry=False, car_status=True)
+
+    timing = observer.live_lap_timing_snapshot()
+    assert timing["status"] == "unavailable"
+    assert timing["reason"] == "receive_provenance_unavailable"
+    assert timing["current_lap_time_ms"] == 34_567
 
 
 def test_missing_car_status_does_not_weaken_the_speed_control_monitor():
@@ -495,6 +727,18 @@ def test_live_car_status_survives_frame_identifier_wrap():
     assert status["fuel_in_tank_reported"] == 12.5
 
 
+def test_live_lap_timing_survives_frame_identifier_wrap():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(observer, frame=0xFFFFFFFE, telemetry=False)
+    assert observer.live_lap_timing_snapshot()["frame_identifier"] == 0xFFFFFFFE
+
+    _publish_frame(observer, frame=0, sequence=20, telemetry=False, sector_id=2)
+    timing = observer.live_lap_timing_snapshot()
+    assert timing["status"] == "fresh"
+    assert timing["frame_identifier"] == 0
+    assert timing["current_sector"] == 3
+
+
 def test_live_monitor_supports_race_and_unknown_context_without_policy_changes():
     time_trial = _AcquisitionObserver(reorder_window_frames=1)
     _process(time_trial, _session_packet_for_mode(race=False))
@@ -503,6 +747,14 @@ def test_live_monitor_supports_race_and_unknown_context_without_policy_changes()
     race = _AcquisitionObserver(reorder_window_frames=1)
     _process(race, _session_packet_for_mode(race=True))
     _publish_frame(race, frame=100, car_status=True)
+
+    practice = _AcquisitionObserver(reorder_window_frames=1)
+    _process(practice, _session_packet_for_mode(session_type_id=1))
+    _publish_frame(practice, frame=100, car_status=True)
+
+    qualifying = _AcquisitionObserver(reorder_window_frames=1)
+    _process(qualifying, _session_packet_for_mode(session_type_id=5))
+    _publish_frame(qualifying, frame=100, car_status=True)
 
     unknown = _AcquisitionObserver(reorder_window_frames=1)
     _publish_frame(unknown, frame=100, car_status=True)
@@ -513,6 +765,11 @@ def test_live_monitor_supports_race_and_unknown_context_without_policy_changes()
     assert time_trial.live_car_status_snapshot()["status"] == "fresh"
     assert race.live_car_status_snapshot()["status"] == "fresh"
     assert unknown.live_car_status_snapshot()["status"] == "fresh"
+    assert time_trial.live_lap_timing_snapshot()["status"] == "fresh"
+    assert race.live_lap_timing_snapshot()["status"] == "fresh"
+    assert practice.live_lap_timing_snapshot()["status"] == "fresh"
+    assert qualifying.live_lap_timing_snapshot()["status"] == "fresh"
+    assert unknown.live_lap_timing_snapshot()["status"] == "fresh"
 
 
 def test_live_monitor_expires_sample_using_monotonic_receive_time():
@@ -554,9 +811,14 @@ def test_live_monitor_clears_and_quarantines_flashback_frame_then_recovers():
     assert live["status"] == "unavailable"
     assert live["reason"] == "flashback_boundary"
     assert live["speed_kph"] is None
+    timing = observer.live_lap_timing_snapshot()
+    assert timing["status"] == "unavailable"
+    assert timing["reason"] == "flashback_boundary"
+    assert timing["current_lap_time_ms"] is None
 
     _publish_frame(observer, frame=103, sequence=30)
     assert observer.live_telemetry_snapshot()["status"] == "fresh"
+    assert observer.live_lap_timing_snapshot()["status"] == "fresh"
 
 
 def test_live_monitor_regression_guard_ignores_event_only_frames():
@@ -628,6 +890,10 @@ def test_live_monitor_detects_clock_regression_between_same_frame_updates():
     assert live["status"] == "unavailable"
     assert live["reason"] == "session_time_regression"
     assert live["speed_kph"] is None
+    timing = observer.live_lap_timing_snapshot()
+    assert timing["status"] == "unavailable"
+    assert timing["reason"] == "session_time_regression"
+    assert timing["current_lap_time_ms"] is None
 
 
 def test_live_monitor_resets_on_player_and_session_change():
@@ -635,12 +901,14 @@ def test_live_monitor_resets_on_player_and_session_change():
     _publish_frame(observer, frame=100, car_status=True)
     assert observer.live_telemetry_snapshot()["status"] == "fresh"
     assert observer.live_car_status_snapshot()["status"] == "fresh"
+    assert observer.live_lap_timing_snapshot()["status"] == "fresh"
 
     _process(observer,
         _telemetry_packet(frame=110, sequence=20, player_car_index=1)
     )
     assert observer.live_telemetry_snapshot()["status"] == "waiting"
     assert observer.live_car_status_snapshot()["status"] == "waiting"
+    assert observer.live_lap_timing_snapshot()["status"] == "waiting"
     _process(observer,
         _lap_packet(
             frame=110,
@@ -669,6 +937,7 @@ def test_live_monitor_resets_on_player_and_session_change():
     assert live["status"] == "waiting"
     assert "player_car_index" not in live
     assert observer.live_car_status_snapshot()["status"] == "waiting"
+    assert observer.live_lap_timing_snapshot()["status"] == "waiting"
 
 
 def test_live_monitor_reports_unsupported_packet_version_and_rejects_old_format():
@@ -713,20 +982,52 @@ def test_live_monitor_duplicate_envelopes_do_not_change_snapshot():
     telemetry = _telemetry_packet(frame=100, sequence=10)
     _process(observer, telemetry)
     _process(observer, telemetry)
-    _process(observer,
-        _lap_packet(
-            frame=100,
-            lap_number=1,
-            distance_m=1.0,
-            current_lap_time_ms=100,
-            session_time=1.0,
-            sequence=11,
-        )
+    lap = _lap_packet(
+        frame=100,
+        lap_number=1,
+        distance_m=1.0,
+        current_lap_time_ms=100,
+        session_time=1.0,
+        sequence=11,
     )
+    _process(observer, lap)
+    _process(observer, lap)
     _process(observer, _advance(101, 12))
 
-    assert observer.frames.duplicates_ignored == 1
+    assert observer.frames.duplicates_ignored == 2
     assert observer.live_telemetry_snapshot()["status"] == "fresh"
+    assert observer.live_lap_timing_snapshot()["status"] == "fresh"
+
+
+def test_live_lap_timing_does_not_promote_late_frames():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(observer, frame=100, telemetry=False, current_lap_time_ms=80_000)
+    _publish_frame(
+        observer,
+        frame=103,
+        sequence=30,
+        telemetry=False,
+        current_lap_time_ms=83_000,
+        sector_id=2,
+    )
+
+    late = _lap_packet(
+        frame=101,
+        lap_number=3,
+        distance_m=150.0,
+        session_time=99.0,
+        current_lap_time_ms=10_000,
+        sequence=40,
+    )
+    _process(observer, late)
+    _process(observer, _advance(104, 41))
+
+    timing = observer.live_lap_timing_snapshot()
+    assert timing["status"] == "fresh"
+    assert timing["frame_identifier"] == 103
+    assert timing["current_lap_time_ms"] == 83_000
+    assert timing["current_sector"] == 3
+    assert observer.frames.late_packets_ignored >= 1
 
 
 def test_live_monitor_player_change_barrier_rejects_older_buffered_snapshot():
@@ -974,6 +1275,10 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                         distance_m=10.0,
                         session_time=11.0,
                         current_lap_time_ms=1_234,
+                        last_lap_time_ms=80_456,
+                        sector1_time_ms=26_543,
+                        sector2_time_ms=30_987,
+                        sector_id=2,
                         sequence=11,
                     ).payload,
                     _car_status_packet(frame=100, sequence=12).payload,
@@ -996,6 +1301,16 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                 assert live["speed_kph"] == 100
                 assert live["lap_time_ms"] == 1_234
                 assert "_observed_monotonic_ns" not in live
+                timing = current["progress"]["live_lap_timing"]
+                assert timing["status"] == "fresh"
+                assert timing["frame_identifier"] == 100
+                assert timing["lap_number"] == 2
+                assert timing["current_lap_time_ms"] == 1_234
+                assert timing["current_sector"] == 3
+                assert timing["previous_lap_time_ms"] == 80_456
+                assert timing["sector1_time_ms"] == 26_543
+                assert timing["sector2_time_ms"] == 30_987
+                assert "_observed_monotonic_ns" not in timing
                 status = current["progress"]["live_car_status"]
                 assert status["status"] == "fresh"
                 assert status["frame_identifier"] == 100
@@ -1013,6 +1328,11 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                 ).json()["data"]["progress"]["live_car_status"]
                 assert stale_status["status"] == "stale"
                 assert stale_status["age_ms"] > 500
+                stale_timing = (
+                    await client.get("/api/v1/recordings/current")
+                ).json()["data"]["progress"]["live_lap_timing"]
+                assert stale_timing["status"] == "stale"
+                assert stale_timing["age_ms"] > 500
 
                 stopped = await client.post(
                     f"/api/v1/recordings/{recording_id}/stop",

@@ -638,7 +638,7 @@ def test_2026_packet_16_does_not_poison_live_packet_6_snapshot() -> None:
         observer.process(replace(raw, monotonic_ns=time.monotonic_ns()))
 
     process(_packet(1, _session_body(), frame=1, sequence=1))
-    process(_packet(2, _lap_body(), frame=100, sequence=2))
+    process(_packet(2, _lap_body(lap_number=24), frame=100, sequence=2))
     process(_packet(6, _telemetry_body(), frame=100, sequence=3))
     process(_packet(16, bytes(240), frame=100, sequence=4))
     process(
@@ -659,6 +659,15 @@ def test_2026_packet_16_does_not_poison_live_packet_6_snapshot() -> None:
     assert live_status["fuel_in_tank_reported"] == 35.5
     assert live_status["actual_tyre_compound"] == 20
     assert live_status["tyre_age_laps"] == 3
+    live_timing = observer.live_lap_timing_snapshot()
+    assert live_timing["status"] == "fresh"
+    assert live_timing["packet_format"] == 2026
+    assert live_timing["player_car_index"] == 23
+    assert live_timing["lap_number"] == 24
+    assert live_timing["current_lap_time_ms"] == 1_000
+    assert live_timing["current_sector"] == 2
+    assert live_timing["sector1_time_ms"] == 120_123
+    assert live_timing["sector2_time_ms"] == 60_234
 
 
 def test_2026_pipeline_joins_motion_by_frame_and_player_without_carry_forward() -> None:
