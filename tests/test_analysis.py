@@ -11,9 +11,12 @@ from f1_engineer.analysis.corners import analyze_attempt_regions
 from f1_engineer.analysis.events import detect_sustained_threshold_events
 from f1_engineer.analysis import quality as quality_module
 from f1_engineer.analysis.resampling import (
+    ExcludedSpan,
     ResamplingConfig,
     TraceSample,
+    _hard_block_grid_masks,
     common_distance_grid,
+    estimate_resampling_work,
     resample_trace,
 )
 from f1_engineer.storage.query import StoredAttemptTrace
@@ -159,6 +162,88 @@ def test_resampler_excludes_regressions_without_sorting_the_trace() -> None:
     assert result.values["speed_mps"][6:11] == (None, None, None, None, None)
     assert result.values["speed_mps"][11] == 21.0
     assert any(span.reason == "distance_regression" for span in result.excluded_spans)
+
+
+def test_indexed_hard_block_masks_match_the_inclusive_bruteforce_rule() -> None:
+    grid = tuple(float(distance) for distance in range(8))
+    blocks = (
+        ExcludedSpan(2.0, 5.0, "distance_regression"),
+        ExcludedSpan(3.0, 4.0, "stationary_distance"),
+        ExcludedSpan(1.0, 2.0, "lap_clock_regression", "brake"),
+        ExcludedSpan(6.0, 6.0, "stationary_distance", "throttle"),
+        ExcludedSpan(0.0, 7.0, "interpolation_gap"),
+        ExcludedSpan(0.0, 7.0, "distance_regression", "unknown_channel"),
+    )
+
+    global_mask, channel_masks = _hard_block_grid_masks(grid, blocks)
+
+    for channel in ("time_s", "speed_mps", "brake", "throttle"):
+        actual = tuple(
+            global_mask[index]
+            or (
+                channel in channel_masks
+                and channel_masks[channel][index]
+            )
+            for index in range(len(grid))
+        )
+        expected = tuple(
+            any(
+                (block.channel is None or block.channel == channel)
+                and block.start_distance_m - 1e-7 <= distance <= block.end_distance_m + 1e-7
+                and block.reason
+                in {"distance_regression", "lap_clock_regression", "stationary_distance"}
+                for block in blocks
+            )
+            for distance in grid
+        )
+        assert actual == expected
+
+
+def test_indexed_hard_block_ranges_preserve_epsilon_endpoints_and_zero_width_blocks() -> None:
+    grid = tuple(float(distance) for distance in range(5))
+    blocks = (
+        ExcludedSpan(2.0 + 5e-8, 2.0 + 5e-8, "stationary_distance"),
+        ExcludedSpan(3.0 + 2e-7, 3.0 + 2e-7, "distance_regression"),
+    )
+
+    global_mask, channel_masks = _hard_block_grid_masks(grid, blocks)
+
+    assert global_mask == (False, False, True, False, False)
+    assert channel_masks == {}
+
+
+def test_indexed_masks_bound_work_for_highly_fragmented_support() -> None:
+    grid = tuple(float(distance) for distance in range(1000))
+    blocks = tuple(
+        ExcludedSpan(
+            float(index % 1000),
+            float(index % 1000),
+            "distance_regression",
+            "brake",
+        )
+        for index in range(10_000)
+    )
+
+    global_mask, channel_masks = _hard_block_grid_masks(grid, blocks)
+    estimated_work = estimate_resampling_work(
+        10_000,
+        len(grid),
+        ResamplingConfig(),
+        hard_block_count=len(blocks),
+    )
+
+    assert not any(global_mask)
+    assert channel_masks["brake"] == (True,) * len(grid)
+    assert estimated_work < 16_000_000
+
+
+def test_indexed_resampling_work_estimator_matches_policy_formula() -> None:
+    assert estimate_resampling_work(
+        21,
+        21,
+        ResamplingConfig(),
+        hard_block_count=3,
+    ) == 7833
 
 
 def test_resampler_collapses_exact_duplicate_frames_and_reports_stationarity() -> None:

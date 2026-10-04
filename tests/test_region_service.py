@@ -329,8 +329,7 @@ def test_region_analysis_work_cap_is_checked_after_resampling_before_evaluation(
 def test_resampling_work_cap_precedes_resampling_and_accepts_exact_limit(monkeypatch) -> None:
     attempt = _attempt()
     _patch_load(monkeypatch, attempt)
-    expected = region_service._region_resampling_work(
-        1,
+    expected = region_service.estimate_resampling_work(
         len(attempt.samples),
         21,
         region_service.ResamplingConfig(),

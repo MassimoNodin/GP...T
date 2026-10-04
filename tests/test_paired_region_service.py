@@ -264,6 +264,40 @@ def test_pair_trace_reads_use_each_preflight_reservation(monkeypatch) -> None:
         assert kwargs["max_context_bytes"] == estimate.context_bytes
 
 
+def test_pair_resampling_v2_sums_both_estimates_and_accepts_exact_cap(monkeypatch) -> None:
+    target = _attempt("target", reference=False)
+    reference = _attempt("reference", reference=True)
+    _install_pair(monkeypatch, (target, reference))
+    config = ResamplingConfig()
+    side_work = paired_service.estimate_resampling_work(21, 21, config)
+    expected = 2 * side_work
+
+    def fail_if_loaded(*_args, **_kwargs):
+        pytest.fail("the combined work preflight must run before trace reads")
+
+    monkeypatch.setattr(paired_service, "load_attempt_trace", fail_if_loaded)
+    monkeypatch.setattr(paired_service, "PAIRED_REGION_RESAMPLING_WORK_LIMIT", expected - 1)
+    with pytest.raises(
+        PairedRegionReportUnavailable,
+        match="region_pair_resampling_work_limit_exceeded",
+    ):
+        compare_attempt_regions("test.sqlite3", "target", "reference", _model())
+
+    monkeypatch.setattr(paired_service, "PAIRED_REGION_RESAMPLING_WORK_LIMIT", expected)
+    monkeypatch.setattr(
+        paired_service,
+        "load_attempt_trace",
+        lambda _database, key, **_kwargs: target if key == "target" else reference,
+    )
+    report = compare_attempt_regions("test.sqlite3", "target", "reference", _model())
+
+    assert report is not None
+    assert report["resource_policy"]["resampling"]["estimated_work"] == expected
+    assert report["resource_policy"]["resampling"]["version"] == (
+        "indexed-hard-block-resampling-preflight-v2"
+    )
+
+
 @pytest.mark.parametrize(
     ("context", "reason"),
     [

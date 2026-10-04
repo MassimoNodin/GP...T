@@ -591,6 +591,28 @@ Reject over-limit requests without partial output. Any additional source scans i
 
 Acceptance covers synthetic Shanghai Practice 3/2 numeric-window parity and incomplete-capture/lifecycle warnings; the recovered Shanghai Practice 3/2 pair's bounded abstention before resampling when observed hard blocks exceed the combined 16,000,000-unit budget; Melbourne parity with existing standalone region calculations; preserved model search-window semantics; positive and unsupported intervals, sub-grid boundaries, gaps/rewinds/unsupported tails, ambiguous and censored events, exit support, missing channels and legacy schemas; pair/model/context/checksum drift; partial, Race and unknown-mode abstention; aggregate and exact-limit resource checks before evaluators; and CLI/API/dashboard evidence parity. Local models remain absent from ranking authority, and existing comparisons, references and briefs remain unchanged. No fresh capture is required. Clean eligible Time Trial evidence and independently reviewed region definitions remain prerequisites for real ranked coaching.
 
+D0042 supersedes the capture-specific resampling-work abstention above; validate that Shanghai pair under the indexed estimator and the unchanged downstream analysis-work cap instead.
+
+## Decision 0042: index hard-block masks during resampling
+
+**Status:** accepted
+
+**Date:** 2026-10-04
+
+Replace the shared resampler's repeated scan of every hard-block span for every channel/grid point with indexed grid-range masks. For each span, map the existing inclusive interval `[start - epsilon, end + epsilon]` onto the sorted grid with `bisect_left` and `bisect_right`, apply range updates to a difference array, then use a prefix sum to build global and channel-specific masks. Keep the current hard-block reasons and channel matching rules.
+
+Preserve resampled values, masks, coverage, excluded-span reasons/order, ambiguity handling, interpolation, counters and downstream measurement semantics exactly. The additional work and memory stay bounded by the existing source/grid caps and `O(C × G + H)` mask storage, where `C` is channel count, `G` grid points, and `H` hard blocks. Do not change source, context, grid, event or region limits.
+
+Move the shared estimator beside the resampler and version it as `indexed-hard-block-resampling-preflight-v2`. With source rows `N`, grid points `G`, hard blocks `H`, `B = min(G, ceil(max_bracket_distance_m / grid_step_m) + 1)`, `S = (C + 4) × N + C × G`, and `L = ceil(log2(max(S, G, H, 1) + 1))`, reserve:
+
+```text
+W = C × [N × (B + 2) + 4 × G + H × (2 × L + 4)] + S × L
+```
+
+Standalone region analysis still caps one estimate at 16,000,000 units; paired region analysis still caps the sum of both estimates at 16,000,000 units. Retain the metadata-only preflight with `H=0`, then recompute with observed hard blocks after bounded decode and before resampling. This decision supersedes only D0040 and D0041's resampling implementation and work-estimator formula; their diagnostics, eligibility gates and downstream work limits remain unchanged.
+
+Acceptance compares full resampler outputs against pre-change Melbourne and Shanghai capture baselines and checks differential membership against the original interval rule, including overlapping/nested and zero-width blocks, channel-specific blocks, epsilon endpoints, rewinds, duplicate distances, missing channels and ambiguous segments. Verify exact-limit acceptance and over-limit rejection before resampling, plus bounded work on highly fragmented traces. Run Shanghai Practice attempts 3 and 2 through the paired report with an explicitly selected region model that fits the separate 32,000,000-unit region-analysis limit, and retain incomplete-capture and lifecycle warnings. No database migration or new capture is required. This optimization does not enable Race comparison, ranking, coaching, geometry activation or claims of validated corners.
+
 ## Data flow
 
 ```text

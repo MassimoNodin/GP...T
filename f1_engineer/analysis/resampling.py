@@ -13,6 +13,10 @@ _FRAME_MASK = 0xFFFFFFFF
 _SERIAL_HALF_RANGE = 0x80000000
 _GRID_EPSILON = 1e-7
 _TIME_LIMIT_EPSILON_S = 1e-9
+RESAMPLING_WORK_POLICY_VERSION = "indexed-hard-block-resampling-preflight-v2"
+_HARD_BLOCK_REASONS = frozenset(
+    {"distance_regression", "lap_clock_regression", "stationary_distance"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +75,32 @@ class ResamplingConfig:
             "max_bracket_time_s": self.max_bracket_time_s,
             "max_bracket_distance_m": self.max_bracket_distance_m,
         }
+
+
+def estimate_resampling_work(
+    source_count: int,
+    grid_count: int,
+    config: ResamplingConfig = ResamplingConfig(),
+    *,
+    hard_block_count: int = 0,
+) -> int:
+    """Conservatively reserve indexed resampling work before allocating outputs."""
+    if source_count < 0 or grid_count < 1 or hard_block_count < 0:
+        raise ValueError("resampling work counts are outside their supported range")
+    channel_count = len(CHANNELS)
+    bracket_points = min(
+        grid_count,
+        math.ceil(config.max_bracket_distance_m / config.grid_step_m) + 1,
+    )
+    state_size = (channel_count + 4) * source_count + channel_count * grid_count
+    levels = math.ceil(
+        math.log2(max(state_size, grid_count, hard_block_count, 1) + 1)
+    )
+    return channel_count * (
+        source_count * (bracket_points + 2)
+        + 4 * grid_count
+        + hard_block_count * (2 * levels + 4)
+    ) + state_size * levels
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,6 +375,9 @@ def resample_trace(
                         )
                     )
 
+    global_hard_block_mask, channel_hard_block_masks = _hard_block_grid_masks(
+        grid, hard_blocks
+    )
     values: dict[str, tuple[float | int | bool | None, ...]] = {}
     masks: dict[str, tuple[bool, ...]] = {}
     coverage: dict[str, float] = {}
@@ -353,14 +386,9 @@ def resample_trace(
         channel_masks: list[bool] = []
         for position, options in enumerate(candidates[channel]):
             distance = grid[position]
-            blocked = any(
-                (span.channel is None or span.channel == channel)
-                and span.start_distance_m - _GRID_EPSILON
-                <= distance
-                <= span.end_distance_m + _GRID_EPSILON
-                and span.reason
-                in {"distance_regression", "lap_clock_regression", "stationary_distance"}
-                for span in hard_blocks
+            channel_mask = channel_hard_block_masks.get(channel)
+            blocked = global_hard_block_mask[position] or (
+                channel_mask is not None and channel_mask[position]
             )
             if blocked or not options:
                 channel_values.append(None)
@@ -428,6 +456,48 @@ def _channel_value(
     sample: TraceSample, channel: str
 ) -> float | int | bool | None:
     return getattr(sample, channel)
+
+
+def _hard_block_grid_masks(
+    grid: Sequence[float], hard_blocks: Sequence[ExcludedSpan]
+) -> tuple[tuple[bool, ...], dict[str, tuple[bool, ...]]]:
+    """Map inclusive hard-block intervals to masks with indexed range updates."""
+    global_difference = [0] * (len(grid) + 1)
+    channel_differences: dict[str, list[int]] = {}
+    for span in hard_blocks:
+        if span.reason not in _HARD_BLOCK_REASONS:
+            continue
+        start = bisect.bisect_left(grid, span.start_distance_m - _GRID_EPSILON)
+        end = bisect.bisect_right(grid, span.end_distance_m + _GRID_EPSILON)
+        if start >= end:
+            continue
+        if span.channel is None:
+            difference = global_difference
+        elif span.channel in CHANNELS:
+            difference = channel_differences.get(span.channel)
+            if difference is None:
+                difference = [0] * (len(grid) + 1)
+                channel_differences[span.channel] = difference
+        else:
+            continue
+        difference[start] += 1
+        difference[end] -= 1
+
+    def mask_from_difference(difference: Sequence[int]) -> tuple[bool, ...]:
+        active = 0
+        mask: list[bool] = []
+        for change in difference[:-1]:
+            active += change
+            mask.append(active > 0)
+        return tuple(mask)
+
+    return (
+        mask_from_difference(global_difference),
+        {
+            channel: mask_from_difference(difference)
+            for channel, difference in channel_differences.items()
+        },
+    )
 
 
 def _span(left: float, right: float, reason: str) -> ExcludedSpan:

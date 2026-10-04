@@ -26,11 +26,16 @@ from .region_service import (
     _conservative_hard_block_count,
     _estimate_matches_attempt,
     _model_summary,
-    _region_resampling_work,
     _region_warnings,
     _source_summary,
 )
-from .resampling import ResamplingConfig, TraceSample, resample_trace
+from .resampling import (
+    RESAMPLING_WORK_POLICY_VERSION,
+    ResamplingConfig,
+    TraceSample,
+    estimate_resampling_work,
+    resample_trace,
+)
 from .service import (
     ComparisonPolicy,
     TimeTrialContextError,
@@ -129,7 +134,6 @@ def compare_attempt_regions(
 
     grid = _bounded_pair_track_grid(track_model.track_length_m, config.grid_step_m)
     _require_pair_resampling_work(
-        region_count,
         (target_estimate, reference_estimate),
         len(grid),
         config,
@@ -188,7 +192,6 @@ def compare_attempt_regions(
         reference_samples, track_model.track_length_m
     )
     resampling_work = _require_pair_resampling_work(
-        region_count,
         (target_estimate, reference_estimate),
         len(grid),
         config,
@@ -305,7 +308,7 @@ def compare_attempt_regions(
                 "regions": {"estimated": region_count, "limit": MAX_TRACK_MODEL_REGIONS},
             },
             "resampling": {
-                "version": "single-attempt-region-resampling-preflight-v1",
+                "version": RESAMPLING_WORK_POLICY_VERSION,
                 "estimated_work": resampling_work,
                 "limit": PAIRED_REGION_RESAMPLING_WORK_LIMIT,
                 "status": "within_limit",
@@ -429,7 +432,6 @@ def _load_bounded_attempt(
 
 
 def _require_pair_resampling_work(
-    region_count: int,
     estimates: tuple[AttemptTraceResourceEstimate, AttemptTraceResourceEstimate],
     grid_count: int,
     config: ResamplingConfig,
@@ -443,8 +445,7 @@ def _require_pair_resampling_work(
             estimates[1].trace_row_count or 0,
         )
     work = sum(
-        _region_resampling_work(
-            region_count,
+        estimate_resampling_work(
             source_count,
             grid_count,
             config,

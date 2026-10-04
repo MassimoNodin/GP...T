@@ -15,7 +15,13 @@ from ..storage.query import (
 from ..storage.run_summaries import get_processing_run_summary
 from ..tracks.model import MAX_TRACK_MODEL_REGIONS, TrackModel
 from .corners import REGION_EVENT_EXAMPLE_LIMIT, analyze_attempt_regions
-from .resampling import CHANNELS, ResamplingConfig, TraceSample, resample_trace
+from .resampling import (
+    RESAMPLING_WORK_POLICY_VERSION,
+    ResamplingConfig,
+    TraceSample,
+    estimate_resampling_work,
+    resample_trace,
+)
 from .service import (
     TimeTrialContextError,
     require_track_model_compatible,
@@ -39,7 +45,7 @@ REGION_REPORT_SCHEMA_VERSION = 3
 REGION_REPORT_GRID_POINT_LIMIT = 100_000
 REGION_ANALYSIS_WORK_POLICY_VERSION = "single-attempt-region-weighted-work-v1"
 REGION_ANALYSIS_WORK_LIMIT = 32_000_000
-REGION_RESAMPLING_WORK_POLICY_VERSION = "single-attempt-region-resampling-preflight-v1"
+REGION_RESAMPLING_WORK_POLICY_VERSION = RESAMPLING_WORK_POLICY_VERSION
 REGION_RESAMPLING_WORK_LIMIT = 16_000_000
 REGION_POSITION_TRACE_COLUMNS = [
     *ANALYSIS_TRACE_COLUMNS,
@@ -102,7 +108,7 @@ def load_attempt_region_report(
     source_count = estimate.trace_row_count
     assert source_count is not None
     _require_region_resampling_work(
-        region_count, source_count, len(distance_grid), config, hard_block_count=0
+        source_count, len(distance_grid), config, hard_block_count=0
     )
 
     try:
@@ -124,8 +130,7 @@ def load_attempt_region_report(
 
     samples = tuple(TraceSample.from_record(row) for row in attempt.samples)
     hard_block_count = _conservative_hard_block_count(samples, track_model.track_length_m)
-    resampling_work = _region_resampling_work(
-        region_count,
+    resampling_work = estimate_resampling_work(
         len(samples),
         len(distance_grid),
         config,
@@ -334,41 +339,14 @@ def _conservative_hard_block_count(
     return count
 
 
-def _region_resampling_work(
-    region_count: int,
-    source_count: int,
-    grid_count: int,
-    config: ResamplingConfig,
-    *,
-    hard_block_count: int,
-) -> int:
-    channel_count = len(CHANNELS)
-    bracket_points = min(
-        grid_count,
-        math.ceil(config.max_bracket_distance_m / config.grid_step_m) + 1,
-    )
-    sortable_size = (channel_count + 4) * source_count + channel_count * grid_count
-    sorting_levels = math.ceil(math.log2(sortable_size + 1)) if sortable_size else 0
-    return (
-        channel_count
-        * (
-            grid_count * (hard_block_count + 1)
-            + source_count * (bracket_points + 2)
-        )
-        + sortable_size * sorting_levels
-    )
-
-
 def _require_region_resampling_work(
-    region_count: int,
     source_count: int,
     grid_count: int,
     config: ResamplingConfig,
     *,
     hard_block_count: int,
 ) -> None:
-    work = _region_resampling_work(
-        region_count,
+    work = estimate_resampling_work(
         source_count,
         grid_count,
         config,
