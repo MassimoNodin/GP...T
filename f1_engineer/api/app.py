@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import os
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -42,6 +43,8 @@ from ..storage.run_summaries import (
 from ..storage.database import DatabaseSchemaError
 from ..tracks.model import TrackModel
 from ..tracks.registry import (
+    TrackModelCatalog,
+    load_track_model_catalog,
     list_track_models as list_registered_track_models,
     resolve_track_model,
 )
@@ -85,6 +88,9 @@ class TrackModelRecord(BaseModel):
     validation_status: str
     provenance: str
     region_count: int
+    origin: Literal["packaged", "local_draft"]
+    content_sha256: str
+    source_filename: str
 
 
 class RecordingSourceRecord(BaseModel):
@@ -231,10 +237,19 @@ def create_app(
     recording_host: str = "0.0.0.0",
     recording_port: int = 20777,
     recording_queue_size: int = 8192,
+    track_models_root: str | Path | None = None,
 ) -> FastAPI:
     """Create a local API bound to operator-configured storage and recording roots."""
     configured_database_path = Path(database_path).expanduser().resolve()
     configured_recordings_root = Path(recordings_root).expanduser().resolve()
+    selected_track_models_root = (
+        track_models_root
+        if track_models_root is not None
+        else os.environ.get("F1_ENGINEER_TRACK_MODELS_ROOT") or None
+    )
+    track_model_catalog: TrackModelCatalog = load_track_model_catalog(
+        selected_track_models_root
+    )
     import_controller = ImportController(
         configured_database_path, configured_recordings_root
     )
@@ -481,11 +496,14 @@ def create_app(
                 reason="track_model_id_and_revision_must_be_selected_together",
             )
         try:
-            track_model = resolve_track_model(track_model_id, track_model_revision)
+            model_entry = track_model_catalog.resolve_entry(
+                track_model_id, track_model_revision
+            )
             result = load_attempt_region_report(
                 configured_database_path,
                 attempt_key,
-                track_model,
+                model_entry.model,
+                model_metadata=model_entry.metadata(),
             )
         except RegionReportUnavailable as exc:
             return APIResponse[dict[str, Any]](
@@ -516,7 +534,7 @@ def create_app(
     )
     def track_models() -> APIResponse[list[TrackModelRecord]]:
         return APIResponse[list[TrackModelRecord]](
-            data=list_registered_track_models()
+            data=list_registered_track_models(track_model_catalog)
         )
 
     @app.get(

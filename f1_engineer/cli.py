@@ -44,7 +44,7 @@ from .storage.run_summaries import list_processing_run_lifecycle_events
 from .udp.models import DecodedPacket
 from .udp.source import ReplaySource, UDPSource
 from .tracks.geometry_loader import load_geometry_model
-from .tracks.registry import resolve_track_model
+from .tracks.registry import load_track_model_catalog
 
 
 def _json_line(value: dict[str, Any]) -> None:
@@ -432,6 +432,7 @@ def _api(args: argparse.Namespace) -> int:
             recording_host=args.udp_host,
             recording_port=args.udp_port,
             recording_queue_size=args.udp_queue_size,
+            track_models_root=args.track_models_root,
         ),
         host="127.0.0.1",
         port=args.port,
@@ -558,11 +559,14 @@ def _traces(args: argparse.Namespace) -> int:
 
 
 def _regions(args: argparse.Namespace) -> int:
-    model = resolve_track_model(args.track_model_id, args.track_model_revision)
+    model_entry = load_track_model_catalog(args.track_models_root).resolve_entry(
+        args.track_model_id, args.track_model_revision
+    )
     document = load_attempt_region_report(
         args.database,
         args.attempt_key,
-        model,
+        model_entry.model,
+        model_metadata=model_entry.metadata(),
     )
     if document is None:
         print("error: lap attempt not found or its trace is not ready", file=sys.stderr)
@@ -757,6 +761,11 @@ def build_parser() -> argparse.ArgumentParser:
     api.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
     api.add_argument("--recordings-root", default="recordings", help="folder containing local .f1ecap files")
     api.add_argument(
+        "--track-models-root",
+        default=os.environ.get("F1_ENGINEER_TRACK_MODELS_ROOT") or None,
+        help="server-configured folder of local draft distance-region JSON models",
+    )
+    api.add_argument(
         "--control-token-file",
         default=str(Path("data") / ".f1-engineer-control-token"),
         help="server-only authorization token file for local import actions",
@@ -858,12 +867,17 @@ def build_parser() -> argparse.ArgumentParser:
     traces.set_defaults(handler=_traces)
 
     regions = commands.add_parser(
-        "regions", help="inspect one attempt against a packaged diagnostic distance-region model"
+        "regions", help="inspect one attempt against a configured diagnostic distance-region model"
     )
     regions.add_argument("attempt_key", help="attempt key printed by the laps command")
     regions.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
-    regions.add_argument("--track-model-id", required=True, help="registered track model ID")
+    regions.add_argument("--track-model-id", required=True, help="catalog track model ID")
     regions.add_argument("--track-model-revision", type=int, required=True, help="registered model revision")
+    regions.add_argument(
+        "--track-models-root",
+        default=os.environ.get("F1_ENGINEER_TRACK_MODELS_ROOT") or None,
+        help="folder of local draft models; defaults to F1_ENGINEER_TRACK_MODELS_ROOT",
+    )
     regions.set_defaults(handler=_regions)
 
     geometry_validate = commands.add_parser(

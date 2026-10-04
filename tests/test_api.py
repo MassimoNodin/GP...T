@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -396,16 +397,30 @@ def test_attempt_regions_api_resolves_registered_model_and_returns_report(
         "regions": [],
     }
 
-    def resolve(model_id: str, revision: int):
+    def resolve_entry(model_id: str, revision: int):
         calls["identity"] = (model_id, revision)
-        return model
+        return SimpleNamespace(
+            model=model,
+            metadata=lambda: {
+                "model_id": model_id,
+                "revision": revision,
+                "origin": "local_draft",
+                "content_sha256": "a" * 64,
+                "source_filename": "local.json",
+            },
+        )
 
-    def load(_database, attempt_key: str, selected_model):
+    def load(_database, attempt_key: str, selected_model, *, model_metadata):
         calls["attempt_key"] = attempt_key
         calls["model"] = selected_model
+        calls["model_metadata"] = model_metadata
         return report
 
-    monkeypatch.setattr(api_module, "resolve_track_model", resolve)
+    monkeypatch.setattr(
+        api_module,
+        "load_track_model_catalog",
+        lambda *_args: SimpleNamespace(resolve_entry=resolve_entry),
+    )
     monkeypatch.setattr(api_module, "load_attempt_region_report", load)
     response = _get(
         create_app(tmp_path / "unused.sqlite3"),
@@ -424,6 +439,13 @@ def test_attempt_regions_api_resolves_registered_model_and_returns_report(
         "identity": ("melbourne-draft-v1", 1),
         "attempt_key": "run:42:0:1",
         "model": model,
+        "model_metadata": {
+            "model_id": "melbourne-draft-v1",
+            "revision": 1,
+            "origin": "local_draft",
+            "content_sha256": "a" * 64,
+            "source_filename": "local.json",
+        },
     }
 
 
@@ -433,7 +455,15 @@ def test_attempt_regions_api_requires_registered_model_identity_and_reports_poli
     def unsupported(*_args, **_kwargs):
         raise api_module.RegionReportUnavailable("unsupported_mode")
 
-    monkeypatch.setattr(api_module, "resolve_track_model", lambda *_args: object())
+    monkeypatch.setattr(
+        api_module,
+        "load_track_model_catalog",
+        lambda *_args: SimpleNamespace(
+            resolve_entry=lambda *_identity: SimpleNamespace(
+                model=object(), metadata=lambda: {}
+            )
+        ),
+    )
     monkeypatch.setattr(api_module, "load_attempt_region_report", unsupported)
     response = _get(
         create_app(tmp_path / "unused.sqlite3"),
@@ -455,7 +485,15 @@ def test_attempt_regions_api_requires_registered_model_identity_and_reports_poli
 def test_attempt_regions_api_maps_trace_file_errors_to_unavailable(
     monkeypatch, tmp_path
 ) -> None:
-    monkeypatch.setattr(api_module, "resolve_track_model", lambda *_args: object())
+    monkeypatch.setattr(
+        api_module,
+        "load_track_model_catalog",
+        lambda *_args: SimpleNamespace(
+            resolve_entry=lambda *_identity: SimpleNamespace(
+                model=object(), metadata=lambda: {}
+            )
+        ),
+    )
 
     def missing_trace(*_args, **_kwargs):
         raise FileNotFoundError("trace disappeared during load")

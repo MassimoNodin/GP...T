@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -12,6 +13,12 @@ MAX_TRACK_MODEL_JSON_BYTES = 1024 * 1024
 
 
 def load_track_model(path: str | Path) -> TrackModel:
+    model, _content_sha256 = load_track_model_with_checksum(path)
+    return model
+
+
+def load_track_model_with_checksum(path: str | Path) -> tuple[TrackModel, str]:
+    """Load one bounded model and return the digest of the exact source bytes."""
     source = Path(path)
     try:
         with source.open("rb") as file:
@@ -32,7 +39,7 @@ def load_track_model(path: str | Path) -> TrackModel:
         raise ValueError("region_count_limit_exceeded")
     corners = tuple(_corner(item) for item in corners_value)
     try:
-        return TrackModel(
+        model = TrackModel(
             model_id=_string(value, "model_id"),
             revision=_integer(value, "revision"),
             packet_format=_integer(value, "packet_format"),
@@ -47,6 +54,7 @@ def load_track_model(path: str | Path) -> TrackModel:
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"invalid track model {source}: {exc}") from exc
+    return model, hashlib.sha256(content).hexdigest()
 
 
 def _corner(value: Any) -> CornerDefinition:

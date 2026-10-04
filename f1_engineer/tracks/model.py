@@ -27,6 +27,10 @@ class CornerDefinition:
     def validate(self, track_length_m: float, distance_origin_m: float) -> None:
         if not self.identifier.strip() or not self.label.strip():
             raise ValueError("corner identifier and label must not be empty")
+        if self.complex_id is not None and (
+            not isinstance(self.complex_id, str) or not self.complex_id.strip()
+        ):
+            raise ValueError("corner complex_id must be a non-empty string or null")
         start = self.start_distance_m + distance_origin_m
         end = self.end_distance_m + distance_origin_m
         if not math.isfinite(start) or not math.isfinite(end) or not 0 <= start < end <= track_length_m:

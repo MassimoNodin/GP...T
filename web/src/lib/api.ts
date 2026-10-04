@@ -126,6 +126,9 @@ export interface TrackModelRecord {
   validation_status: "draft" | "validated";
   provenance: string;
   region_count?: number;
+  origin?: "packaged" | "local_draft" | "unattributed";
+  content_sha256?: string | null;
+  source_filename?: string | null;
 }
 
 export interface LapRecord {
@@ -882,10 +885,16 @@ export interface RegionPositionEvidence {
 }
 
 export interface AttemptRegionReport {
-  schema_version: 2;
+  schema_version: 3;
   artifact_kind: "single_attempt_distance_region_observations";
   diagnostic_only: true;
+  context_mode: "time_trial" | "practice_qualifying";
   config: { grid_step_m: number; max_bracket_time_s: number; max_bracket_distance_m: number };
+  resource_policy: {
+    resampling: { version: string; estimated_work: number; limit: number; status: string };
+    region_analysis: { version: string; estimated_work: number; limit: number; status: string };
+  };
+  warnings: Array<{ code: string; text: string }>;
   source: {
     attempt_key: string;
     run_id: string;
@@ -897,16 +906,29 @@ export interface AttemptRegionReport {
     game_valid: boolean | null;
     reference_eligible: boolean;
     exclusion_reasons: string[];
+    start_observed: boolean;
+    pit_encountered: boolean;
+    superseded: boolean | null;
+    lifecycle_assessed: boolean;
     trace_sha256: string;
     trace_schema_version: number;
     source_sample_count: number;
+    capture: {
+      complete: boolean | null;
+      footer_status: string | null;
+      recording_counters: Record<string, number | null>;
+    } | null;
+    replay_counters: Record<string, number | null> | null;
     session_context_segments: Array<{
       from_frame_identifier: number;
       context: Record<string, unknown> | null;
     }>;
   };
   analysis_version: string;
-  model: TrackModelRecord & { distance_origin_m: number };
+  model: TrackModelRecord & {
+    distance_origin_m: number;
+    layout_identity_status: "caller_declared";
+  };
   layout_validation_status: string;
   event_thresholds: Record<string, number>;
   event_example_limit_per_channel_region: number;

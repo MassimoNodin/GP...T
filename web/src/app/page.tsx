@@ -132,6 +132,8 @@ export default async function Home({
   const selectedModel =
     trackModels.find((item) => modelKey(item) === params.track_model_key) ??
     null;
+  const selectedComparisonModel =
+    selectedModel?.origin === "packaged" ? selectedModel : null;
   const staleModelChoice = Boolean(params.track_model_key) && !selectedModel;
   const allSessions = sessionResponse?.data ?? [];
   const importedSessions = allSessions.filter(
@@ -173,6 +175,11 @@ export default async function Home({
       ? [...sessions, session]
       : sessions;
   const isTimeTrial = session?.context?.session_type === "time_trial";
+  const sessionType = session?.context?.session_type;
+  const isPracticeQualifying =
+    typeof sessionType === "string" &&
+    /^(practice_|qualifying_|sprint_shootout_)/.test(sessionType);
+  const standaloneRegionModeSupported = isTimeTrial || isPracticeQualifying;
   const comparisonPolicy =
     params.comparison_policy === "practice_qualifying"
       ? "practice_qualifying"
@@ -260,7 +267,7 @@ export default async function Home({
   const manualComparisonRequest =
     target && manualReference
       ? requestApi<Comparison>(
-          `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, manualReference.attempt_key, selectedModel, comparisonPolicy, params.window_start_m, params.window_end_m)}`,
+          `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, manualReference.attempt_key, selectedComparisonModel, comparisonPolicy, params.window_start_m, params.window_end_m)}`,
         )
       : Promise.resolve(null);
   const [selectionResponse, manualComparisonResponse, qualityResponse, traceChartResponse, trajectoryResponse, regionResponse, observationSetResponse] = await Promise.all([
@@ -283,7 +290,7 @@ export default async function Home({
   const comparisonResponse =
     autoReference && target && referenceKey
       ? await requestApi<Comparison>(
-          `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, referenceKey, selectedModel, "time_trial", params.window_start_m, params.window_end_m)}`,
+          `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, referenceKey, selectedComparisonModel, "time_trial", params.window_start_m, params.window_end_m)}`,
         )
       : manualComparisonResponse;
   const comparison =
@@ -879,7 +886,7 @@ export default async function Home({
                         <option value="">No region analysis</option>
                         {trackModels.map((model) => (
                           <option value={modelKey(model)} key={modelKey(model)}>
-                            {model.track_name} · {model.validation_status} · rev{" "}
+                            {model.track_name} · {model.origin === "local_draft" ? "local draft · standalone only" : model.validation_status} · rev{" "}
                             {model.revision} · {model.region_count ?? 0} regions
                           </option>
                         ))}
@@ -921,21 +928,22 @@ export default async function Home({
                       The selected model revision is no longer available. The
                       regular lap comparison remains available.
                     </p>
-                  ) : !isTimeTrial ? (
+                  ) : !standaloneRegionModeSupported ? (
                     <p className="model-note">
-                      Standalone region observations currently require a
-                      stable Time Trial context. Other modes return an
-                      explicit unavailable result.
+                      Standalone region observations require a stable known
+                      Time Trial or Practice/Qualifying context. Race and
+                      unknown modes return an explicit unavailable result.
                     </p>
                   ) : selectedModel ? (
                     <p className="model-note">
-                      Explicit revision selected. Draft windows remain
-                      diagnostic and do not represent validated circuit corners.
+                      {selectedModel.origin === "local_draft"
+                        ? "Local draft selected for this attempt's standalone inspection only. It does not affect paired comparison, ranking, or coaching."
+                        : "Explicit revision selected. Draft windows remain diagnostic and do not represent validated circuit corners."}
                     </p>
                   ) : (
                     <p className="model-note">
-                      Select a packaged model revision to add its distance
-                      regions to this comparison.
+                      Select a packaged or configured local draft revision to
+                      inspect this attempt's distance regions.
                     </p>
                   )}
                   {comparisonPolicy === "practice_qualifying" ? (
@@ -1390,7 +1398,7 @@ export default async function Home({
                             ? "REGION ANALYSIS UNAVAILABLE"
                             : trackModelCatalogUnavailable
                               ? "REGION MODEL CATALOG UNAVAILABLE"
-                              : isTimeTrial
+                              : standaloneRegionModeSupported
                                 ? "NO REGION MODEL SELECTED"
                                 : "REGION POLICY UNSUPPORTED"}
                         </div>
@@ -1399,18 +1407,18 @@ export default async function Home({
                             ? "The selected model returned no region analysis."
                             : trackModelCatalogUnavailable
                               ? "Track model metadata could not be loaded."
-                              : isTimeTrial
+                            : standaloneRegionModeSupported
                                 ? "Choose an explicit model to inspect distance regions."
-                                : "Diagnostic region analysis currently requires Time Trial."}
+                              : "Standalone region inspection requires stable Time Trial or Practice/Qualifying context."}
                         </h3>
                         <p>
                           {selectedModel
                             ? "The API returned the lap comparison without region evidence. Reload or choose another registered revision."
                             : trackModelCatalogUnavailable
                               ? "The local API did not provide the model catalog. Reload after the API is available to select a registered revision."
-                              : isTimeTrial
+                              : standaloneRegionModeSupported
                                 ? "No circuit geometry is inferred from session telemetry. Models are versioned and selected explicitly."
-                                : "This comparison keeps the mode boundary explicit; no region results are inferred for this session."}
+                                : "Race and unknown contexts stay unavailable; no region results are inferred for this session."}
                         </p>
                       </section>
                     )}

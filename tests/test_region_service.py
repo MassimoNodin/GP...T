@@ -6,7 +6,11 @@ import pytest
 
 from f1_engineer.analysis import region_service
 from f1_engineer.analysis.region_service import RegionReportUnavailable
-from f1_engineer.storage.query import AttemptTraceReadLimitError, StoredAttemptTrace
+from f1_engineer.storage.query import (
+    AttemptTraceReadLimitError,
+    AttemptTraceResourceEstimate,
+    StoredAttemptTrace,
+)
 from f1_engineer.tracks.model import CornerDefinition, TrackModel
 
 
@@ -77,6 +81,7 @@ def _attempt(
         attempt_number=1,
         start_observed=True,
         pit_encountered=False,
+        source_sample_count=len(samples),
     )
 
 
@@ -107,6 +112,63 @@ def _model(*, track_length_m: float = 20.0) -> TrackModel:
     )
 
 
+def _patch_load(monkeypatch, attempt: StoredAttemptTrace) -> None:
+    estimate = AttemptTraceResourceEstimate(
+        attempt_key=attempt.attempt_key,
+        run_id=attempt.run_id,
+        session_uid=attempt.session_uid,
+        car_index=attempt.car_index,
+        attempt_number=attempt.attempt_number,
+        disposition=attempt.disposition,
+        lap_time_ms=attempt.lap_time_ms,
+        game_valid=attempt.game_valid,
+        start_observed=attempt.start_observed,
+        pit_encountered=attempt.pit_encountered,
+        superseded=attempt.superseded,
+        lifecycle_assessed=attempt.lifecycle_assessed,
+        exclusion_reasons=attempt.exclusion_reasons,
+        trace_ready=True,
+        trace_row_count=len(attempt.samples),
+        trace_sha256=attempt.trace_sha256,
+        trace_schema_version=attempt.trace_schema_version,
+        trace_size_bytes=1024,
+        context_segment_count=len(attempt.context_segments),
+        context_bytes=128,
+        context_segments=attempt.context_segments,
+    )
+    monkeypatch.setattr(
+        region_service,
+        "load_attempt_trace_resource_estimates",
+        lambda *_args, **_kwargs: (estimate,),
+    )
+    monkeypatch.setattr(
+        region_service,
+        "load_attempt_trace",
+        lambda *_args, **_kwargs: attempt,
+    )
+    monkeypatch.setattr(
+        region_service,
+        "get_processing_run_summary",
+        lambda *_args: {
+            "capture": {
+                "complete": True,
+                "footer_status": "complete",
+                "recording_counters": {
+                    "queue_dropped": 0,
+                    "unpersisted_on_shutdown": 0,
+                    "socket_errors": 0,
+                },
+            },
+            "processing": {
+                "replay_counters": {
+                    "import_late_packets_ignored": 0,
+                    "import_frame_overflow_packets_dropped": 0,
+                }
+            },
+        },
+    )
+
+
 @pytest.mark.parametrize("schema_version", [1, 2, 3])
 def test_single_attempt_report_accepts_invalid_and_partial_time_trial_traces(
     monkeypatch, schema_version: int
@@ -118,15 +180,21 @@ def test_single_attempt_report_accepts_invalid_and_partial_time_trial_traces(
         calls.update(kwargs)
         return attempt
 
+    _patch_load(monkeypatch, attempt)
     monkeypatch.setattr(region_service, "load_attempt_trace", load)
     report = region_service.load_attempt_region_report("test.sqlite3", attempt.attempt_key, _model())
 
     assert report is not None
+    assert report["schema_version"] == 3
     assert report["diagnostic_only"] is True
+    assert report["context_mode"] == "time_trial"
     assert report["source"]["game_valid"] is False
     assert report["source"]["reference_eligible"] is False
     assert report["source"]["trace_schema_version"] == schema_version
     assert report["source"]["trace_sha256"] == "a" * 64
+    assert report["model"]["layout_identity_status"] == "caller_declared"
+    assert report["source"]["capture"]["complete"] is True
+    assert any(warning["code"] == "game_invalid" for warning in report["warnings"])
     assert report["regions"][0]["observations"]["minimum_speed"]["speed_kph"] == pytest.approx(54.0)
     assert calls["columns"] == region_service.REGION_POSITION_TRACE_COLUMNS
     position_evidence = report["regions"][0]["position_evidence"]
@@ -151,8 +219,9 @@ def test_single_attempt_report_accepts_invalid_and_partial_time_trial_traces(
         reference_eligible=False,
         exclusion_reasons=("capture_ended_before_lap_completion",),
         samples=partial_samples,
+        source_sample_count=len(partial_samples),
     )
-    monkeypatch.setattr(region_service, "load_attempt_trace", lambda *_args, **_kwargs: partial)
+    _patch_load(monkeypatch, partial)
     partial_report = region_service.load_attempt_region_report(
         "test.sqlite3", attempt.attempt_key, _model()
     )
@@ -168,7 +237,7 @@ def test_single_attempt_report_accepts_invalid_and_partial_time_trial_traces(
         disposition="abandoned",
         exclusion_reasons=("attempt_abandoned_before_completion",),
     )
-    monkeypatch.setattr(region_service, "load_attempt_trace", lambda *_args, **_kwargs: abandoned)
+    _patch_load(monkeypatch, abandoned)
     abandoned_report = region_service.load_attempt_region_report(
         "test.sqlite3", attempt.attempt_key, _model()
     )
@@ -193,7 +262,7 @@ def test_single_attempt_region_report_abstains_for_unsupported_context(
     monkeypatch, context_segments, reason: str
 ) -> None:
     attempt = replace(_attempt(), context_segments=context_segments)
-    monkeypatch.setattr(region_service, "load_attempt_trace", lambda *_args, **_kwargs: attempt)
+    _patch_load(monkeypatch, attempt)
 
     with pytest.raises(RegionReportUnavailable) as caught:
         region_service.load_attempt_region_report("test.sqlite3", attempt.attempt_key, _model())
@@ -203,13 +272,125 @@ def test_single_attempt_region_report_abstains_for_unsupported_context(
 
 def test_single_attempt_region_report_abstains_for_incompatible_model(monkeypatch) -> None:
     attempt = _attempt()
-    monkeypatch.setattr(region_service, "load_attempt_trace", lambda *_args, **_kwargs: attempt)
+    _patch_load(monkeypatch, attempt)
     incompatible = replace(_model(), track_id=2)
 
     with pytest.raises(RegionReportUnavailable) as caught:
         region_service.load_attempt_region_report("test.sqlite3", attempt.attempt_key, incompatible)
 
     assert caught.value.reason_code == "track_model_incompatible"
+
+
+def test_single_attempt_region_report_supports_practice_qualifying_context(monkeypatch) -> None:
+    context = _context(
+        session_type="practice_1",
+        game_mode="driver_career_25",
+        rule_set="practice_qualifying",
+    )
+    attempt = _attempt(context=context)
+    _patch_load(monkeypatch, attempt)
+
+    report = region_service.load_attempt_region_report(
+        "test.sqlite3",
+        attempt.attempt_key,
+        _model(),
+        model_metadata={"origin": "local_draft", "content_sha256": "b" * 64},
+    )
+
+    assert report is not None
+    assert report["context_mode"] == "practice_qualifying"
+    assert report["model"]["origin"] == "local_draft"
+    assert report["model"]["content_sha256"] == "b" * 64
+    assert any(
+        warning["code"] == "practice_qualifying_conditions_uncontrolled"
+        for warning in report["warnings"]
+    )
+
+
+def test_region_analysis_work_cap_is_checked_after_resampling_before_evaluation(
+    monkeypatch,
+) -> None:
+    attempt = _attempt()
+    _patch_load(monkeypatch, attempt)
+    expected = region_service._region_analysis_work(1, 3, 21, 0)
+    monkeypatch.setattr(region_service, "REGION_ANALYSIS_WORK_LIMIT", expected - 1)
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("region evaluator must not run over the work limit")
+
+    monkeypatch.setattr(region_service, "analyze_attempt_regions", fail_if_called)
+    with pytest.raises(RegionReportUnavailable) as caught:
+        region_service.load_attempt_region_report(
+            "test.sqlite3", attempt.attempt_key, _model()
+        )
+    assert caught.value.reason_code == "region_analysis_work_limit_exceeded"
+
+
+def test_resampling_work_cap_precedes_resampling_and_accepts_exact_limit(monkeypatch) -> None:
+    attempt = _attempt()
+    _patch_load(monkeypatch, attempt)
+    expected = region_service._region_resampling_work(
+        1,
+        len(attempt.samples),
+        21,
+        region_service.ResamplingConfig(),
+        hard_block_count=0,
+    )
+    monkeypatch.setattr(region_service, "REGION_RESAMPLING_WORK_LIMIT", expected - 1)
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("resampling must not run over the work limit")
+
+    monkeypatch.setattr(region_service, "resample_trace", fail_if_called)
+    with pytest.raises(RegionReportUnavailable) as caught:
+        region_service.load_attempt_region_report(
+            "test.sqlite3", attempt.attempt_key, _model()
+        )
+    assert caught.value.reason_code == "region_resampling_work_limit_exceeded"
+
+    monkeypatch.undo()
+    _patch_load(monkeypatch, attempt)
+    monkeypatch.setattr(region_service, "REGION_RESAMPLING_WORK_LIMIT", expected)
+    report = region_service.load_attempt_region_report(
+        "test.sqlite3", attempt.attempt_key, _model()
+    )
+    assert report is not None
+    assert report["resource_policy"]["resampling"]["estimated_work"] == expected
+
+
+def test_region_warnings_preserve_unknown_counters_with_positive_losses(monkeypatch) -> None:
+    attempt = _attempt()
+    _patch_load(monkeypatch, attempt)
+    monkeypatch.setattr(
+        region_service,
+        "get_processing_run_summary",
+        lambda *_args: {
+            "capture": {
+                "complete": False,
+                "footer_status": "incomplete",
+                "recording_counters": {
+                    "queue_dropped": 1,
+                    "unpersisted_on_shutdown": None,
+                    "socket_errors": 0,
+                },
+            },
+            "processing": {
+                "replay_counters": {
+                    "import_late_packets_ignored": 2,
+                    "import_frame_overflow_packets_dropped": None,
+                }
+            },
+        },
+    )
+
+    report = region_service.load_attempt_region_report(
+        "test.sqlite3", attempt.attempt_key, _model()
+    )
+
+    warnings = {warning["code"]: warning["text"] for warning in report["warnings"]}
+    assert warnings["capture_incomplete"]
+    assert "unknown" in warnings["recording_loss_reported"]
+    assert "unknown" in warnings["replay_frame_exclusions_reported"]
 
 
 def test_single_attempt_region_report_abstains_when_source_or_grid_exceeds_bounds(
@@ -220,6 +401,7 @@ def test_single_attempt_region_report_abstains_when_source_or_grid_exceeds_bound
     def oversized(*_args, **_kwargs):
         raise AttemptTraceReadLimitError("rows")
 
+    _patch_load(monkeypatch, attempt)
     monkeypatch.setattr(region_service, "load_attempt_trace", oversized)
     with pytest.raises(RegionReportUnavailable) as caught:
         region_service.load_attempt_region_report("test.sqlite3", attempt.attempt_key, _model())

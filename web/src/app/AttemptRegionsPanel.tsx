@@ -48,6 +48,16 @@ export default function AttemptRegionsPanel({
         These draft distance windows are not validated corners. Metrics use
         only observed, supported telemetry; there is no comparison or coaching.
       </p>
+      {report.warnings.length ? (
+        <div className="attempt-region-warnings" aria-label="Region analysis warnings">
+          {report.warnings.map((warning) => (
+            <div className="diagnostic-banner" key={warning.code}>
+              <b>i</b>
+              <span>{warning.text}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
       <div className="region-grid">
         {report.regions.map((region, index) => (
           <AttemptRegionCard
@@ -74,6 +84,58 @@ export default function AttemptRegionsPanel({
             <dt>Model revision</dt>
             <dd>
               {model.model_id} · rev {model.revision}
+            </dd>
+          </div>
+          <div>
+            <dt>Model source</dt>
+            <dd>
+              {humanize(model.origin ?? "unattributed")}
+              {model.source_filename ? ` · ${model.source_filename}` : ""}
+            </dd>
+          </div>
+          <div>
+            <dt>Model content SHA-256</dt>
+            <dd>{model.content_sha256 ?? "unavailable"}</dd>
+          </div>
+          <div>
+            <dt>Declared layout</dt>
+            <dd>
+              {model.layout_id} · {humanize(model.layout_identity_status)}
+            </dd>
+          </div>
+          <div>
+            <dt>Session mode</dt>
+            <dd>{humanize(report.context_mode)}</dd>
+          </div>
+          <div>
+            <dt>Capture completion</dt>
+            <dd>
+              {source.capture?.footer_status ?? "unknown"}
+              {source.capture?.complete === false ? " · incomplete" : ""}
+            </dd>
+          </div>
+          <div>
+            <dt>Attempt lifecycle</dt>
+            <dd>
+              {source.lifecycle_assessed
+                ? source.superseded === true
+                  ? "assessed · superseded"
+                  : "assessed"
+                : "unassessed"}
+            </dd>
+          </div>
+          <div>
+            <dt>Resampling work</dt>
+            <dd>
+              {report.resource_policy.resampling.estimated_work.toLocaleString()} /{" "}
+              {report.resource_policy.resampling.limit.toLocaleString()}
+            </dd>
+          </div>
+          <div>
+            <dt>Region analysis work</dt>
+            <dd>
+              {report.resource_policy.region_analysis.estimated_work.toLocaleString()} /{" "}
+              {report.resource_policy.region_analysis.limit.toLocaleString()}
             </dd>
           </div>
           <div>

@@ -137,3 +137,21 @@ def test_track_model_allows_explicit_overlapping_complex_members() -> None:
     )
 
     assert tuple(corner.identifier for corner in model.corners) == ("a", "b")
+
+
+@pytest.mark.parametrize("complex_id", [{}, [], False, 7, ""])
+def test_track_model_rejects_invalid_complex_id_types(complex_id) -> None:
+    with pytest.raises(ValueError, match="complex_id must be a non-empty string or null"):
+        TrackModel(
+            model_id="test-track",
+            revision=1,
+            packet_format=2025,
+            track_id=0,
+            track_name="Test",
+            layout_id="default",
+            track_length_m=100,
+            distance_origin_m=0,
+            provenance="test",
+            validation_status="draft",
+            corners=(CornerDefinition("a", "A", 0, 20, complex_id=complex_id),),
+        )
