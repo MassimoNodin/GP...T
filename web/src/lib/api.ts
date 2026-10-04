@@ -48,6 +48,7 @@ export interface RecordingProgressRecord {
   socket_errors: number;
   latest_context: SessionContext | null;
   live_telemetry: LiveTelemetryRecord;
+  live_car_status?: LiveCarStatusRecord | null;
 }
 
 export interface LiveTelemetryRecord {
@@ -68,6 +69,24 @@ export interface LiveTelemetryRecord {
   engine_rpm?: number | null;
   throttle?: number | null;
   brake?: number | null;
+}
+
+export interface LiveCarStatusRecord {
+  status: "waiting" | "fresh" | "stale" | "unsupported" | "unavailable";
+  reason: string | null;
+  age_ms: number | null;
+  session_uid?: string | null;
+  frame_identifier?: number | null;
+  packet_format?: number | null;
+  player_car_index?: number | null;
+  fuel_in_tank_reported?: number | null;
+  fuel_remaining_laps?: number | null;
+  actual_tyre_compound?: number | null;
+  visual_tyre_compound?: number | null;
+  tyre_age_laps?: number | null;
+  front_brake_bias_percent?: number | null;
+  pit_limiter_active?: boolean | null;
+  validation_flags?: string[];
 }
 
 export interface RecordingJobRecord {

@@ -12,6 +12,7 @@ from typing import Any
 
 from ..recording.capture import CaptureReader
 from ..recording.service import (
+    LIVE_CAR_STATUS_FRESHNESS_LIMIT_MS,
     LIVE_TELEMETRY_FRESHNESS_LIMIT_MS,
     RecordingSnapshot,
     record_udp_capture,
@@ -135,6 +136,11 @@ class RecordingController:
                     "socket_errors": 0,
                     "latest_context": None,
                     "live_telemetry": {
+                        "status": "waiting",
+                        "reason": None,
+                        "age_ms": None,
+                    },
+                    "live_car_status": {
                         "status": "waiting",
                         "reason": None,
                         "age_ms": None,
@@ -447,8 +453,14 @@ class RecordingController:
             return result
 
         progress_response = dict(progress)
-        live = progress.get("live_telemetry")
-        if isinstance(live, dict):
+        freshness_limits = {
+            "live_telemetry": LIVE_TELEMETRY_FRESHNESS_LIMIT_MS,
+            "live_car_status": LIVE_CAR_STATUS_FRESHNESS_LIMIT_MS,
+        }
+        for name, freshness_limit_ms in freshness_limits.items():
+            live = progress.get(name)
+            if not isinstance(live, dict):
+                continue
             live_response = dict(live)
             observed_ns = live_response.pop("_observed_monotonic_ns", None)
             age_ms = (
@@ -459,11 +471,11 @@ class RecordingController:
             live_response["age_ms"] = age_ms
             if (
                 age_ms is not None
-                and age_ms > LIVE_TELEMETRY_FRESHNESS_LIMIT_MS
+                and age_ms > freshness_limit_ms
                 and live_response.get("status") in {"fresh", "unavailable"}
             ):
                 live_response["status"] = "stale"
-            progress_response["live_telemetry"] = live_response
+            progress_response[name] = live_response
         result["progress"] = progress_response
         return result
 

@@ -644,7 +644,8 @@ def test_2026_packet_16_does_not_poison_live_packet_6_snapshot() -> None:
     process(
         _packet(6, b"unsupported update", frame=100, sequence=5, packet_version=2)
     )
-    process(_packet(255, b"advance", frame=102, sequence=6))
+    process(_packet(7, _car_status_body(), frame=100, sequence=7))
+    process(_packet(255, b"advance", frame=102, sequence=8))
 
     live = observer.live_telemetry_snapshot()
 
@@ -652,6 +653,12 @@ def test_2026_packet_16_does_not_poison_live_packet_6_snapshot() -> None:
     assert live["player_car_index"] == 23
     assert live["speed_kph"] == 223
     assert live["throttle"] == 0.75
+    live_status = observer.live_car_status_snapshot()
+    assert live_status["status"] == "fresh"
+    assert live_status["player_car_index"] == 23
+    assert live_status["fuel_in_tank_reported"] == 35.5
+    assert live_status["actual_tyre_compound"] == 20
+    assert live_status["tyre_age_laps"] == 3
 
 
 def test_2026_pipeline_joins_motion_by_frame_and_player_without_carry_forward() -> None:

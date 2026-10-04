@@ -2701,6 +2701,16 @@ h1 span {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.live-car-status-note,
+.live-car-status-invalid {
+  margin: 8px 0 0;
+  color: #93a098;
+  font-size: 9px;
+  line-height: 1.5;
+}
+.live-car-status-invalid {
+  color: #d6ae77;
+}
 .inbox-heading,
 .import-job-heading {
   display: flex;

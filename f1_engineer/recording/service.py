@@ -11,11 +11,12 @@ from typing import Any, Callable
 from .. import __version__
 from ..analysis.continuity import session_time_discontinuity
 from ..errors import ProtocolError
-from ..pipeline import PipelineResult, TelemetryPipeline
+from ..pipeline import PipelineResult, TelemetryPipeline, _join_car_status
 from ..sessions.context import SessionContext
 from ..sessions.manager import SessionTracker
-from ..telemetry.canonical import make_car_sample
+from ..telemetry.canonical import CarSample, make_car_sample
 from ..telemetry.frames import FrameAssembler
+from ..udp.car_status import CarStatusDecoder, CarStatusPacket
 from ..udp.car_telemetry import CarTelemetryDecoder
 from ..udp.decoder import PacketDecoder
 from ..udp.events import EventDecoder
@@ -27,6 +28,7 @@ from .capture import CaptureWriter
 
 
 LIVE_TELEMETRY_FRESHNESS_LIMIT_MS = 500
+LIVE_CAR_STATUS_FRESHNESS_LIMIT_MS = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +42,7 @@ class RecordingSnapshot:
     socket_errors: int
     latest_context: dict[str, object] | None
     live_telemetry: dict[str, object]
+    live_car_status: dict[str, object]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -52,6 +55,7 @@ class RecordingSnapshot:
             "socket_errors": self.socket_errors,
             "latest_context": self.latest_context,
             "live_telemetry": dict(self.live_telemetry),
+            "live_car_status": dict(self.live_car_status),
         }
 
 
@@ -87,6 +91,7 @@ class _AcquisitionObserver:
         self.frames = FrameAssembler(reorder_window_frames=reorder_window_frames)
         self.lap_data_decoder = LapDataDecoder()
         self.car_telemetry_decoder = CarTelemetryDecoder()
+        self.car_status_decoder = CarStatusDecoder()
         self.counts: Counter[str] = Counter(completed_frames=0)
         self.latest_context: dict[str, object] | None = None
         self._live_status = "waiting"
@@ -99,8 +104,12 @@ class _AcquisitionObserver:
         self._player_header_frame: int | None = None
         self._live_player_barrier_frame: int | None = None
         self._live_last_session_time_s: float | None = None
+        self._live_car_status = "waiting"
+        self._live_car_status_reason: str | None = None
+        self._live_car_status_snapshot: dict[str, object] | None = None
+        self._live_car_status_received_monotonic_ns: int | None = None
         self._receive_times: OrderedDict[tuple[int, int, bytes], int] = OrderedDict()
-        self._max_receive_time_entries = self.frames.max_open_frames * 4 + 4
+        self._max_receive_time_entries = self.frames.max_open_frames * 5 + 4
         self._finished = False
 
     def process(self, raw: RawDatagram) -> None:
@@ -174,6 +183,7 @@ class _AcquisitionObserver:
                 PacketId.LAP_DATA,
                 PacketId.CAR_TELEMETRY,
                 PacketId.CAR_TELEMETRY_2,
+                PacketId.CAR_STATUS,
             }:
                 self._remember_receive_time(raw, packet)
         self._count_completed(self._consume_frames(completed))
@@ -221,6 +231,39 @@ class _AcquisitionObserver:
             snapshot["_observed_monotonic_ns"] = self._live_received_monotonic_ns
         return snapshot
 
+    def live_car_status_snapshot(
+        self, now_monotonic_ns: int | None = None
+    ) -> dict[str, object]:
+        """Return independent Car Status freshness using its selected frame evidence."""
+        now = time.monotonic_ns() if now_monotonic_ns is None else now_monotonic_ns
+        age_ms = (
+            None
+            if self._live_car_status_received_monotonic_ns is None
+            else max(
+                0,
+                (now - self._live_car_status_received_monotonic_ns) // 1_000_000,
+            )
+        )
+        status = self._live_car_status
+        if (
+            age_ms is not None
+            and age_ms > LIVE_CAR_STATUS_FRESHNESS_LIMIT_MS
+            and status in {"fresh", "unavailable"}
+        ):
+            status = "stale"
+        snapshot: dict[str, object] = {
+            "status": status,
+            "reason": self._live_car_status_reason,
+            "age_ms": age_ms,
+        }
+        if self._live_car_status_snapshot is not None:
+            snapshot.update(self._live_car_status_snapshot)
+        if self._live_car_status_received_monotonic_ns is not None:
+            snapshot["_observed_monotonic_ns"] = (
+                self._live_car_status_received_monotonic_ns
+            )
+        return snapshot
+
     def _reset_live_monitor(self) -> None:
         self._live_status = "waiting"
         self._live_reason = None
@@ -232,6 +275,7 @@ class _AcquisitionObserver:
         self._player_header_frame = None
         self._live_player_barrier_frame = None
         self._live_last_session_time_s = None
+        self._reset_live_car_status_monitor()
         self._receive_times.clear()
 
     def _observe_player_identity(self, packet: DecodedPacket) -> None:
@@ -371,7 +415,31 @@ class _AcquisitionObserver:
         lap_packets = [
             packet for packet in frame.packets if packet.packet_kind is PacketId.LAP_DATA
         ]
+        car_status_candidates = []
+        for packet in frame.packets:
+            if packet.packet_kind is not PacketId.CAR_STATUS:
+                continue
+            result = self.car_status_decoder.decode(packet)
+            car_status_candidates.append((packet, result.car_status, result.error))
         if not lap_packets:
+            if car_status_candidates and self._live_player_index is not None:
+                selected_status_packets = [
+                    packet
+                    for packet, _decoded, _error in car_status_candidates
+                    if packet.header.player_car_index == self._live_player_index
+                ]
+                if selected_status_packets:
+                    unsupported = any(
+                        self._is_unsupported_adapter(packet)
+                        for packet in selected_status_packets
+                    )
+                    self._set_live_car_status_unavailable(
+                        frame,
+                        self._live_player_index,
+                        "same_frame_player_lap_missing",
+                        selected_status_packets,
+                        status="unsupported" if unsupported else "unavailable",
+                    )
             unsupported = next(
                 (
                     packet
@@ -425,6 +493,24 @@ class _AcquisitionObserver:
             selected_receive_ns = self._frame_receive_time(frame, selected_packets)
             result = self.lap_data_decoder.decode(packet)
             if result.error is not None or result.lap_data is None:
+                self._set_live_car_status_unavailable(
+                    frame,
+                    self._live_player_index,
+                    "lap_data_adapter_unsupported"
+                    if self._is_unsupported_adapter(packet)
+                    else "lap_data_decode_failed",
+                    [packet]
+                    + [
+                        candidate
+                        for candidate, _decoded, _error in car_status_candidates
+                        if candidate.header.player_car_index == self._live_player_index
+                    ],
+                    status=(
+                        "unsupported"
+                        if self._is_unsupported_adapter(packet)
+                        else "unavailable"
+                    ),
+                )
                 latest_values = None
                 latest_status = (
                     "unsupported"
@@ -439,6 +525,17 @@ class _AcquisitionObserver:
                 continue
             car_index = packet.header.player_car_index
             if not 0 <= car_index < len(result.lap_data.cars):
+                self._set_live_car_status_unavailable(
+                    frame,
+                    car_index,
+                    "player_car_index_out_of_range",
+                    [packet]
+                    + [
+                        candidate
+                        for candidate, _decoded, _error in car_status_candidates
+                        if candidate.header.player_car_index == car_index
+                    ],
+                )
                 latest_values = None
                 latest_status = "unavailable"
                 latest_reason = "player_car_index_out_of_range"
@@ -469,6 +566,17 @@ class _AcquisitionObserver:
             selected_receive_ns = self._frame_receive_time(frame, selected_packets)
 
             car = result.lap_data.cars[car_index]
+            car_status, car_status_reason = _join_car_status(
+                packet, car_index, car_status_candidates
+            )
+            status_packets = [
+                candidate
+                for candidate, _decoded, _error in car_status_candidates
+                if candidate.header.player_car_index == car_index
+            ]
+            car_status_receive_ns = self._frame_receive_time(
+                frame, [packet, *status_packets]
+            )
             sample = make_car_sample(
                 session_uid=frame.session_uid,
                 frame_identifier=frame.overall_frame_identifier,
@@ -477,6 +585,19 @@ class _AcquisitionObserver:
                 attempt_id="recording_live_snapshot",
                 lap=car,
                 telemetry=telemetry,
+                car_status=car_status,
+                car_status_unavailable_reason=car_status_reason,
+            )
+            self._publish_live_car_status(
+                frame,
+                packet,
+                sample,
+                status_reason=car_status_reason,
+                received_monotonic_ns=car_status_receive_ns,
+                unsupported=any(
+                    self._is_unsupported_adapter(candidate)
+                    for candidate in status_packets
+                ),
             )
             values: dict[str, object] = {
                 "session_uid": str(frame.session_uid),
@@ -517,7 +638,6 @@ class _AcquisitionObserver:
                 latest_status = "unavailable"
                 latest_reason = "receive_provenance_unavailable"
 
-        self._discard_frame_receive_times(frame)
         if latest_values is not None:
             self._live_snapshot = latest_values
             self._live_status = latest_status
@@ -531,6 +651,26 @@ class _AcquisitionObserver:
             self._live_reason = latest_reason
             self._live_received_monotonic_ns = selected_receive_ns
         else:
+            if car_status_candidates and self._live_player_index is not None:
+                selected_status_packets = [
+                    candidate
+                    for candidate, _decoded, _error in car_status_candidates
+                    if candidate.header.player_car_index == self._live_player_index
+                ]
+                if selected_status_packets:
+                    unsupported_status = any(
+                        self._is_unsupported_adapter(candidate)
+                        for candidate in selected_status_packets
+                    )
+                    self._set_live_car_status_unavailable(
+                        frame,
+                        self._live_player_index,
+                        "same_frame_player_lap_missing",
+                        selected_status_packets,
+                        status="unsupported"
+                        if unsupported_status
+                        else "unavailable",
+                    )
             unsupported = next(
                 (
                     packet
@@ -550,6 +690,7 @@ class _AcquisitionObserver:
                 self._live_received_monotonic_ns = self._frame_receive_time(
                     frame, (unsupported,)
                 )
+        self._discard_frame_receive_times(frame)
 
     def _frame_receive_time(
         self, frame: PacketFrame, packets: list[DecodedPacket] | tuple[DecodedPacket, ...]
@@ -568,6 +709,7 @@ class _AcquisitionObserver:
                 PacketId.LAP_DATA,
                 PacketId.CAR_TELEMETRY,
                 PacketId.CAR_TELEMETRY_2,
+                PacketId.CAR_STATUS,
             }
         ]
         if not times or any(value is None for value in times):
@@ -580,6 +722,7 @@ class _AcquisitionObserver:
                 PacketId.LAP_DATA,
                 PacketId.CAR_TELEMETRY,
                 PacketId.CAR_TELEMETRY_2,
+                PacketId.CAR_STATUS,
             }:
                 self._receive_times.pop(
                     (
@@ -589,6 +732,100 @@ class _AcquisitionObserver:
                     ),
                     None,
                 )
+
+    def _publish_live_car_status(
+        self,
+        frame: PacketFrame,
+        lap_packet: DecodedPacket,
+        sample: CarSample,
+        *,
+        status_reason: str | None,
+        received_monotonic_ns: int | None,
+        unsupported: bool,
+    ) -> None:
+        player_index = lap_packet.header.player_car_index
+        snapshot = self._empty_live_car_status_snapshot(frame, player_index)
+        for field in (
+            "fuel_in_tank_reported",
+            "fuel_remaining_laps",
+            "actual_tyre_compound",
+            "visual_tyre_compound",
+            "tyre_age_laps",
+            "front_brake_bias_percent",
+            "pit_limiter_active",
+        ):
+            snapshot[field] = getattr(sample, field)
+        snapshot["validation_flags"] = [
+            flag
+            for flag in sample.validation_flags
+            if flag
+            in {
+                "invalid_car_status_fuel_in_tank_reported",
+                "invalid_car_status_fuel_remaining_laps",
+                "invalid_car_status_front_brake_bias_percent",
+                "invalid_car_status_pit_limiter_active",
+            }
+        ]
+        self._live_car_status_snapshot = snapshot
+        self._live_car_status_received_monotonic_ns = received_monotonic_ns
+        if getattr(sample, "car_status_available") is True:
+            if received_monotonic_ns is None:
+                self._live_car_status = "unavailable"
+                self._live_car_status_reason = "receive_provenance_unavailable"
+            else:
+                self._live_car_status = "fresh"
+                self._live_car_status_reason = None
+        else:
+            self._live_car_status = "unsupported" if unsupported else "unavailable"
+            self._live_car_status_reason = (
+                status_reason or "status_packet_unavailable"
+            )
+
+    def _set_live_car_status_unavailable(
+        self,
+        frame: PacketFrame,
+        player_index: int,
+        reason: str,
+        selected_packets: list[DecodedPacket],
+        *,
+        status: str = "unavailable",
+    ) -> None:
+        self._live_car_status_snapshot = self._empty_live_car_status_snapshot(
+            frame, player_index
+        )
+        self._live_car_status = status
+        self._live_car_status_reason = reason
+        self._live_car_status_received_monotonic_ns = self._frame_receive_time(
+            frame, selected_packets
+        )
+
+    def _reset_live_car_status_monitor(self) -> None:
+        self._live_car_status = "waiting"
+        self._live_car_status_reason = None
+        self._live_car_status_snapshot = None
+        self._live_car_status_received_monotonic_ns = None
+
+    def _clear_live_car_status_sample(self) -> None:
+        self._reset_live_car_status_monitor()
+
+    @staticmethod
+    def _empty_live_car_status_snapshot(
+        frame: PacketFrame, player_index: int
+    ) -> dict[str, object]:
+        return {
+            "session_uid": str(frame.session_uid),
+            "frame_identifier": frame.overall_frame_identifier,
+            "packet_format": int(frame.packets[-1].packet_format),
+            "player_car_index": player_index,
+            "fuel_in_tank_reported": None,
+            "fuel_remaining_laps": None,
+            "actual_tyre_compound": None,
+            "visual_tyre_compound": None,
+            "tyre_age_laps": None,
+            "front_brake_bias_percent": None,
+            "pit_limiter_active": None,
+            "validation_flags": [],
+        }
 
     @staticmethod
     def _empty_live_snapshot(
@@ -616,6 +853,7 @@ class _AcquisitionObserver:
         self._live_reason = None
         self._live_snapshot = None
         self._live_received_monotonic_ns = None
+        self._clear_live_car_status_sample()
 
     @classmethod
     def _is_newer_frame(cls, candidate: int, current: int) -> bool:
@@ -633,6 +871,12 @@ class _AcquisitionObserver:
             return not self.car_telemetry_decoder.supports(
                 packet.packet_format,
                 PacketId.CAR_TELEMETRY,
+                packet.header.packet_version,
+            )
+        if packet.packet_kind is PacketId.CAR_STATUS:
+            return not self.car_status_decoder.supports(
+                packet.packet_format,
+                PacketId.CAR_STATUS,
                 packet.header.packet_version,
             )
         return False
@@ -683,6 +927,15 @@ async def record_udp_capture(
             latest_context=latest_context,
             live_telemetry=(
                 observer.live_telemetry_snapshot()
+                if observer is not None
+                else {
+                    "status": "unavailable",
+                    "reason": "live_monitor_not_enabled",
+                    "age_ms": None,
+                }
+            ),
+            live_car_status=(
+                observer.live_car_status_snapshot()
                 if observer is not None
                 else {
                     "status": "unavailable",

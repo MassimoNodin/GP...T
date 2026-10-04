@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type {
   ApiResponse,
+  LiveCarStatusRecord,
   LiveTelemetryRecord,
   RecordingJobRecord,
 } from "@/lib/api";
@@ -192,7 +193,12 @@ export default function RecordingControls({
         </p>
       )}
       {active && progress && (
-        <LiveTelemetryPanel telemetry={progress.live_telemetry} />
+        <>
+          <LiveTelemetryPanel telemetry={progress.live_telemetry} />
+          {progress.live_car_status ? (
+            <LiveCarStatusPanel telemetry={progress.live_car_status} />
+          ) : null}
+        </>
       )}
     </div>
   );
@@ -280,6 +286,87 @@ function LiveMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function LiveCarStatusPanel({ telemetry }: { telemetry: LiveCarStatusRecord }) {
+  const statusCopy: Record<LiveCarStatusRecord["status"], string> = {
+    waiting: "Waiting for same-frame player Lap Data and Car Status.",
+    fresh: "Car Status is matched to the current player frame.",
+    stale: `Last matched Car Status frame was ${formatAge(telemetry.age_ms)} ago.`,
+    unsupported:
+      "Recording continues. This Car Status packet version is unsupported.",
+    unavailable: liveCarStatusUnavailableReason(telemetry.reason),
+  };
+  const invalidFields = (telemetry.validation_flags ?? []).map((flag) =>
+    flag.replace("invalid_car_status_", "").replaceAll("_", " "),
+  );
+
+  return (
+    <section
+      className="live-telemetry live-car-status"
+      data-state={telemetry.status}
+      aria-label="Live player car status"
+    >
+      <div className="live-telemetry-heading">
+        <div>
+          <div className="eyebrow">LIVE CAR STATUS</div>
+          <p>{statusCopy[telemetry.status]}</p>
+        </div>
+        <span className={`live-telemetry-state state-${telemetry.status}`}>
+          {telemetry.status.toUpperCase()}
+        </span>
+      </div>
+      {telemetry.status !== "waiting" && (
+        <>
+          <div className="live-telemetry-grid">
+            <LiveMetric
+              label="FUEL REPORTED · UNIT UNSPECIFIED"
+              value={fixed(telemetry.fuel_in_tank_reported, 2)}
+            />
+            <LiveMetric
+              label="GAME-REPORTED REMAINING LAPS"
+              value={fixed(telemetry.fuel_remaining_laps, 2)}
+            />
+            <LiveMetric
+              label="ACTUAL TYRE COMPOUND CODE"
+              value={display(telemetry.actual_tyre_compound)}
+            />
+            <LiveMetric
+              label="VISUAL TYRE COMPOUND CODE"
+              value={display(telemetry.visual_tyre_compound)}
+            />
+            <LiveMetric
+              label="TYRE AGE"
+              value={withUnit(telemetry.tyre_age_laps, "laps")}
+            />
+            <LiveMetric
+              label="FRONT BRAKE BIAS"
+              value={withUnit(telemetry.front_brake_bias_percent, "%")}
+            />
+            <LiveMetric
+              label="PIT LIMITER"
+              value={
+                telemetry.pit_limiter_active == null
+                  ? "—"
+                  : telemetry.pit_limiter_active
+                    ? "ON"
+                    : "OFF"
+              }
+            />
+          </div>
+          <p className="live-car-status-note">
+            Fuel quantity has no unit in the game feed; remaining laps is the
+            reported value, not an app forecast.
+          </p>
+          {invalidFields.length ? (
+            <p className="live-car-status-invalid" role="status">
+              Invalid fields are unavailable: {invalidFields.join(", ")}.
+            </p>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
+}
+
 function recordingStatus(
   recording: RecordingJobRecord | null,
   receiving: boolean,
@@ -312,6 +399,12 @@ function label(value: unknown) {
 
 function display(value: number | null | undefined) {
   return value === null || value === undefined ? "—" : String(value);
+}
+
+function fixed(value: number | null | undefined, digits: number) {
+  return value === null || value === undefined || !Number.isFinite(value)
+    ? "—"
+    : value.toFixed(digits);
 }
 
 function withUnit(
@@ -366,4 +459,22 @@ function liveUnavailableReason(reason: string | null) {
   if (reason === "lap_data_decode_failed")
     return "Lap data was malformed for this frame.";
   return "The current player telemetry is unavailable.";
+}
+
+function liveCarStatusUnavailableReason(reason: string | null) {
+  if (reason === "status_packet_missing")
+    return "Lap Data is available, but no Car Status packet matched this frame.";
+  if (reason === "player_index_mismatch")
+    return "The Car Status packet belongs to a different player index.";
+  if (reason === "status_packet_malformed_or_unsupported")
+    return "Car Status was malformed or uses an unsupported packet version.";
+  if (reason === "conflicting_status_packets")
+    return "Conflicting Car Status updates were received for this frame.";
+  if (reason === "same_frame_player_lap_missing")
+    return "Car Status arrived without a valid same-frame player Lap Data packet.";
+  if (reason === "receive_provenance_unavailable")
+    return "Receive-time evidence for the selected Car Status frame is unavailable.";
+  if (reason === "lap_data_decode_failed" || reason === "lap_data_adapter_unsupported")
+    return "The same-frame player Lap Data packet is unavailable.";
+  return "The current player Car Status is unavailable.";
 }

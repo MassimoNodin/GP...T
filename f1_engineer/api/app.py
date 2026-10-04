@@ -156,6 +156,24 @@ class LiveTelemetryRecord(BaseModel):
     brake: float | None = None
 
 
+class LiveCarStatusRecord(BaseModel):
+    status: Literal["waiting", "fresh", "stale", "unsupported", "unavailable"]
+    reason: str | None
+    age_ms: int | None
+    session_uid: str | None = None
+    frame_identifier: int | None = None
+    packet_format: int | None = None
+    player_car_index: int | None = None
+    fuel_in_tank_reported: float | None = None
+    fuel_remaining_laps: float | None = None
+    actual_tyre_compound: int | None = None
+    visual_tyre_compound: int | None = None
+    tyre_age_laps: int | None = None
+    front_brake_bias_percent: int | None = None
+    pit_limiter_active: bool | None = None
+    validation_flags: list[str] = Field(default_factory=list)
+
+
 class RecordingProgressRecord(BaseModel):
     state: str
     elapsed_ms: int
@@ -166,6 +184,7 @@ class RecordingProgressRecord(BaseModel):
     socket_errors: int
     latest_context: dict[str, Any] | None
     live_telemetry: LiveTelemetryRecord
+    live_car_status: LiveCarStatusRecord | None = None
 
 
 class RecordingJobRecord(BaseModel):

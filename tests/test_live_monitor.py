@@ -16,6 +16,7 @@ from f1_engineer.api.app import create_app
 from f1_engineer.recording.service import _AcquisitionObserver
 from f1_engineer.recording.capture import CaptureReader
 from tests.helpers import make_datagram
+from tests.test_car_status import _status_body
 from tests.test_lap_tracking import SESSION_UID, _lap_packet, _session_packet
 
 
@@ -72,6 +73,27 @@ def _advance(
         frame=frame,
         player_car_index=player_car_index,
         body=b"advance-watermark",
+        sequence=sequence,
+    )
+
+
+def _car_status_packet(
+    *,
+    frame: int,
+    sequence: int,
+    player_car_index: int = 0,
+    packet_format: int = 2025,
+    packet_version: int = 1,
+    body: bytes | None = None,
+):
+    return make_datagram(
+        packet_format=packet_format,
+        packet_id=7,
+        packet_version=packet_version,
+        session_uid=SESSION_UID,
+        frame=frame,
+        player_car_index=player_car_index,
+        body=body if body is not None else _status_body(packet_format=packet_format),
         sequence=sequence,
     )
 
@@ -144,9 +166,17 @@ def _publish_frame(
     player_car_index: int = 0,
     invalid: int = 0,
     telemetry: bool = True,
+    car_status: bool = False,
+    car_status_bodies: tuple[bytes, ...] | None = None,
+    car_status_player_index: int | None = None,
     throttle: float = 0.75,
     brake: float = 0.2,
 ) -> None:
+    status_bodies = (
+        car_status_bodies
+        if car_status_bodies is not None
+        else ((_status_body(),) if car_status else ())
+    )
     if telemetry:
         _process(observer,
             _telemetry_packet(
@@ -172,11 +202,25 @@ def _publish_frame(
             active_car_index=player_car_index,
         )
     )
+    for index, body in enumerate(status_bodies):
+        _process(
+            observer,
+            _car_status_packet(
+                frame=frame,
+                sequence=sequence + 2 + index,
+                player_car_index=(
+                    player_car_index
+                    if car_status_player_index is None
+                    else car_status_player_index
+                ),
+                body=body,
+            ),
+        )
     _process(
         observer,
         _advance(
             frame + 1,
-            sequence + 2,
+            sequence + 2 + len(status_bodies),
             player_car_index=player_car_index,
         ),
     )
@@ -225,21 +269,250 @@ def test_live_monitor_marks_missing_same_frame_car_telemetry_unavailable():
     assert live["brake"] is None
 
 
+def test_live_car_status_joins_the_same_player_frame_and_exposes_canonical_values():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(observer, frame=100, car_status=True)
+
+    status = observer.live_car_status_snapshot()
+    assert status["status"] == "fresh"
+    assert status["reason"] is None
+    assert status["session_uid"] == str(SESSION_UID)
+    assert status["frame_identifier"] == 100
+    assert status["player_car_index"] == 0
+    assert status["fuel_in_tank_reported"] == 12.5
+    assert status["fuel_remaining_laps"] == -1.25
+    assert status["actual_tyre_compound"] == 20
+    assert status["visual_tyre_compound"] == 17
+    assert status["tyre_age_laps"] == 3
+    assert status["front_brake_bias_percent"] == 54
+    assert status["pit_limiter_active"] is False
+    assert status["validation_flags"] == []
+
+
+def test_missing_car_status_does_not_weaken_the_speed_control_monitor():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(observer, frame=100)
+
+    telemetry = observer.live_telemetry_snapshot()
+    status = observer.live_car_status_snapshot()
+    assert telemetry["status"] == "fresh"
+    assert telemetry["speed_kph"] == 100
+    assert telemetry["throttle"] == 0.75
+    assert status["status"] == "unavailable"
+    assert status["reason"] == "status_packet_missing"
+    assert status["fuel_in_tank_reported"] is None
+
+
+def test_live_car_status_is_independent_of_missing_car_telemetry():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(observer, frame=100, telemetry=False, car_status=True)
+
+    assert observer.live_telemetry_snapshot()["status"] == "unavailable"
+    status = observer.live_car_status_snapshot()
+    assert status["status"] == "fresh"
+    assert status["fuel_in_tank_reported"] == 12.5
+
+
+def test_live_car_status_ages_from_the_oldest_lap_or_status_receive_time():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    base_ns = 1_000_000_000
+    observer.process(
+        replace(
+            _lap_packet(
+                frame=100,
+                lap_number=3,
+                distance_m=120.0,
+                session_time=12.0,
+                current_lap_time_ms=34_567,
+                sequence=10,
+            ),
+            monotonic_ns=base_ns + 100_000_000,
+        )
+    )
+    observer.process(
+        replace(
+            _car_status_packet(frame=100, sequence=11),
+            monotonic_ns=base_ns + 250_000_000,
+        )
+    )
+    observer.process(
+        replace(_advance(101, 12), monotonic_ns=base_ns + 300_000_000)
+    )
+
+    status = observer.live_car_status_snapshot(base_ns + 600_000_000)
+    assert status["status"] == "fresh"
+    assert status["age_ms"] == 500
+    assert status["_observed_monotonic_ns"] == base_ns + 100_000_000
+    stale = observer.live_car_status_snapshot(base_ns + 601_000_000)
+    assert stale["status"] == "stale"
+    assert stale["age_ms"] == 501
+
+
+def test_live_car_status_does_not_carry_values_from_a_status_only_frame():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(observer, frame=100, car_status=True)
+    assert observer.live_car_status_snapshot()["fuel_in_tank_reported"] == 12.5
+
+    _process(observer, _car_status_packet(frame=101, sequence=20))
+    _process(observer, _advance(102, 21))
+
+    status = observer.live_car_status_snapshot()
+    assert status["status"] == "unavailable"
+    assert status["reason"] == "same_frame_player_lap_missing"
+    assert status["frame_identifier"] == 101
+    assert status["fuel_in_tank_reported"] is None
+
+
+def test_live_car_status_nulls_invalid_fields_without_invalidating_packet():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    body = bytearray(_status_body())
+    body[3] = 101
+    _publish_frame(observer, frame=100, car_status=True)
+    # A later frame carries one malformed field; other status fields remain usable.
+    _process(observer, _lap_packet(
+        frame=101,
+        lap_number=3,
+        distance_m=130.0,
+        session_time=12.1,
+        current_lap_time_ms=35_000,
+        sequence=20,
+    ))
+    _process(observer, _car_status_packet(frame=101, sequence=21, body=bytes(body)))
+    _process(observer, _advance(102, 22))
+
+    status = observer.live_car_status_snapshot()
+    assert status["status"] == "fresh"
+    assert status["fuel_in_tank_reported"] == 12.5
+    assert status["front_brake_bias_percent"] is None
+    assert status["validation_flags"] == [
+        "invalid_car_status_front_brake_bias_percent"
+    ]
+
+
+def test_live_car_status_reports_malformed_and_conflicting_packets():
+    malformed = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(
+        malformed,
+        frame=100,
+        car_status_bodies=(b"malformed",),
+    )
+    malformed_status = malformed.live_car_status_snapshot()
+    assert malformed_status["status"] == "unavailable"
+    assert malformed_status["reason"] == "status_packet_malformed_or_unsupported"
+    assert malformed_status["fuel_in_tank_reported"] is None
+
+    conflicting = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(
+        conflicting,
+        frame=100,
+        car_status_bodies=(_status_body(fuel=12.5), _status_body(fuel=13.5)),
+    )
+    conflicting_status = conflicting.live_car_status_snapshot()
+    assert conflicting_status["status"] == "unavailable"
+    assert conflicting_status["reason"] == "conflicting_status_packets"
+    assert conflicting_status["fuel_in_tank_reported"] is None
+
+
+def test_live_car_status_rejects_a_conflicting_player_header():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(observer, frame=100, car_status=True)
+    _publish_frame(
+        observer,
+        frame=102,
+        sequence=20,
+        car_status=True,
+        car_status_player_index=1,
+    )
+
+    status = observer.live_car_status_snapshot()
+    assert status["status"] != "fresh"
+    assert status.get("fuel_in_tank_reported") is None
+
+
+def test_live_car_status_freshness_requires_provenance_for_every_selected_packet():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    observer._max_receive_time_entries = 1
+    _publish_frame(observer, frame=100, car_status=True)
+
+    status = observer.live_car_status_snapshot()
+    assert status["status"] == "unavailable"
+    assert status["reason"] == "receive_provenance_unavailable"
+    assert status["fuel_in_tank_reported"] == 12.5
+
+
+def test_live_car_status_and_telemetry_expire_independently():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    base_ns = 1_000_000_000
+    observer.process(
+        replace(
+            _car_status_packet(frame=100, sequence=10),
+            monotonic_ns=base_ns + 100_000_000,
+        )
+    )
+    observer.process(
+        replace(
+            _lap_packet(
+                frame=100,
+                lap_number=3,
+                distance_m=120.0,
+                session_time=12.0,
+                current_lap_time_ms=34_567,
+                sequence=11,
+            ),
+            monotonic_ns=base_ns + 250_000_000,
+        )
+    )
+    observer.process(
+        replace(
+            _telemetry_packet(frame=100, sequence=12),
+            monotonic_ns=base_ns + 300_000_000,
+        )
+    )
+    observer.process(
+        replace(
+            _advance(101, 13),
+            monotonic_ns=base_ns + 310_000_000,
+        )
+    )
+
+    telemetry = observer.live_telemetry_snapshot(base_ns + 700_000_000)
+    status = observer.live_car_status_snapshot(base_ns + 700_000_000)
+    assert telemetry["status"] == "fresh"
+    assert telemetry["age_ms"] == 450
+    assert status["status"] == "stale"
+    assert status["age_ms"] == 600
+
+
+def test_live_car_status_survives_frame_identifier_wrap():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(observer, frame=0xFFFFFFFE, car_status=True)
+    assert observer.live_car_status_snapshot()["frame_identifier"] == 0xFFFFFFFE
+
+    _publish_frame(observer, frame=0, sequence=20, car_status=True)
+    status = observer.live_car_status_snapshot()
+    assert status["status"] == "fresh"
+    assert status["frame_identifier"] == 0
+    assert status["fuel_in_tank_reported"] == 12.5
+
+
 def test_live_monitor_supports_race_and_unknown_context_without_policy_changes():
     time_trial = _AcquisitionObserver(reorder_window_frames=1)
     _process(time_trial, _session_packet_for_mode(race=False))
-    _publish_frame(time_trial, frame=100)
+    _publish_frame(time_trial, frame=100, car_status=True)
 
     race = _AcquisitionObserver(reorder_window_frames=1)
     _process(race, _session_packet_for_mode(race=True))
-    _publish_frame(race, frame=100)
+    _publish_frame(race, frame=100, car_status=True)
 
     unknown = _AcquisitionObserver(reorder_window_frames=1)
-    _publish_frame(unknown, frame=100)
+    _publish_frame(unknown, frame=100, car_status=True)
 
     assert time_trial.live_telemetry_snapshot()["status"] == "fresh"
     assert race.live_telemetry_snapshot()["status"] == "fresh"
     assert unknown.live_telemetry_snapshot()["status"] == "fresh"
+    assert time_trial.live_car_status_snapshot()["status"] == "fresh"
+    assert race.live_car_status_snapshot()["status"] == "fresh"
+    assert unknown.live_car_status_snapshot()["status"] == "fresh"
 
 
 def test_live_monitor_expires_sample_using_monotonic_receive_time():
@@ -359,13 +632,15 @@ def test_live_monitor_detects_clock_regression_between_same_frame_updates():
 
 def test_live_monitor_resets_on_player_and_session_change():
     observer = _AcquisitionObserver(reorder_window_frames=1)
-    _publish_frame(observer, frame=100)
+    _publish_frame(observer, frame=100, car_status=True)
     assert observer.live_telemetry_snapshot()["status"] == "fresh"
+    assert observer.live_car_status_snapshot()["status"] == "fresh"
 
     _process(observer,
         _telemetry_packet(frame=110, sequence=20, player_car_index=1)
     )
     assert observer.live_telemetry_snapshot()["status"] == "waiting"
+    assert observer.live_car_status_snapshot()["status"] == "waiting"
     _process(observer,
         _lap_packet(
             frame=110,
@@ -393,6 +668,7 @@ def test_live_monitor_resets_on_player_and_session_change():
     live = observer.live_telemetry_snapshot()
     assert live["status"] == "waiting"
     assert "player_car_index" not in live
+    assert observer.live_car_status_snapshot()["status"] == "waiting"
 
 
 def test_live_monitor_reports_unsupported_packet_version_and_rejects_old_format():
@@ -407,8 +683,18 @@ def test_live_monitor_reports_unsupported_packet_version_and_rejects_old_format(
             packet_version=2,
         )
     )
-    _process(observer, _advance(111, 21, packet_format=2026))
+    _process(
+        observer,
+        _car_status_packet(
+            frame=110,
+            sequence=21,
+            packet_format=2026,
+            packet_version=2,
+        ),
+    )
+    _process(observer, _advance(111, 22, packet_format=2026))
     assert observer.live_telemetry_snapshot()["status"] == "unsupported"
+    assert observer.live_car_status_snapshot()["status"] == "unsupported"
 
     _process(observer,
         make_datagram(
@@ -416,7 +702,7 @@ def test_live_monitor_reports_unsupported_packet_version_and_rejects_old_format(
             session_uid=SESSION_UID,
             frame=109,
             body=b"late old format",
-            sequence=21,
+            sequence=23,
         )
     )
     assert observer.live_telemetry_snapshot()["status"] == "unsupported"
@@ -690,7 +976,8 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                         current_lap_time_ms=1_234,
                         sequence=11,
                     ).payload,
-                    _advance(103, 12).payload,
+                    _car_status_packet(frame=100, sequence=12).payload,
+                    _advance(103, 13).payload,
                 ]
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
                     for payload in payloads:
@@ -709,6 +996,11 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                 assert live["speed_kph"] == 100
                 assert live["lap_time_ms"] == 1_234
                 assert "_observed_monotonic_ns" not in live
+                status = current["progress"]["live_car_status"]
+                assert status["status"] == "fresh"
+                assert status["frame_identifier"] == 100
+                assert status["fuel_in_tank_reported"] == 12.5
+                assert "_observed_monotonic_ns" not in status
 
                 await asyncio.sleep(0.55)
                 stale = (
@@ -716,6 +1008,11 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                 ).json()["data"]["progress"]["live_telemetry"]
                 assert stale["status"] == "stale"
                 assert stale["age_ms"] > 500
+                stale_status = (
+                    await client.get("/api/v1/recordings/current")
+                ).json()["data"]["progress"]["live_car_status"]
+                assert stale_status["status"] == "stale"
+                assert stale_status["age_ms"] > 500
 
                 stopped = await client.post(
                     f"/api/v1/recordings/{recording_id}/stop",

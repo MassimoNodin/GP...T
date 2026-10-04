@@ -627,6 +627,20 @@ Version the nested object as `diagnostic-region-debrief-v1` with schema version 
 
 The debrief remains diagnostic, coaching-ineligible, and ranking-ineligible, including for validated models. It does not inherit D0033's ranked-region brief gates or authority and does not change existing ranking or reference selection. Acceptance covers connected and disconnected timing, complete and incomplete minimum-speed coverage, ambiguous/left-censored and right-censored events, onset intervals that straddle zero, missing/unconfigured exit evidence, fixed fact order, output bounds, unchanged source-read counts, API/CLI response parity, and dashboard handling of absent or present debriefs. Validate Shanghai Practice attempts 3/2 with D0042's indexed resampling estimator; preserve its incomplete-capture and lifecycle warnings. Clean eligible Time Trial evidence and independently reviewed region definitions remain prerequisites for any future actionable coaching.
 
+## Decision 0044: monitor live Car Status independently
+
+**Status:** accepted
+
+**Date:** 2026-10-04
+
+Extend D0015's recording-time monitor with a separately qualified player Car Status group, reusing the existing F1 25 and 2026 Car Status decoders and D0018 canonical field validation. Expose reported fuel quantity, game-reported remaining laps, actual and visual tyre compound codes, tyre age, front brake bias, and pit-limiter state through the existing recording-status API and dashboard. Keep the fuel quantity unit unspecified and make no consumption forecast.
+
+Join Car Status only to valid player Lap Data from the same admitted session, packet format, overall frame, and header-designated player index. Do not carry values between frames. Keep missing, malformed, unsupported, mismatched, conflicting, and individually invalid fields explicit; invalid fields remain null. The group has its own `waiting`, `fresh`, `stale`, `unsupported`, and `unavailable` state and 500 ms freshness limit. Measure freshness from the oldest selected Lap Data or Car Status receive timestamp and require provenance for all selected packets. Reset it across session, format, player, and rewind boundaries. Keep only one bounded snapshot and never let absent Status weaken the existing speed/control monitor. API/UI consumers tolerate the optional group's absence.
+
+Use the existing capture, frame assembly, observer, status response, and same-origin dashboard proxy. Raw datagram persistence remains first and authoritative. Add no endpoint, storage migration, trace/importer change, or data history. The monitor is available across Time Trial, Practice/Qualifying, Race, and unknown contexts without changing reference or coaching policy.
+
+Acceptance covers F1 25 and 2026 exact-frame player joins against capture/import evidence; Time Trial, Practice/Qualifying, Race, and unknown modes; missing, malformed, unsupported, mismatched, conflicting, delayed, duplicate, and individually invalid Status packets; receive-time eviction; frame wrap; and session, format, player, and rewind resets. Verify that speed/control remains available without Status, Status remains available without Car Telemetry, each group expires independently, memory stays bounded, optional API/UI fields are tolerated, raw payload order is unchanged, and stopping clears live state. No new capture is required. This is live diagnostic visibility only; fuel/tyre strategy, consumption estimates, comparisons, and coaching remain out of scope.
+
 ## Data flow
 
 ```text
@@ -676,7 +690,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - Replay timing is based only on the monotonic intervals stored in the capture; maximum-speed replay skips sleeps.
 - The capture format has a magic value and schema version. Unknown packet IDs remain inspectable.
 - App-managed recording uses a server-generated staging file and the shared raw-first recorder. Stop finalizes and fsyncs the footer before no-replacement publication into the configured recordings root; import and recording operations are serialized by the controller.
-- The app-managed acquisition observer retains only one latest same-frame player telemetry snapshot for the active session. Recording status calculates freshness from monotonic receive time; telemetry history remains the importer's responsibility.
+- The app-managed acquisition observer retains one latest same-frame player telemetry snapshot and a separate latest player Car Status snapshot. Recording status calculates each group's freshness from selected monotonic receive-time provenance; history remains the importer's responsibility.
 
 ## Deferred decisions
 
