@@ -710,6 +710,25 @@ Acceptance covers positive, negative, equal, and zero-straddling bracket differe
 
 **Rationale:** This fills the braking-phase observation gap in the development plan by measuring an observed threshold release using already computed events and existing captures. It retains sampling uncertainty and censoring while avoiding new source reads or expanded coaching authority. Geometry-dependent trail-braking analysis and actionable coaching remain deferred.
 
+## Decision 0049: query recorded engineer evidence deterministically
+
+**Status:** accepted
+**Date:** 2026-10-04
+
+Add a compact engineer-query surface over persisted evidence with exactly two structured intents: `attempt_summary` for one explicitly selected attempt, and `region_comparison` for one explicitly selected region in an explicitly selected attempt pair and registered model revision. Requests reject unknown fields, bound identity strings to 256 characters, accept IDs rather than paths or caller-supplied analysis, and never infer a latest attempt or substitute a reference.
+
+Attempt summaries read bounded SQLite metadata, reported timing and processing-run evidence only. They report attempt disposition, lap time where present, game validity, lifecycle, and capture/replay qualifications across Time Trial, Practice/Qualifying, Race, unknown modes, and invalid, partial or abandoned attempts. Mark their verification scope `metadata_only`; do not imply trace checksum verification or telemetry coverage.
+
+Region comparisons call the existing paired-region service once, select only the exact requested region, and reuse its diagnostic debrief and brake-threshold-release measurement. They perform no additional trace reads, interpolation, event detection or ranking. Keep the existing D0041 same-run/session/player, completed-attempt, and stable Time Trial or Practice/Qualifying policies; Race and unknown contexts abstain.
+
+Return a versioned `engineer-query-v1` response with explicit intent and selected identities; `available`, `partial` or `unavailable` status and machine reasons; at most six measured facts with source-field references; and at most eight grouped warnings after priority ordering, with omitted counts. Bound fact and warning text to 240 characters. Include bounded run/capture provenance and, for region analysis, trace checksum/schema and model identity/content digest. Return no telemetry arrays or raw analysis reports. Keep results diagnostic-only, coaching-ineligible and ranking-ineligible.
+
+Expose the shared service through read-only `POST /api/v1/engineer/query`, CLI commands and a small dashboard panel with guided actions over the current explicit selection. Preserve source links and distinguish unavailable evidence from API/request failures. Configured roots and all existing paired-region resource ceilings remain server-owned and unchanged.
+
+Acceptance checks cover Melbourne invalid completed and partial attempts; Shanghai incomplete capture and lifecycle-unassessed evidence; selected paired-region fact parity; Race/unknown summaries and region abstention; missing IDs without fallback; unknown timing; fact/warning bounds and priority; bracket/censoring preservation; API/CLI parity; and that attempt summaries open no Parquet while region queries add no reads beyond the paired-region service. The query layer cannot grant additional reference, ranking or coaching authority. Clean eligible Time Trial evidence and independently reviewed real region/geometry definitions remain separate MVP gates.
+
+**Rationale:** Structured deterministic queries separate compact explanation and request routing from telemetry acquisition and numerical analysis. They make the evidence already stored easier to use while reusing established provenance, bounds and mode policies. Natural-language interpretation, voice and actionable coaching remain behind their existing validation gates.
+
 ## Data flow
 
 ```text

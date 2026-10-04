@@ -103,6 +103,15 @@ Every selected attempt also exposes standalone speed, throttle, brake, and steer
 
 The dashboard's run summaries review persisted capture size/hash, recorder losses, replay assembly counters, decoder/import counts, session and attempt status, and stored reference-eligibility flags. The summary pages link to bounded session and attempt pages and do not reread capture files or telemetry traces. Capture completion, game validity, and reference eligibility remain separate evidence; the summary does not certify a capture as ready for coaching.
 
+The dashboard, read-only `POST /api/v1/engineer/query`, and `engineer` CLI expose two deterministic queries over recorded evidence: an explicitly selected attempt summary and one explicitly selected region comparison. Attempt summaries read bounded SQLite metadata only and mark their scope `metadata_only`; region queries reuse the paired-region analysis once and retain its exact selected measurements and warnings. Responses cap facts at six and warnings at eight, preserve source links and provenance, and remain diagnostic-only with no generated coaching.
+
+Examples:
+
+```powershell
+f1-engineer engineer attempt-summary ATTEMPT_KEY
+f1-engineer engineer region-comparison TARGET_KEY REFERENCE_KEY REGION_ID --track-model-id MODEL_ID --track-model-revision 1
+```
+
 Install the package to use the `f1-engineer` command:
 
 ```powershell

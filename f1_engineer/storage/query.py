@@ -45,6 +45,14 @@ TRAJECTORY_TRACE_COLUMNS = [
     "roll_rad",
 ]
 
+ENGINEER_ATTEMPT_METADATA_LIMITS = {
+    "attempt_reasons_bytes": 8_192,
+    "context_bytes": 16_384,
+    "timing_evidence_bytes": 32_768,
+    "capture_completion_bytes": 8_192,
+    "processing_metrics_bytes": 65_536,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class StoredAttemptTrace:
@@ -538,6 +546,159 @@ def load_attempt_timing_evidence(
         )
         value["provenance"] = provenance
         return value
+
+
+def load_attempt_engineer_summary_metadata(
+    database_path: str | Path, attempt_key: str
+) -> dict[str, object] | None:
+    """Load bounded SQLite-only evidence for a deterministic attempt summary.
+
+    This function never resolves a stored trace path or opens Parquet. Large JSON
+    columns are omitted before SQLite returns them and are marked as truncated.
+    """
+    limits = ENGINEER_ATTEMPT_METADATA_LIMITS
+    with Database(database_path, read_only=True) as db:
+        row = db.connection.execute(
+            """SELECT l.attempt_key, l.attempt_number, l.lap_number,
+                      l.disposition, l.lap_time_ms, l.game_valid,
+                      l.start_observed, l.pit_encountered, l.superseded,
+                      l.lifecycle_assessed, l.reference_eligible,
+                      CASE WHEN LENGTH(CAST(l.exclusion_reasons_json AS BLOB)) <= ?
+                           THEN l.exclusion_reasons_json END AS exclusion_reasons_json,
+                      LENGTH(CAST(l.exclusion_reasons_json AS BLOB)) AS exclusion_reasons_bytes,
+                      s.run_id, s.session_uid, l.car_index, s.packet_format,
+                      r.status AS processing_status, r.pipeline_version,
+                      r.capture_sha256, c.byte_size AS capture_byte_size, c.complete AS capture_complete,
+                      CASE WHEN LENGTH(CAST(c.completion_json AS BLOB)) <= ?
+                           THEN c.completion_json END AS completion_json,
+                      LENGTH(CAST(c.completion_json AS BLOB)) AS completion_bytes,
+                      CASE WHEN LENGTH(CAST(r.metrics_json AS BLOB)) <= ?
+                           THEN r.metrics_json END AS metrics_json,
+                      LENGTH(CAST(r.metrics_json AS BLOB)) AS processing_metrics_bytes,
+                      t.ready AS trace_ready, t.row_count AS trace_row_count,
+                      t.sha256 AS trace_sha256, t.schema_version AS trace_schema_version,
+                      e.status AS timing_status,
+                      CASE WHEN LENGTH(CAST(e.evidence_json AS BLOB)) <= ?
+                           THEN e.evidence_json END AS timing_evidence_json,
+                      LENGTH(CAST(e.evidence_json AS BLOB)) AS timing_evidence_bytes,
+                      (SELECT c.context_json FROM lap_context_segments c
+                        WHERE c.attempt_key = l.attempt_key AND c.ordinal = 0
+                          AND LENGTH(CAST(c.context_json AS BLOB)) <= ?)
+                        AS initial_context_json,
+                      (SELECT LENGTH(CAST(c.context_json AS BLOB))
+                         FROM lap_context_segments c
+                        WHERE c.attempt_key = l.attempt_key AND c.ordinal = 0)
+                        AS initial_context_bytes,
+                      CASE WHEN LENGTH(CAST(s.context_json AS BLOB)) <= ?
+                           THEN s.context_json END AS latest_context_json,
+                      LENGTH(CAST(s.context_json AS BLOB)) AS latest_context_bytes,
+                      (SELECT COUNT(*) FROM lap_context_segments c
+                        WHERE c.attempt_key = l.attempt_key) AS context_segment_count
+                 FROM lap_attempts l
+                 JOIN sessions s USING(session_key)
+                 JOIN processing_runs r USING(run_id)
+                 LEFT JOIN captures c USING(capture_sha256)
+                 LEFT JOIN telemetry_files t USING(attempt_key)
+                 LEFT JOIN attempt_timing_evidence e USING(attempt_key)
+                WHERE l.attempt_key = ?""",
+            (
+                limits["attempt_reasons_bytes"],
+                limits["capture_completion_bytes"],
+                limits["processing_metrics_bytes"],
+                limits["timing_evidence_bytes"],
+                limits["context_bytes"],
+                limits["context_bytes"],
+                attempt_key,
+            ),
+        ).fetchone()
+    if row is None:
+        return None
+
+    def json_value(raw: object, expected: type) -> object | None:
+        if not isinstance(raw, str):
+            return None
+        try:
+            value = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            return None
+        return value if isinstance(value, expected) else None
+
+    reasons = json_value(row["exclusion_reasons_json"], list)
+    context = json_value(row["initial_context_json"], dict)
+    latest_context = json_value(row["latest_context_json"], dict)
+    completion = json_value(row["completion_json"], dict)
+    metrics = json_value(row["metrics_json"], dict)
+    timing = json_value(row["timing_evidence_json"], dict)
+    if timing is None:
+        timing = {
+            "status": row["timing_status"] or "unavailable",
+            "reasons": [
+                "timing_evidence_exceeds_metadata_limit"
+                if row["timing_evidence_bytes"] is not None
+                and int(row["timing_evidence_bytes"]) > limits["timing_evidence_bytes"]
+                else "not_available_for_legacy_import"
+            ],
+        }
+
+    capture_complete = row["capture_complete"]
+    return {
+        "attempt": {
+            "attempt_key": row["attempt_key"],
+            "attempt_number": row["attempt_number"],
+            "lap_number": row["lap_number"],
+            "disposition": row["disposition"],
+            "lap_time_ms": row["lap_time_ms"],
+            "game_valid": None if row["game_valid"] is None else bool(row["game_valid"]),
+            "start_observed": bool(row["start_observed"]),
+            "pit_encountered": bool(row["pit_encountered"]),
+            "superseded": None if row["superseded"] is None else bool(row["superseded"]),
+            "lifecycle_assessed": bool(row["lifecycle_assessed"]),
+            "reference_eligible": bool(row["reference_eligible"]),
+            "exclusion_reasons": reasons if reasons is not None else [],
+        },
+        "scope": {
+            "run_id": row["run_id"],
+            "session_uid": row["session_uid"],
+            "car_index": row["car_index"],
+            "packet_format": row["packet_format"],
+        },
+        "context": context,
+        "latest_context": latest_context,
+        "context_segment_count": int(row["context_segment_count"] or 0),
+        "processing": {
+            "status": row["processing_status"],
+            "pipeline_version": row["pipeline_version"],
+            "metrics": metrics,
+        },
+        "capture": {
+            "sha256": row["capture_sha256"],
+            "byte_size": row["capture_byte_size"],
+            "complete": None if capture_complete is None else bool(capture_complete),
+            "completion": completion,
+        },
+        "trace_metadata": {
+            "ready": None if row["trace_ready"] is None else bool(row["trace_ready"]),
+            "row_count": row["trace_row_count"],
+            "sha256": row["trace_sha256"],
+            "schema_version": row["trace_schema_version"],
+            "checksum_verified": False,
+        },
+        "timing_evidence": timing,
+        "metadata_limits": {
+            "attempt_reasons_truncated": row["exclusion_reasons_bytes"] is not None
+            and int(row["exclusion_reasons_bytes"]) > limits["attempt_reasons_bytes"],
+            "context_truncated": row["initial_context_bytes"] is not None
+            and int(row["initial_context_bytes"]) > limits["context_bytes"],
+            "latest_context_truncated": row["latest_context_bytes"] is not None
+            and int(row["latest_context_bytes"]) > limits["context_bytes"],
+            "timing_evidence_truncated": row["timing_evidence_bytes"] is not None
+            and int(row["timing_evidence_bytes"]) > limits["timing_evidence_bytes"],
+            "capture_completion_truncated": row["completion_bytes"] is not None
+            and int(row["completion_bytes"]) > limits["capture_completion_bytes"],
+            "processing_metrics_truncated": row["processing_metrics_bytes"] is not None
+            and int(row["processing_metrics_bytes"]) > limits["processing_metrics_bytes"],
+        },
+    }
 
 
 def load_reference_inventory(

@@ -163,6 +163,7 @@ def _install_pair(monkeypatch, attempts: tuple[StoredAttemptTrace, StoredAttempt
         "get_processing_run_summary",
         lambda *_args: {
             "capture": {
+                "sha256": "e" * 64,
                 "complete": False,
                 "footer_status": "incomplete",
                 "recording_counters": {"queue_dropped": 1, "unknown_counter": None},
@@ -229,6 +230,8 @@ def test_paired_report_is_diagnostic_and_uses_bracketed_control_differences(monk
     assert report["model"]["content_sha256"] == "c" * 64
     assert report["track"]["layout_identity_status"] == "caller_declared"
     assert report["attempts"]["target"]["capture"]["complete"] is False
+    assert report["attempts"]["target"]["capture"]["sha256"] == "e" * 64
+    assert report["attempts"]["reference"]["capture"]["sha256"] == "e" * 64
     assert report["attempts"]["reference"]["replay_counters"]["import_late_packets_ignored"] == 2
     region = report["regions"][0]
     assert region["diagnostic_only"] is True

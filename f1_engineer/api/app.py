@@ -5,7 +5,7 @@ import os
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Generic, Literal, TypeVar
+from typing import Annotated, Any, Generic, Literal, TypeVar
 
 from fastapi import FastAPI, Header, Query
 from fastapi.responses import JSONResponse
@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, select_reference
 from ..analysis.comparison_window import optional_distance_window
+from ..analysis.engineer_query import query_engineer_evidence
 from ..analysis.observation_set import build_observation_set
 from ..analysis.paired_region_service import (
     PairedRegionReportUnavailable,
@@ -135,6 +136,31 @@ class ImportJobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     capture_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class AttemptSummaryQueryBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    intent: Literal["attempt_summary"]
+    target_attempt_key: str = Field(min_length=1, max_length=256)
+
+
+class RegionComparisonQueryBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    intent: Literal["region_comparison"]
+    target_attempt_key: str = Field(min_length=1, max_length=256)
+    reference_attempt_key: str = Field(min_length=1, max_length=256)
+    comparison_policy: Literal["time_trial", "practice_qualifying"]
+    track_model_id: str = Field(min_length=1, max_length=256)
+    track_model_revision: int = Field(ge=1)
+    region_identifier: str = Field(min_length=1, max_length=256)
+
+
+EngineerQueryBody = Annotated[
+    AttemptSummaryQueryBody | RegionComparisonQueryBody,
+    Field(discriminator="intent"),
+]
 
 
 class LiveTelemetryRecord(BaseModel):
@@ -930,6 +956,27 @@ def create_app(
                 status="unavailable", reason="attempt_trace_unavailable"
             )
         return APIResponse[dict[str, Any]](data=_stringify_session_uids(result))
+
+    @app.post(
+        "/api/v1/engineer/query",
+        response_model=APIResponse[dict[str, Any]],
+    )
+    def engineer_query(request: EngineerQueryBody) -> APIResponse[dict[str, Any]]:
+        try:
+            result = query_engineer_evidence(
+                configured_database_path,
+                request.model_dump(),
+                track_model_catalog=track_model_catalog,
+            )
+        except DatabaseSchemaError:
+            raise
+        except (OSError, sqlite3.Error):
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="engineer_query_source_unavailable"
+            )
+        return APIResponse[dict[str, Any]](
+            data=_stringify_session_uids(result)
+        )
 
     @app.get(
         "/api/v1/references/session-best",

@@ -19,6 +19,7 @@ from .recording.service import record_udp_capture
 from .sessions.context import SessionContext
 from .analysis.resampling import ResamplingConfig
 from .analysis.comparison_window import optional_distance_window
+from .analysis.engineer_query import query_engineer_evidence
 from .analysis.observation_set import build_observation_set
 from .analysis.paired_region_service import compare_attempt_regions
 from .analysis.service import ComparisonPolicy, compare_attempts
@@ -595,6 +596,37 @@ def _compare_regions(args: argparse.Namespace) -> int:
     return 0
 
 
+def _engineer_attempt_summary(args: argparse.Namespace) -> int:
+    report = query_engineer_evidence(
+        args.database,
+        {
+            "intent": "attempt_summary",
+            "target_attempt_key": args.attempt_key,
+        },
+    )
+    _json_line(report)
+    return 0
+
+
+def _engineer_region_comparison(args: argparse.Namespace) -> int:
+    catalog = load_track_model_catalog(args.track_models_root)
+    report = query_engineer_evidence(
+        args.database,
+        {
+            "intent": "region_comparison",
+            "target_attempt_key": args.target_attempt_key,
+            "reference_attempt_key": args.reference_attempt_key,
+            "comparison_policy": args.comparison_policy,
+            "track_model_id": args.track_model_id,
+            "track_model_revision": args.track_model_revision,
+            "region_identifier": args.region_identifier,
+        },
+        track_model_catalog=catalog,
+    )
+    _json_line(report)
+    return 0
+
+
 def _geometry_validate(args: argparse.Namespace) -> int:
     model = load_geometry_model(args.model)
     _json_line(
@@ -931,6 +963,47 @@ def build_parser() -> argparse.ArgumentParser:
         help="folder of local draft models; defaults to F1_ENGINEER_TRACK_MODELS_ROOT",
     )
     compare_regions.set_defaults(handler=_compare_regions)
+
+    engineer = commands.add_parser(
+        "engineer",
+        help="summarize stored race-engineer evidence without generating coaching",
+    )
+    engineer_commands = engineer.add_subparsers(dest="engineer_command", required=True)
+    engineer_attempt = engineer_commands.add_parser(
+        "attempt-summary",
+        help="summarize one explicitly selected stored attempt",
+    )
+    engineer_attempt.add_argument(
+        "attempt_key", help="attempt key printed by the laps command"
+    )
+    engineer_attempt.add_argument(
+        "--database", default=str(DEFAULT_DATABASE), help="SQLite database path"
+    )
+    engineer_attempt.set_defaults(handler=_engineer_attempt_summary)
+
+    engineer_region = engineer_commands.add_parser(
+        "region-comparison",
+        help="explain one region from an explicitly selected attempt pair",
+    )
+    engineer_region.add_argument("target_attempt_key")
+    engineer_region.add_argument("reference_attempt_key")
+    engineer_region.add_argument("region_identifier")
+    engineer_region.add_argument(
+        "--database", default=str(DEFAULT_DATABASE), help="SQLite database path"
+    )
+    engineer_region.add_argument(
+        "--comparison-policy",
+        choices=[policy.value for policy in ComparisonPolicy],
+        default=ComparisonPolicy.TIME_TRIAL.value,
+    )
+    engineer_region.add_argument("--track-model-id", required=True)
+    engineer_region.add_argument("--track-model-revision", type=int, required=True)
+    engineer_region.add_argument(
+        "--track-models-root",
+        default=os.environ.get("F1_ENGINEER_TRACK_MODELS_ROOT") or None,
+        help="folder of local draft models; defaults to F1_ENGINEER_TRACK_MODELS_ROOT",
+    )
+    engineer_region.set_defaults(handler=_engineer_region_comparison)
 
     geometry_validate = commands.add_parser(
         "geometry-validate",

@@ -5,6 +5,44 @@ export interface ApiResponse<T> {
   reason: string | null;
 }
 
+export interface EngineerQueryFact {
+  kind: string;
+  text: string;
+  source_fields: string[];
+}
+
+export interface EngineerQueryWarning {
+  code: string;
+  text: string;
+  source_fields: string[];
+  sides?: string[];
+}
+
+export interface EngineerQueryReport {
+  schema_version: 1;
+  analysis_version: "engineer-query-v1";
+  artifact_kind: "engineer_query";
+  intent: "attempt_summary" | "region_comparison";
+  status: "available" | "partial" | "unavailable";
+  reason_codes: string[];
+  selected: {
+    target_attempt_key: string;
+    reference_attempt_key?: string;
+    comparison_policy?: "time_trial" | "practice_qualifying";
+    track_model_id?: string;
+    track_model_revision?: number;
+    region_identifier?: string;
+  };
+  facts: EngineerQueryFact[];
+  omitted_fact_count: number;
+  warnings: EngineerQueryWarning[];
+  omitted_warning_count: number;
+  provenance: Record<string, unknown>;
+  diagnostic_only: true;
+  coaching_eligible: false;
+  ranking_eligible: false;
+}
+
 export interface RecordingSourceRecord {
   capture_id: string;
   display_name: string;
@@ -1658,6 +1696,41 @@ export async function requestApi<T>(
   try {
     const response = await fetch(`${base}${path}`, { cache: "no-store" });
     return (await response.json()) as ApiResponse<T>;
+  } catch {
+    return null;
+  }
+}
+
+export async function requestApiPost<T>(
+  path: string,
+  body: object,
+): Promise<ApiResponse<T> | null> {
+  const base = (
+    process.env.F1_ENGINEER_API_URL ?? "http://127.0.0.1:8765"
+  ).replace(/\/+$/, "");
+  try {
+    const response = await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return {
+        api_version: "v1",
+        status: "unavailable",
+        data: null,
+        reason: `http_status_${response.status}`,
+      };
+    }
+    const result = (await response.json()) as ApiResponse<T>;
+    if (
+      result.api_version !== "v1" ||
+      (result.status !== "ok" && result.status !== "unavailable")
+    ) {
+      return null;
+    }
+    return result;
   } catch {
     return null;
   }

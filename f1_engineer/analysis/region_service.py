@@ -431,6 +431,7 @@ def _source_summary(
         "source_sample_count": len(attempt.samples),
         "capture": (
             {
+                "sha256": capture.get("sha256"),
                 "complete": capture.get("complete"),
                 "footer_status": capture.get("footer_status"),
                 "recording_counters": capture.get("recording_counters"),

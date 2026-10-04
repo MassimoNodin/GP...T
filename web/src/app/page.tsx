@@ -7,6 +7,7 @@ import {
   CornerLossCandidates,
   CornerRegion,
   DistanceWindowBrief,
+  EngineerQueryReport,
   AttemptTrajectoryPreview,
   AttemptQualityReport,
   AttemptTraceChartReport,
@@ -26,6 +27,7 @@ import {
   SessionRecord,
   TrackModelRecord,
   requestApi,
+  requestApiPost,
 } from "@/lib/api";
 import RecordingInbox from "./RecordingInbox";
 import AttemptQualityPanel from "./AttemptQualityPanel";
@@ -36,6 +38,7 @@ import TrajectoryComparisonPanel from "./TrajectoryComparisonPanel";
 import LinkedComparisonCharts from "./LinkedComparisonCharts";
 import ObservationSetPanel from "./ObservationSetPanel";
 import PairedRegionPanel from "./PairedRegionPanel";
+import EngineerQueryPanel from "./EngineerQueryPanel";
 import type { ChartSpec } from "./LinkedComparisonCharts";
 import type { ImportJobRecord, RecordingSourceRecord } from "@/lib/api";
 
@@ -56,6 +59,8 @@ type SearchParams = {
   session_offset?: string | string[];
   attempt_offset?: string | string[];
   lifecycle_event_offset?: string | string[];
+  engineer_intent?: string | string[];
+  engineer_region_identifier?: string | string[];
 };
 
 type Series = {
@@ -88,6 +93,8 @@ export default async function Home({
     session_offset: firstParam(rawParams.session_offset),
     attempt_offset: firstParam(rawParams.attempt_offset),
     lifecycle_event_offset: firstParam(rawParams.lifecycle_event_offset),
+    engineer_intent: firstParam(rawParams.engineer_intent),
+    engineer_region_identifier: firstParam(rawParams.engineer_region_identifier),
   };
   const runOffset = pageOffset(params.run_offset);
   const sessionOffset = pageOffset(params.session_offset);
@@ -280,7 +287,13 @@ export default async function Home({
       params.reference_choice !== "session_best" &&
       selectedModel,
   );
-  const pairedRegionRequest = pairedRegionSelectionReady && target && manualReference && selectedModel
+  const engineerIntent = params.engineer_intent;
+  const pairedRegionRequest =
+    pairedRegionSelectionReady &&
+    target &&
+    manualReference &&
+    selectedModel &&
+    engineerIntent !== "region_comparison"
     ? requestApi<PairedRegionReport>(
         `/api/v1/compare/regions?${new URLSearchParams({
           target_attempt_key: target.attempt_key,
@@ -291,7 +304,38 @@ export default async function Home({
         })}`,
       )
     : Promise.resolve(null);
-  const [selectionResponse, manualComparisonResponse, qualityResponse, traceChartResponse, trajectoryResponse, regionResponse, observationSetResponse, pairedRegionResponse] = await Promise.all([
+  const engineerQueryBody =
+    engineerIntent === "attempt_summary" &&
+    params.target_attempt_key &&
+    target?.attempt_key === params.target_attempt_key
+      ? {
+          intent: "attempt_summary",
+          target_attempt_key: params.target_attempt_key,
+        }
+      : engineerIntent === "region_comparison" &&
+          params.target_attempt_key &&
+          target?.attempt_key === params.target_attempt_key &&
+          manualReference &&
+          params.reference_choice === manualReference.attempt_key &&
+          selectedModel &&
+          params.engineer_region_identifier
+        ? {
+            intent: "region_comparison",
+            target_attempt_key: target.attempt_key,
+            reference_attempt_key: manualReference.attempt_key,
+            comparison_policy: comparisonPolicy,
+            track_model_id: selectedModel.model_id,
+            track_model_revision: selectedModel.revision,
+            region_identifier: params.engineer_region_identifier,
+          }
+        : null;
+  const engineerQueryRequest = engineerQueryBody
+    ? requestApiPost<EngineerQueryReport>(
+        "/api/v1/engineer/query",
+        engineerQueryBody,
+      )
+    : Promise.resolve(null);
+  const [selectionResponse, manualComparisonResponse, qualityResponse, traceChartResponse, trajectoryResponse, regionResponse, observationSetResponse, pairedRegionResponse, engineerQueryResponse] = await Promise.all([
     selectionRequest,
     manualComparisonRequest,
     attemptQualityRequest,
@@ -300,6 +344,7 @@ export default async function Home({
     regionRequest,
     observationSetRequest,
     pairedRegionRequest,
+    engineerQueryRequest,
   ]);
   const attemptQuality =
     qualityResponse?.status === "ok" ? qualityResponse.data : null;
@@ -321,6 +366,24 @@ export default async function Home({
     observationSetResponse?.status === "ok" ? observationSetResponse.data : null;
   const pairedRegionReport =
     pairedRegionResponse?.status === "ok" ? pairedRegionResponse.data : null;
+  const engineerQueryReport =
+    engineerQueryResponse?.status === "ok" ? engineerQueryResponse.data : null;
+  const engineerQueryRequestState =
+    engineerIntent !== "attempt_summary" && engineerIntent !== "region_comparison"
+      ? "not_requested"
+      : !engineerQueryBody
+        ? "not_ready"
+        : engineerQueryResponse?.status === "ok" && engineerQueryResponse.data
+          ? "ok"
+          : "failed";
+  const engineerQueryRequestReason =
+    engineerQueryRequestState !== "not_ready"
+      ? engineerQueryResponse?.reason ?? null
+      : engineerIntent === "attempt_summary"
+        ? params.target_attempt_key
+          ? "The requested attempt is not available in the selected recording. Choose an attempt from this session and retry."
+          : "Select an attempt from this session before requesting a summary."
+        : "Choose an available target attempt, explicit reference, registered model, and region before requesting a comparison.";
   const trajectoryComparisonQuery = new URLSearchParams();
   if (target) trajectoryComparisonQuery.set("target_attempt_key", target.attempt_key);
   if (referenceKey) trajectoryComparisonQuery.set("reference_attempt_key", referenceKey);
@@ -524,6 +587,36 @@ export default async function Home({
       query.set("comparison_policy", comparisonPolicy);
     return `/?${query.toString()}`;
   };
+  const engineerSourceHref = (attemptKey: string | null) => {
+    if (!attemptKey || !session) return null;
+    const query = new URLSearchParams({
+      session_key: session.session_key,
+      target_attempt_key: attemptKey,
+    });
+    return `/?${query.toString()}`;
+  };
+  const engineerComparisonHref =
+    params.target_attempt_key &&
+    target?.attempt_key === params.target_attempt_key &&
+    manualReference &&
+    params.reference_choice === manualReference.attempt_key &&
+    selectedModel
+      ? (() => {
+          const query = new URLSearchParams({
+            session_key: session?.session_key ?? "",
+            target_attempt_key: target.attempt_key,
+            reference_choice: manualReference.attempt_key,
+            track_model_key: modelKey(selectedModel),
+          });
+          if (comparisonPolicy !== "time_trial")
+            query.set("comparison_policy", comparisonPolicy);
+          return `/?${query.toString()}`;
+        })()
+      : null;
+  const engineerRegions = (pairedRegionReport?.regions ?? []).map((region) => ({
+    identifier: region.identifier,
+    label: region.label,
+  }));
 
   return (
     <main className="app-shell">
@@ -1571,30 +1664,56 @@ export default async function Home({
                     <p>{noComparison.body}</p>
                   </section>
                 )}
-                <PairedRegionPanel
-                  report={pairedRegionReport}
-                  unavailableReason={
-                    pairedRegionResponse?.status === "unavailable"
-                      ? pairedRegionResponse.reason
-                      : null
-                  }
-                  selectionReady={pairedRegionSelectionReady}
-                  navigation={{
-                    sessionKey: session?.session_key ?? null,
-                    runId: selectedRunId,
-                    runOffset: params.run_offset ?? null,
-                    sessionOffset: params.session_offset ?? null,
-                    attemptOffset: params.attempt_offset ?? null,
-                    lifecycleEventOffset: params.lifecycle_event_offset ?? null,
-                    observationAttemptKeys: params.observation_attempt_keys,
-                    positionProbeM: params.position_probe_m ?? null,
-                  }}
-                />
+                {engineerIntent !== "region_comparison" ? (
+                  <PairedRegionPanel
+                    report={pairedRegionReport}
+                    unavailableReason={
+                      pairedRegionResponse?.status === "unavailable"
+                        ? pairedRegionResponse.reason
+                        : null
+                    }
+                    selectionReady={pairedRegionSelectionReady}
+                    navigation={{
+                      sessionKey: session?.session_key ?? null,
+                      runId: selectedRunId,
+                      runOffset: params.run_offset ?? null,
+                      sessionOffset: params.session_offset ?? null,
+                      attemptOffset: params.attempt_offset ?? null,
+                      lifecycleEventOffset: params.lifecycle_event_offset ?? null,
+                      observationAttemptKeys: params.observation_attempt_keys,
+                      positionProbeM: params.position_probe_m ?? null,
+                    }}
+                  />
+                ) : null}
               </section>
             </div>
           </>
         )}
       </div>
+      <EngineerQueryPanel
+        report={engineerQueryReport}
+        requestState={engineerQueryRequestState}
+        intent={
+          engineerIntent === "attempt_summary" || engineerIntent === "region_comparison"
+            ? engineerIntent
+            : null
+        }
+        sessionKey={session?.session_key ?? null}
+        targetAttemptKey={
+          params.target_attempt_key && target?.attempt_key === params.target_attempt_key
+            ? params.target_attempt_key
+            : null
+        }
+        referenceAttemptKey={manualReference?.attempt_key ?? null}
+        referenceChoice={params.reference_choice ?? null}
+        comparisonPolicy={comparisonPolicy}
+        trackModelKey={selectedModel ? modelKey(selectedModel) : null}
+        regions={engineerRegions}
+        targetHref={engineerSourceHref(target?.attempt_key ?? null)}
+        referenceHref={engineerSourceHref(manualReference?.attempt_key ?? null)}
+        comparisonHref={engineerComparisonHref}
+        requestReason={engineerQueryRequestReason}
+      />
       <footer className="footer-bar">
         <span>
           GP...T <b>·</b> LOCAL FIRST

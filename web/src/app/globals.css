@@ -4148,6 +4148,177 @@ h1 span {
   color: #c2ad78 !important;
   font-size: 9px !important;
 }
+.engineer-query-panel {
+  display: grid;
+  gap: 14px;
+  margin: 20px 5.5vw;
+  padding: 17px;
+  border-color: #2c3834;
+  background: linear-gradient(135deg, rgba(113, 199, 181, 0.045), transparent 42%), #111516;
+}
+.engineer-query-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.engineer-query-heading h2 {
+  margin: 4px 0 0;
+  font-size: 15px;
+}
+.engineer-query-heading p,
+.engineer-query-hint {
+  margin: 6px 0 0;
+  color: #98a39e;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.engineer-query-actions {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.engineer-query-actions form {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.engineer-query-region-form label {
+  display: grid;
+  gap: 5px;
+  color: #98a39e;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.engineer-query-region-form select {
+  min-width: 210px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid #35403f;
+  border-radius: 3px;
+  background: #0c1111;
+  color: #d5ddda;
+  font-size: 10px;
+}
+.engineer-query-region-form select:focus-visible,
+.engineer-query-actions button:focus-visible {
+  outline: 2px solid var(--mint);
+  outline-offset: 2px;
+}
+.engineer-query-actions button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #4a6b60;
+  border-radius: 3px;
+  background: #172320;
+  color: #bce5d8;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.engineer-query-actions button:hover {
+  border-color: var(--mint);
+  background: #1c2d28;
+}
+.engineer-query-result,
+.engineer-query-state {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid #29332f;
+  border-radius: 7px;
+  background: #0e1313;
+}
+.engineer-query-status {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #a6dfd0;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.08em;
+}
+.engineer-query-status.is-partial {
+  color: #dec88b;
+}
+.engineer-query-status span {
+  color: #70807a;
+  letter-spacing: 0;
+}
+.engineer-query-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: #8e9b95;
+  font: 8px var(--font-mono);
+}
+.engineer-query-sources a {
+  color: #a8dbcd;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.engineer-query-facts,
+.engineer-query-warnings {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.engineer-query-facts li {
+  display: grid;
+  grid-template-columns: minmax(105px, 0.23fr) minmax(0, 1fr);
+  gap: 10px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid #202927;
+}
+.engineer-query-facts li > span {
+  color: #7c8b84;
+  font: 8px var(--font-mono);
+  text-transform: uppercase;
+}
+.engineer-query-facts p,
+.engineer-query-warnings li,
+.engineer-query-footnote,
+.engineer-query-omissions,
+.engineer-query-state p {
+  margin: 0;
+  color: #d0d9d4;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.engineer-query-warnings {
+  padding: 9px 10px;
+  border: 1px solid rgba(203, 168, 98, 0.22);
+  border-radius: 6px;
+  background: rgba(162, 122, 46, 0.07);
+}
+.engineer-query-warnings li {
+  color: #d2bd8a;
+}
+.engineer-query-warnings strong {
+  text-transform: uppercase;
+}
+.engineer-query-footnote,
+.engineer-query-omissions {
+  color: #87948e;
+  font-size: 9px;
+}
+.engineer-query-state strong {
+  color: #dec88b;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.08em;
+}
+.engineer-query-state.is-failed {
+  border-color: rgba(240, 106, 79, 0.34);
+}
+.engineer-query-state.is-failed strong {
+  color: #f19a81;
+}
+.engineer-query-state.is-unavailable {
+  border-color: rgba(203, 168, 98, 0.25);
+}
 @media (max-width: 740px) {
   .paired-region-heading,
   .paired-region-card > header,
@@ -4157,5 +4328,24 @@ h1 span {
   .paired-region-facts,
   .paired-region-coverage {
     grid-template-columns: 1fr;
+  }
+  .engineer-query-panel {
+    margin-right: 16px;
+    margin-left: 16px;
+    padding: 13px;
+  }
+  .engineer-query-facts li {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .engineer-query-actions,
+  .engineer-query-actions form,
+  .engineer-query-region-form label,
+  .engineer-query-region-form select {
+    width: 100%;
+  }
+  .engineer-query-actions form {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
