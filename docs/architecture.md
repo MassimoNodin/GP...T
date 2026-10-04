@@ -828,6 +828,20 @@ Acceptance covers identical, overlapping and disjoint brackets; the minimum/maxi
 
 **Rationale:** D0039 intentionally retained pedal onsets as per-attempt brackets. A bounded spread summarizes repeated observations for the plan's consistency work while preserving measurement uncertainty and avoiding midpoint averaging or a false consistency score.
 
+## Decision 0056: distinguish positive pipeline acceptance from real coaching validation
+
+**Status:** accepted
+
+**Date:** 2026-10-05
+
+Add reproducible, synthetic raw F1 25 captures that exercise the ordinary decoder, import, SQLite/Parquet storage, session-best reference selection, distance comparison, validated test-local region model, D0032 ranking, D0033 facts, D0053/D0054 pattern assessments, and lap debrief as one end-to-end positive path. Also exercise the same report through the local API and CLI, and confirm an identical re-import is idempotent. Do not mock packet decoders, persistence queries, reference selection, or numerical analysis.
+
+Synthetic model approval exists only in the isolated test process and is bound to the exact serialized model fingerprint. Do not add the synthetic model or approval to packaged data or the production registry. Synthetic success establishes integration and arithmetic mechanics; it does not validate real circuit boundaries, diagnosis accuracy, action mapping, or driving advice. Keep production coaching admission denied.
+
+Include negative acceptance for game invalidity, incomplete capture, rewind/lifecycle uncertainty, unsupported regional telemetry, and unapproved model content. Practice/Qualifying remains diagnostic; Race and unknown modes remain ineligible for Time Trial reference selection. Preserve the current Melbourne and Shanghai captures as diagnostic evidence with their existing warnings.
+
+**Rationale:** Positive unit tests currently construct stored attempts or comparison reports and cannot expose drift between capture parsing, import, persisted evidence, automatic reference selection, region ranking, and final reports. A compact reproducible raw capture closes that integration gap before any future confidence or action work, without treating synthetic evidence as real validation. Clean eligible Time Trial game data and independently reviewed real regions remain prerequisites for coaching admission.
+
 ## Data flow
 
 ```text
