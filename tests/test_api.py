@@ -540,6 +540,15 @@ def test_paired_regions_api_resolves_catalog_model_and_preserves_diagnostic_scop
             "ranking_eligible": False,
             "regions": [
                 {
+                    "supported_differences": {
+                        "brake_10_percent_release": {
+                            "status": "supported",
+                            "analysis_version": "brake-threshold-release-v1",
+                            "target_end_bracket_m": [10.0, 11.0],
+                            "reference_end_bracket_m": [12.0, 13.0],
+                            "target_minus_reference_end_bracket_m": [-3.0, -1.0],
+                        }
+                    },
                     "debrief": {
                         "schema_version": 1,
                         "analysis_version": "diagnostic-region-debrief-v1",
@@ -583,6 +592,12 @@ def test_paired_regions_api_resolves_catalog_model_and_preserves_diagnostic_scop
         "diagnostic-region-debrief-v1"
     )
     assert payload["regions"][0]["debrief"]["facts"][0]["text"] == "A measured fact."
+    assert payload["regions"][0]["supported_differences"][
+        "brake_10_percent_release"
+    ]["analysis_version"] == "brake-threshold-release-v1"
+    assert payload["regions"][0]["supported_differences"][
+        "brake_10_percent_release"
+    ]["target_minus_reference_end_bracket_m"] == [-3.0, -1.0]
     assert payload["model"]["origin"] == "local_draft"
     assert payload["attempts"]["target"]["session_uid"] == "18446744073709551600"
     assert calls["identity"] == ("local-model", 3)

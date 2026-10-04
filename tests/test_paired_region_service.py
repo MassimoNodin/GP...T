@@ -45,7 +45,7 @@ def _samples(*, reference: bool) -> tuple[dict[str, object], ...]:
     rows = []
     for distance in range(21):
         lap_step_ms = 52 if reference else 50
-        brake = 0.3 if (11 <= distance <= 17 if reference else 8 <= distance <= 14) else 0.0
+        brake = 0.3 if (11 <= distance <= 16 if reference else 8 <= distance <= 14) else 0.0
         throttle = 0.6 if (distance >= 15 if reference else distance >= 13) else 0.0
         minimum_speed = 13.0 if reference else 15.0
         speed = minimum_speed if distance == 10 else 25.0 + distance * 0.1
@@ -174,6 +174,35 @@ def _install_pair(monkeypatch, attempts: tuple[StoredAttemptTrace, StoredAttempt
     )
 
 
+def _brake_release_observation(
+    bracket: tuple[float, float],
+    *,
+    left_censored: bool = False,
+    right_censored: bool = False,
+) -> dict[str, object]:
+    event = {
+        "channel": "brake",
+        "threshold": 0.1,
+        "start_distance_m": 5.0,
+        "start_distance_bracket_m": None if left_censored else [4.0, 5.0],
+        "end_distance_m": bracket[0],
+        "end_distance_bracket_m": list(bracket),
+        "start_session_time_s": 1.0,
+        "end_session_time_s": 2.0,
+        "left_censored": left_censored,
+        "right_censored": right_censored,
+    }
+    return {
+        "event_channel_coverage": {"brake": 1.0},
+        "braking": {
+            "status": "left_censored" if left_censored else "detected",
+            "event_count": 1,
+            "events_truncated": False,
+            "rejected_short_event_count": 0,
+            "unsupported_break_count": 0,
+            "events": [event],
+        },
+    }
 def test_paired_report_is_diagnostic_and_uses_bracketed_control_differences(monkeypatch) -> None:
     target = _attempt("target", reference=False)
     reference = _attempt("reference", reference=True)
@@ -214,6 +243,11 @@ def test_paired_report_is_diagnostic_and_uses_bracketed_control_differences(monk
     assert brake["target_minus_reference_start_bracket_m"][0] <= brake[
         "target_minus_reference_start_bracket_m"
     ][1]
+    release = region["supported_differences"]["brake_10_percent_release"]
+    assert release["status"] == "supported"
+    assert release["analysis_version"] == "brake-threshold-release-v1"
+    assert release["target_minus_reference_end_bracket_m"] == pytest.approx([-3.0, -1.0])
+    assert release["right_censored"] == {"target": False, "reference": False}
     throttle = region["supported_differences"]["throttle_50_percent_onset"]
     assert throttle["status"] == "supported"
     assert region["supported_differences"]["exit_speed"]["status"] == "supported"
@@ -234,6 +268,177 @@ def test_paired_report_is_diagnostic_and_uses_bracketed_control_differences(monk
     )
     assert any(item["code"] == "capture_incomplete" for item in report["warnings"]["target"])
     assert report["resource_policy"]["source"]["grid_points"]["estimated"] == 42
+
+
+def test_exact_ten_percent_sample_is_active_for_brake_event_and_release(monkeypatch) -> None:
+    target = _attempt("target", reference=False)
+    reference = _attempt("reference", reference=True)
+    target_samples = tuple(
+        {
+            **sample,
+            "brake": 0.1 if sample["lap_distance_m"] == 8.0 else sample["brake"],
+        }
+        for sample in target.samples
+    )
+    target = replace(target, samples=target_samples)
+    _install_pair(monkeypatch, (target, reference))
+
+    report = compare_attempt_regions(
+        "test.sqlite3",
+        target.attempt_key,
+        reference.attempt_key,
+        _model(),
+    )
+
+    assert report is not None
+    region = report["regions"][0]
+    assert region["target"]["braking"]["events"][0][
+        "start_distance_bracket_m"
+    ] == [7.0, 8.0]
+    assert region["supported_differences"]["brake_10_percent_release"][
+        "status"
+    ] == "supported"
+
+
+@pytest.mark.parametrize(
+    ("target_bracket", "reference_bracket", "expected"),
+    [
+        ((10.0, 11.0), (5.0, 6.0), (4.0, 6.0)),
+        ((5.0, 6.0), (10.0, 11.0), (-6.0, -4.0)),
+        ((5.0, 5.0), (5.0, 5.0), (0.0, 0.0)),
+        ((4.5, 5.5), (5.0, 6.0), (-1.5, 0.5)),
+    ],
+)
+def test_brake_release_keeps_brackets_and_target_minus_reference_bounds(
+    target_bracket: tuple[float, float],
+    reference_bracket: tuple[float, float],
+    expected: tuple[float, float],
+) -> None:
+    difference = paired_service._brake_threshold_release_difference(
+        _brake_release_observation(target_bracket),
+        _brake_release_observation(reference_bracket),
+        search_window=(0.0, 20.0),
+    )
+
+    assert difference["status"] == "supported"
+    assert difference["target_end_bracket_m"] == list(target_bracket)
+    assert difference["reference_end_bracket_m"] == list(reference_bracket)
+    assert difference["target_minus_reference_end_bracket_m"] == pytest.approx(expected)
+    assert difference["unit"] == "m"
+    assert difference["direction"] == "target_minus_reference_end_bracket_in_lap_distance"
+    assert "duration" not in difference
+
+
+def test_left_censored_brake_episode_can_have_observed_release() -> None:
+    target = _brake_release_observation((10.0, 11.0), left_censored=True)
+    reference = _brake_release_observation((8.0, 9.0))
+
+    difference = paired_service._brake_threshold_release_difference(
+        target,
+        reference,
+        search_window=(5.0, 20.0),
+    )
+
+    assert difference["status"] == "supported"
+    assert difference["left_censored"] == {"target": True, "reference": False}
+    assert difference["target_end_bracket_m"] == [10.0, 11.0]
+
+
+@pytest.mark.parametrize(
+    ("change", "search_window", "expected_reason"),
+    [
+        ("missing_coverage", (0.0, 20.0), "target_brake_coverage_incomplete"),
+        ("partial_coverage", (0.0, 20.0), "target_brake_coverage_incomplete"),
+        ("missing_counter", (0.0, 20.0), "target_threshold_event_counters_unavailable"),
+        ("boolean_counter", (0.0, 20.0), "target_threshold_event_counters_unavailable"),
+        ("truncated", (0.0, 20.0), "target_threshold_event_examples_truncated"),
+        ("ambiguous", (0.0, 20.0), "target_threshold_event_ambiguous"),
+        ("short_episode", (0.0, 20.0), "target_threshold_event_ambiguous"),
+        ("unsupported_break", (0.0, 20.0), "target_threshold_event_ambiguous"),
+        ("right_censored", (0.0, 20.0), "target_brake_release_right_censored"),
+        ("malformed_bracket", (0.0, 20.0), "target_brake_release_bracket_unavailable"),
+        ("exclusive_end", (0.0, 20.0), "target_brake_release_bracket_unavailable"),
+        ("outside_event", (0.0, 20.0), "target_brake_threshold_event_malformed"),
+        ("time_rewind", (0.0, 20.0), "target_brake_threshold_event_malformed"),
+    ],
+)
+def test_brake_release_abstains_when_evidence_is_ambiguous_or_unsupported(
+    change: str,
+    search_window: tuple[float, float],
+    expected_reason: str,
+) -> None:
+    target = _brake_release_observation((10.0, 11.0))
+    detection = target["braking"]
+    assert isinstance(detection, dict)
+    event = detection["events"][0]
+    assert isinstance(event, dict)
+    if change == "missing_coverage":
+        target["event_channel_coverage"] = {}
+    elif change == "partial_coverage":
+        target["event_channel_coverage"] = {"brake": 0.99}
+    elif change == "missing_counter":
+        detection.pop("unsupported_break_count")
+    elif change == "boolean_counter":
+        detection["event_count"] = True
+    elif change == "truncated":
+        detection["events_truncated"] = True
+    elif change == "ambiguous":
+        detection["event_count"] = 2
+    elif change == "short_episode":
+        detection["rejected_short_event_count"] = 1
+    elif change == "unsupported_break":
+        detection["unsupported_break_count"] = 1
+    elif change == "right_censored":
+        event["right_censored"] = True
+    elif change == "malformed_bracket":
+        event["end_distance_bracket_m"] = [11.0, 10.0]
+    elif change == "exclusive_end":
+        event["end_distance_m"] = 19.0
+        event["end_distance_bracket_m"] = [19.0, 20.0]
+    elif change == "outside_event":
+        event["end_distance_m"] = 20.0
+    elif change == "time_rewind":
+        event["end_session_time_s"] = 0.5
+
+    difference = paired_service._brake_threshold_release_difference(
+        target,
+        _brake_release_observation((8.0, 9.0)),
+        search_window=search_window,
+    )
+
+    assert difference["status"] == "unavailable"
+    assert difference["unavailable_reason"] == expected_reason
+
+
+def test_brake_release_unavailable_is_versioned_and_origin_adjusted_window_is_used() -> None:
+    unavailable = paired_service._brake_threshold_release_difference(
+        _brake_release_observation((10.0, 11.0)),
+        _brake_release_observation((8.0, 9.0)),
+        search_window=None,
+    )
+    assert unavailable["status"] == "unavailable"
+    assert unavailable["analysis_version"] == "brake-threshold-release-v1"
+    assert unavailable["unavailable_reason"] == "search_window_unconfigured"
+
+    definition = _model().corners[0]
+    target = _brake_release_observation((110.0, 111.0))
+    reference = _brake_release_observation((112.0, 113.0))
+    target["braking"]["events"][0]["start_distance_m"] = 110.0
+    reference["braking"]["events"][0]["start_distance_m"] = 112.0
+    differences = paired_service._supported_differences(
+        definition,
+        target,
+        reference,
+        None,
+        100.0,
+        105.0,
+        120.0,
+    )
+
+    assert differences["brake_10_percent_release"]["status"] == "supported"
+    assert differences["brake_10_percent_release"][
+        "target_minus_reference_end_bracket_m"
+    ] == pytest.approx([-3.0, -1.0])
 
 
 def test_validated_model_and_eligible_sources_keep_delta_diagnostic(monkeypatch) -> None:

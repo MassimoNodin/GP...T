@@ -587,6 +587,11 @@ def _supported_differences(
             threshold=0.1,
             search_window=_shift_window(definition.braking_search_window_m, origin_m),
         ),
+        "brake_10_percent_release": _brake_threshold_release_difference(
+            target,
+            reference,
+            search_window=_shift_window(definition.braking_search_window_m, origin_m),
+        ),
         "throttle_50_percent_onset": _event_difference(
             target,
             reference,
@@ -603,6 +608,166 @@ def _supported_differences(
             else None,
         ),
     }
+
+
+def _brake_threshold_release_difference(
+    target: Mapping[str, object],
+    reference: Mapping[str, object],
+    *,
+    search_window: tuple[float, float] | None,
+) -> dict[str, object]:
+    if search_window is None:
+        return _brake_release_unavailable("search_window_unconfigured")
+
+    events: dict[str, Mapping[str, object]] = {}
+    for side, observation in (("target", target), ("reference", reference)):
+        coverage = _mapping(observation.get("event_channel_coverage"))
+        channel_coverage = _finite_number(coverage.get("brake")) if coverage else None
+        if channel_coverage is None or not math.isclose(
+            channel_coverage, 1.0, rel_tol=0.0, abs_tol=1e-9
+        ):
+            return _brake_release_unavailable(f"{side}_brake_coverage_incomplete")
+
+        detection = _mapping(observation.get("braking"))
+        event, reason = _brake_release_event(detection, search_window)
+        if reason is not None:
+            return _brake_release_unavailable(f"{side}_{reason}")
+        assert event is not None
+        events[side] = event
+
+    target_event = events["target"]
+    reference_event = events["reference"]
+    target_bracket = _brake_release_bracket(
+        target_event.get("end_distance_bracket_m"), search_window
+    )
+    reference_bracket = _brake_release_bracket(
+        reference_event.get("end_distance_bracket_m"), search_window
+    )
+    if target_bracket is None:
+        return _brake_release_unavailable("target_brake_release_bracket_unavailable")
+    if reference_bracket is None:
+        return _brake_release_unavailable("reference_brake_release_bracket_unavailable")
+
+    difference = (
+        target_bracket[0] - reference_bracket[1],
+        target_bracket[1] - reference_bracket[0],
+    )
+    left_censored = {
+        "target": target_event["left_censored"],
+        "reference": reference_event["left_censored"],
+    }
+    return {
+        "status": "supported",
+        "schema_version": 1,
+        "analysis_version": "brake-threshold-release-v1",
+        "channel": "brake",
+        "threshold": 0.1,
+        "threshold_semantics": "release is the observed transition from brake >= 10% to brake < 10%",
+        "target_end_bracket_m": list(target_bracket),
+        "reference_end_bracket_m": list(reference_bracket),
+        "target_minus_reference_end_bracket_m": list(difference),
+        "left_censored": left_censored,
+        "right_censored": {"target": False, "reference": False},
+        "unit": "m",
+        "direction": "target_minus_reference_end_bracket_in_lap_distance",
+        "unavailable_reason": None,
+    }
+
+
+def _brake_release_event(
+    detection: Mapping[str, object] | None,
+    search_window: tuple[float, float],
+) -> tuple[Mapping[str, object] | None, str | None]:
+    if detection is None or detection.get("status") not in {
+        "detected",
+        "left_censored",
+        "no_sustained_event",
+    }:
+        return None, "braking_observation_unavailable"
+
+    count = detection.get("event_count")
+    rejected_short = detection.get("rejected_short_event_count")
+    unsupported_breaks = detection.get("unsupported_break_count")
+    if (
+        not _is_nonnegative_count(count)
+        or not _is_nonnegative_count(rejected_short)
+        or not _is_nonnegative_count(unsupported_breaks)
+        or not isinstance(detection.get("events_truncated"), bool)
+    ):
+        return None, "threshold_event_counters_unavailable"
+    if detection["events_truncated"]:
+        return None, "threshold_event_examples_truncated"
+    if count != 1 or rejected_short != 0 or unsupported_breaks != 0:
+        return None, "threshold_event_ambiguous"
+
+    examples = detection.get("events")
+    if (
+        not isinstance(examples, list)
+        or len(examples) != 1
+        or not isinstance(examples[0], Mapping)
+    ):
+        return None, "threshold_event_ambiguous"
+    event = examples[0]
+    if (
+        event.get("channel") != "brake"
+        or not _close_number(event.get("threshold"), 0.1)
+        or not isinstance(event.get("left_censored"), bool)
+        or not isinstance(event.get("right_censored"), bool)
+    ):
+        return None, "brake_threshold_event_malformed"
+    if event["right_censored"]:
+        return None, "brake_release_right_censored"
+
+    start_distance = _finite_number(event.get("start_distance_m"))
+    end_distance = _finite_number(event.get("end_distance_m"))
+    start_time = _finite_number(event.get("start_session_time_s"))
+    end_time = _finite_number(event.get("end_session_time_s"))
+    if (
+        start_distance is None
+        or end_distance is None
+        or start_time is None
+        or end_time is None
+        or start_time < 0
+        or end_time < start_time
+        or not search_window[0] <= start_distance < search_window[1]
+        or not search_window[0] <= end_distance < search_window[1]
+    ):
+        return None, "brake_threshold_event_malformed"
+
+    bracket = _brake_release_bracket(event.get("end_distance_bracket_m"), search_window)
+    if bracket is None:
+        return None, "brake_release_bracket_unavailable"
+    if not bracket[0] <= end_distance <= bracket[1]:
+        return None, "brake_release_bracket_malformed"
+    return event, None
+
+
+def _brake_release_bracket(
+    value: object,
+    search_window: tuple[float, float],
+) -> tuple[float, float] | None:
+    bracket = _bracket(value, search_window)
+    if bracket is None or bracket[1] >= search_window[1]:
+        return None
+    return bracket
+
+
+def _brake_release_unavailable(reason: str) -> dict[str, object]:
+    return {
+        "status": "unavailable",
+        "schema_version": 1,
+        "analysis_version": "brake-threshold-release-v1",
+        "channel": "brake",
+        "threshold": 0.1,
+        "unit": "m",
+        "direction": "target_minus_reference_end_bracket_in_lap_distance",
+        "value": None,
+        "unavailable_reason": reason,
+    }
+
+
+def _is_nonnegative_count(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def _interval_difference(raw: object) -> dict[str, object]:

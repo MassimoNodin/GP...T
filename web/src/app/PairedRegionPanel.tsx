@@ -131,6 +131,36 @@ function DifferenceValue({
     );
   }
 
+  if (metric === "brake_10_percent_release") {
+    if (
+      difference.target_end_bracket_m &&
+      difference.reference_end_bracket_m &&
+      difference.target_minus_reference_end_bracket_m
+    ) {
+      const leftCensored = difference.left_censored;
+      const unobservedOnsets = leftCensored
+        ? (["target", "reference"] as const).filter((side) => leftCensored[side])
+        : [];
+      return (
+        <>
+          <strong>
+            {distanceBracket(difference.target_end_bracket_m)} target · {distanceBracket(difference.reference_end_bracket_m)} reference
+          </strong>
+          <small>
+            Target − reference: {distanceBracket(difference.target_minus_reference_end_bracket_m)}
+          </small>
+          <small>
+            Sampled transition from brake ≥10% to &lt;10%; positive means farther along lap distance.
+          </small>
+          {unobservedOnsets.length ? (
+            <small>{unobservedOnsets.join(" and ")} brake onset was not observed in the search window.</small>
+          ) : null}
+        </>
+      );
+    }
+    return <span className="paired-region-unsupported">release brackets unavailable</span>;
+  }
+
   if (metric === "connected_interval_time") {
     return (
       <strong>
@@ -276,6 +306,7 @@ export default function PairedRegionPanel({
                 ["connected_interval_time", "Connected time change"],
                 ["minimum_speed", "Observed minimum speed"],
                 ["brake_10_percent_onset", "10% brake onset"],
+                ["brake_10_percent_release", "10% brake-threshold release"],
                 ["throttle_50_percent_onset", "50% throttle onset"],
                 ["exit_speed", "Speed at configured exit"],
               ].map(([key, label]) => (

@@ -128,6 +128,15 @@ def test_compare_regions_cli_forwards_explicit_pair_and_catalog_model(monkeypatc
         "ranking_eligible": False,
         "regions": [
             {
+                "supported_differences": {
+                    "brake_10_percent_release": {
+                        "status": "supported",
+                        "analysis_version": "brake-threshold-release-v1",
+                        "target_end_bracket_m": [10.0, 11.0],
+                        "reference_end_bracket_m": [12.0, 13.0],
+                        "target_minus_reference_end_bracket_m": [-3.0, -1.0],
+                    }
+                },
                 "debrief": {
                     "schema_version": 1,
                     "analysis_version": "diagnostic-region-debrief-v1",

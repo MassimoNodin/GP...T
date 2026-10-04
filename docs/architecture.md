@@ -691,6 +691,25 @@ Acceptance covers exact layouts and wheel order; independent invalid-field handl
 
 **Rationale:** This supplies the damage context required by plan section 45 using existing captures and established storage/join boundaries. It improves diagnostic comparability without assigning a cause to lap-time differences or promoting sparse observations into coaching authority.
 
+## Decision 0048: compare observed brake-threshold release
+
+**Status:** accepted
+**Date:** 2026-10-04
+
+Add the optional `supported_differences.brake_10_percent_release` measurement to each paired region. Reuse each side's existing sustained braking detection; do not read traces again, resample, or scan events again. The measurement is the sampled transition from brake input `>= 10%` to `< 10%`. It does not mean complete pedal release.
+
+Require a configured half-open braking search window, complete brake-channel coverage on both sides, and exactly one sustained event per side. Require known, non-negative integer `event_count`, `rejected_short_event_count`, and `unsupported_break_count`, `events_truncated=false`, one retained event example, and zero rejected-short events or unsupported breaks. The event must have the brake channel, the 0.1 threshold, finite source endpoints, valid censoring flags, and an observed finite release bracket wholly inside the configured window. The event must not be right-censored. A left-censored event may qualify because its release was observed; return its censoring flag so the UI discloses that its onset was not observed. Do not report event duration.
+
+For target bracket `[Tlo, Thi]` and reference bracket `[Rlo, Rhi]`, return target-minus-reference bounds `[Tlo - Rhi, Thi - Rlo]` in metres. Preserve intervals that cross zero. Positive values mean the target's release is farther along lap distance; they do not necessarily mean later in time. Preserve both source brackets and outward-round only in presentation.
+
+Return explicit unavailable reasons for an unconfigured window, incomplete coverage, unavailable observations or counters, truncated examples, ambiguous episodes, short episodes, unsupported gaps, right-censored continuation, and malformed or out-of-window brackets. Version the nested object as `brake-threshold-release-v1` with schema version 1. Add no parent schema change, storage, database, packet, or trace change. Older API/UI consumers may omit or ignore the measurement. Keep D0043's five-fact debrief unchanged.
+
+Keep D0041's existing same-run/session/player, completed-attempt, and stable Time Trial or Practice/Qualifying policies. Race and unknown modes remain inspection-only. Preserve invalidity, superseded, lifecycle-unassessed, incomplete-capture, and model provenance warnings. Keep the new measurement diagnostic, coaching-ineligible, and ranking-ineligible; do not feed it into D0032 ranking, D0033 region summaries, confidence, reference eligibility, coaching, or other measurements. Existing source, resampling, region-count, and weighted-work limits remain unchanged; output adds at most one fixed-size measurement per region.
+
+Acceptance covers positive, negative, equal, and zero-straddling bracket differences; exact-threshold behavior; left-censored onset with observed release; right-censored continuation; missing counters; incomplete brake coverage; gaps, rewinds, multiple and short episodes; truncated event examples; malformed brackets; origin-shifted windows; and the exclusive search-window end. API, CLI, and dashboard carry the additive field while accepting older responses. Inspect the available Melbourne and Shanghai Practice pairs with existing capture-quality and lifecycle warnings; no new capture is required. This diagnostic is not an apex relationship, a cause of time loss, a complete pedal-release point, or a recommended technique.
+
+**Rationale:** This fills the braking-phase observation gap in the development plan by measuring an observed threshold release using already computed events and existing captures. It retains sampling uncertainty and censoring while avoiding new source reads or expanded coaching authority. Geometry-dependent trail-braking analysis and actionable coaching remain deferred.
+
 ## Data flow
 
 ```text
@@ -734,6 +753,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - `project-trajectory` projects one checksummed attempt against a caller-selected geometry artifact for bounded diagnostics. It preserves source discontinuities and unsupported spans, and all modes remain ineligible for coaching through this command.
 - `distance_window_brief` derives at most five measured facts from the already computed selected-window comparison. Complete coverage, source anchors and event uncertainty remain explicit; all results are diagnostic and coaching-ineligible.
 - `diagnostic-region-debrief-v1` derives at most five deterministic facts from existing paired-region supported differences; omissions remain explicit, and the additive nested report is diagnostic, coaching-ineligible, and ranking-ineligible.
+- `brake-threshold-release-v1` compares the existing paired braking-event end brackets for the sampled `>=10%` to `<10%` transition. It preserves uncertainty and left-censored onset, abstains on right-censoring or unsupported event evidence, and does not measure complete pedal release or add trace reads.
 - `observation-set` reuses the single-attempt selected-window evaluator across at most eight explicitly selected same-run/session/player attempts. Scalar ranges require two fully supported, lifecycle-assessed completed attempts; onset evidence remains bracketed per lap, and every result is diagnostic and coaching-ineligible.
 - Comparison speed, lap-delta, and driver-input charts share a bounded pointer and keyboard cursor over the original resampled comparison distance grid. Local chart zoom is presentation-only and preserves sampled continuity gaps; analysis, mode policy and comparison outputs are unchanged.
 - Standalone attempt trace previews read the checksummed speed/control channels independently of comparison and reference eligibility. Session time remains the plot coordinate; frame/time gaps and missing channel values split runs, and deterministic point/run caps preserve discontinuities and report omitted data.

@@ -927,6 +927,9 @@ export interface CornerAnalysis {
 
 export interface PairedRegionDifference {
   status: "supported" | "unavailable";
+  schema_version?: 1;
+  analysis_version?: string;
+  threshold?: number;
   value?: number | null;
   unit?: string;
   direction?: string;
@@ -938,11 +941,26 @@ export interface PairedRegionDifference {
   target_start_bracket_m?: [number, number];
   reference_start_bracket_m?: [number, number];
   target_minus_reference_start_bracket_m?: [number, number];
+  target_end_bracket_m?: [number, number];
+  reference_end_bracket_m?: [number, number];
+  target_minus_reference_end_bracket_m?: [number, number];
+  left_censored?: { target: boolean; reference: boolean };
   right_censored?: { target: boolean; reference: boolean };
   entry_delta_s?: number | null;
   exit_delta_s?: number | null;
   unavailable_reason?: string | null;
   [key: string]: unknown;
+}
+
+export interface BrakeThresholdReleaseDifference extends PairedRegionDifference {
+  schema_version?: 1;
+  analysis_version?: "brake-threshold-release-v1";
+  threshold?: 0.1;
+  target_end_bracket_m?: [number, number];
+  reference_end_bracket_m?: [number, number];
+  target_minus_reference_end_bracket_m?: [number, number];
+  left_censored?: { target: boolean; reference: boolean };
+  right_censored?: { target: boolean; reference: boolean };
 }
 
 export interface PairedRegionEntry {
@@ -962,7 +980,9 @@ export interface PairedRegionEntry {
   target: RegionAttempt;
   reference: RegionAttempt;
   delta_change: CornerRegion["delta_change"];
-  supported_differences: Record<string, PairedRegionDifference>;
+  supported_differences: Record<string, PairedRegionDifference> & {
+    brake_10_percent_release?: BrakeThresholdReleaseDifference;
+  };
   debrief?: {
     schema_version: 1;
     analysis_version: "diagnostic-region-debrief-v1";
