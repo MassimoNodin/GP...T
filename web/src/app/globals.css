@@ -54,25 +54,45 @@ select {
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 9px;
   font-size: 13px;
   font-weight: 800;
-  letter-spacing: 0.16em;
 }
-.brand em {
-  color: #879191;
-  font-style: normal;
+.brand-name {
+  color: var(--text);
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+.brand-dots {
+  color: var(--mint);
+  letter-spacing: 0.025em;
+}
+.brand-descriptor {
+  margin-left: 2px;
+  color: var(--muted);
+  font-size: 9px;
   font-weight: 600;
+  letter-spacing: 0.12em;
 }
 .brand-mark {
-  display: grid;
-  place-items: center;
   width: 28px;
   height: 28px;
-  border: 1px solid var(--warm);
-  color: var(--warm);
-  font-size: 14px;
-  transform: skew(-8deg);
+  flex: none;
+  padding: 3px;
+  border: 1px solid rgba(113, 199, 181, 0.45);
+  border-radius: 4px;
+  background: rgba(113, 199, 181, 0.04);
+  color: var(--mint);
+}
+.brand-mark path {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+.brand-mark circle {
+  fill: var(--text);
 }
 .topbar-right {
   display: flex;
@@ -2910,6 +2930,9 @@ h1 span {
   }
   .topbar-version,
   .lap-stamp {
+    display: none;
+  }
+  .brand-descriptor {
     display: none;
   }
   .page-content {

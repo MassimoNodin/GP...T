@@ -527,11 +527,17 @@ export default async function Home({
   return (
     <main className="app-shell">
       <header className="topbar">
-        <a className="brand" href="/" aria-label="Apex Engineer home">
-          <span className="brand-mark">A</span>
-          <span>
-            APEX <em>ENGINEER</em>
+        <a className="brand" href="/" aria-label="GP...T home">
+          <svg className="brand-mark" viewBox="0 0 64 64" aria-hidden="true">
+            <path d="M12 44h11V31h10v7h10V19h9" />
+            <circle cx="23" cy="31" r="3" />
+            <circle cx="33" cy="38" r="3" />
+            <circle cx="43" cy="19" r="3" />
+          </svg>
+          <span className="brand-name">
+            GP<span className="brand-dots">...</span>T
           </span>
+          <span className="brand-descriptor">RACE ENGINEER</span>
         </a>
         <div className="topbar-right">
           <span className="local-indicator">
@@ -546,9 +552,9 @@ export default async function Home({
           <div>
             <div className="eyebrow">DRIVER ANALYSIS / SESSION REVIEW</div>
             <h1>
-              Find the time
+              Know the lap.
               <br />
-              <span>between the lines.</span>
+              <span>Find the time.</span>
             </h1>
             <p className="intro-copy">
               Compare recorded laps by distance. Every gap stays visible, and
@@ -613,8 +619,7 @@ export default async function Home({
             <div className="eyebrow">NO COMPLETED RECORDINGS</div>
             <h2>Record and import a session to begin.</h2>
             <p>
-              APEX keeps the recording local and builds a replayable lap
-              archive.
+              GP...T keeps recording local and builds a replayable lap archive.
             </p>
           </section>
         ) : lapApiUnavailable ? (
@@ -1469,7 +1474,7 @@ export default async function Home({
       </div>
       <footer className="footer-bar">
         <span>
-          APEX ENGINEER <b>·</b> LOCAL FIRST
+          GP...T <b>·</b> LOCAL FIRST
         </span>
         <span>Recorded telemetry only · No generated coaching</span>
       </footer>

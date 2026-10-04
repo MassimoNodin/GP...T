@@ -1,6 +1,8 @@
-# AI F1 Race Engineer
+# GP...T — AI F1 Race Engineer
 
 A local-first race engineer for F1 25 and its 2026 Season Pack. The system is being built in layers: raw telemetry capture, deterministic analysis, coaching decisions, and finally natural-language and voice features.
+
+The name pairs the race-engineer call sign “GP” with a final “T” as a wink to GPT. The app has its own voice and visual identity: precise, evidence-led, and local-first.
 
 ## Current slice
 
