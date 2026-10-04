@@ -54,15 +54,23 @@ const MAX_RENDERED_RUNS = 256;
 export default function LinkedComparisonCharts({
   distance,
   charts,
+  initialWindowM = null,
 }: {
   distance: number[];
   charts: ChartSpec[];
+  initialWindowM?: [number, number] | null;
 }) {
+  const initialWindow = resolveInitialRange(distance, initialWindowM);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [requestedDistance, setRequestedDistance] = useState<number | null>(
     null,
   );
-  const [zoom, setZoom] = useState<RangeIndex | null>(null);
+  const [zoom, setZoom] = useState<RangeIndex | null>(() =>
+    initialWindow?.status === "range" ? initialWindow.range : null,
+  );
+  const [analysisWindowView, setAnalysisWindowView] = useState(
+    initialWindow?.status === "range",
+  );
   const [zoomMode, setZoomMode] = useState(false);
   const [dragStart, setDragStart] = useState<number | null>(null);
 
@@ -72,7 +80,12 @@ export default function LinkedComparisonCharts({
   );
   if (invalidReason) {
     return (
-      <section className="chart-stack" aria-label="Linked comparison charts">
+      <section
+        id="comparison-charts"
+        className="chart-stack"
+        aria-label="Linked comparison charts"
+        tabIndex={-1}
+      >
         <section
           className="chart-card panel linked-chart-unavailable"
           role="status"
@@ -86,13 +99,41 @@ export default function LinkedComparisonCharts({
 
   if (distance.length === 0) {
     return (
-      <section className="chart-stack" aria-label="Linked comparison charts">
+      <section
+        id="comparison-charts"
+        className="chart-stack"
+        aria-label="Linked comparison charts"
+        tabIndex={-1}
+      >
         <section
           className="chart-card panel linked-chart-unavailable"
           role="status"
         >
           <h3>Linked distance inspection unavailable</h3>
           <p>The comparison contains no distance-grid points.</p>
+        </section>
+      </section>
+    );
+  }
+
+  if (initialWindow?.status === "empty") {
+    return (
+      <section
+        id="comparison-charts"
+        className="chart-stack"
+        aria-label="Linked comparison charts"
+        tabIndex={-1}
+      >
+        <section
+          className="chart-card panel linked-chart-unavailable"
+          role="status"
+        >
+          <h3>No grid points inside the selected interval</h3>
+          <p>
+            The exact interval was preserved. This comparison grid contains no
+            existing distance samples within its half-open bounds, so no chart
+            values are interpolated.
+          </p>
         </section>
       </section>
     );
@@ -117,6 +158,7 @@ export default function LinkedComparisonCharts({
     const high = Math.max(first, last);
     if (high - low < 1) return;
     setZoom({ first: low, last: high });
+    setAnalysisWindowView(false);
     setSelectedIndex((current) =>
       current == null ? null : Math.max(low, Math.min(high, current)),
     );
@@ -142,6 +184,7 @@ export default function LinkedComparisonCharts({
     );
     const last = first + newSpan;
     setZoom({ first, last });
+    setAnalysisWindowView(false);
     setSelectedIndex((currentIndex) =>
       currentIndex == null
         ? null
@@ -154,8 +197,10 @@ export default function LinkedComparisonCharts({
 
   return (
     <section
+      id="comparison-charts"
       className="linked-comparison"
       aria-label="Linked comparison charts"
+      tabIndex={-1}
     >
       <div className="linked-chart-controls panel">
         <div className="linked-chart-control-copy">
@@ -202,6 +247,7 @@ export default function LinkedComparisonCharts({
             className="secondary-button"
             onClick={() => {
               setZoom(null);
+              setAnalysisWindowView(false);
               setZoomMode(false);
               setDragStart(null);
             }}
@@ -215,9 +261,11 @@ export default function LinkedComparisonCharts({
             ? dragStart == null
               ? "Drag across any chart to zoom all charts to that distance interval."
               : "Keep dragging, then release to set the shared local zoom."
-            : zoom
-              ? `Local view: ${distance[visibleRange.first].toFixed(1)}–${distance[visibleRange.last].toFixed(1)} m · analysis window unchanged`
-              : `Full comparison view: ${distance[0].toFixed(1)}–${distance[lastIndex].toFixed(1)} m`}
+            : analysisWindowView && initialWindowM
+              ? `Selected interval: [${initialWindowM[0].toFixed(2)}, ${initialWindowM[1].toFixed(2)}) m · existing grid points only`
+              : zoom
+                ? `Local view: ${distance[visibleRange.first].toFixed(1)}–${distance[visibleRange.last].toFixed(1)} m · analysis window unchanged`
+                : `Full comparison view: ${distance[0].toFixed(1)}–${distance[lastIndex].toFixed(1)} m`}
         </p>
       </div>
 
@@ -707,6 +755,24 @@ function lowerBound(
     else high = middle;
   }
   return low;
+}
+
+function resolveInitialRange(
+  distance: number[],
+  windowM: [number, number] | null,
+): { status: "range"; range: RangeIndex } | { status: "empty" } | null {
+  if (!windowM) return null;
+  const [start, end] = windowM;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return null;
+  }
+  if (distance.length === 0) return { status: "empty" };
+
+  const first = lowerBound(distance, start, 0, distance.length - 1);
+  const endExclusive = lowerBound(distance, end, 0, distance.length - 1);
+  const last = Math.min(distance.length - 1, endExclusive - 1);
+  if (first > last || first >= distance.length) return { status: "empty" };
+  return { status: "range", range: { first, last } };
 }
 
 function nearestIndex(values: number[], target: number, range: RangeIndex) {

@@ -4,6 +4,16 @@ type Props = {
   report: PairedRegionReport | null;
   unavailableReason: string | null;
   selectionReady: boolean;
+  navigation: {
+    sessionKey: string | null;
+    runId: string | null;
+    runOffset: string | null;
+    sessionOffset: string | null;
+    attemptOffset: string | null;
+    lifecycleEventOffset: string | null;
+    observationAttemptKeys: string[];
+    positionProbeM: string | null;
+  };
 };
 
 const numberText = (value: number | null | undefined, digits = 2) =>
@@ -83,6 +93,7 @@ export default function PairedRegionPanel({
   report,
   unavailableReason,
   selectionReady,
+  navigation,
 }: Props) {
   if (!selectionReady) {
     return (
@@ -176,6 +187,21 @@ export default function PairedRegionPanel({
                 ) : null}
               </section>
             ) : null}
+            <a
+              className="compare-button paired-region-inspect-link"
+              href={pairedRegionInspectionHref(
+                report,
+                region.analysis_window_m,
+                navigation,
+              )}
+              aria-label={`Inspect ${region.label} comparison traces from ${region.analysis_window_m[0]} to ${region.analysis_window_m[1]} metres`}
+            >
+              Inspect interval traces <span aria-hidden="true">↗</span>
+            </a>
+            <p className="paired-region-inspect-note">
+              Opens the comparison charts for this exact distance interval.
+              Configured event search bounds remain separate.
+            </p>
             <div className="paired-region-facts">
               {[
                 ["connected_interval_time", "Connected time change"],
@@ -227,4 +253,40 @@ export default function PairedRegionPanel({
       </p>
     </section>
   );
+}
+
+function pairedRegionInspectionHref(
+  report: PairedRegionReport,
+  bounds: [number, number],
+  navigation: Props["navigation"],
+) {
+  const query = new URLSearchParams();
+  if (navigation.sessionKey) query.set("session_key", navigation.sessionKey);
+  query.set("target_attempt_key", report.attempts.target.attempt_key);
+  query.set("reference_choice", report.attempts.reference.attempt_key);
+  query.set("comparison_policy", report.comparison_policy);
+  query.set(
+    "track_model_key",
+    `${report.model.model_id}@${report.model.revision}`,
+  );
+  query.set("window_start_m", String(bounds[0]));
+  query.set("window_end_m", String(bounds[1]));
+  if (navigation.runId) query.set("run_id", navigation.runId);
+  if (navigation.runOffset) query.set("run_offset", navigation.runOffset);
+  if (navigation.sessionOffset) {
+    query.set("session_offset", navigation.sessionOffset);
+  }
+  if (navigation.attemptOffset) {
+    query.set("attempt_offset", navigation.attemptOffset);
+  }
+  if (navigation.lifecycleEventOffset) {
+    query.set("lifecycle_event_offset", navigation.lifecycleEventOffset);
+  }
+  if (navigation.positionProbeM) {
+    query.set("position_probe_m", navigation.positionProbeM);
+  }
+  for (const attemptKey of navigation.observationAttemptKeys) {
+    query.append("observation_attempt_key", attemptKey);
+  }
+  return `/?${query.toString()}#comparison-charts`;
 }

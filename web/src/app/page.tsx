@@ -914,7 +914,11 @@ export default async function Home({
                         <option value="">No region analysis</option>
                         {trackModels.map((model) => (
                           <option value={modelKey(model)} key={modelKey(model)}>
-                            {model.track_name} · {model.origin === "local_draft" ? "local draft · standalone only" : model.validation_status} · rev{" "}
+                            {model.track_name} ·{" "}
+                            {model.origin === "local_draft"
+                              ? "local draft · diagnostic"
+                              : model.validation_status}{" "}
+                            · rev{" "}
                             {model.revision} · {model.region_count ?? 0} regions
                           </option>
                         ))}
@@ -965,7 +969,7 @@ export default async function Home({
                   ) : selectedModel ? (
                     <p className="model-note">
                       {selectedModel.origin === "local_draft"
-                        ? "Local draft selected for this attempt's standalone inspection only. It does not affect paired comparison, ranking, or coaching."
+                        ? "Local draft selected for diagnostic inspection on this attempt and in the explicitly selected pair. Results do not authorize ranking or coaching."
                         : "Explicit revision selected. Draft windows remain diagnostic and do not represent validated circuit corners."}
                     </p>
                   ) : (
@@ -1259,7 +1263,17 @@ export default async function Home({
                       />
                     ) : null}
                     <LinkedComparisonCharts
+                      key={JSON.stringify([
+                        target?.attempt_key ?? "",
+                        reference?.attempt_key ?? "",
+                        params.window_start_m ?? "",
+                        params.window_end_m ?? "",
+                      ])}
                       distance={comparison.distance_m}
+                      initialWindowM={distanceWindow(
+                        params.window_start_m,
+                        params.window_end_m,
+                      )}
                       charts={[
                         {
                           title: "Speed trace",
@@ -1466,6 +1480,16 @@ export default async function Home({
                       : null
                   }
                   selectionReady={pairedRegionSelectionReady}
+                  navigation={{
+                    sessionKey: session?.session_key ?? null,
+                    runId: selectedRunId,
+                    runOffset: params.run_offset ?? null,
+                    sessionOffset: params.session_offset ?? null,
+                    attemptOffset: params.attempt_offset ?? null,
+                    lifecycleEventOffset: params.lifecycle_event_offset ?? null,
+                    observationAttemptKeys: params.observation_attempt_keys,
+                    positionProbeM: params.position_probe_m ?? null,
+                  }}
                 />
               </section>
             </div>
@@ -2770,6 +2794,16 @@ const pageOffset = (value: string | undefined) => {
 };
 const modelKey = (model: TrackModelRecord) =>
   `${model.model_id}@${model.revision}`;
+function distanceWindow(start?: string, end?: string): [number, number] | null {
+  if (!start?.trim() || !end?.trim()) return null;
+  const first = Number(start);
+  const last = Number(end);
+  const valid =
+    Number.isFinite(first) && Number.isFinite(last) && first >= 0 && last > first;
+  return valid
+    ? [first, last]
+    : null;
+}
 function comparisonQuery(
   targetAttemptKey: string,
   referenceAttemptKey: string,
