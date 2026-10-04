@@ -773,6 +773,11 @@ export interface RegionAttempt {
     status: string;
     speed_kph: number | null;
     distance_m: number | null;
+    source_anchor?: {
+      frame_identifier: number | null;
+      session_time_s: number | null;
+      lap_distance_m: number | null;
+    } | null;
     supported_grid_coverage: number;
     observed_sample_count?: number;
   };
@@ -835,6 +840,89 @@ export interface CornerAnalysis {
     reference: { attempt_key: string; run_id: string; trace_sha256: string };
   };
   regions: CornerRegion[];
+}
+
+export interface PairedRegionDifference {
+  status: "supported" | "unavailable";
+  value?: number | null;
+  unit?: string;
+  direction?: string;
+  target_value?: number;
+  reference_value?: number;
+  distance_m?: number;
+  target_anchor?: Record<string, number>;
+  reference_anchor?: Record<string, number>;
+  target_start_bracket_m?: [number, number];
+  reference_start_bracket_m?: [number, number];
+  target_minus_reference_start_bracket_m?: [number, number];
+  right_censored?: { target: boolean; reference: boolean };
+  entry_delta_s?: number | null;
+  exit_delta_s?: number | null;
+  unavailable_reason?: string | null;
+  [key: string]: unknown;
+}
+
+export interface PairedRegionEntry {
+  identifier: string;
+  label: string;
+  analysis_window_m: [number, number];
+  configured_windows_m: {
+    analysis: [number, number];
+    braking_search: [number, number] | null;
+    turn_in_search: [number, number] | null;
+    throttle_pickup_search: [number, number] | null;
+    exit_distance_m: number | null;
+  };
+  diagnostic_only: true;
+  coaching_eligible: false;
+  ranking_eligible: false;
+  target: RegionAttempt;
+  reference: RegionAttempt;
+  delta_change: CornerRegion["delta_change"];
+  supported_differences: Record<string, PairedRegionDifference>;
+}
+
+export interface PairedRegionReport {
+  schema_version: 1;
+  analysis_version: string;
+  region_analysis_version: string;
+  artifact_kind: "paired_distance_region_observations";
+  status: "available";
+  comparison_policy: "time_trial" | "practice_qualifying";
+  diagnostic_only: true;
+  coaching_eligible: false;
+  ranking_eligible: false;
+  config: { grid_step_m: number; max_bracket_time_s: number; max_bracket_distance_m: number };
+  policy_limitations: string[];
+  track: {
+    packet_format: number;
+    track_id: number;
+    track_name: string;
+    track_length_m: number;
+    layout_identity_status: "caller_declared";
+  };
+  attempts: Record<"target" | "reference", {
+    attempt_key: string;
+    run_id: string;
+    session_uid: string;
+    car_index: number;
+    game_valid: boolean | null;
+    reference_eligible: boolean;
+    superseded: boolean | null;
+    lifecycle_assessed: boolean;
+    trace_sha256: string;
+    trace_schema_version: number;
+    capture: Record<string, unknown> | null;
+    replay_counters: Record<string, unknown> | null;
+    [key: string]: unknown;
+  }>;
+  warnings: Record<"target" | "reference", Array<{ code: string; text: string }>>;
+  model: TrackModelRecord & {
+    distance_origin_m: number;
+    layout_identity_status: "caller_declared";
+  };
+  regions: PairedRegionEntry[];
+  resource_policy: Record<string, unknown>;
 }
 
 export interface AttemptRegionWindow {

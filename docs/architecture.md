@@ -561,6 +561,36 @@ Expose the same bounded standalone report through API, CLI, and dashboard. Inclu
 
 Acceptance covers local catalog root traversal, oversize/count caps, packaged shadowing and duplicate identities, draft-only enforcement and exact content provenance; packaged-only ranking and comparison resolution; stable Time Trial and Practice/Qualifying plus Race/unknown/context-change/incompatible identity cases; invalid, partial, lifecycle-unassessed and superseded attempts; missing Motion, capture warnings and replay counters; half-open regions, gaps, censoring and overlap rules; exact-limit acceptance and one-unit-over rejection before the appropriate evaluator; fragmented traces with high `E`; pre-resampling rejection for rewinds, duplicate distances and fine grids; six-region Melbourne and Shanghai observations; and API/CLI/dashboard parity. No fresh capture is required.
 
+## Decision 0041: compare configured distance regions diagnostically
+
+**Status:** accepted
+
+**Date:** 2026-10-04
+
+Add a separate, read-only paired report for two explicitly selected completed attempts and one explicitly selected packaged or configured local draft distance-region model. Require one completed processing run, session UID and player car index; stable compatible Time Trial or Practice/Qualifying context; and a model compatible with packet format, track ID/name and lap length within the established 1 m tolerance. Practice/Qualifying retains the positive reported lap time, observed start and no-pit requirements. Race, unknown or changing context, partial/abandoned attempts and incompatible scope abstain. Invalid, superseded, lifecycle-unassessed and incomplete-capture attempts remain diagnostic with warnings. Layout identity remains `caller_declared`; distances are not rescaled.
+
+Decode and resample each trace once onto a shared origin-anchored full-track grid, then calculate one shared masked delta. Reuse `analyze_corner_regions`, existing event detectors, coverage helpers and the connected interval evaluator. Apply the model distance origin to region and search-window bounds; sample `[start, end)` while evaluating both time-delta boundaries. Preserve independently supported entry/exit deltas and event censoring/counts. Minimum-speed differences require complete speed coverage and valid source anchors on both attempts. Braking and 50% throttle onset comparisons use source-bracket difference intervals only when both channels have full coverage, exactly one sustained event per side, no event truncation, no left censoring, rejected short episodes or unsupported breaks; disclose right-censored continuation. Exit-speed differences require a configured exit anchor and supported channel-aware samples at the same distance on both sides. Missing search windows remain `unconfigured`. Never expose the older scalar sampled-onset subtraction as an exact onset difference.
+
+The report is versioned as `paired_distance_region_observations` schema 1. It carries pair and model provenance, exact model-byte digest and caller-declared layout status, source trace checksums/schemas, validity/lifecycle/capture/replay evidence, per-region observations, coverage, independent boundaries, supported differences, warnings, and resource estimates. Every result and region is `diagnostic_only=true`, `coaching_eligible=false`, and `ranking_eligible=false`; call them distance regions, do not sort by largest loss, and do not invoke reference selection or ranking.
+
+Keep the existing `/compare/laps` packaged-only resolver, D0032 ranking approval and D0033 corner brief authority unchanged. This decision supersedes D0040's prohibition on local paired inspection only for this new endpoint/report. It does not authorize local models for ordinary lap comparison, reference selection, candidate ranking or coaching.
+
+Expose the same report through `GET /api/v1/compare/regions`, CLI `compare-regions`, and explicit dashboard paired-region cards. Resolve model identity by startup-catalog ID/revision; never accept request paths. If the report is unavailable, ordinary lap comparison and standalone inspection remain available. Add no persistence, migrations, model editing, geometry, official corner labels, automatic reference selection, personal/theoretical best, rankings, causality, advice or Race comparison.
+
+Enforce request-wide aggregate limits of 64 MiB trace bytes, 100,000 trace rows, 100,000 grid points across both resampled traces, 1,024 context segments, 4 MiB context, 64 regions and the existing 20 event examples per threshold/attempt/region. Preflight SQLite estimates before trace reads; load and validate the target against its row, byte and context reservation before reading the reference, then cap that read by its reservation and remaining aggregate limits. Verify loaded row count, attempt identity, checksum, schema and context against the preflight. Reserve resampling using the D0040 estimate per side with the combined total capped at 16,000,000 units. After bounded decode, recompute both estimates with observed hard blocks and reject before resampling if over the cap. Before region evaluators, reserve D0031's 4,000,000 interval-work limit and the paired-region work cap of 32,000,000 units, using:
+
+```text
+L = ceil(log2(max(Gt, Gr, Gdelta, Et + Er) + 1))
+
+region_work =
+    R * [40 * (Nt + Nr)
+         + 16 * (Gt + Gr + Gdelta + Et + Er) * L]
+```
+
+Reject over-limit requests without partial output. Any additional source scans introduced by implementation must be included in these reservations.
+
+Acceptance covers synthetic Shanghai Practice 3/2 numeric-window parity and incomplete-capture/lifecycle warnings; the recovered Shanghai Practice 3/2 pair's bounded abstention before resampling when observed hard blocks exceed the combined 16,000,000-unit budget; Melbourne parity with existing standalone region calculations; preserved model search-window semantics; positive and unsupported intervals, sub-grid boundaries, gaps/rewinds/unsupported tails, ambiguous and censored events, exit support, missing channels and legacy schemas; pair/model/context/checksum drift; partial, Race and unknown-mode abstention; aggregate and exact-limit resource checks before evaluators; and CLI/API/dashboard evidence parity. Local models remain absent from ranking authority, and existing comparisons, references and briefs remain unchanged. No fresh capture is required. Clean eligible Time Trial evidence and independently reviewed region definitions remain prerequisites for real ranked coaching.
+
 ## Data flow
 
 ```text

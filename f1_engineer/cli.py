@@ -20,6 +20,7 @@ from .sessions.context import SessionContext
 from .analysis.resampling import ResamplingConfig
 from .analysis.comparison_window import optional_distance_window
 from .analysis.observation_set import build_observation_set
+from .analysis.paired_region_service import compare_attempt_regions
 from .analysis.service import ComparisonPolicy, compare_attempts
 from .analysis.reference_selection import (
     ReferenceKind,
@@ -575,6 +576,25 @@ def _regions(args: argparse.Namespace) -> int:
     return 0
 
 
+def _compare_regions(args: argparse.Namespace) -> int:
+    model_entry = load_track_model_catalog(args.track_models_root).resolve_entry(
+        args.track_model_id, args.track_model_revision
+    )
+    document = compare_attempt_regions(
+        args.database,
+        args.target_attempt_key,
+        args.reference_attempt_key,
+        model_entry.model,
+        model_metadata=model_entry.metadata(),
+        policy=ComparisonPolicy(args.comparison_policy),
+    )
+    if document is None:
+        print("error: one or both lap attempts are unavailable", file=sys.stderr)
+        return 2
+    _json_line(document)
+    return 0
+
+
 def _geometry_validate(args: argparse.Namespace) -> int:
     model = load_geometry_model(args.model)
     _json_line(
@@ -879,6 +899,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="folder of local draft models; defaults to F1_ENGINEER_TRACK_MODELS_ROOT",
     )
     regions.set_defaults(handler=_regions)
+
+    compare_regions = commands.add_parser(
+        "compare-regions",
+        help="compare explicitly selected laps across configured diagnostic distance regions",
+    )
+    compare_regions.add_argument(
+        "target_attempt_key", help="target attempt key printed by the laps command"
+    )
+    compare_regions.add_argument(
+        "reference_attempt_key", help="reference attempt key printed by the laps command"
+    )
+    compare_regions.add_argument(
+        "--database", default=str(DEFAULT_DATABASE), help="SQLite database path"
+    )
+    compare_regions.add_argument(
+        "--comparison-policy",
+        choices=[policy.value for policy in ComparisonPolicy],
+        default=ComparisonPolicy.TIME_TRIAL.value,
+        help="explicit mode policy (default: Time Trial)",
+    )
+    compare_regions.add_argument(
+        "--track-model-id", required=True, help="catalog track model ID"
+    )
+    compare_regions.add_argument(
+        "--track-model-revision", type=int, required=True, help="registered model revision"
+    )
+    compare_regions.add_argument(
+        "--track-models-root",
+        default=os.environ.get("F1_ENGINEER_TRACK_MODELS_ROOT") or None,
+        help="folder of local draft models; defaults to F1_ENGINEER_TRACK_MODELS_ROOT",
+    )
+    compare_regions.set_defaults(handler=_compare_regions)
 
     geometry_validate = commands.add_parser(
         "geometry-validate",

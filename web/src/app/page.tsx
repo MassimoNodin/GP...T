@@ -15,6 +15,7 @@ import {
   ObservedConditionAnchor,
   ObservedConditionSummary,
   ObservedTrajectoryComparisonPreview,
+  PairedRegionReport,
   ProcessingRunDetail,
   ProcessingRunPage,
   ProcessingRunSummary,
@@ -33,6 +34,7 @@ import RunEvidencePanel from "./RunEvidencePanel";
 import TrajectoryComparisonPanel from "./TrajectoryComparisonPanel";
 import LinkedComparisonCharts from "./LinkedComparisonCharts";
 import ObservationSetPanel from "./ObservationSetPanel";
+import PairedRegionPanel from "./PairedRegionPanel";
 import type { ChartSpec } from "./LinkedComparisonCharts";
 import type { ImportJobRecord, RecordingSourceRecord } from "@/lib/api";
 
@@ -270,7 +272,25 @@ export default async function Home({
           `/api/v1/compare/laps?${comparisonQuery(target.attempt_key, manualReference.attempt_key, selectedComparisonModel, comparisonPolicy, params.window_start_m, params.window_end_m)}`,
         )
       : Promise.resolve(null);
-  const [selectionResponse, manualComparisonResponse, qualityResponse, traceChartResponse, trajectoryResponse, regionResponse, observationSetResponse] = await Promise.all([
+  const pairedRegionSelectionReady = Boolean(
+    target &&
+      manualReference &&
+      params.reference_choice &&
+      params.reference_choice !== "session_best" &&
+      selectedModel,
+  );
+  const pairedRegionRequest = pairedRegionSelectionReady && target && manualReference && selectedModel
+    ? requestApi<PairedRegionReport>(
+        `/api/v1/compare/regions?${new URLSearchParams({
+          target_attempt_key: target.attempt_key,
+          reference_attempt_key: manualReference.attempt_key,
+          comparison_policy: comparisonPolicy,
+          track_model_id: selectedModel.model_id,
+          track_model_revision: String(selectedModel.revision),
+        })}`,
+      )
+    : Promise.resolve(null);
+  const [selectionResponse, manualComparisonResponse, qualityResponse, traceChartResponse, trajectoryResponse, regionResponse, observationSetResponse, pairedRegionResponse] = await Promise.all([
     selectionRequest,
     manualComparisonRequest,
     attemptQualityRequest,
@@ -278,6 +298,7 @@ export default async function Home({
     trajectoryRequest,
     regionRequest,
     observationSetRequest,
+    pairedRegionRequest,
   ]);
   const attemptQuality =
     qualityResponse?.status === "ok" ? qualityResponse.data : null;
@@ -297,6 +318,8 @@ export default async function Home({
     comparisonResponse?.status === "ok" ? comparisonResponse.data : null;
   const observationSet =
     observationSetResponse?.status === "ok" ? observationSetResponse.data : null;
+  const pairedRegionReport =
+    pairedRegionResponse?.status === "ok" ? pairedRegionResponse.data : null;
   const trajectoryComparisonQuery = new URLSearchParams();
   if (target) trajectoryComparisonQuery.set("target_attempt_key", target.attempt_key);
   if (referenceKey) trajectoryComparisonQuery.set("reference_attempt_key", referenceKey);
@@ -1430,6 +1453,15 @@ export default async function Home({
                     <p>{noComparison.body}</p>
                   </section>
                 )}
+                <PairedRegionPanel
+                  report={pairedRegionReport}
+                  unavailableReason={
+                    pairedRegionResponse?.status === "unavailable"
+                      ? pairedRegionResponse.reason
+                      : null
+                  }
+                  selectionReady={pairedRegionSelectionReady}
+                />
               </section>
             </div>
           </>

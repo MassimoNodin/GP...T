@@ -102,6 +102,64 @@ def test_observation_set_cli_forwards_explicit_attempts_and_window(
     )
 
 
+def test_compare_regions_cli_forwards_explicit_pair_and_catalog_model(monkeypatch, capsys) -> None:
+    calls: dict[str, object] = {}
+    model = object()
+    metadata = {
+        "model_id": "local-test-model",
+        "revision": 2,
+        "origin": "local_draft",
+        "content_sha256": "a" * 64,
+    }
+    monkeypatch.setattr(
+        cli,
+        "load_track_model_catalog",
+        lambda root: calls.update(root=root)
+        or type("Catalog", (), {
+            "resolve_entry": lambda _self, model_id, revision: type(
+                "Entry", (), {"model": model, "metadata": lambda _self: metadata}
+            )()
+        })(),
+    )
+    document = {
+        "artifact_kind": "paired_distance_region_observations",
+        "diagnostic_only": True,
+        "coaching_eligible": False,
+        "ranking_eligible": False,
+    }
+    monkeypatch.setattr(
+        cli,
+        "compare_attempt_regions",
+        lambda *args, **kwargs: calls.update(args=args, kwargs=kwargs) or document,
+    )
+    args = cli.build_parser().parse_args(
+        [
+            "compare-regions",
+            "target",
+            "reference",
+            "--comparison-policy",
+            "practice_qualifying",
+            "--database",
+            "state.sqlite3",
+            "--track-model-id",
+            "local-test-model",
+            "--track-model-revision",
+            "2",
+            "--track-models-root",
+            "models",
+        ]
+    )
+
+    assert cli._compare_regions(args) == 0
+    assert calls["args"] == ("state.sqlite3", "target", "reference", model)
+    assert calls["kwargs"] == {
+        "model_metadata": metadata,
+        "policy": cli.ComparisonPolicy.PRACTICE_QUALIFYING,
+    }
+    assert calls["root"] == "models"
+    assert json.loads(capsys.readouterr().out) == document
+
+
 def test_compare_trajectories_cli_exports_versioned_json(monkeypatch, capsys, tmp_path) -> None:
     output_path = tmp_path / "paired-paths.json"
     calls: dict[str, object] = {}

@@ -14,6 +14,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, select_reference
 from ..analysis.comparison_window import optional_distance_window
 from ..analysis.observation_set import build_observation_set
+from ..analysis.paired_region_service import (
+    PairedRegionReportUnavailable,
+    compare_attempt_regions,
+)
 from ..analysis.quality import inspect_attempt_quality
 from ..analysis.region_service import RegionReportUnavailable, load_attempt_region_report
 from ..analysis.service import compare_attempts
@@ -748,6 +752,51 @@ def create_app(
             return APIResponse[dict[str, Any]](
                 status="unavailable",
                 reason=str(exc),
+            )
+        return APIResponse[dict[str, Any]](data=_stringify_session_uids(result))
+
+    @app.get("/api/v1/compare/regions", response_model=APIResponse[dict[str, Any]])
+    def compare_regions(
+        target_attempt_key: str = Query(min_length=1),
+        reference_attempt_key: str = Query(min_length=1),
+        comparison_policy: Literal["time_trial", "practice_qualifying"] = "time_trial",
+        track_model_id: str | None = Query(default=None, min_length=1),
+        track_model_revision: int | None = Query(default=None, ge=1),
+    ) -> APIResponse[dict[str, Any]]:
+        if track_model_id is None or track_model_revision is None:
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason="track_model_id_and_revision_must_be_selected_together",
+            )
+        try:
+            model_entry = track_model_catalog.resolve_entry(
+                track_model_id, track_model_revision
+            )
+            result = compare_attempt_regions(
+                configured_database_path,
+                target_attempt_key,
+                reference_attempt_key,
+                model_entry.model,
+                model_metadata=model_entry.metadata(),
+                policy=comparison_policy,
+            )
+        except DatabaseSchemaError:
+            raise
+        except PairedRegionReportUnavailable as exc:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason=exc.reason_code
+            )
+        except OSError:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="attempt_trace_unavailable"
+            )
+        except ValueError as exc:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason=str(exc)
+            )
+        if result is None:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="attempt_trace_unavailable"
             )
         return APIResponse[dict[str, Any]](data=_stringify_session_uids(result))
 

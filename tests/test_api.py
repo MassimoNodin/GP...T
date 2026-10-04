@@ -509,6 +509,114 @@ def test_attempt_regions_api_maps_trace_file_errors_to_unavailable(
     assert response.json()["reason"] == "attempt_trace_unavailable"
 
 
+def test_paired_regions_api_resolves_catalog_model_and_preserves_diagnostic_scope(
+    monkeypatch, tmp_path
+) -> None:
+    model = object()
+    calls: dict[str, object] = {}
+
+    def resolve_entry(model_id: str, revision: int):
+        calls["identity"] = (model_id, revision)
+        return SimpleNamespace(
+            model=model,
+            metadata=lambda: {
+                "model_id": model_id,
+                "revision": revision,
+                "origin": "local_draft",
+                "content_sha256": "d" * 64,
+                "source_filename": "local-draft.json",
+            },
+        )
+
+    def compare(_database, target_key, reference_key, selected_model, **kwargs):
+        calls["pair"] = (target_key, reference_key)
+        calls["model"] = selected_model
+        calls["metadata"] = kwargs["model_metadata"]
+        calls["policy"] = kwargs["policy"]
+        return {
+            "artifact_kind": "paired_distance_region_observations",
+            "diagnostic_only": True,
+            "coaching_eligible": False,
+            "ranking_eligible": False,
+            "model": kwargs["model_metadata"],
+            "attempts": {
+                "target": {"session_uid": 18_446_744_073_709_551_600},
+                "reference": {"session_uid": 18_446_744_073_709_551_600},
+            },
+        }
+
+    monkeypatch.setattr(
+        api_module,
+        "load_track_model_catalog",
+        lambda *_args: SimpleNamespace(resolve_entry=resolve_entry),
+    )
+    monkeypatch.setattr(api_module, "compare_attempt_regions", compare)
+    response = _get(
+        create_app(tmp_path / "unused.sqlite3"),
+        "/api/v1/compare/regions",
+        params={
+            "target_attempt_key": "target:42:0:1",
+            "reference_attempt_key": "reference:42:0:2",
+            "comparison_policy": "practice_qualifying",
+            "track_model_id": "local-model",
+            "track_model_revision": "3",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["artifact_kind"] == "paired_distance_region_observations"
+    assert payload["diagnostic_only"] is True
+    assert payload["coaching_eligible"] is False
+    assert payload["ranking_eligible"] is False
+    assert payload["model"]["origin"] == "local_draft"
+    assert payload["attempts"]["target"]["session_uid"] == "18446744073709551600"
+    assert calls["identity"] == ("local-model", 3)
+    assert calls["pair"] == ("target:42:0:1", "reference:42:0:2")
+    assert calls["model"] is model
+    assert calls["policy"] == "practice_qualifying"
+
+
+def test_paired_regions_api_requires_model_identity_and_keeps_abstention_reason(
+    monkeypatch, tmp_path
+) -> None:
+    def unsupported(*_args, **_kwargs):
+        raise api_module.PairedRegionReportUnavailable("region_pair_must_share_session")
+
+    monkeypatch.setattr(
+        api_module,
+        "load_track_model_catalog",
+        lambda *_args: SimpleNamespace(
+            resolve_entry=lambda *_identity: SimpleNamespace(model=object(), metadata=lambda: {})
+        ),
+    )
+    monkeypatch.setattr(api_module, "compare_attempt_regions", unsupported)
+    app = create_app(tmp_path / "unused.sqlite3")
+    base = {
+        "target_attempt_key": "target",
+        "reference_attempt_key": "reference",
+    }
+    unavailable = _get(
+        app,
+        "/api/v1/compare/regions",
+        params={
+            **base,
+            "track_model_id": "local-model",
+            "track_model_revision": "3",
+        },
+    )
+    incomplete = _get(
+        app,
+        "/api/v1/compare/regions",
+        params={**base, "track_model_id": "local-model"},
+    )
+
+    assert unavailable.json()["status"] == "unavailable"
+    assert unavailable.json()["reason"] == "region_pair_must_share_session"
+    assert incomplete.json()["status"] == "unavailable"
+    assert incomplete.json()["reason"] == "track_model_id_and_revision_must_be_selected_together"
+
+
 def test_compare_api_resolves_explicit_model_id_and_revision(monkeypatch, tmp_path) -> None:
     resolved_model = object()
     calls: dict[str, object] = {}

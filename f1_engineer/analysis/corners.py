@@ -97,9 +97,12 @@ def analyze_corner_regions(
     config: ResamplingConfig,
     target_reference_eligible: bool,
     reference_reference_eligible: bool,
+    event_example_limit: int | None = None,
 ) -> dict[str, object]:
     if len(track_model.corners) > MAX_TRACK_MODEL_REGIONS:
         raise ValueError("region_count_limit_exceeded")
+    if event_example_limit is not None and event_example_limit < 0:
+        raise ValueError("event_example_limit must not be negative")
     attempts_eligible = target_reference_eligible and reference_reference_eligible
     diagnostic_only = (
         track_model.validation_status != "validated" or not attempts_eligible
@@ -121,6 +124,7 @@ def analyze_corner_regions(
                 delta,
                 config,
                 diagnostic_only=diagnostic_only,
+                event_example_limit=event_example_limit,
             )
         )
     return {
@@ -164,6 +168,7 @@ def _compare_region(
     config: ResamplingConfig,
     *,
     diagnostic_only: bool,
+    event_example_limit: int | None = None,
 ) -> dict[str, object]:
     target = _analyze_attempt_region(
         target_samples,
@@ -175,6 +180,7 @@ def _compare_region(
         model.validation_status,
         model.distance_origin_m,
         model.track_length_m,
+        event_example_limit=event_example_limit,
     )
     reference = _analyze_attempt_region(
         reference_samples,
@@ -186,6 +192,7 @@ def _compare_region(
         model.validation_status,
         model.distance_origin_m,
         model.track_length_m,
+        event_example_limit=event_example_limit,
     )
     interval = evaluate_interval_delta(
         target_samples,
@@ -313,6 +320,11 @@ def _analyze_attempt_region(
             else "observed_minimum_partial_window",
             "speed_kph": float(observed_minimum.speed_mps) * 3.6,
             "distance_m": observed_minimum.distance_m,
+            "source_anchor": {
+                "frame_identifier": observed_minimum.frame_identifier,
+                "session_time_s": observed_minimum.session_time_s,
+                "lap_distance_m": observed_minimum.distance_m,
+            },
             "supported_grid_coverage": speed_coverage,
             "observed_sample_count": len(speed_samples),
         }
