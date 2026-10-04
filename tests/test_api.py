@@ -538,6 +538,16 @@ def test_paired_regions_api_resolves_catalog_model_and_preserves_diagnostic_scop
             "diagnostic_only": True,
             "coaching_eligible": False,
             "ranking_eligible": False,
+            "regions": [
+                {
+                    "debrief": {
+                        "schema_version": 1,
+                        "analysis_version": "diagnostic-region-debrief-v1",
+                        "facts": [{"kind": "minimum_speed", "text": "A measured fact."}],
+                        "omissions": [],
+                    }
+                }
+            ],
             "model": kwargs["model_metadata"],
             "attempts": {
                 "target": {"session_uid": 18_446_744_073_709_551_600},
@@ -569,6 +579,10 @@ def test_paired_regions_api_resolves_catalog_model_and_preserves_diagnostic_scop
     assert payload["diagnostic_only"] is True
     assert payload["coaching_eligible"] is False
     assert payload["ranking_eligible"] is False
+    assert payload["regions"][0]["debrief"]["analysis_version"] == (
+        "diagnostic-region-debrief-v1"
+    )
+    assert payload["regions"][0]["debrief"]["facts"][0]["text"] == "A measured fact."
     assert payload["model"]["origin"] == "local_draft"
     assert payload["attempts"]["target"]["session_uid"] == "18446744073709551600"
     assert calls["identity"] == ("local-model", 3)

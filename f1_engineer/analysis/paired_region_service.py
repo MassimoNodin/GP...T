@@ -21,6 +21,10 @@ from .interval_delta import (
     MAX_INTERVAL_EVALUATION_WORK,
     reserve_interval_evaluation_work,
 )
+from .paired_region_debrief import (
+    MAX_DIAGNOSTIC_DEBRIEF_REGIONS,
+    build_diagnostic_region_debrief,
+)
 from .region_service import (
     REGION_RESAMPLING_WORK_LIMIT,
     _conservative_hard_block_count,
@@ -510,6 +514,8 @@ def _paired_regions(
         raise PairedRegionReportUnavailable("region_analysis_malformed")
     if len(raw_regions) != len(model.corners):
         raise PairedRegionReportUnavailable("region_analysis_model_mismatch")
+    if len(raw_regions) > MAX_DIAGNOSTIC_DEBRIEF_REGIONS:
+        raise PairedRegionReportUnavailable("diagnostic_region_debrief_region_limit_exceeded")
     paired: list[dict[str, object]] = []
     for definition, raw_region in zip(model.corners, raw_regions):
         if not isinstance(raw_region, Mapping):
@@ -543,7 +549,7 @@ def _paired_regions(
                 else None
             ),
         }
-        region["supported_differences"] = _supported_differences(
+        supported_differences = _supported_differences(
             definition,
             target,
             reference,
@@ -551,6 +557,11 @@ def _paired_regions(
             model.distance_origin_m,
             start_m,
             end_m,
+        )
+        region["supported_differences"] = supported_differences
+        region["debrief"] = build_diagnostic_region_debrief(
+            supported_differences,
+            region["configured_windows_m"],
         )
         paired.append(region)
     return paired

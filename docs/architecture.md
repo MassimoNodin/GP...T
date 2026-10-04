@@ -613,6 +613,20 @@ Standalone region analysis still caps one estimate at 16,000,000 units; paired r
 
 Acceptance compares full resampler outputs against pre-change Melbourne and Shanghai capture baselines and checks differential membership against the original interval rule, including overlapping/nested and zero-width blocks, channel-specific blocks, epsilon endpoints, rewinds, duplicate distances, missing channels and ambiguous segments. Verify exact-limit acceptance and over-limit rejection before resampling, plus bounded work on highly fragmented traces. Run Shanghai Practice attempts 3 and 2 through the paired report with an explicitly selected region model that fits the separate 32,000,000-unit region-analysis limit, and retain incomplete-capture and lifecycle warnings. No database migration or new capture is required. This optimization does not enable Race comparison, ranking, coaching, geometry activation or claims of validated corners.
 
+## Decision 0043: add a diagnostic region debrief
+
+**Status:** accepted
+
+**Date:** 2026-10-04
+
+Add a deterministic, read-only debrief to each D0041 paired distance-region result, built only from that region's existing `supported_differences` and configured exit distance. Do not read traces again, interpolate, reanalyze, select references, or add a separate API route or persistence. Preserve D0041's same-run/session/player and stable Time Trial or Practice/Qualifying gates, plus all source/model provenance and capture, validity, replay, and lifecycle warnings. Race and unknown contexts remain unavailable.
+
+For each region, consider at most five measurements in fixed order: connected-interval time change, observed minimum-speed difference, 10% brake-onset bracket, 50% throttle-onset bracket, and speed at the configured exit. Emit a fact only when the corresponding difference is already supported; otherwise return an explicit omission reason. Preserve onset bracket bounds, zero-straddling differences, and right-censored continuation. Bound reports to 64 regions, five facts and five omissions per region, and 240 characters per generated text. Do not rank regions, assign confidence, infer a cause or physical corner, or recommend a driving change.
+
+Version the nested object as `diagnostic-region-debrief-v1` with schema version 1. Keep the parent report at schema version 1 and `paired-distance-region-observations-v1` because its existing measurements and meanings do not change. The field is additive: older consumers may ignore it, and updated consumers must tolerate its absence. API and CLI keep returning the same paired report; the dashboard renders the available facts and omissions while retaining detailed evidence.
+
+The debrief remains diagnostic, coaching-ineligible, and ranking-ineligible, including for validated models. It does not inherit D0033's ranked-region brief gates or authority and does not change existing ranking or reference selection. Acceptance covers connected and disconnected timing, complete and incomplete minimum-speed coverage, ambiguous/left-censored and right-censored events, onset intervals that straddle zero, missing/unconfigured exit evidence, fixed fact order, output bounds, unchanged source-read counts, API/CLI response parity, and dashboard handling of absent or present debriefs. Validate Shanghai Practice attempts 3/2 with D0042's indexed resampling estimator; preserve its incomplete-capture and lifecycle warnings. Clean eligible Time Trial evidence and independently reviewed region definitions remain prerequisites for any future actionable coaching.
+
 ## Data flow
 
 ```text
@@ -655,6 +669,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - Geometry artifacts and projection use a separate schema from distance-region `TrackModel`. Projection retains normalized game lap distance, explicit supported segments and independent geometry/calibration evidence; observed paths remain diagnostic and no real centreline is currently activated.
 - `project-trajectory` projects one checksummed attempt against a caller-selected geometry artifact for bounded diagnostics. It preserves source discontinuities and unsupported spans, and all modes remain ineligible for coaching through this command.
 - `distance_window_brief` derives at most five measured facts from the already computed selected-window comparison. Complete coverage, source anchors and event uncertainty remain explicit; all results are diagnostic and coaching-ineligible.
+- `diagnostic-region-debrief-v1` derives at most five deterministic facts from existing paired-region supported differences; omissions remain explicit, and the additive nested report is diagnostic, coaching-ineligible, and ranking-ineligible.
 - `observation-set` reuses the single-attempt selected-window evaluator across at most eight explicitly selected same-run/session/player attempts. Scalar ranges require two fully supported, lifecycle-assessed completed attempts; onset evidence remains bracketed per lap, and every result is diagnostic and coaching-ineligible.
 - Comparison speed, lap-delta, and driver-input charts share a bounded pointer and keyboard cursor over the original resampled comparison distance grid. Local chart zoom is presentation-only and preserves sampled continuity gaps; analysis, mode policy and comparison outputs are unchanged.
 - Standalone attempt trace previews read the checksummed speed/control channels independently of comparison and reference eligibility. Session time remains the plot coordinate; frame/time gaps and missing channel values split runs, and deterministic point/run caps preserve discontinuities and report omitted data.

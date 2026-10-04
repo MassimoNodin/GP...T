@@ -126,6 +126,16 @@ def test_compare_regions_cli_forwards_explicit_pair_and_catalog_model(monkeypatc
         "diagnostic_only": True,
         "coaching_eligible": False,
         "ranking_eligible": False,
+        "regions": [
+            {
+                "debrief": {
+                    "schema_version": 1,
+                    "analysis_version": "diagnostic-region-debrief-v1",
+                    "facts": [{"kind": "minimum_speed", "text": "A measured fact."}],
+                    "omissions": [],
+                }
+            }
+        ],
     }
     monkeypatch.setattr(
         cli,

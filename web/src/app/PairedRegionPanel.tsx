@@ -154,6 +154,28 @@ export default function PairedRegionPanel({
               </div>
               <span>{numberText(region.analysis_window_m[0], 0)}–{numberText(region.analysis_window_m[1], 0)} m</span>
             </header>
+            {region.debrief ? (
+              <section className="paired-region-debrief" aria-label="Measured diagnostic debrief">
+                <strong>Measured debrief</strong>
+                {region.debrief.facts.length ? (
+                  <ul>
+                    {region.debrief.facts.map((fact) => (
+                      <li key={fact.kind}>{fact.text}</li>
+                    ))}
+                  </ul>
+                ) : <p>No supported debrief facts for this region.</p>}
+                {region.debrief.omissions.length ? (
+                  <details>
+                    <summary>Omitted evidence ({region.debrief.omissions.length})</summary>
+                    <ul>
+                      {region.debrief.omissions.map((omission) => (
+                        <li key={omission.kind}>{omission.text}</li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+              </section>
+            ) : null}
             <div className="paired-region-facts">
               {[
                 ["connected_interval_time", "Connected time change"],

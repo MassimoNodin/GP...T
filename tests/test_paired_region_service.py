@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -216,6 +217,21 @@ def test_paired_report_is_diagnostic_and_uses_bracketed_control_differences(monk
     throttle = region["supported_differences"]["throttle_50_percent_onset"]
     assert throttle["status"] == "supported"
     assert region["supported_differences"]["exit_speed"]["status"] == "supported"
+    assert region["debrief"]["analysis_version"] == "diagnostic-region-debrief-v1"
+    assert region["debrief"]["diagnostic_only"] is True
+    assert region["debrief"]["coaching_eligible"] is False
+    assert region["debrief"]["ranking_eligible"] is False
+    assert [fact["kind"] for fact in region["debrief"]["facts"]] == [
+        "connected_interval_time",
+        "minimum_speed",
+        "brake_10_percent_onset",
+        "throttle_50_percent_onset",
+        "exit_speed",
+    ]
+    assert any(
+        item["code"] == "lifecycle_unassessed"
+        for item in report["warnings"]["target"]
+    )
     assert any(item["code"] == "capture_incomplete" for item in report["warnings"]["target"])
     assert report["resource_policy"]["source"]["grid_points"]["estimated"] == 42
 
@@ -296,6 +312,16 @@ def test_pair_resampling_v2_sums_both_estimates_and_accepts_exact_cap(monkeypatc
     assert report["resource_policy"]["resampling"]["version"] == (
         "indexed-hard-block-resampling-preflight-v2"
     )
+
+
+def test_debrief_region_limit_is_checked_before_region_conversion() -> None:
+    model = SimpleNamespace(corners=[None] * 65)
+
+    with pytest.raises(
+        PairedRegionReportUnavailable,
+        match="diagnostic_region_debrief_region_limit_exceeded",
+    ):
+        paired_service._paired_regions(model, {"regions": [None] * 65})
 
 
 @pytest.mark.parametrize(

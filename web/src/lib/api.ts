@@ -880,6 +880,15 @@ export interface PairedRegionEntry {
   reference: RegionAttempt;
   delta_change: CornerRegion["delta_change"];
   supported_differences: Record<string, PairedRegionDifference>;
+  debrief?: {
+    schema_version: 1;
+    analysis_version: "diagnostic-region-debrief-v1";
+    diagnostic_only: true;
+    coaching_eligible: false;
+    ranking_eligible: false;
+    facts: Array<{ kind: string; text: string; source_fields: string[] }>;
+    omissions: Array<{ kind: string; reason_code: string; text: string }>;
+  };
 }
 
 export interface PairedRegionReport {
