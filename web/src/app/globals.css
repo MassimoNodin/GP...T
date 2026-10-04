@@ -2653,6 +2653,58 @@ h1 span {
   flex: 1 0 100%;
   color: #edb59a !important;
 }
+.replay-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 10px;
+  padding: 13px 14px;
+  border: 1px solid #293532;
+  border-radius: 3px;
+  background: rgba(11, 17, 16, 0.4);
+}
+.replay-control-copy {
+  flex: 1 1 300px;
+  min-width: 0;
+}
+.replay-control-copy p {
+  margin: 5px 0 0;
+  color: #929e9b;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.replay-control-actions {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: flex-end;
+  gap: 8px;
+}
+.replay-select-label {
+  display: flex;
+  min-width: 180px;
+  flex-direction: column;
+  gap: 4px;
+  color: #7f8b89;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.05em;
+}
+.replay-select-label select {
+  max-width: 280px;
+  min-height: 34px;
+  color: #d8e4dd;
+  font: 10px var(--font-mono);
+}
+.replay-speed-label {
+  min-width: 74px;
+}
+.replay-speed-label select {
+  min-width: 74px;
+}
+.replay-controls > .recording-control-alert {
+  margin: 0;
+}
 .live-telemetry {
   flex: 1 0 100%;
   min-width: 0;
@@ -2980,6 +3032,20 @@ h1 span {
   .recording-controls {
     align-items: stretch;
     flex-direction: column;
+  }
+  .replay-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .replay-control-actions {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+  .replay-select-label {
+    flex: 1 1 170px;
+  }
+  .replay-select-label select {
+    max-width: none;
   }
   .recording-control-actions {
     flex-wrap: wrap;

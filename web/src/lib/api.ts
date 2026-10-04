@@ -128,6 +128,31 @@ export interface RecordingJobRecord {
   progress: RecordingProgressRecord | null;
 }
 
+export interface ReplayRecord {
+  source_kind: "replay";
+  playback_id: string;
+  capture_id: string;
+  capture_name: string;
+  speed: number;
+  state:
+    | "starting"
+    | "playing"
+    | "stopping"
+    | "stopped"
+    | "completed"
+    | "failed";
+  elapsed_ms: number;
+  datagrams_delivered: number;
+  capture_complete: boolean | null;
+  capture_completion: Record<string, unknown> | null;
+  source_stable: boolean | null;
+  latest_context: SessionContext | null;
+  live_telemetry: LiveTelemetryRecord;
+  live_car_status: LiveCarStatusRecord;
+  live_lap_timing: LiveLapTimingRecord;
+  failure_reason: string | null;
+}
+
 export interface SessionContext {
   session_uid?: string;
   track_name?: string | null;

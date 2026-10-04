@@ -208,11 +208,23 @@ export default function RecordingControls({
   );
 }
 
-function LiveTelemetryPanel({ telemetry }: { telemetry: LiveTelemetryRecord }) {
+export function LiveTelemetryPanel({
+  telemetry,
+  sourceKind = "recording",
+}: {
+  telemetry: LiveTelemetryRecord;
+  sourceKind?: "recording" | "replay";
+}) {
   const statusCopy: Record<LiveTelemetryRecord["status"], string> = {
     waiting: "Waiting for a synchronized player frame.",
-    fresh: "Player telemetry is updating from the current recording.",
-    stale: `Last player frame was ${formatAge(telemetry.age_ms)} ago.`,
+    fresh:
+      sourceKind === "replay"
+        ? "Player telemetry is updating from replay delivery."
+        : "Player telemetry is updating from the current recording.",
+    stale:
+      sourceKind === "replay"
+        ? `Last playback-delivered player frame was ${formatAge(telemetry.age_ms)} ago.`
+        : `Last player frame was ${formatAge(telemetry.age_ms)} ago.`,
     unsupported:
       "Recording continues. The live view does not support this packet format yet.",
     unavailable: liveUnavailableReason(telemetry.reason),
@@ -226,7 +238,11 @@ function LiveTelemetryPanel({ telemetry }: { telemetry: LiveTelemetryRecord }) {
     >
       <div className="live-telemetry-heading">
         <div>
-          <div className="eyebrow">LIVE PLAYER TELEMETRY</div>
+          <div className="eyebrow">
+            {sourceKind === "replay"
+              ? "REPLAYED PLAYER TELEMETRY"
+              : "LIVE PLAYER TELEMETRY"}
+          </div>
           <p>{statusCopy[telemetry.status]}</p>
         </div>
         <span className={`live-telemetry-state state-${telemetry.status}`}>
@@ -290,11 +306,23 @@ function LiveMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function LiveCarStatusPanel({ telemetry }: { telemetry: LiveCarStatusRecord }) {
+export function LiveCarStatusPanel({
+  telemetry,
+  sourceKind = "recording",
+}: {
+  telemetry: LiveCarStatusRecord;
+  sourceKind?: "recording" | "replay";
+}) {
   const statusCopy: Record<LiveCarStatusRecord["status"], string> = {
     waiting: "Waiting for same-frame player Lap Data and Car Status.",
-    fresh: "Car Status is matched to the current player frame.",
-    stale: `Last matched Car Status frame was ${formatAge(telemetry.age_ms)} ago.`,
+    fresh:
+      sourceKind === "replay"
+        ? "Car Status is matched to the current player frame in the replay."
+        : "Car Status is matched to the current player frame.",
+    stale:
+      sourceKind === "replay"
+        ? `Last playback-delivered Car Status frame was ${formatAge(telemetry.age_ms)} ago.`
+        : `Last matched Car Status frame was ${formatAge(telemetry.age_ms)} ago.`,
     unsupported:
       "Recording continues. This Car Status packet version is unsupported.",
     unavailable: liveCarStatusUnavailableReason(telemetry.reason),
@@ -311,7 +339,9 @@ function LiveCarStatusPanel({ telemetry }: { telemetry: LiveCarStatusRecord }) {
     >
       <div className="live-telemetry-heading">
         <div>
-          <div className="eyebrow">LIVE CAR STATUS</div>
+          <div className="eyebrow">
+            {sourceKind === "replay" ? "REPLAYED CAR STATUS" : "LIVE CAR STATUS"}
+          </div>
           <p>{statusCopy[telemetry.status]}</p>
         </div>
         <span className={`live-telemetry-state state-${telemetry.status}`}>
@@ -371,11 +401,23 @@ function LiveCarStatusPanel({ telemetry }: { telemetry: LiveCarStatusRecord }) {
   );
 }
 
-function LiveLapTimingPanel({ telemetry }: { telemetry: LiveLapTimingRecord }) {
+export function LiveLapTimingPanel({
+  telemetry,
+  sourceKind = "recording",
+}: {
+  telemetry: LiveLapTimingRecord;
+  sourceKind?: "recording" | "replay";
+}) {
   const statusCopy: Record<LiveLapTimingRecord["status"], string> = {
     waiting: "Waiting for selected-player Lap Data.",
-    fresh: "Game-reported lap timing is updating for the selected player.",
-    stale: `Last Lap Data timing update was ${formatAge(telemetry.age_ms)} ago.`,
+    fresh:
+      sourceKind === "replay"
+        ? "Game-reported lap timing is updating from replay delivery."
+        : "Game-reported lap timing is updating for the selected player.",
+    stale:
+      sourceKind === "replay"
+        ? `Last playback-delivered Lap Data update was ${formatAge(telemetry.age_ms)} ago.`
+        : `Last Lap Data timing update was ${formatAge(telemetry.age_ms)} ago.`,
     unsupported:
       "Recording continues. This Lap Data packet version is unsupported.",
     unavailable: liveLapTimingUnavailableReason(telemetry.reason),
@@ -392,7 +434,11 @@ function LiveLapTimingPanel({ telemetry }: { telemetry: LiveLapTimingRecord }) {
     >
       <div className="live-telemetry-heading">
         <div>
-          <div className="eyebrow">LIVE REPORTED LAP TIMING</div>
+          <div className="eyebrow">
+            {sourceKind === "replay"
+              ? "REPLAYED REPORTED LAP TIMING"
+              : "LIVE REPORTED LAP TIMING"}
+          </div>
           <p>{statusCopy[telemetry.status]}</p>
         </div>
         <span className={`live-telemetry-state state-${telemetry.status}`}>

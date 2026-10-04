@@ -5,6 +5,7 @@ import type {
   RecordingSourceRecord,
 } from "@/lib/api";
 import ImportJobStatus from "./ImportJobStatus";
+import ReplayControls from "./ReplayControls";
 import RecordingControls from "./RecordingControls";
 
 const importErrorText: Record<string, string> = {
@@ -50,6 +51,7 @@ export default function RecordingInbox({
         initialRecording={recordingResponse?.data ?? null}
         initialError={!recordingResponse || recordingResponse.status !== "ok"}
       />
+      <ReplayControls sources={sources} />
 
       {importError && (
         <p className="import-alert" role="alert">

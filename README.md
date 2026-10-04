@@ -20,6 +20,8 @@ The three comparison charts for speed, lap delta, and driver inputs share a poin
 
 The selected-window observation set compares 2–8 explicitly selected attempts in one numeric distance interval. Attempts must share one processing run, game session and player, with stable compatible Time Trial or Practice/Qualifying context; Race and unknown modes are unavailable. Supported minimum-speed and peak-brake values show per-metric contributor counts and ranges, while brake and throttle onsets stay as per-attempt brackets. Invalid, partial, superseded, lifecycle-unassessed and incomplete-capture evidence remains visible with its warnings and support reasons; only fully supported scalar observations from completed, lifecycle-assessed attempts can contribute. This is measurement inspection, not a consistency score or coaching.
 
+The dashboard can replay an available inbox capture at 0.5×, 1×, 2×, or 4× through the same bounded player monitors used during UDP recording. Replay is temporary and read-only: it leaves the source packet timestamps and footer evidence unchanged, measures monitor freshness from playback delivery time, and creates no capture, import, or database record. Import, UDP recording, and replay share one exclusive operation reservation.
+
 ## Requirements
 
 - Python 3.11 or newer
@@ -61,6 +63,8 @@ npm run dev
 The API binds to `127.0.0.1:8765`; its managed UDP recorder listens on `0.0.0.0:20777` by default so the game can send telemetry to the PC. Set `--udp-host`, `--udp-port`, or `--udp-queue-size` on the API command to change those recording settings. Next.js serves the dashboard at `http://127.0.0.1:3000`. Set `F1_ENGINEER_API_URL` only if the local API uses a different loopback URL. The API's database path and recording root are selected at server startup and are never accepted from a request. The API creates a random control token at the configured token-file path; the Next server reads it for same-origin recording and import actions, and it is never sent to browser code. If you choose a different token-file path, set `F1_ENGINEER_CONTROL_TOKEN_FILE` for the Next server to that same path.
 
 Start recording from the dashboard before driving and stop it after the session. Stop drains queued datagrams, writes and syncs the capture footer, then publishes the `.f1ecap` file into the inbox. A finalized capture can still have packet drops or invalid laps; inspect its capture-quality and lap evidence before treating it as a reference. Starting a capture while an import is running, or importing while recording, is rejected until the current operation finishes. If the API exits unexpectedly, its `.part` file is retained and marked interrupted; it is not resumed or imported automatically.
+
+Use the diagnostic replay controls in the same inbox to review a catalog capture without running the game. Playback status is held only in memory and is never resumed after an API restart. Reaching the end of an incomplete source capture completes playback while retaining the original incomplete-footer evidence.
 
 `record` listens on `0.0.0.0:20777` by default. Set the game's UDP telemetry destination to the computer's local address and port 20777. Use `Ctrl+C` to stop recording. `--speed 0` replays as fast as possible; positive values replay relative packet timing at that multiplier.
 

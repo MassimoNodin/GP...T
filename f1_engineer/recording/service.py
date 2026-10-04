@@ -79,7 +79,7 @@ class RecordingResult:
         }
 
 
-class _AcquisitionObserver:
+class AcquisitionObserver:
     """Bounded packet and session observer for long-running managed captures."""
 
     _LIVE_FRESHNESS_LIMIT_MS = LIVE_TELEMETRY_FRESHNESS_LIMIT_MS
@@ -119,7 +119,23 @@ class _AcquisitionObserver:
         self._max_receive_time_entries = self.frames.max_open_frames * 5 + 4
         self._finished = False
 
-    def process(self, raw: RawDatagram) -> None:
+    def process(
+        self,
+        raw: RawDatagram,
+        *,
+        delivery_monotonic_ns: int | None = None,
+    ) -> None:
+        """Observe one unchanged datagram.
+
+        Live UDP callers use the datagram's receive timestamp. Replay callers
+        may supply a runtime delivery timestamp so freshness is measured during
+        playback without altering the capture's source timestamp.
+        """
+        observed_monotonic_ns = (
+            raw.monotonic_ns
+            if delivery_monotonic_ns is None
+            else delivery_monotonic_ns
+        )
         try:
             packet = self.decoder.decode(raw)
         except ProtocolError:
@@ -192,7 +208,7 @@ class _AcquisitionObserver:
                 PacketId.CAR_TELEMETRY_2,
                 PacketId.CAR_STATUS,
             }:
-                self._remember_receive_time(raw, packet)
+                self._remember_receive_time(raw, packet, observed_monotonic_ns)
         self._count_completed(self._consume_frames(completed))
 
     def finish(self) -> None:
@@ -354,13 +370,18 @@ class _AcquisitionObserver:
             self._live_reason = "player_identity_conflicted_within_frame"
             self._live_status = "unavailable"
 
-    def _remember_receive_time(self, raw: RawDatagram, packet: DecodedPacket) -> None:
+    def _remember_receive_time(
+        self,
+        raw: RawDatagram,
+        packet: DecodedPacket,
+        observed_monotonic_ns: int,
+    ) -> None:
         key = (
             packet.header.session_uid,
             packet.header.overall_frame_identifier,
             packet.wire_fingerprint,
         )
-        self._receive_times[key] = raw.monotonic_ns
+        self._receive_times[key] = observed_monotonic_ns
         self._receive_times.move_to_end(key)
         while len(self._receive_times) > self._max_receive_time_entries:
             self._receive_times.popitem(last=False)
@@ -1079,6 +1100,10 @@ class _AcquisitionObserver:
         self.counts["completed_frames"] += len(frames)
 
 
+# Preserve the historical internal name used by existing tests and helpers.
+_AcquisitionObserver = AcquisitionObserver
+
+
 async def record_udp_capture(
     output: str | Path,
     *,
@@ -1095,7 +1120,7 @@ async def record_udp_capture(
     output_path = Path(output)
     source = UDPSource(host=host, port=port, queue_size=queue_size)
     pipeline = TelemetryPipeline() if collect_inventory else None
-    observer = None if collect_inventory else _AcquisitionObserver()
+    observer = None if collect_inventory else AcquisitionObserver()
     counts: Counter[str] = Counter(completed_frames=0)
     session_contexts: dict[int, SessionContext] = {}
     latest_context: dict[str, object] | None = None

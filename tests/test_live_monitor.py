@@ -270,6 +270,42 @@ def test_live_monitor_joins_reordered_player_packets_and_uses_canonical_values()
     assert live["brake"] == 0
 
 
+def test_live_monitor_uses_replay_delivery_clock_without_changing_source_datagrams():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    delivery_start_ns = 100_000_000_000
+    raw_packets = (
+        _session_packet_for_mode(),
+        _telemetry_packet(frame=10, sequence=10),
+        _lap_packet(
+            frame=10,
+            lap_number=3,
+            distance_m=120.0,
+            session_time=12.0,
+            current_lap_time_ms=34_567,
+            sequence=11,
+            player_car_index=0,
+            active_car_index=0,
+        ),
+        _advance(frame=11, sequence=12),
+    )
+    source_packets = tuple(
+        replace(raw, monotonic_ns=5_000_000_000) for raw in raw_packets
+    )
+
+    for index, raw in enumerate(source_packets):
+        observer.process(
+            raw,
+            delivery_monotonic_ns=delivery_start_ns + index * 10_000_000,
+        )
+
+    telemetry = observer.live_telemetry_snapshot(
+        now_monotonic_ns=delivery_start_ns + 150_000_000
+    )
+    assert telemetry["status"] == "fresh"
+    assert telemetry["age_ms"] == 140
+    assert all(raw.monotonic_ns == 5_000_000_000 for raw in source_packets)
+
+
 def test_live_monitor_marks_missing_same_frame_car_telemetry_unavailable():
     observer = _AcquisitionObserver(reorder_window_frames=1)
     _publish_frame(observer, frame=100, telemetry=False)

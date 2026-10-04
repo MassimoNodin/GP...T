@@ -53,6 +53,7 @@ from ..tracks.registry import (
     resolve_track_model,
 )
 from .import_controller import ImportController
+from .replay_controller import ReplayController
 from .recording_controller import RecordingController
 
 
@@ -222,6 +223,32 @@ class RecordingJobRecord(BaseModel):
     progress: RecordingProgressRecord | None = None
 
 
+class ReplayStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    capture_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    speed: float = Field(default=1.0, allow_inf_nan=False)
+
+
+class ReplayRecord(BaseModel):
+    source_kind: Literal["replay"]
+    playback_id: str
+    capture_id: str
+    capture_name: str
+    speed: float
+    state: Literal["starting", "playing", "stopping", "stopped", "completed", "failed"]
+    elapsed_ms: int
+    datagrams_delivered: int
+    capture_complete: bool | None
+    capture_completion: dict[str, Any] | None
+    source_stable: bool | None
+    latest_context: dict[str, Any] | None
+    live_telemetry: LiveTelemetryRecord
+    live_car_status: LiveCarStatusRecord
+    live_lap_timing: LiveLapTimingRecord
+    failure_reason: str | None
+
+
 class LapRecord(BaseModel):
     attempt_key: str
     run_id: str
@@ -302,16 +329,24 @@ def create_app(
         port=recording_port,
         queue_size=recording_queue_size,
     )
+    replay_controller = ReplayController(
+        configured_database_path,
+        configured_recordings_root,
+        import_controller,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         import_controller.start()
         recording_controller.start()
+        replay_controller.start()
         app.state.import_controller = import_controller
         app.state.recording_controller = recording_controller
+        app.state.replay_controller = replay_controller
         try:
             yield
         finally:
+            replay_controller.close()
             recording_controller.close()
             import_controller.close()
 
@@ -644,6 +679,65 @@ def create_app(
             status_code = 404 if reason == "recording_unavailable" else 503
             return _api_error(status_code, reason)
         return APIResponse[RecordingJobRecord](data=job)
+
+    @app.get(
+        "/api/v1/replays/current",
+        response_model=APIResponse[ReplayRecord],
+    )
+    def current_replay() -> APIResponse[ReplayRecord] | JSONResponse:
+        try:
+            playback = replay_controller.current()
+        except ValueError as exc:
+            return _api_error(503, str(exc))
+        return APIResponse[ReplayRecord](data=playback)
+
+    @app.post(
+        "/api/v1/replays/start",
+        response_model=APIResponse[ReplayRecord],
+        status_code=202,
+    )
+    def start_replay(
+        request: ReplayStartRequest,
+        authorization: str | None = Header(default=None),
+    ) -> APIResponse[ReplayRecord] | JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "replay_control_not_authorized")
+        try:
+            playback = replay_controller.start_replay(
+                request.capture_id, speed=request.speed
+            )
+        except ValueError as exc:
+            reason = str(exc)
+            status_code = (
+                409
+                if reason == "another_local_operation_is_in_progress"
+                else 404
+                if reason == "capture_id_unavailable"
+                else 422
+                if reason == "replay_speed_unsupported"
+                else 503
+            )
+            return _api_error(status_code, reason)
+        return APIResponse[ReplayRecord](data=playback)
+
+    @app.post(
+        "/api/v1/replays/{playback_id}/stop",
+        response_model=APIResponse[ReplayRecord],
+        status_code=202,
+    )
+    def stop_replay(
+        playback_id: str,
+        authorization: str | None = Header(default=None),
+    ) -> APIResponse[ReplayRecord] | JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "replay_control_not_authorized")
+        try:
+            playback = replay_controller.stop_replay(playback_id)
+        except ValueError as exc:
+            reason = str(exc)
+            status_code = 404 if reason == "playback_unavailable" else 503
+            return _api_error(status_code, reason)
+        return APIResponse[ReplayRecord](data=playback)
 
     @app.post(
         "/api/v1/import-jobs",

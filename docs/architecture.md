@@ -655,12 +655,27 @@ Expose the optional group through the existing recording-status API and dashboar
 
 Acceptance covers F1 25 and 2026 synthetic layouts; Time Trial, Practice/Qualifying, Race, and unknown contexts; lap and sector transitions; zero/missing values; malformed and unsupported packets; duplicates and late frames; frame wrap; timestamp eviction; pause freshness; player/session/format/rewind resets; independence from telemetry and Status; optional API/UI compatibility; bounded memory; and hiding live data after Stop. Replay Melbourne and Shanghai against selected admitted Lap Data records. No new capture is required; real 2026 validation remains pending.
 
+## Decision 0046: replay catalog captures into the live diagnostic monitors
+
+**Status:** accepted
+**Date:** 2026-10-04
+
+Expose app-managed diagnostic replay for one capture selected by its opaque catalog capture ID. Reuse `ReplaySource` and the bounded acquisition observer to drive the existing player telemetry, Car Status, and Lap Data timing monitors in the dashboard. The local API accepts only catalog IDs, resolves them beneath the startup-configured recordings root, and revalidates file identity before and after reading. Staging files and arbitrary paths are never replayable. Replay does not emit UDP packets, create a capture, import data, or modify telemetry, analysis, or database records.
+
+Keep playback control ephemeral and non-resumable: `starting → playing → stopping → stopped`, or `completed` / `failed`. Support only speeds `0.5`, `1`, `2`, and `4`, fixed for the life of a playback. An active playback can be stopped promptly, including while waiting for the next paced datagram. A repeated Start for the same capture and speed returns the active playback; a different request is busy. On API restart no playback resumes. Capture footer completion remains separate evidence: exhausting a readable capture can complete playback while exposing `capture_complete=false` and its original footer status.
+
+Keep three clocks separate. Preserve each source datagram's capture timestamp, monotonic source timestamp, sequence, and payload unchanged. `ReplaySource` schedules delivery using capture-relative monotonic intervals divided by the fixed playback speed. The observer receives a separate runtime delivery-monotonic timestamp for its 500 ms freshness calculations; its joined fields use the oldest selected packet's delivery timestamp. Game frame IDs and session-time evidence continue to control packet ordering and rewind resets. Replay freshness describes playback delivery recency and says nothing about original capture recency or quality.
+
+Serialize replay with import and UDP recording through the existing local operation reservation. Reserve before dispatch and release only after the replay reader and worker have closed. Expose authenticated Start/Stop and read-only current status through the local API and same-origin dashboard proxy. Identify every snapshot with `source_kind=replay`, playback ID, capture ID, and immutable speed. Do not add a database migration or claim checksum verification for the replayed source.
+
+Acceptance covers Melbourne and the recovered Shanghai capture through the dashboard, preserving invalid/incomplete source evidence; synthetic F1 25/2026 and Time Trial/Practice-Qualifying/Race/unknown contexts; malformed/unsupported, duplicate, late, rewind, and session transitions; every permitted speed and the separate source/delivery clocks; stale expiration from delivered packets; source identity changes and truncated input; prompt Stop during pacing; EOF/error cleanup; repeated commands, concurrency reservations, restart behavior, and bounded monitor state. Replay remains diagnostic and does not add comparison, reference selection, live analysis, corner findings, confidence, or coaching.
+
 ## Data flow
 
 ```text
 UDPSource / ReplaySource
           ↓
-      RawDatagram
+      RawDatagram ───── ReplaySource deliveries carry a separate delivery clock
        ↙       ↘
   Capture     Header decoder
                   ↓
