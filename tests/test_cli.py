@@ -179,7 +179,13 @@ def test_observation_set_cli_forwards_explicit_attempts_and_window(
         cli,
         "build_observation_set",
         lambda *args, **kwargs: calls.update(args=args, kwargs=kwargs)
-        or {"artifact_kind": "selected_window_observation_set"},
+        or {
+            "artifact_kind": "selected_window_observation_set",
+            "onset_repeatability": {
+                "analysis_version": "selected-window-onset-spread-v1",
+                "consistency_claim": False,
+            },
+        },
     )
     args = cli.build_parser().parse_args(
         [
@@ -199,8 +205,12 @@ def test_observation_set_cli_forwards_explicit_attempts_and_window(
     assert calls["args"][1] == ["attempt-2", "attempt-1"]
     assert calls["args"][2] == DistanceWindow(500.0, 1200.0)
     assert calls["kwargs"] == {"policy": "practice_qualifying"}
-    assert json.loads(capsys.readouterr().out)["artifact_kind"] == (
+    output = json.loads(capsys.readouterr().out)
+    assert output["artifact_kind"] == (
         "selected_window_observation_set"
+    )
+    assert output["onset_repeatability"]["analysis_version"] == (
+        "selected-window-onset-spread-v1"
     )
 
 

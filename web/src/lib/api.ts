@@ -1812,6 +1812,10 @@ export interface ObservationSetAttempt {
     coverage: Record<string, number>;
     threshold_events: Record<string, ObservationThresholdEventSummary>;
   };
+  onset_repeatability?: Record<
+    "brake_10_percent" | "throttle_50_percent",
+    ObservationOnsetAttemptState
+  >;
   [key: string]: unknown;
 }
 
@@ -1826,6 +1830,13 @@ export interface ObservationThresholdEventSummary {
   unsupported_break_count: number;
 }
 
+export interface ObservationOnsetAttemptState {
+  status: "contributes" | "excluded" | "unavailable";
+  reasons: string[];
+  bracket_m: [number, number] | null;
+  right_censored: boolean | null;
+}
+
 export interface ObservationSetMetric {
   status: "supported" | "insufficient_contributors";
   required_contributor_count: number;
@@ -1836,6 +1847,45 @@ export interface ObservationSetMetric {
   range: number | null;
   contributors: Array<{ attempt_key: string; value: number }>;
   exclusion_counts: Array<{ reason: string; attempt_count: number }>;
+}
+
+export interface ObservationOnsetSpreadMetric {
+  status: "supported" | "insufficient_contributors";
+  threshold: number;
+  unit: "m";
+  required_contributor_count: number;
+  contributor_count: number;
+  excluded_attempt_count: number;
+  minimum_possible_spread_m: number | null;
+  maximum_possible_spread_m: number | null;
+  right_censored_contributor_count: number;
+  contributors: Array<{
+    attempt_key: string;
+    attempt_number: number;
+    trace_sha256: string;
+    start_distance_m: number;
+    start_session_time_s: number;
+    bracket_m: [number, number];
+    right_censored: boolean;
+  }>;
+  excluded_attempts: Array<{
+    attempt_key: string;
+    attempt_number: number;
+    reasons: string[];
+  }>;
+  exclusion_counts: Array<{ reason: string; attempt_count: number }>;
+  exclusion_reason_omitted_count: number;
+}
+
+export interface ObservationOnsetRepeatability {
+  analysis_version: "selected-window-onset-spread-v1";
+  diagnostic_only: true;
+  consistency_claim: false;
+  required_contributor_count: number;
+  metrics: {
+    brake_10_percent: ObservationOnsetSpreadMetric;
+    throttle_50_percent: ObservationOnsetSpreadMetric;
+  };
 }
 
 export interface ObservationSetReport {
@@ -1853,6 +1903,7 @@ export interface ObservationSetReport {
   scope: { run_id: string; session_uid: string; car_index: number };
   attempts: ObservationSetAttempt[];
   aggregates: { minimum_speed: ObservationSetMetric; peak_brake: ObservationSetMetric };
+  onset_repeatability?: ObservationOnsetRepeatability;
   warnings: Array<{ code: string; text: string }>;
   limits: Record<string, number>;
 }

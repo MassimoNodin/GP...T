@@ -1,5 +1,7 @@
 import type {
   LapRecord,
+  ObservationOnsetAttemptState,
+  ObservationOnsetSpreadMetric,
   ObservationSetReport,
   ObservationThresholdEventSummary,
 } from "@/lib/api";
@@ -51,7 +53,8 @@ export default function ObservationSetPanel({
           <p>
             Select 2–8 attempts and enter one numeric distance window above.
             Supported speed and brake values show their observed range; pedal
-            onset evidence stays as per-attempt brackets.
+            onset evidence stays as per-attempt brackets, with a separate
+            bracket-aware spread summary when enough attempts are supported.
           </p>
         </div>
         <span className="protocol-tag">DIAGNOSTIC ONLY</span>
@@ -119,6 +122,7 @@ export default function ObservationSetPanel({
 function ObservationReport({ report }: { report: ObservationSetReport }) {
   const speed = report.aggregates.minimum_speed;
   const brake = report.aggregates.peak_brake;
+  const onsetRepeatability = report.onset_repeatability;
   const speedContributors = new Set(speed.contributors.map((item) => item.attempt_key));
   const brakeContributors = new Set(brake.contributors.map((item) => item.attempt_key));
 
@@ -128,6 +132,29 @@ function ObservationReport({ report }: { report: ObservationSetReport }) {
         <MetricRange title="Observed minimum speed" metric={speed} digits={1} />
         <MetricRange title="Peak recorded brake input" metric={brake} digits={1} />
       </div>
+      {onsetRepeatability ? (
+        <section className="observation-set-repeatability" aria-label="Onset bracket spread">
+          <div>
+            <div className="eyebrow">REPEATED ONSET EVIDENCE</div>
+            <h3>Across-lap onset spread</h3>
+          </div>
+          <div className="observation-set-summary">
+            <OnsetSpread
+              title="10% brake onset"
+              metric={onsetRepeatability.metrics.brake_10_percent}
+            />
+            <OnsetSpread
+              title="50% throttle onset"
+              metric={onsetRepeatability.metrics.throttle_50_percent}
+            />
+          </div>
+          <p className="observation-set-onset-note">
+            Each range shows the minimum to maximum possible spread across distinct attempts,
+            calculated from sampled onset brackets. No bracket midpoint is treated as exact;
+            this is not a consistency score.
+          </p>
+        </section>
+      ) : null}
       {report.warnings.map((warning) => (
         <p className="observation-set-warning" key={warning.code}>{warning.text}</p>
       ))}
@@ -176,6 +203,8 @@ function ObservationReport({ report }: { report: ObservationSetReport }) {
                   <td>
                     <small>Speed: {speedContributors.has(attempt.attempt_key) ? "contributes" : metricExclusion(attempt, "minimum_speed")}</small>
                     <small>Brake: {brakeContributors.has(attempt.attempt_key) ? "contributes" : metricExclusion(attempt, "peak_brake")}</small>
+                    <small>10% onset: {onsetStateText(attempt.onset_repeatability?.brake_10_percent)}</small>
+                    <small>50% onset: {onsetStateText(attempt.onset_repeatability?.throttle_50_percent)}</small>
                   </td>
                 </tr>
               );
@@ -187,6 +216,36 @@ function ObservationReport({ report }: { report: ObservationSetReport }) {
         Onset brackets remain tied to each attempt. The report does not average bracket midpoints or assign a precise shared onset.
       </p>
     </div>
+  );
+}
+
+function OnsetSpread({
+  title,
+  metric,
+}: {
+  title: string;
+  metric: ObservationOnsetSpreadMetric;
+}) {
+  const supported = metric.status === "supported";
+  return (
+    <article className="observation-metric">
+      <span>{title}</span>
+      {supported ? (
+        <strong>
+          {spreadBoundary(metric.minimum_possible_spread_m ?? 0, "lower")}–
+          {spreadBoundary(metric.maximum_possible_spread_m ?? 0, "upper")} m
+        </strong>
+      ) : (
+        <strong>Insufficient support</strong>
+      )}
+      <small>
+        {metric.contributor_count} contributor{metric.contributor_count === 1 ? "" : "s"}
+        {supported
+          ? ` · ${metric.right_censored_contributor_count} right-censored continuation${metric.right_censored_contributor_count === 1 ? "" : "s"}`
+          : ` · requires ${metric.required_contributor_count}`}
+        {metric.excluded_attempt_count ? ` · ${metric.excluded_attempt_count} excluded` : ""}
+      </small>
+    </article>
   );
 }
 
@@ -257,6 +316,16 @@ function metricExclusion(attempt: ObservationSetReport["attempts"][number], metr
   return coverage === 1 ? "measurement unavailable" : "incomplete support";
 }
 
+function onsetStateText(
+  value: ObservationOnsetAttemptState | undefined,
+) {
+  if (!value) return "unavailable";
+  if (value.status === "contributes") {
+    return value.right_censored ? "contributes · continuation censored" : "contributes";
+  }
+  return value.reasons.length ? value.reasons.map(humanize).join(", ") : value.status;
+}
+
 function validity(value: boolean | null) {
   return value === true ? "game valid" : value === false ? "game invalid" : "validity unknown";
 }
@@ -277,6 +346,15 @@ function humanize(value: string) {
 
 function percent(value: number | undefined) {
   return value === undefined ? "unknown" : `${(value * 100).toFixed(1)}%`;
+}
+
+function spreadBoundary(value: number, side: "lower" | "upper") {
+  const scaled = value * 10;
+  const tolerance = Number.EPSILON * Math.max(1, Math.abs(scaled)) * 4;
+  const rounded = side === "lower"
+    ? Math.floor(scaled + tolerance)
+    : Math.ceil(scaled - tolerance);
+  return (rounded / 10).toFixed(1);
 }
 
 function outwardBound(value: number, side: "lower" | "upper") {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 
@@ -105,6 +106,48 @@ def _attempt(
         lifecycle_assessed=resource.lifecycle_assessed,
         source_sample_count=resource.trace_row_count,
     )
+
+
+def _onset_resources(
+    *,
+    brake_onsets: tuple[int, ...],
+    throttle_onsets: tuple[int, ...],
+    invalid_second: bool = False,
+    superseded_second: bool = False,
+) -> tuple[tuple[AttemptTraceResourceEstimate, ...], dict[str, StoredAttemptTrace]]:
+    context = {**_CONTEXT, "track_length_m": 30}
+    resources = tuple(
+        replace(
+            _resource(index + 1, f"attempt-{index + 1}"),
+            game_valid=False if index == 1 and invalid_second else True,
+            superseded=True if index == 1 and superseded_second else False,
+            trace_row_count=7,
+            trace_size_bytes=2048,
+            context_segments=((0, context),),
+        )
+        for index in range(len(brake_onsets))
+    )
+    attempts: dict[str, StoredAttemptTrace] = {}
+    for index, resource in enumerate(resources):
+        samples = tuple(
+            {
+                "frame_identifier": frame,
+                "session_time_s": frame * 0.1,
+                "lap_distance_m": distance,
+                "current_lap_time_ms": frame * 100,
+                "speed_mps": 20.0 + frame,
+                "throttle": 0.6 if frame >= throttle_onsets[index] else 0.0,
+                "brake": 0.2 if frame >= brake_onsets[index] else 0.0,
+                "steering": 0.1,
+                "gear": 4,
+                "drs_active": False,
+            }
+            for frame, distance in enumerate(range(0, 31, 5))
+        )
+        attempts[resource.attempt_key] = replace(
+            _attempt(resource), samples=samples
+        )
+    return resources, attempts
 
 
 @pytest.mark.parametrize(
@@ -220,6 +263,246 @@ def test_observation_set_reports_supported_scalar_ranges_and_keeps_invalid_laps(
         warning["code"] == "game_invalid"
         for warning in result["attempts"][1]["warnings"]
     )
+
+
+@pytest.mark.parametrize(
+    ("onsets", "expected_minimum", "expected_maximum"),
+    [
+        ((1, 1), 0.0, 5.0),
+        ((1, 2), 0.0, 10.0),
+        ((1, 3), 5.0, 15.0),
+    ],
+)
+def test_onset_spread_preserves_identical_overlapping_and_disjoint_brackets(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    onsets: tuple[int, int],
+    expected_minimum: float,
+    expected_maximum: float,
+) -> None:
+    resources, attempts = _onset_resources(
+        brake_onsets=onsets,
+        throttle_onsets=onsets,
+        invalid_second=True,
+    )
+    _patch_service_inputs(monkeypatch, resources, attempts)
+    monkeypatch.setattr(
+        observation_module,
+        "_load_capture_evidence",
+        lambda *_args: {
+            "complete": False,
+            "footer_status": "incomplete",
+            "recording_counters": {
+                "queue_dropped": 0,
+                "unpersisted_on_shutdown": 0,
+                "socket_errors": 0,
+            },
+            "replay_counters": {
+                "import_late_packets_ignored": 0,
+                "import_frame_overflow_packets_dropped": 0,
+            },
+        },
+    )
+
+    result = observation_module.build_observation_set(
+        tmp_path / "unused.sqlite3",
+        [resource.attempt_key for resource in resources],
+        DistanceWindow(0.0, 30.0),
+        config=ResamplingConfig(grid_step_m=10.0),
+    )
+
+    spread = result["onset_repeatability"]
+    assert spread["analysis_version"] == "selected-window-onset-spread-v1"
+    assert spread["consistency_claim"] is False
+    for key in ("brake_10_percent", "throttle_50_percent"):
+        metric = spread["metrics"][key]
+        assert metric["status"] == "supported"
+        assert metric["contributor_count"] == 2
+        assert metric["minimum_possible_spread_m"] == pytest.approx(expected_minimum)
+        assert metric["maximum_possible_spread_m"] == pytest.approx(expected_maximum)
+        assert metric["right_censored_contributor_count"] == 2
+        assert [item["right_censored"] for item in metric["contributors"]] == [True, True]
+        assert [item["attempt_number"] for item in metric["contributors"]] == [1, 2]
+    assert any(
+        warning["code"] == "game_invalid"
+        for warning in result["attempts"][1]["warnings"]
+    )
+    assert result["attempts"][1]["onset_repeatability"]["brake_10_percent"][
+        "status"
+    ] == "contributes"
+    assert result["coaching_eligible"] is False
+    assert any(warning["code"] == "capture_incomplete" for warning in result["warnings"])
+    assert any(
+        warning["code"] == "capture_incomplete"
+        for warning in result["attempts"][0]["warnings"]
+    )
+
+
+def test_onset_spread_requires_two_distinct_eligible_attempts_and_excludes_left_censoring(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    resources, attempts = _onset_resources(
+        brake_onsets=(1, 2),
+        throttle_onsets=(1, 2),
+        superseded_second=True,
+    )
+    _patch_service_inputs(monkeypatch, resources, attempts)
+    result = observation_module.build_observation_set(
+        tmp_path / "unused.sqlite3",
+        [resource.attempt_key for resource in resources],
+        DistanceWindow(0.0, 30.0),
+        config=ResamplingConfig(grid_step_m=10.0),
+    )
+    brake = result["onset_repeatability"]["metrics"]["brake_10_percent"]
+    assert brake["status"] == "insufficient_contributors"
+    assert brake["contributor_count"] == 1
+    assert brake["minimum_possible_spread_m"] is None
+    assert brake["maximum_possible_spread_m"] is None
+    assert brake["excluded_attempts"][0]["attempt_key"] == "attempt-2"
+    assert "superseded_by_lifecycle_evidence" in brake["excluded_attempts"][0]["reasons"]
+
+    left_censored_resources, left_censored_attempts = _onset_resources(
+        brake_onsets=(0, 1),
+        throttle_onsets=(0, 1),
+    )
+    _patch_service_inputs(monkeypatch, left_censored_resources, left_censored_attempts)
+    left_censored = observation_module.build_observation_set(
+        tmp_path / "unused.sqlite3",
+        [resource.attempt_key for resource in left_censored_resources],
+        DistanceWindow(0.0, 30.0),
+        config=ResamplingConfig(grid_step_m=10.0),
+    )
+    brake = left_censored["onset_repeatability"]["metrics"]["brake_10_percent"]
+    assert brake["contributor_count"] == 1
+    assert any(
+        item["reason"] == "left_censored_onset"
+        for item in brake["exclusion_counts"]
+    )
+    assert left_censored["attempts"][0]["onset_repeatability"]["brake_10_percent"][
+        "status"
+    ] == "unavailable"
+
+
+def test_onset_spread_maximum_uses_distinct_attempt_pairs() -> None:
+    candidates = [
+        {
+            "attempt_key": "wide",
+            "attempt_number": 1,
+            "trace_sha256": "a" * 64,
+            "bracket_m": [0.0, 20.0],
+            "right_censored": False,
+        },
+        {
+            "attempt_key": "narrow",
+            "attempt_number": 2,
+            "trace_sha256": "b" * 64,
+            "bracket_m": [9.0, 10.0],
+            "right_censored": False,
+        },
+    ]
+
+    result = observation_module._aggregate_onset_spread(
+        "brake_10_percent", 0.1, candidates, Counter(), []
+    )
+
+    assert result["minimum_possible_spread_m"] == 0.0
+    assert result["maximum_possible_spread_m"] == 11.0
+
+
+def test_onset_spread_bounds_excluded_rows_and_omitted_reason_categories() -> None:
+    attempts = [
+        {
+            "attempt_key": f"attempt-{index}",
+            "attempt_number": index,
+            "onset_repeatability": {
+                "brake_10_percent": {
+                    "status": "excluded",
+                    "reasons": [f"reason-{index}", f"reason-{index + 1}"],
+                }
+            },
+        }
+        for index in range(1, 7)
+    ]
+    exclusions = Counter({f"reason-{index}": index for index in range(1, 11)})
+
+    result = observation_module._aggregate_onset_spread(
+        "brake_10_percent", 0.1, [], exclusions, attempts
+    )
+
+    assert result["excluded_attempt_count"] == 6
+    assert len(result["excluded_attempts"]) == 6
+    assert len(result["exclusion_counts"]) == 8
+    assert result["exclusion_reason_omitted_count"] == 2
+
+
+def test_onset_spread_rejects_multiple_malformed_and_censored_events() -> None:
+    supported_event = {
+        "channel": "brake",
+        "threshold": 0.1,
+        "start_distance_m": 5.0,
+        "start_distance_bracket_m": [0.0, 5.0],
+        "start_session_time_s": 0.1,
+        "left_censored": False,
+        "right_censored": True,
+    }
+    summary = {
+        "status": "detected",
+        "threshold": 0.1,
+        "events": [supported_event],
+        "event_count": 1,
+        "events_truncated": False,
+        "left_censored_event_count": 0,
+        "right_censored_event_count": 1,
+        "rejected_short_event_count": 0,
+        "unsupported_break_count": 0,
+    }
+    observations = {
+        "coverage": {"brake": 1.0},
+        "threshold_events": {"brake_10_percent": summary},
+    }
+    bracket, reason = observation_module._supported_onset_bracket(
+        observations,
+        event_key="brake_10_percent",
+        channel="brake",
+        threshold=0.1,
+        start_m=0.0,
+        end_m=20.0,
+        track_length_m=20.0,
+    )
+    assert reason is None
+    assert bracket is not None and bracket["right_censored"] is True
+
+    multiple = {**summary, "event_count": 2, "events": [supported_event, supported_event]}
+    invalid_bracket = {
+        **summary,
+        "events": [{**supported_event, "start_distance_bracket_m": [5.0, 4.0]}],
+    }
+    left_censored = {
+        **summary,
+        "status": "left_censored",
+        "left_censored_event_count": 1,
+        "events": [{**supported_event, "left_censored": True}],
+    }
+    invalid_count = {**summary, "event_count": True}
+    censor_count_mismatch = {**summary, "right_censored_event_count": 0}
+    for candidate, expected in (
+        (multiple, "threshold_event_not_unique"),
+        (invalid_bracket, "threshold_onset_bracket_invalid"),
+        (left_censored, "left_censored_onset"),
+        (invalid_count, "threshold_event_counts_invalid"),
+        (censor_count_mismatch, "threshold_event_censoring_counts_mismatch"),
+    ):
+        result, reason = observation_module._supported_onset_bracket(
+            {"coverage": {"brake": 1.0}, "threshold_events": {"brake_10_percent": candidate}},
+            event_key="brake_10_percent",
+            channel="brake",
+            threshold=0.1,
+            start_m=0.0,
+            end_m=20.0,
+            track_length_m=20.0,
+        )
+        assert result is None
+        assert reason == expected
 
 
 @pytest.mark.parametrize(

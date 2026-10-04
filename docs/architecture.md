@@ -810,6 +810,24 @@ Acceptance covers synthetic matched and contradicted patterns, equal exit speed,
 
 **Rationale:** Throttle pickup and exit speed are existing, bracketed comparison measurements and provide a second deterministic pattern that advances Phase E without new data reads or broader coaching authority. Independent outcomes preserve useful evidence when the braking rule lacks one of its required measurements, while explicit censoring and uncertainty gates prevent a descriptive distance pattern from becoming an unsupported diagnosis.
 
+## Decision 0055: summarize repeated onset-bracket spread
+
+**Status:** accepted
+
+**Date:** 2026-10-05
+
+Extend the D0039 selected-window observation set with one separately versioned onset-repeatability section for its existing 2–8 explicitly selected attempts. Summarize the 10% brake-threshold and 50% throttle-threshold sampled onset brackets independently. Require at least two supported observations from distinct completed attempts that are lifecycle-assessed and not superseded. Preserve each bracket and its attempt identity; do not average bracket midpoints or claim a precise onset.
+
+An onset contributes only when its selected-window channel has full support, exactly one supported sustained event is present, examples are untruncated, no short events or unsupported breaks were rejected, and the onset bracket is finite, ordered, anchored inside the lap, and not left-censored. A right-censored continuation remains usable and is identified in its contributor record. Preserve existing invalidity, capture-quality, run/session/player, compatibility, lifecycle, and attempt warnings; game-invalid laps remain diagnostic observations with their warning and are not silently promoted to coaching evidence. Race and unknown modes remain unsupported.
+
+For supported brackets `[Lᵢ,Uᵢ]` from distinct attempts, report the minimum possible spread as `max(0, max(Lᵢ) − min(Uᵢ))`. Report the maximum possible spread as `max(Uᵢ − Lⱼ)` over distinct contributors `i ≠ j`. Require at least two contributors before exposing either range. Return bounded contributor identities/brackets, exclusion counts, and omitted-exclusion counts. Label this as repeatability evidence with `consistency_claim=false`; do not emit a score, confidence probability, diagnosis, advice, or admission change.
+
+Expose the additive versioned section in the existing service, CLI, API and dashboard report. Reuse each selected attempt's already computed `analyze_single_attempt_window` measurements; perform no extra trace reads, resampling, migration, persistence, or automatic attempt selection. Existing clients can ignore the new section.
+
+Acceptance covers identical, overlapping and disjoint brackets; the minimum/maximum formulas over distinct attempts; one and zero contributors; left-censored exclusion and right-censored contribution; partial, superseded and lifecycle-unassessed exclusion; invalidity/capture warning preservation; malformed and multiple events; rejected short events and unsupported breaks; bounded selections and exclusions; Shanghai/Melbourne source parity; and service/API/CLI/dashboard delivery without new reads. Existing capture evidence does not guarantee two positively supported onset contributors in a selected window.
+
+**Rationale:** D0039 intentionally retained pedal onsets as per-attempt brackets. A bounded spread summarizes repeated observations for the plan's consistency work while preserving measurement uncertainty and avoiding midpoint averaging or a false consistency score.
+
 ## Data flow
 
 ```text
@@ -857,6 +875,7 @@ Capture precedes decoding so every datagram successfully persisted survives pars
 - `lap-debrief-v1` composes a verified official lap-time difference and at most three matching D0032/D0033 region interval summaries from one existing comparison response. It preserves prioritized capture, lifecycle, validity, and support limitations, rejects mismatched provenance, and adds no analysis reads or coaching authority.
 - `driving-pattern-assessment-v1` evaluates at most three D0032-ranked regions against provenance-matched D0033 braking-onset, minimum-speed and exit-speed facts. It distinguishes matched, contradicted and unavailable measurements while keeping the experimental rule coaching-ineligible with no action.
 - `throttle-pattern-assessment-v1` independently evaluates at most three D0032-ranked regions against connected interval time, D0033 50% throttle-onset brackets and configured exit-speed facts. It preserves onset uncertainty and censoring while keeping the experimental rule coaching-ineligible with no action.
+- `selected-window-onset-spread-v1` derives minimum and maximum possible 10% brake and 50% throttle onset spreads from distinct, supported per-attempt brackets in the existing 2–8-attempt observation set. It retains bracket and attempt provenance, right-censored continuations, contributor exclusions and warnings without claiming consistency or coaching eligibility.
 - `brake-threshold-release-v1` compares the existing paired braking-event end brackets for the sampled `>=10%` to `<10%` transition. It preserves uncertainty and left-censored onset, abstains on right-censoring or unsupported event evidence, and does not measure complete pedal release or add trace reads.
 - `observation-set` reuses the single-attempt selected-window evaluator across at most eight explicitly selected same-run/session/player attempts. Scalar ranges require two fully supported, lifecycle-assessed completed attempts; onset evidence remains bracketed per lap, and every result is diagnostic and coaching-ineligible.
 - Comparison speed, lap-delta, and driver-input charts share a bounded pointer and keyboard cursor over the original resampled comparison distance grid. Local chart zoom is presentation-only and preserves sampled continuity gaps; analysis, mode policy and comparison outputs are unchanged.

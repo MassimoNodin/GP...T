@@ -35,11 +35,16 @@ from .source_limits import (
 
 
 OBSERVATION_SET_VERSION = "selected-window-observation-set-v1"
+ONSET_REPEATABILITY_VERSION = "selected-window-onset-spread-v1"
 MAX_OBSERVATION_SET_ATTEMPTS = 8
 MIN_OBSERVATION_SET_ATTEMPTS = 2
 OBSERVATION_SET_GRID_POINT_LIMIT = 100_000
 MIN_AGGREGATE_CONTRIBUTORS = 2
 _FULL_COVERAGE_TOLERANCE = 1e-9
+_ONSET_REPEATABILITY_SPECS = {
+    "brake_10_percent": ("brake_10_percent", "brake", 0.1),
+    "throttle_50_percent": ("throttle_50_percent", "throttle", 0.5),
+}
 
 
 def build_observation_set(
@@ -151,6 +156,12 @@ def build_observation_set(
         "minimum_speed": Counter(),
         "peak_brake": Counter(),
     }
+    onset_candidates: dict[str, list[dict[str, object]]] = {
+        key: [] for key in _ONSET_REPEATABILITY_SPECS
+    }
+    onset_exclusions: dict[str, Counter[str]] = {
+        key: Counter() for key in _ONSET_REPEATABILITY_SPECS
+    }
     used_trace_bytes = 0
     used_trace_rows = 0
     used_context_segments = 0
@@ -169,6 +180,11 @@ def build_observation_set(
             _record_scalar_exclusions(
                 scalar_exclusions, exclusion_reasons, "attempt_trace_not_ready"
             )
+            _mark_onset_unavailable(
+                row,
+                onset_exclusions,
+                [*exclusion_reasons, "attempt_trace_not_ready"],
+            )
             continue
         if resource.trace_size_bytes is None or resource.trace_row_count is None:
             row["analysis_status"] = "unavailable"
@@ -176,6 +192,11 @@ def build_observation_set(
             attempt_rows.append(row)
             _record_scalar_exclusions(
                 scalar_exclusions, exclusion_reasons, "attempt_trace_resource_unavailable"
+            )
+            _mark_onset_unavailable(
+                row,
+                onset_exclusions,
+                [*exclusion_reasons, "attempt_trace_resource_unavailable"],
             )
             continue
 
@@ -235,6 +256,11 @@ def build_observation_set(
                 exclusion_reasons,
                 str(row["analysis_reason"]),
             )
+            _mark_onset_unavailable(
+                row,
+                onset_exclusions,
+                [*exclusion_reasons, str(row["analysis_reason"])],
+            )
             continue
         if not _attempt_matches_preflight_snapshot(attempt, resource):
             row["analysis_status"] = "unavailable"
@@ -245,6 +271,11 @@ def build_observation_set(
                 exclusion_reasons,
                 "attempt_metadata_changed_during_read",
             )
+            _mark_onset_unavailable(
+                row,
+                onset_exclusions,
+                [*exclusion_reasons, "attempt_metadata_changed_during_read"],
+            )
             continue
 
         if attempt.context_segments != resource.context_segments:
@@ -253,6 +284,11 @@ def build_observation_set(
             attempt_rows.append(row)
             _record_scalar_exclusions(
                 scalar_exclusions, exclusion_reasons, "attempt_context_changed_during_read"
+            )
+            _mark_onset_unavailable(
+                row,
+                onset_exclusions,
+                [*exclusion_reasons, "attempt_context_changed_during_read"],
             )
             continue
 
@@ -274,6 +310,11 @@ def build_observation_set(
             _record_scalar_exclusions(
                 scalar_exclusions, exclusion_reasons, "attempt_trace_samples_invalid"
             )
+            _mark_onset_unavailable(
+                row,
+                onset_exclusions,
+                [*exclusion_reasons, "attempt_trace_samples_invalid"],
+            )
             continue
 
         row["analysis_status"] = "available"
@@ -292,6 +333,21 @@ def build_observation_set(
             end_m=window.end_m,
             exclusion_reasons=exclusion_reasons,
         )
+        for metric_key, (event_key, channel, threshold) in _ONSET_REPEATABILITY_SPECS.items():
+            _collect_onset_candidate(
+                onset_candidates[metric_key],
+                onset_exclusions[metric_key],
+                row,
+                observations,
+                metric_key=metric_key,
+                event_key=event_key,
+                channel=channel,
+                threshold=threshold,
+                start_m=window.start_m,
+                end_m=window.end_m,
+                track_length_m=track_length,
+                aggregate_exclusion_reasons=exclusion_reasons,
+            )
         _collect_scalar_candidate(
             scalar_candidates["peak_brake"],
             scalar_exclusions["peak_brake"],
@@ -344,6 +400,23 @@ def build_observation_set(
         },
         "attempts": attempt_rows,
         "aggregates": aggregates,
+        "onset_repeatability": {
+            "analysis_version": ONSET_REPEATABILITY_VERSION,
+            "diagnostic_only": True,
+            "consistency_claim": False,
+            "required_contributor_count": MIN_AGGREGATE_CONTRIBUTORS,
+            "metrics": {
+                metric_key: _aggregate_onset_spread(
+                    metric_key,
+                    threshold,
+                    onset_candidates[metric_key],
+                    onset_exclusions[metric_key],
+                    attempt_rows,
+                )
+                for metric_key, (_event_key, _channel, threshold)
+                in _ONSET_REPEATABILITY_SPECS.items()
+            },
+        },
         "warnings": _set_warnings(policy, capture),
         "limits": {
             "minimum_attempt_count": MIN_OBSERVATION_SET_ATTEMPTS,
@@ -355,6 +428,9 @@ def build_observation_set(
             "context_segments_used": used_context_segments,
             "context_bytes_used": used_context_bytes,
             "attempt_row_limit": MAX_OBSERVATION_SET_ATTEMPTS,
+            "onset_contributor_limit": MAX_OBSERVATION_SET_ATTEMPTS,
+            "onset_excluded_attempt_limit": MAX_OBSERVATION_SET_ATTEMPTS,
+            "onset_exclusion_reason_limit": 8,
         },
     }
 
@@ -401,7 +477,291 @@ def _attempt_row(resource: AttemptTraceResourceEstimate) -> dict[str, object]:
         "trace_sha256": resource.trace_sha256,
         "trace_schema_version": resource.trace_schema_version,
         "source_sample_count": resource.trace_row_count,
+        "onset_repeatability": {},
     }
+
+
+def _collect_onset_candidate(
+    candidates: list[dict[str, object]],
+    exclusions: Counter[str],
+    row: dict[str, object],
+    observations: Mapping[str, object],
+    *,
+    metric_key: str,
+    event_key: str,
+    channel: str,
+    threshold: float,
+    start_m: float,
+    end_m: float,
+    track_length_m: float,
+    aggregate_exclusion_reasons: list[str],
+) -> None:
+    bracket, reason = _supported_onset_bracket(
+        observations,
+        event_key=event_key,
+        channel=channel,
+        threshold=threshold,
+        start_m=start_m,
+        end_m=end_m,
+        track_length_m=track_length_m,
+    )
+    reasons = list(dict.fromkeys(
+        [*aggregate_exclusion_reasons, *([reason] if reason else [])]
+    ))
+    if bracket is None or aggregate_exclusion_reasons:
+        state = {
+            "status": "unavailable" if bracket is None else "excluded",
+            "reasons": reasons or ["onset_observation_unavailable"],
+            "bracket_m": None if bracket is None else bracket["bracket_m"],
+            "right_censored": None if bracket is None else bracket["right_censored"],
+        }
+        _set_onset_row_state(row, metric_key, state)
+        for exclusion_reason in state["reasons"]:
+            exclusions[exclusion_reason] += 1
+        return
+
+    attempt_key = row.get("attempt_key")
+    attempt_number = row.get("attempt_number")
+    trace_sha256 = row.get("trace_sha256")
+    if (
+        not isinstance(attempt_key, str)
+        or not attempt_key
+        or not isinstance(attempt_number, int)
+        or isinstance(attempt_number, bool)
+        or not isinstance(trace_sha256, str)
+        or len(trace_sha256) != 64
+        or any(char not in "0123456789abcdef" for char in trace_sha256)
+    ):
+        reason = "onset_source_identity_unavailable"
+        _set_onset_row_state(
+            row,
+            metric_key,
+            {"status": "unavailable", "reasons": [reason], "bracket_m": None, "right_censored": None},
+        )
+        exclusions[reason] += 1
+        return
+
+    contributor = {
+        "attempt_key": attempt_key,
+        "attempt_number": attempt_number,
+        "trace_sha256": trace_sha256,
+        "start_distance_m": bracket["start_distance_m"],
+        "start_session_time_s": bracket["start_session_time_s"],
+        "bracket_m": bracket["bracket_m"],
+        "right_censored": bracket["right_censored"],
+    }
+    candidates.append(contributor)
+    _set_onset_row_state(
+        row,
+        metric_key,
+        {
+            "status": "contributes",
+            "reasons": [],
+            "bracket_m": bracket["bracket_m"],
+            "right_censored": bracket["right_censored"],
+        },
+    )
+
+
+def _supported_onset_bracket(
+    observations: Mapping[str, object],
+    *,
+    event_key: str,
+    channel: str,
+    threshold: float,
+    start_m: float,
+    end_m: float,
+    track_length_m: float,
+) -> tuple[dict[str, object] | None, str | None]:
+    coverage = observations.get("coverage")
+    coverage = coverage if isinstance(coverage, Mapping) else {}
+    coverage_value = _finite_number(coverage.get(channel))
+    if coverage_value is None or not math.isclose(
+        coverage_value, 1.0, rel_tol=0, abs_tol=_FULL_COVERAGE_TOLERANCE
+    ):
+        return None, "incomplete_channel_coverage"
+
+    threshold_events = observations.get("threshold_events")
+    threshold_events = threshold_events if isinstance(threshold_events, Mapping) else {}
+    summary = threshold_events.get(event_key)
+    summary = summary if isinstance(summary, Mapping) else None
+    if summary is None:
+        return None, "threshold_event_summary_unavailable"
+    event_count = _nonnegative_integer(summary.get("event_count"))
+    left_censored_count = _nonnegative_integer(
+        summary.get("left_censored_event_count")
+    )
+    right_censored_count = _nonnegative_integer(
+        summary.get("right_censored_event_count")
+    )
+    if event_count is None or left_censored_count is None or right_censored_count is None:
+        return None, "threshold_event_counts_invalid"
+    if event_count != 1:
+        return None, "threshold_event_not_unique"
+    if left_censored_count > 0:
+        return None, "left_censored_onset"
+    if summary.get("status") != "detected" or not _is_number_close(
+        summary.get("threshold"), threshold
+    ):
+        return None, "threshold_event_not_detected"
+    if summary.get("events_truncated") is not False:
+        return None, "threshold_event_examples_truncated"
+    if _nonnegative_integer(summary.get("rejected_short_event_count")) != 0:
+        return None, "threshold_short_events_rejected"
+    if _nonnegative_integer(summary.get("unsupported_break_count")) != 0:
+        return None, "threshold_unsupported_breaks_present"
+    events = summary.get("events")
+    if not isinstance(events, Sequence) or isinstance(events, (str, bytes)) or len(events) != 1:
+        return None, "threshold_event_example_unavailable"
+    event = events[0]
+    if not isinstance(event, Mapping):
+        return None, "threshold_event_example_malformed"
+    if event.get("left_censored") is True:
+        return None, "left_censored_onset"
+    if event.get("left_censored") is not False:
+        return None, "threshold_onset_censoring_unavailable"
+    if not isinstance(event.get("right_censored"), bool):
+        return None, "threshold_onset_censoring_unavailable"
+    if right_censored_count != int(event["right_censored"]):
+        return None, "threshold_event_censoring_counts_mismatch"
+    bracket = _distance_bounds(event.get("start_distance_bracket_m"))
+    distance = _finite_number(event.get("start_distance_m"))
+    session_time = _finite_number(event.get("start_session_time_s"))
+    if (
+        event.get("channel") != channel
+        or not _is_number_close(event.get("threshold"), threshold)
+        or bracket is None
+        or distance is None
+        or session_time is None
+        or session_time < 0
+        or not bracket[0] <= distance <= bracket[1]
+        or not start_m <= distance < end_m
+        or bracket[0] < 0
+        or bracket[1] > track_length_m
+    ):
+        return None, "threshold_onset_bracket_invalid"
+    return {
+        "start_distance_m": distance,
+        "start_session_time_s": session_time,
+        "bracket_m": [bracket[0], bracket[1]],
+        "right_censored": event["right_censored"],
+    }, None
+
+
+def _aggregate_onset_spread(
+    metric_key: str,
+    threshold: float,
+    candidates: list[dict[str, object]],
+    exclusions: Counter[str],
+    attempt_rows: list[dict[str, object]],
+) -> dict[str, object]:
+    brackets = [
+        _distance_bounds(item.get("bracket_m"))
+        for item in candidates
+    ]
+    if any(bracket is None for bracket in brackets):
+        raise AssertionError("onset contributors must have validated brackets")
+    valid_brackets = [bracket for bracket in brackets if bracket is not None]
+    enough = len(candidates) >= MIN_AGGREGATE_CONTRIBUTORS
+    if enough:
+        minimum_possible_spread = max(
+            0.0,
+            max(bracket[0] for bracket in valid_brackets)
+            - min(bracket[1] for bracket in valid_brackets),
+        )
+        maximum_possible_spread = max(
+            upper_i - lower_j
+            for i, (_lower_i, upper_i) in enumerate(valid_brackets)
+            for j, (lower_j, _upper_j) in enumerate(valid_brackets)
+            if i != j
+        )
+    else:
+        minimum_possible_spread = None
+        maximum_possible_spread = None
+
+    excluded_attempts: list[dict[str, object]] = []
+    for row in attempt_rows:
+        state_map = row.get("onset_repeatability")
+        state_map = state_map if isinstance(state_map, Mapping) else {}
+        state = state_map.get(metric_key)
+        state = state if isinstance(state, Mapping) else {}
+        if state.get("status") == "contributes":
+            continue
+        reasons = state.get("reasons")
+        reasons = reasons if isinstance(reasons, list) else []
+        excluded_attempts.append({
+            "attempt_key": row.get("attempt_key"),
+            "attempt_number": row.get("attempt_number"),
+            "reasons": [reason for reason in reasons if isinstance(reason, str)][:8],
+        })
+
+    return {
+        "status": "supported" if enough else "insufficient_contributors",
+        "threshold": threshold,
+        "unit": "m",
+        "required_contributor_count": MIN_AGGREGATE_CONTRIBUTORS,
+        "contributor_count": len(candidates),
+        "excluded_attempt_count": len(excluded_attempts),
+        "minimum_possible_spread_m": minimum_possible_spread,
+        "maximum_possible_spread_m": maximum_possible_spread,
+        "right_censored_contributor_count": sum(
+            item["right_censored"] is True for item in candidates
+        ),
+        "contributors": candidates[:MAX_OBSERVATION_SET_ATTEMPTS],
+        "excluded_attempts": excluded_attempts[:MAX_OBSERVATION_SET_ATTEMPTS],
+        "exclusion_counts": [
+            {"reason": reason, "attempt_count": count}
+            for reason, count in sorted(exclusions.items())[:8]
+        ],
+        "exclusion_reason_omitted_count": max(0, len(exclusions) - 8),
+    }
+
+
+def _mark_onset_unavailable(
+    row: dict[str, object],
+    exclusions: Mapping[str, Counter[str]],
+    reasons: list[str],
+) -> None:
+    unique = list(dict.fromkeys(reason for reason in reasons if isinstance(reason, str)))
+    if not unique:
+        unique = ["onset_observation_unavailable"]
+    for metric_key in _ONSET_REPEATABILITY_SPECS:
+        state = {
+            "status": "unavailable",
+            "reasons": unique[:8],
+            "bracket_m": None,
+            "right_censored": None,
+        }
+        _set_onset_row_state(row, metric_key, state)
+        for reason in unique:
+            exclusions[metric_key][reason] += 1
+
+
+def _set_onset_row_state(
+    row: dict[str, object], metric_key: str, state: dict[str, object]
+) -> None:
+    repeatability = row.get("onset_repeatability")
+    if not isinstance(repeatability, dict):
+        repeatability = {}
+        row["onset_repeatability"] = repeatability
+    repeatability[metric_key] = state
+
+
+def _distance_bounds(value: object) -> tuple[float, float] | None:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)) or len(value) != 2:
+        return None
+    low = _finite_number(value[0])
+    high = _finite_number(value[1])
+    if low is None or high is None or low > high:
+        return None
+    return low, high
+
+
+def _is_number_close(value: object, expected: float) -> bool:
+    number = _finite_number(value)
+    return number is not None and math.isclose(
+        number, expected, rel_tol=0.0, abs_tol=1e-9
+    )
 
 
 def _aggregate_exclusion_reasons(
@@ -669,6 +1029,12 @@ def _positive_finite(value: object) -> float | None:
         return None
     number = float(value)
     return number if math.isfinite(number) and number > 0 else None
+
+
+def _nonnegative_integer(value: object) -> int | None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        return None
+    return value
 
 
 def _finite_number(value: object) -> float | None:

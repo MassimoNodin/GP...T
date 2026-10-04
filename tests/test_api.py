@@ -924,6 +924,10 @@ def test_observation_set_api_accepts_repeated_attempt_keys_and_window(
         "artifact_kind": "selected_window_observation_set",
         "diagnostic_only": True,
         "session_uid": 18446744073709551615,
+        "onset_repeatability": {
+            "analysis_version": "selected-window-onset-spread-v1",
+            "consistency_claim": False,
+        },
     }
 
     def build(database, attempt_keys, window, **kwargs):
@@ -951,6 +955,7 @@ def test_observation_set_api_accepts_repeated_attempt_keys_and_window(
 
     assert response.status_code == 200
     assert response.json()["data"]["session_uid"] == "18446744073709551615"
+    assert response.json()["data"]["onset_repeatability"] == document["onset_repeatability"]
     assert calls["attempt_keys"] == ["attempt-1", "attempt-2"]
     assert calls["window"] == DistanceWindow(500.0, 1200.0)
     assert calls["kwargs"] == {"policy": "practice_qualifying"}

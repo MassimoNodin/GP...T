@@ -3852,6 +3852,18 @@ h1 span {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 9px;
 }
+.observation-set-repeatability {
+  display: grid;
+  gap: 9px;
+  padding-top: 12px;
+  border-top: 1px solid #293631;
+}
+.observation-set-repeatability h3 {
+  margin: 4px 0 0;
+  color: #d3ded6;
+  font-size: 12px;
+  font-weight: 550;
+}
 .observation-metric {
   display: grid;
   gap: 5px;
