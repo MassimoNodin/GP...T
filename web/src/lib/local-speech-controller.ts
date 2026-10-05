@@ -7,6 +7,11 @@ export interface LocalSpeechPlayback {
   message: string | null;
 }
 
+export interface LocalSpeechSettings {
+  rate: number;
+  volume: number;
+}
+
 export type LocalSpeechVoiceDiscovery =
   { status: "ready"; voice: SpeechSynthesisVoice } | { status: "unavailable" };
 
@@ -78,6 +83,7 @@ export function speakLocalEvidence(
   chunks: readonly string[],
   voice: SpeechSynthesisVoice,
   sourceKey: string,
+  settings: LocalSpeechSettings = { rate: 1, volume: 1 },
 ): void {
   if (typeof window === "undefined" || !window.speechSynthesis) {
     publish({
@@ -104,6 +110,21 @@ export function speakLocalEvidence(
       status: "failed",
       sourceKey,
       message: "Only a local browser voice can be used.",
+    });
+    return;
+  }
+  if (
+    !Number.isFinite(settings.rate) ||
+    settings.rate < 0.5 ||
+    settings.rate > 2 ||
+    !Number.isFinite(settings.volume) ||
+    settings.volume < 0 ||
+    settings.volume > 1
+  ) {
+    publish({
+      status: "failed",
+      sourceKey,
+      message: "Local speech settings are outside the supported range.",
     });
     return;
   }
@@ -142,6 +163,8 @@ export function speakLocalEvidence(
     const chunk = chunks[index];
     const utterance = new SpeechSynthesisUtterance(chunk);
     utterance.voice = voice;
+    utterance.rate = settings.rate;
+    utterance.volume = settings.volume;
     if (voice.lang) utterance.lang = voice.lang;
     utterance.onend = () => {
       if (generation === requestGeneration && activeSourceKey === sourceKey) {

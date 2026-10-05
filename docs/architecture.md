@@ -945,6 +945,22 @@ Do not infer official corner identity, apex, direction, centreline or verified g
 
 **Rationale:** The existing diagnostic model loader already accepts locally configured draft models, but requiring hand-written JSON makes the format hard to use and error-prone. A selected-attempt editor reuses existing bounds and context policy while keeping user-authored segmentation distinct from independent geometry validation and all eligibility decisions.
 
+## Decision 0063: keep browser voice preferences separate from service configuration
+
+**Status:** accepted
+
+**Date:** 2026-10-05
+
+Add browser-local read-aloud rate and volume preferences for user-triggered recorded-evidence speech. Store one versioned record containing only those two numeric values, with a 2 KiB UTF-8 byte read bound and strict version, key and range validation. Apply and Reset each write the complete record atomically; publish new effective values only after storage succeeds. Cancel discards the pending form values. Invalid, oversized, unknown-version or inaccessible stored state uses safe defaults with an explicit status and is never overwritten during load.
+
+Use applied preferences for Dashboard and Engineer evidence playback. The fixed, benign Settings preview may use pending slider values so the user can audition before Apply; it contains no telemetry or session-derived text, and is the only speech path that may use unapplied values. Keep `SpeechSynthesisVoice.localService === true`, the single active speech sequence, existing cancellation behavior and transient speech plans. A successful preference change cancels active playback. Settings makes no local API calls and stores no telemetry, credentials or service configuration. General, AI runtime, telemetry, device routing, HUD and storage controls remain unavailable until their own capability contracts exist.
+
+This decision changes presentation only. It does not add automatic speech, microphone access, speech recognition, remote voice fallback, or any evidence, comparison, reference, ranking or coaching authority.
+
+**Acceptance** covers Apply/Cancel/Reset atomicity, malformed and inaccessible storage recovery, unknown-version preservation until an explicit write, effective rate/volume in both evidence panels, local-only voice discovery, preference-change and page/navigation cancellation, keyboard and narrow-screen use, and a synthetic Settings preview that contains no telemetry.
+
+**Rationale:** Browser speech rate and volume belong to the presentation surface, not to telemetry-service configuration. A small browser-only preference group can improve an existing, user-triggered local speech capability without creating service mutations or changing evidence policy.
+
 ## Data flow
 
 ```text

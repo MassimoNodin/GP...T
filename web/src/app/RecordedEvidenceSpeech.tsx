@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import {
   cancelLocalEvidenceSpeech,
   cancelLocalEvidenceSpeechForPage,
@@ -9,6 +9,11 @@ import {
   type LocalSpeechPlayback,
   watchForLocalSpeechVoice,
 } from "@/lib/local-speech-controller";
+import {
+  getLocalVoicePreferenceSnapshot,
+  getServerLocalVoicePreferenceSnapshot,
+  subscribeToLocalVoicePreferences,
+} from "@/lib/local-voice-preferences";
 import type { RecordedSpeechPlanResult } from "@/lib/recorded-speech-plan";
 
 type VoiceAvailability = "checking" | "ready" | "unavailable";
@@ -30,6 +35,11 @@ export default function RecordedEvidenceSpeech({
     null,
   );
   const [playback, setPlayback] = useState(INITIAL_PLAYBACK);
+  const preferences = useSyncExternalStore(
+    subscribeToLocalVoicePreferences,
+    getLocalVoicePreferenceSnapshot,
+    getServerLocalVoicePreferenceSnapshot,
+  );
   const plan = planResult.ok ? planResult.plan : null;
   const sourceKey = plan?.source_key ?? null;
 
@@ -53,6 +63,10 @@ export default function RecordedEvidenceSpeech({
     if (!sourceKey) return;
     return () => cancelLocalEvidenceSpeech(sourceKey);
   }, [sourceKey]);
+
+  useEffect(() => {
+    cancelLocalEvidenceSpeechForPage();
+  }, [preferences.effective.rate, preferences.effective.volume]);
 
   useEffect(() => {
     if (
@@ -132,7 +146,12 @@ export default function RecordedEvidenceSpeech({
             disabled={!plan || availability !== "ready" || !localVoice}
             onClick={() => {
               if (plan && localVoice?.localService === true) {
-                speakLocalEvidence(plan.chunks, localVoice, plan.source_key);
+                speakLocalEvidence(
+                  plan.chunks,
+                  localVoice,
+                  plan.source_key,
+                  preferences.effective,
+                );
               }
             }}
           >
