@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sqlite3
 import threading
 import time
@@ -16,9 +17,11 @@ from f1_engineer.api.import_controller import ImportController
 from f1_engineer.recording.capture import CaptureWriter
 from f1_engineer.storage.database import Database
 from f1_engineer.storage.import_jobs import (
+    RecordingCatalogUnavailable,
     create_import_job,
     get_import_job,
     list_recording_sources,
+    list_recording_sources_page,
     recover_abandoned_import_jobs,
     resolve_recording_source,
     retry_import_job,
@@ -195,6 +198,201 @@ def test_catalog_hides_stale_files_but_retains_missing_sources_with_jobs(tmp_pat
     assert sources[0]["available"] is False
     assert sources[0]["latest_job_id"] == job["job_id"]
     assert sources[0]["latest_job_status"] == "queued"
+
+
+def test_recording_source_pages_filter_literally_and_keep_off_page_selection(tmp_path):
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    alpha = root / "Alpha.f1ecap"
+    wildcard = root / "run_%_final.f1ecap"
+    zulu = root / "zulu.f1ecap"
+    for path in (alpha, wildcard, zulu):
+        _capture(path)
+
+    first_page = list_recording_sources_page(database, root, limit=1)
+    assert first_page["total_count"] == 3
+    assert first_page["items"][0]["display_name"] == "Alpha.f1ecap"
+    assert first_page["has_more"] is True
+    alpha_id = first_page["items"][0]["capture_id"]
+    replacement = tmp_path / "replacement.tmp"
+    replacement.write_bytes(b"replacement capture")
+    os.replace(replacement, alpha)
+    refreshed = list_recording_sources_page(database, root, limit=1)
+    assert refreshed["items"][0]["capture_id"] == alpha_id
+    assert refreshed["items"][0]["byte_size"] == len(b"replacement capture")
+
+    wildcard_page = list_recording_sources_page(database, root, query="%_")
+    assert [item["display_name"] for item in wildcard_page["items"]] == [
+        "run_%_final.f1ecap"
+    ]
+
+    wildcard_id = next(
+        item["capture_id"]
+        for item in list_recording_sources(database, root)
+        if item["display_name"] == wildcard.name
+    )
+    queued_job, _ = create_import_job(database, wildcard_id)
+    filtered = list_recording_sources_page(
+        database,
+        root,
+        latest_job_status="queued",
+        availability="available",
+        selected_capture_id=wildcard_id,
+        limit=1,
+        offset=1,
+    )
+    assert filtered["total_count"] == 1
+    assert filtered["items"] == []
+    assert filtered["selected_capture"]["capture_id"] == wildcard_id
+    assert filtered["selected_capture"]["latest_job_id"] == queued_job["job_id"]
+
+    wildcard.unlink()
+    missing = list_recording_sources_page(
+        database,
+        root,
+        availability="missing",
+        selected_capture_id=wildcard_id,
+    )
+    assert missing["total_count"] == 1
+    assert missing["items"][0]["available"] is False
+    assert missing["selected_capture"]["available"] is False
+
+    other_root = tmp_path / "other-recordings"
+    other_root.mkdir()
+    _capture(other_root / alpha.name)
+    isolated = list_recording_sources_page(
+        database, other_root, selected_capture_id=wildcard_id
+    )
+    assert isolated["total_count"] == 1
+    assert isolated["selected_capture"] is None
+
+
+def test_recording_source_page_repeats_non_ascii_capture_name_across_refreshes(
+    tmp_path,
+):
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    capture = root / ("中" * 200 + ".f1ecap")
+    _capture(capture)
+
+    first = list_recording_sources_page(database, root)
+    second = list_recording_sources_page(database, root)
+
+    assert first["total_count"] == second["total_count"] == 1
+    assert first["items"][0]["display_name"] == capture.name
+    assert second["items"][0]["display_name"] == capture.name
+    assert first["items"][0]["capture_id"] == second["items"][0]["capture_id"]
+
+
+@pytest.mark.parametrize("column", ["byte_size", "modified_ns"])
+def test_recording_source_page_rejects_unbounded_stale_numeric_metadata(
+    tmp_path, column
+):
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    capture = root / "missing-after-registration.f1ecap"
+    _capture(capture)
+    source = list_recording_sources_page(database, root)["items"][0]
+    capture.unlink()
+    with Database(database) as db:
+        db.connection.execute(
+            f"UPDATE recording_sources SET {column}=? WHERE capture_id=?",
+            ("x" * 100_000, source["capture_id"]),
+        )
+        db.connection.commit()
+
+    with pytest.raises(
+        RecordingCatalogUnavailable,
+        match="recording_catalog_registration_invalid",
+    ):
+        list_recording_sources_page(database, root)
+
+
+def test_recording_source_page_limits_are_atomic_and_job_result_is_bounded(
+    tmp_path, monkeypatch
+):
+    import f1_engineer.storage.import_jobs as import_jobs_module
+
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    _capture(root / "one.f1ecap")
+    source = list_recording_sources_page(database, root)["items"][0]
+    job, _ = create_import_job(database, source["capture_id"])
+    with Database(database) as db:
+        db.connection.execute(
+            """UPDATE import_jobs SET status='complete', phase='complete',
+                   result_json=? WHERE job_id=?""",
+            ("{" + "x" * 20_000 + "}", job["job_id"]),
+        )
+        db.connection.commit()
+
+    selected = list_recording_sources_page(
+        database, root, selected_capture_id=source["capture_id"]
+    )["selected_capture"]
+    assert selected["available"] is True
+    assert selected["latest_job_status"] == "complete"
+    assert selected["latest_job_run_id"] is None
+
+    _capture(root / "two.f1ecap")
+    monkeypatch.setattr(
+        import_jobs_module, "MAX_RECORDING_CATALOG_REGISTERED_SOURCES", 1
+    )
+    with pytest.raises(
+        RecordingCatalogUnavailable,
+        match="recording_catalog_registered_source_limit",
+    ):
+        list_recording_sources_page(database, root)
+    with Database(database, read_only=True) as db:
+        registered_count = db.connection.execute(
+            "SELECT COUNT(*) FROM recording_sources"
+        ).fetchone()[0]
+    assert registered_count == 1
+
+
+def test_recording_source_page_rejects_oversized_directory_before_database_write(
+    tmp_path, monkeypatch
+):
+    import f1_engineer.storage.import_jobs as import_jobs_module
+
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    for index in range(3):
+        (root / f"entry-{index}.txt").write_text("ignored")
+    monkeypatch.setattr(
+        import_jobs_module, "MAX_RECORDING_CATALOG_DIRECTORY_ENTRIES", 2
+    )
+
+    with pytest.raises(
+        RecordingCatalogUnavailable,
+        match="recording_catalog_directory_entry_limit",
+    ):
+        list_recording_sources_page(database, root)
+
+    assert not database.exists()
+
+
+def test_recording_source_page_ignores_symlinked_capture_entries(tmp_path):
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    _capture(root / "regular.f1ecap")
+    outside = tmp_path / "outside.f1ecap"
+    _capture(outside)
+    link = root / "linked.f1ecap"
+    try:
+        link.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlinks are not available: {exc}")
+
+    page = list_recording_sources_page(database, root)
+
+    assert page["total_count"] == 1
+    assert [item["display_name"] for item in page["items"]] == ["regular.f1ecap"]
 
 
 def test_recording_source_resolution_rejects_database_path_escape(tmp_path):

@@ -39,7 +39,11 @@ from ..tracks.draft_authoring import (
     MAX_DRAFT_MODEL_REQUEST_BYTES,
     build_draft_track_model,
 )
-from ..storage.import_jobs import list_recording_sources
+from ..storage.import_jobs import (
+    RecordingCatalogUnavailable,
+    list_recording_sources,
+    list_recording_sources_page,
+)
 from ..storage.importer import (
     DEFAULT_DATABASE,
     MAX_LAP_ATTEMPT_PAGE_OFFSET,
@@ -144,6 +148,25 @@ class RecordingSourceRecord(BaseModel):
     latest_job_status: str | None
     latest_job_run_id: str | None
     available: bool
+
+
+class RecordingSourceFiltersRecord(BaseModel):
+    query: str = Field(max_length=128)
+    latest_job_status: Literal[
+        "all", "none", "queued", "running", "complete", "failed", "interrupted"
+    ]
+    availability: Literal["all", "available", "missing"]
+    selected_capture_id: str | None
+
+
+class RecordingSourcePageRecord(BaseModel):
+    items: list[RecordingSourceRecord] = Field(max_length=50)
+    selected_capture: RecordingSourceRecord | None
+    total_count: int = Field(ge=0, le=10_000)
+    limit: int = Field(ge=1, le=50)
+    offset: int = Field(ge=0, le=100_000)
+    has_more: bool
+    filters: RecordingSourceFiltersRecord
 
 
 class StorageScopeRecord(BaseModel):
@@ -702,6 +725,79 @@ class RunArtifactQueryValidationError(ValueError):
     def __init__(self, field: str) -> None:
         super().__init__(field)
         self.reason = f"invalid_processing_run_artifact_{field}"
+
+
+class RecordingSourcePageQueryValidationError(ValueError):
+    def __init__(self, field: str) -> None:
+        super().__init__(field)
+        self.reason = f"invalid_recording_catalog_{field}"
+
+
+def _recording_source_page_query(
+    request: Request,
+) -> tuple[int, int, str, str, str, str | None]:
+    allowed = {
+        "limit",
+        "offset",
+        "q",
+        "latest_job_status",
+        "availability",
+        "selected_capture_id",
+    }
+    values: dict[str, str] = {}
+    for key, value in request.query_params.multi_items():
+        if key not in allowed:
+            raise RecordingSourcePageQueryValidationError("query_parameter")
+        if key in values:
+            raise RecordingSourcePageQueryValidationError("repeated_parameter")
+        values[key] = value
+
+    raw_limit = values.get("limit", "25")
+    if re.fullmatch(r"[0-9]{1,2}", raw_limit) is None:
+        raise RecordingSourcePageQueryValidationError("limit")
+    limit = int(raw_limit)
+    if not 1 <= limit <= 50:
+        raise RecordingSourcePageQueryValidationError("limit")
+
+    raw_offset = values.get("offset", "0")
+    if re.fullmatch(r"[0-9]{1,6}", raw_offset) is None:
+        raise RecordingSourcePageQueryValidationError("offset")
+    offset = int(raw_offset)
+    if offset > 100_000:
+        raise RecordingSourcePageQueryValidationError("offset")
+
+    query = values.get("q", "")
+    if len(query) > 128 or any(
+        ord(character) < 32 or ord(character) == 127 for character in query
+    ):
+        raise RecordingSourcePageQueryValidationError("q")
+    latest_job_status = values.get("latest_job_status", "all")
+    if latest_job_status not in {
+        "all",
+        "none",
+        "queued",
+        "running",
+        "complete",
+        "failed",
+        "interrupted",
+    }:
+        raise RecordingSourcePageQueryValidationError("latest_job_status")
+    availability = values.get("availability", "all")
+    if availability not in {"all", "available", "missing"}:
+        raise RecordingSourcePageQueryValidationError("availability")
+    selected_capture_id = values.get("selected_capture_id")
+    if selected_capture_id is not None and re.fullmatch(
+        r"[a-f0-9]{32}", selected_capture_id
+    ) is None:
+        raise RecordingSourcePageQueryValidationError("selected_capture_id")
+    return (
+        limit,
+        offset,
+        query,
+        latest_job_status,
+        availability,
+        selected_capture_id,
+    )
 
 
 def _run_artifact_query(request: Request) -> tuple[str, int, int]:
@@ -1406,6 +1502,53 @@ def create_app(
                 configured_database_path, configured_recordings_root
             )
         )
+
+    @app.get(
+        "/api/v1/recording-sources/page",
+        response_model=APIResponse[RecordingSourcePageRecord],
+    )
+    def recording_sources_page(
+        request: Request,
+    ) -> APIResponse[RecordingSourcePageRecord] | JSONResponse:
+        try:
+            (
+                limit,
+                offset,
+                query,
+                latest_job_status,
+                availability,
+                selected_capture_id,
+            ) = _recording_source_page_query(request)
+        except RecordingSourcePageQueryValidationError as exc:
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "api_version": "v1",
+                    "status": "unavailable",
+                    "data": None,
+                    "reason": exc.reason,
+                },
+            )
+        try:
+            page = list_recording_sources_page(
+                configured_database_path,
+                configured_recordings_root,
+                limit=limit,
+                offset=offset,
+                query=query,
+                latest_job_status=latest_job_status,
+                availability=availability,
+                selected_capture_id=selected_capture_id,
+            )
+        except RecordingCatalogUnavailable as exc:
+            return APIResponse[RecordingSourcePageRecord](
+                status="unavailable", reason=exc.reason
+            )
+        except (OSError, sqlite3.DatabaseError, ValueError):
+            return APIResponse[RecordingSourcePageRecord](
+                status="unavailable", reason="recording_catalog_unavailable"
+            )
+        return APIResponse[RecordingSourcePageRecord](data=page)
 
     @app.get(
         "/api/v1/storage/usage",

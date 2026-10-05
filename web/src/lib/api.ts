@@ -54,6 +54,28 @@ export interface RecordingSourceRecord {
   available: boolean;
 }
 
+export interface RecordingSourcePageRecord {
+  items: RecordingSourceRecord[];
+  selected_capture: RecordingSourceRecord | null;
+  total_count: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+  filters: {
+    query: string;
+    latest_job_status:
+      | "all"
+      | "none"
+      | "queued"
+      | "running"
+      | "complete"
+      | "failed"
+      | "interrupted";
+    availability: "all" | "available" | "missing";
+    selected_capture_id: string | null;
+  };
+}
+
 export interface ImportProgressRecord {
   phase: string;
   packets_processed: number;

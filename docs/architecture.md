@@ -1183,6 +1183,26 @@ Do not add a live `LapTracker`, accumulated histories, attempt reconciliation, p
 
 **Rationale:** Stage 5 explicitly calls for a live lap inventory, while current monitors expose lap timing but not recent game-reported history. A bounded source projection completes that view using the existing decoder and real capture evidence without introducing another lap lifecycle or suggesting that history rows are completed or eligible attempts. No new recording or geometry is required for this increment; positive real coaching validation remains a separate prerequisite.
 
+## Decision 0077: add a bounded, explicitly selected recording catalog
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Add `GET /api/v1/recording-sources/page` for a bounded page of capture registrations while preserving the existing `GET /api/v1/recording-sources` response shape. Accept one value each for `limit` (1–50, default 25), `offset` (0–100,000, default 0), literal `q` (at most 128 characters), `latest_job_status` (`all`, `none`, `queued`, `running`, `complete`, `failed`, or `interrupted`), `availability` (`all`, `available`, or `missing`), and an optional exact `selected_capture_id` (32 lowercase hex characters). Reject unknown or repeated parameters and malformed values. Return the normalized filters, total matching count, bounded page, `has_more`, and the requested selected capture separately. A valid selected capture remains inspectable when it is outside the current filters or page; a missing or malformed selection never receives a substitute.
+
+Use the configured recordings-root namespace and existing capture-ID identity, discovery/upsert, and import-job ownership behavior. Finish a bounded discovery pass before registration updates; then use one SQLite transaction for registration, registered-count checks, filter count, page selection, latest-job metadata, and selected-capture lookup. Inspect only direct regular `.f1ecap` entries under the configured root. Reject symlinks, Windows junctions and other reparse points, and resolved paths outside the root. Do not open or hash capture contents. Bound discovery to 4,096 root entries and the configured-root namespace to 10,000 registered captures. If a discovery or evaluation limit is exceeded, return an explicit unavailable response instead of partial results or an understated count, and do not treat an incomplete scan as evidence that a registered file is missing. Bound stored strings, optional job-result JSON parsing, and serialized responses; latest-job result corruption remains an unavailable run link and does not hide its capture.
+
+On `/recordings`, add literal filename/capture-ID search, latest-import-status and file-availability filters, and Previous/Next pagination. Use recording-specific URL keys so these filters remain distinct from Sessions search. Preserve the exact selected capture, import-job selection, and analysis/run selection when changing filters or pages. Show a selected capture separately when it is outside the visible page and keep its existing import, latest-job, run-evidence, and replay actions available. Replay start always submits the explicit selected capture ID. Filtering, paging, refresh, or an unavailable catalog response never changes the selected capture or interrupts active replay. Preserve import/replay reservation checks and revalidate the source at operation start.
+
+Availability means a regular file was observed under the configured root. It does not assert a complete footer, checksum integrity, successful import, or comparison eligibility. Pages use deterministic display-name/capture-ID ordering. No schema migration is required.
+
+Exclude file upload/download, deletion, retention, queued imports, footer-quality inspection, and replay seek from this increment. Do not add new evidence or coaching authority.
+
+**Acceptance:** literal wildcard characters; repeated and malformed filters; empty results and page boundaries; stable capture IDs after refresh and file replacement; root namespace isolation; count/page consistency and deterministic ordering; missing files, unsafe filesystem entries, and discovery/registered-count limits; malformed optional job metadata; selected captures outside the page or filters; explicit replay capture identity; preservation of import-job and analysis selections; and catalog failure isolation from recording, paused-group ownership, import, and active replay. Existing Melbourne and recovered Shanghai import/replay behavior remains intact.
+
+**Rationale:** the current recordings route loads every registered capture, and Replay initializes itself from the first available item. Durable recording groups make the unbounded catalog more costly and can cause paging or filtering to select a different source accidentally. A bounded catalog with an explicit capture identity makes search and replay predictable while preserving stable IDs and existing operation guards.
+
 ## Data flow
 
 ```text

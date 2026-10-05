@@ -489,6 +489,53 @@ def test_recording_sources_api_preserves_latest_completed_run_id(
     assert response.json()["data"][0]["latest_job_run_id"] == run_id
 
 
+def test_recording_source_page_api_bounds_filters_and_preserves_explicit_selection(
+    tmp_path,
+):
+    recordings_root = tmp_path / "recordings"
+    recordings_root.mkdir()
+    (recordings_root / "alpha.f1ecap").write_bytes(b"capture")
+    (recordings_root / "run_%_final.f1ecap").write_bytes(b"capture")
+    app = create_app(tmp_path / "archive.sqlite3", recordings_root=recordings_root)
+
+    first = _get(app, "/api/v1/recording-sources/page", params={"limit": "1"})
+    first_body = first.json()["data"]
+    assert first.status_code == 200
+    assert first_body["total_count"] == 2
+    assert len(first_body["items"]) == 1
+    assert first_body["items"][0]["display_name"] == "alpha.f1ecap"
+    assert first_body["has_more"] is True
+
+    exact_literal = _get(
+        app,
+        "/api/v1/recording-sources/page",
+        params={"q": "%_", "selected_capture_id": "f" * 32},
+    )
+    literal_body = exact_literal.json()["data"]
+    assert literal_body["total_count"] == 1
+    assert literal_body["items"][0]["display_name"] == "run_%_final.f1ecap"
+    assert literal_body["selected_capture"] is None
+
+    selected_id = _get(app, "/api/v1/recording-sources/page").json()["data"][
+        "items"
+    ][1]["capture_id"]
+    selected_off_page = _get(
+        app,
+        "/api/v1/recording-sources/page",
+        params={"limit": "1", "offset": "0", "selected_capture_id": selected_id},
+    ).json()["data"]
+    assert selected_off_page["items"][0]["capture_id"] != selected_id
+    assert selected_off_page["selected_capture"]["capture_id"] == selected_id
+
+    repeated = _get(
+        app,
+        "/api/v1/recording-sources/page",
+        params=[("availability", "all"), ("availability", "missing")],
+    )
+    assert repeated.status_code == 422
+    assert repeated.json()["reason"] == "invalid_recording_catalog_repeated_parameter"
+
+
 def test_compare_api_reports_unsupported_pair_without_losing_status(monkeypatch, tmp_path) -> None:
     def reject_pair(*_args, **_kwargs):
         raise ValueError("attempts have incompatible track, format, or Time Trial settings")

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import type {
   ApiResponse,
   RecordingSourceRecord,
@@ -31,21 +32,42 @@ const replaySpeeds = [0.5, 1, 2, 4];
 
 export default function ReplayControls({
   sources,
+  selectedSource,
+  selectedCaptureId,
   preservedQuery = "",
 }: {
   sources: RecordingSourceRecord[];
+  selectedSource: RecordingSourceRecord | null;
+  selectedCaptureId: string;
   preservedQuery?: string;
 }) {
-  const availableSources = sources.filter((source) => source.available);
-  const [captureId, setCaptureId] = useState(
-    availableSources[0]?.capture_id ?? "",
-  );
+  const [captureId, setCaptureId] = useState(selectedCaptureId);
   const [speed, setSpeed] = useState(1);
   const [playback, setPlayback] = useState<ReplayRecord | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+  const availableSources = sources.filter((source) => source.available);
+  const selectedReplaySource =
+    selectedSource?.capture_id === captureId
+      ? selectedSource
+      : (sources.find((source) => source.capture_id === captureId) ?? null);
+  const replayOptions = [...availableSources];
+  if (
+    captureId &&
+    selectedReplaySource &&
+    !replayOptions.some(
+      (source) => source.capture_id === selectedReplaySource.capture_id,
+    )
+  ) {
+    replayOptions.push(selectedReplaySource);
+  }
 
   const active = playback ? activeStates.has(playback.state) : false;
+
+  useEffect(() => {
+    setCaptureId(selectedCaptureId);
+  }, [selectedCaptureId]);
   const liveHref =
     active && playback && !isSelectionTransferBlocked(preservedQuery)
       ? appScreenHref("live", preservedQuery, {
@@ -104,6 +126,15 @@ export default function ReplayControls({
   }, [active]);
 
   async function start() {
+    const selected = replayOptions.find(
+      (source) => source.capture_id === captureId,
+    );
+    if (!selected?.available) {
+      setError(
+        "Choose an available capture from the catalog before replaying.",
+      );
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -211,13 +242,33 @@ export default function ReplayControls({
           <span>CAPTURE</span>
           <select
             value={captureId}
-            onChange={(event) => setCaptureId(event.target.value)}
-            disabled={active || busy || availableSources.length === 0}
+            onChange={(event) => {
+              const nextCaptureId = event.target.value;
+              setCaptureId(nextCaptureId);
+              const url = new URL(window.location.href);
+              if (nextCaptureId) {
+                url.searchParams.set("recording_capture_id", nextCaptureId);
+              } else {
+                url.searchParams.delete("recording_capture_id");
+              }
+              router.replace(`${url.pathname}${url.search}${url.hash}`, {
+                scroll: false,
+              });
+            }}
+            disabled={active || busy}
             aria-label="Capture to replay"
           >
-            {availableSources.map((source) => (
+            <option value="">Choose a capture</option>
+            {captureId &&
+            !replayOptions.some((source) => source.capture_id === captureId) ? (
+              <option value={captureId} disabled>
+                Selected capture unavailable
+              </option>
+            ) : null}
+            {replayOptions.map((source) => (
               <option key={source.capture_id} value={source.capture_id}>
                 {source.display_name}
+                {source.available ? "" : " · unavailable"}
               </option>
             ))}
           </select>
@@ -286,9 +337,9 @@ export default function ReplayControls({
             className="import-button"
             type="button"
             onClick={start}
-            disabled={busy || availableSources.length === 0 || !captureId}
+            disabled={busy || !selectedReplaySource?.available || !captureId}
           >
-            Start paused
+            {captureId ? "Start paused" : "Select capture to replay"}
           </button>
         )}
       </div>
@@ -342,7 +393,10 @@ export default function ReplayControls({
             />
           ) : null}
           {playback.live_motion ? (
-            <LiveMotionPanel telemetry={playback.live_motion} sourceKind="replay" />
+            <LiveMotionPanel
+              telemetry={playback.live_motion}
+              sourceKind="replay"
+            />
           ) : null}
           {playback.live_session_history ? (
             <LiveSessionHistoryPanel
