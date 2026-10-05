@@ -711,5 +711,14 @@ def _canonical_car_damage(
     return values
 
 
+def canonical_car_damage_values(
+    damage: CarDamageData,
+) -> tuple[dict[str, object], tuple[str, ...]]:
+    """Return validated canonical fields and per-field flags for one wire record."""
+    flags: list[str] = []
+    values = _canonical_car_damage(damage, flags)
+    return values, tuple(flags)
+
+
 def _finite(value: float) -> float | None:
     return value if math.isfinite(value) else None

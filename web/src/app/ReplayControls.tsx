@@ -7,6 +7,7 @@ import type {
   ReplayRecord,
 } from "@/lib/api";
 import {
+  LiveCarDamagePanel,
   LiveCarStatusPanel,
   LiveLapTimingPanel,
   LiveTelemetryPanel,
@@ -318,6 +319,12 @@ export default function ReplayControls({
             telemetry={playback.live_lap_timing}
             sourceKind="replay"
           />
+          {playback.live_car_damage ? (
+            <LiveCarDamagePanel
+              telemetry={playback.live_car_damage}
+              sourceKind="replay"
+            />
+          ) : null}
         </>
       )}
     </section>

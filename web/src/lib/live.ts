@@ -1,4 +1,5 @@
 import type {
+  LiveCarDamageRecord,
   LiveCarStatusRecord,
   LiveLapTimingRecord,
   LiveTelemetryRecord,
@@ -15,6 +16,7 @@ export interface PinnedLiveSnapshot {
   live_telemetry: LiveTelemetryRecord | null;
   live_car_status: LiveCarStatusRecord | null;
   live_lap_timing: LiveLapTimingRecord | null;
+  live_car_damage: LiveCarDamageRecord | null;
   capture_name: string | null;
   speed: number | null;
 }
@@ -105,6 +107,11 @@ export function readPinnedLiveCurrent(
         ? progress?.live_lap_timing
         : data.live_lap_timing,
     ) as LiveLapTimingRecord | null,
+    live_car_damage: readCarDamageMonitor(
+      source === "recording"
+        ? progress?.live_car_damage
+        : data.live_car_damage,
+    ),
     capture_name:
       source === "replay" && typeof data.capture_name === "string"
         ? data.capture_name
@@ -119,10 +126,83 @@ export function readPinnedLiveCurrent(
   return { status: "ready", snapshot };
 }
 
+export function readCarDamageMonitor(value: unknown): LiveCarDamageRecord | null {
+  const monitor = readMonitor(value);
+  if (!monitor || !isRecord(value)) return null;
+  return {
+    ...(monitor as LiveCarDamageRecord),
+    reason:
+      typeof value.reason === "string" && value.reason.length <= 80
+        ? value.reason
+        : value.reason === null
+          ? null
+          : "malformed_optional_fields",
+    age_ms:
+      typeof value.age_ms === "number" &&
+      Number.isFinite(value.age_ms) &&
+      value.age_ms >= 0
+        ? value.age_ms
+        : null,
+    observation_count:
+      Number.isSafeInteger(value.observation_count) &&
+      (value.observation_count as number) >= 0 &&
+      (value.observation_count as number) <= 2_147_483_647
+        ? (value.observation_count as number)
+        : undefined,
+    session_uid:
+      typeof value.session_uid === "string" ? value.session_uid : null,
+    frame_identifier: boundedInteger(value.frame_identifier),
+    packet_format: boundedInteger(value.packet_format),
+    player_car_index: boundedInteger(value.player_car_index),
+    session_time_s: finiteNumber(value.session_time_s),
+    tyre_wear_percent: percentArray(value.tyre_wear_percent, false),
+    tyre_damage_percent: percentArray(value.tyre_damage_percent, true),
+    brake_damage_percent: percentArray(value.brake_damage_percent, true),
+    front_left_wing_damage_percent: percent(value.front_left_wing_damage_percent, true),
+    front_right_wing_damage_percent: percent(value.front_right_wing_damage_percent, true),
+    rear_wing_damage_percent: percent(value.rear_wing_damage_percent, true),
+    engine_damage_percent: percent(value.engine_damage_percent, true),
+    validation_flags:
+      Array.isArray(value.validation_flags) &&
+      value.validation_flags.length <= 16 &&
+      value.validation_flags.every(
+        (flag) => typeof flag === "string" && flag.length <= 80,
+      )
+        ? value.validation_flags
+        : [],
+  };
+}
+
+function percentArray(value: unknown, integer: boolean): readonly (number | null)[] | null {
+  if (!Array.isArray(value) || value.length !== 4) return null;
+  return value.map((item) => percent(item, integer));
+}
+
+function percent(value: unknown, integer: boolean): number | null {
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 100 &&
+    (!integer || Number.isInteger(value))
+    ? value
+    : null;
+}
+
+function boundedInteger(value: unknown): number | null {
+  return Number.isSafeInteger(value) && (value as number) >= 0
+    ? (value as number)
+    : null;
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function readMonitor(value: unknown):
   | LiveTelemetryRecord
   | LiveCarStatusRecord
   | LiveLapTimingRecord
+  | LiveCarDamageRecord
   | null {
   if (!isRecord(value)) return null;
   if (
@@ -137,7 +217,8 @@ function readMonitor(value: unknown):
   return value as unknown as
     | LiveTelemetryRecord
     | LiveCarStatusRecord
-    | LiveLapTimingRecord;
+    | LiveLapTimingRecord
+    | LiveCarDamageRecord;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

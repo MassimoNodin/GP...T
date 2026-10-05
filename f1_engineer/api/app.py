@@ -270,6 +270,41 @@ class LiveLapTimingRecord(BaseModel):
     validation_flags: list[str] = Field(default_factory=list)
 
 
+class LiveCarDamageRecord(BaseModel):
+    status: Literal["waiting", "fresh", "stale", "unsupported", "unavailable"]
+    reason: str | None
+    age_ms: int | None
+    observation_count: int = Field(ge=0, le=2_147_483_647)
+    session_uid: str | None = None
+    frame_identifier: int | None = None
+    packet_format: int | None = None
+    player_car_index: int | None = None
+    session_time_s: Annotated[float, Field(strict=True, allow_inf_nan=False)] | None = None
+    tyre_wear_percent: tuple[
+        Annotated[float, Field(strict=True, ge=0, le=100, allow_inf_nan=False)] | None,
+        Annotated[float, Field(strict=True, ge=0, le=100, allow_inf_nan=False)] | None,
+        Annotated[float, Field(strict=True, ge=0, le=100, allow_inf_nan=False)] | None,
+        Annotated[float, Field(strict=True, ge=0, le=100, allow_inf_nan=False)] | None,
+    ] | None = None
+    tyre_damage_percent: tuple[
+        Annotated[int, Field(strict=True, ge=0, le=100)] | None,
+        Annotated[int, Field(strict=True, ge=0, le=100)] | None,
+        Annotated[int, Field(strict=True, ge=0, le=100)] | None,
+        Annotated[int, Field(strict=True, ge=0, le=100)] | None,
+    ] | None = None
+    brake_damage_percent: tuple[
+        Annotated[int, Field(strict=True, ge=0, le=100)] | None,
+        Annotated[int, Field(strict=True, ge=0, le=100)] | None,
+        Annotated[int, Field(strict=True, ge=0, le=100)] | None,
+        Annotated[int, Field(strict=True, ge=0, le=100)] | None,
+    ] | None = None
+    front_left_wing_damage_percent: Annotated[int, Field(strict=True, ge=0, le=100)] | None = None
+    front_right_wing_damage_percent: Annotated[int, Field(strict=True, ge=0, le=100)] | None = None
+    rear_wing_damage_percent: Annotated[int, Field(strict=True, ge=0, le=100)] | None = None
+    engine_damage_percent: Annotated[int, Field(strict=True, ge=0, le=100)] | None = None
+    validation_flags: list[str] = Field(default_factory=list, max_length=16)
+
+
 class RecordingProgressRecord(BaseModel):
     state: str
     elapsed_ms: int
@@ -282,6 +317,7 @@ class RecordingProgressRecord(BaseModel):
     live_telemetry: LiveTelemetryRecord
     live_car_status: LiveCarStatusRecord | None = None
     live_lap_timing: LiveLapTimingRecord | None = None
+    live_car_damage: LiveCarDamageRecord | None = None
 
 
 class RecordingJobRecord(BaseModel):
@@ -336,6 +372,7 @@ class ReplayRecord(BaseModel):
     live_car_status: LiveCarStatusRecord
     live_lap_timing: LiveLapTimingRecord
     failure_reason: str | None
+    live_car_damage: LiveCarDamageRecord | None = None
 
 
 class LapRecord(BaseModel):

@@ -1027,6 +1027,24 @@ These values remain literal observations, including reported zeroes. Validate on
 
 **Rationale:** the versioned Car Telemetry adapters already decode these source measurements, but the live snapshot currently discards them. An additive projection of the admitted snapshot makes useful observations visible while reusing established synchronization, bounded-memory, and freshness rules and granting no analysis or coaching authority.
 
+## Decision 0068: expose independently aged live damage observations
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Add one optional `live_car_damage` group to recording, replay and pinned `/live`. This group exposes four-wheel tyre wear, tyre damage and brake damage percentages, plus front-left wing, front-right wing, rear-wing and engine damage percentages. Reuse the existing F1 25 and 2026 Car Damage decoders and canonical per-field validation. Preserve zeroes; invalid fields become null with bounded validation flags. Include source session, wire format, player, frame and session time, independent age, and a bounded observation count.
+
+Treat a supported, admitted Car Damage frame as a standalone sparse observation. Do not require Lap Data in the same frame and do not associate the observation with a lap sample. This presentation path does not change exact-frame trace joins. Apply existing active-session, format, player and frame-barrier checks, then lifecycle and rewind quarantine. Same-frame selected-player records must agree byte-for-byte. Malformed or unsupported candidates, conflicting records, ambiguous identity, or missing receive/delivery provenance make only this group unavailable. For agreeing records use the oldest supporting receive/delivery time; duplicates and late packets never refresh it. Frames without Car Damage retain the previous observation while its age increases. Other packet families never refresh it.
+
+Use the existing 500 ms recency threshold and label the values as a recent or stale observation, never as continuous car condition. Count admitted, decoded, nonconflicting observation frames within the current identity epoch. Session, player, format and rewind boundaries clear the values and reset the count. Terminal operations hide the values. Keep one fixed-size snapshot and the existing bounded receive-time cache. Older API responses or malformed optional fields leave existing monitors usable.
+
+Do not add history, storage, schema or importer changes, damage trends, diagnoses, strategy, forecasts or advice. Sparse packet cadence is not packet loss and source-reported zero damage is not proof of an undamaged lap.
+
+**Acceptance:** synthetic F1 25/2026 packets verify wheel and field mapping, zeroes and independent invalid-field handling; Damage-only admitted frames work without Lap Data; other frames only age the last observation; conflicts, malformed/unsupported variants, duplicate/late packets, cache eviction, frame wrap and session/player/format/rewind boundaries are covered; paused replay ages naturally and terminal operations clear the group; older API responses and malformed optional web fields do not affect other monitors; and Melbourne plus recovered Shanghai replay values match selected raw Damage records with observation counts disclosed.
+
+**Rationale:** supported Car Damage decoding and canonical validation already exist, but live inspection omits this evidence. A separate sparse observation group provides useful source values without forcing slower Damage packets into the exact-frame Lap Data join or presenting them as continuously updated car condition.
+
 ## Data flow
 
 ```text

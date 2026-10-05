@@ -88,6 +88,7 @@ export interface RecordingProgressRecord {
   live_telemetry: LiveTelemetryRecord;
   live_car_status?: LiveCarStatusRecord | null;
   live_lap_timing?: LiveLapTimingRecord | null;
+  live_car_damage?: LiveCarDamageRecord | null;
 }
 
 export interface LiveTelemetryRecord {
@@ -149,6 +150,26 @@ export interface LiveLapTimingRecord {
   validation_flags?: string[];
 }
 
+export interface LiveCarDamageRecord {
+  status: "waiting" | "fresh" | "stale" | "unsupported" | "unavailable";
+  reason: string | null;
+  age_ms: number | null;
+  observation_count?: number;
+  session_uid?: string | null;
+  frame_identifier?: number | null;
+  packet_format?: number | null;
+  player_car_index?: number | null;
+  session_time_s?: number | null;
+  tyre_wear_percent?: readonly (number | null)[] | null;
+  tyre_damage_percent?: readonly (number | null)[] | null;
+  brake_damage_percent?: readonly (number | null)[] | null;
+  front_left_wing_damage_percent?: number | null;
+  front_right_wing_damage_percent?: number | null;
+  rear_wing_damage_percent?: number | null;
+  engine_damage_percent?: number | null;
+  validation_flags?: string[];
+}
+
 export interface RecordingJobRecord {
   recording_id: string;
   status:
@@ -196,6 +217,7 @@ export interface ReplayRecord {
   live_telemetry: LiveTelemetryRecord;
   live_car_status: LiveCarStatusRecord;
   live_lap_timing: LiveLapTimingRecord;
+  live_car_damage?: LiveCarDamageRecord | null;
   failure_reason: string | null;
 }
 

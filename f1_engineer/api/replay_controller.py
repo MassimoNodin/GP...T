@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..recording.service import (
+    LIVE_CAR_DAMAGE_FRESHNESS_LIMIT_MS,
     LIVE_CAR_STATUS_FRESHNESS_LIMIT_MS,
     LIVE_LAP_TIMING_FRESHNESS_LIMIT_MS,
     LIVE_TELEMETRY_FRESHNESS_LIMIT_MS,
@@ -131,6 +132,10 @@ class ReplayController:
                 "live_telemetry": _waiting_monitor(),
                 "live_car_status": _waiting_monitor(),
                 "live_lap_timing": _waiting_monitor(),
+                "live_car_damage": {
+                    **_waiting_monitor(),
+                    "observation_count": 0,
+                },
                 "failure_reason": None,
                 "progress_updated_monotonic_ns": time.monotonic_ns(),
             }
@@ -282,6 +287,7 @@ class ReplayController:
             "live_telemetry": LIVE_TELEMETRY_FRESHNESS_LIMIT_MS,
             "live_car_status": LIVE_CAR_STATUS_FRESHNESS_LIMIT_MS,
             "live_lap_timing": LIVE_LAP_TIMING_FRESHNESS_LIMIT_MS,
+            "live_car_damage": LIVE_CAR_DAMAGE_FRESHNESS_LIMIT_MS,
         }
         for name, limit_ms in freshness_limits.items():
             monitor = result.get(name)
@@ -300,6 +306,13 @@ class ReplayController:
                 and monitor.get("status") in {"fresh", "unavailable"}
             ):
                 monitor["status"] = "stale"
+        if result.get("state") in {"stopped", "completed", "failed"}:
+            result["live_car_damage"] = {
+                "status": "unavailable",
+                "reason": "operation_ended",
+                "age_ms": None,
+                "observation_count": 0,
+            }
         result.pop("started_monotonic_ns", None)
         return result
 
@@ -348,6 +361,7 @@ class ReplayController:
                 "live_telemetry": observer.live_telemetry_snapshot(),
                 "live_car_status": observer.live_car_status_snapshot(),
                 "live_lap_timing": observer.live_lap_timing_snapshot(),
+                "live_car_damage": observer.live_car_damage_snapshot(),
                 "failure_reason": failure_reason,
                 "started_monotonic_ns": started_ns,
                 "progress_updated_monotonic_ns": time.monotonic_ns(),

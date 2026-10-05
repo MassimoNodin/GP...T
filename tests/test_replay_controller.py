@@ -5,6 +5,7 @@ import concurrent.futures
 import hashlib
 import inspect
 import socket
+import time
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -23,6 +24,52 @@ from tests.helpers import make_datagram
 
 
 TOKEN = "diagnostic-replay-test-token-000000000000000000"
+
+
+def test_replay_damage_observation_ages_while_paused_and_clears_at_terminal_state(
+    tmp_path,
+):
+    operation_controller = SimpleNamespace(ready=True)
+    controller = ReplayController(
+        tmp_path / "archive.sqlite3",
+        tmp_path / "recordings",
+        operation_controller,
+    )
+    controller.start()
+    observed_ns = time.monotonic_ns() - 700_000_000
+    controller._snapshot = {
+        "playback_id": "a" * 32,
+        "state": "paused",
+        "progress_updated_monotonic_ns": time.monotonic_ns(),
+        "live_car_damage": {
+            "status": "fresh",
+            "reason": None,
+            "age_ms": 0,
+            "observation_count": 2,
+            "tyre_wear_percent": [10.0, 20.0, 30.0, 40.0],
+            "_observed_monotonic_ns": observed_ns,
+        },
+    }
+
+    paused = controller.current()
+    assert paused["live_car_damage"]["status"] == "stale"
+    assert paused["live_car_damage"]["age_ms"] >= 700
+    assert paused["live_car_damage"]["tyre_wear_percent"] == [
+        10.0,
+        20.0,
+        30.0,
+        40.0,
+    ]
+    assert "_observed_monotonic_ns" not in paused["live_car_damage"]
+
+    controller._snapshot["state"] = "completed"
+    ended = controller.current()
+    assert ended["live_car_damage"] == {
+        "status": "unavailable",
+        "reason": "operation_ended",
+        "age_ms": None,
+        "observation_count": 0,
+    }
 
 
 def _free_udp_port() -> int:
@@ -432,6 +479,14 @@ def test_replay_stop_during_eof_finalization_publishes_terminal_state(
 
         def live_lap_timing_snapshot(self):
             return {"status": "waiting", "reason": None, "age_ms": None}
+
+        def live_car_damage_snapshot(self):
+            return {
+                "status": "waiting",
+                "reason": None,
+                "age_ms": None,
+                "observation_count": 0,
+            }
 
     class ImmediateReplaySource:
         complete = True

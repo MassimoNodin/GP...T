@@ -3952,6 +3952,14 @@ h1 span {
   font-size: 9px;
   line-height: 1.5;
 }
+.live-car-damage-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 10px;
+  color: #93a098;
+  font: 9px var(--font-mono);
+}
 .live-car-status-invalid {
   color: #d6ae77;
 }

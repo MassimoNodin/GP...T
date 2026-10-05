@@ -13,7 +13,7 @@ pytest.importorskip("fastapi")
 from pydantic import ValidationError
 httpx = pytest.importorskip("httpx")
 
-from f1_engineer.api.app import LiveTelemetryRecord, create_app
+from f1_engineer.api.app import LiveCarDamageRecord, LiveTelemetryRecord, create_app
 from f1_engineer.recording.service import _AcquisitionObserver
 from f1_engineer.recording.capture import CaptureReader
 from tests.helpers import make_datagram
@@ -23,6 +23,7 @@ from tests.test_lap_tracking import SESSION_UID, _lap_packet, _session_packet
 
 _TELEMETRY_CAR = struct.Struct("<HfffBbHBBH4H4B4BH4f4B")
 _LAP_DATA_CAR = struct.Struct("<IIHBHBHBHBfff15BHHBfB")
+_CAR_DAMAGE_CAR = struct.Struct("<4f30B")
 _CONTROL_TOKEN = "live-monitor-test-token"
 
 
@@ -102,6 +103,36 @@ def _car_status_packet(
         frame=frame,
         player_car_index=player_car_index,
         body=body if body is not None else _status_body(packet_format=packet_format),
+        sequence=sequence,
+    )
+
+
+def _car_damage_packet(
+    *,
+    frame: int,
+    sequence: int,
+    session_uid: int = SESSION_UID,
+    player_car_index: int = 0,
+    packet_format: int = 2025,
+    packet_version: int = 1,
+    session_time_s: float = 0.0,
+    wear: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
+    byte_values: tuple[int, ...] = (0,) * 30,
+    body: bytes | None = None,
+):
+    car_count = 24 if packet_format == 2026 else 22
+    if body is None:
+        record = _CAR_DAMAGE_CAR.pack(*wear, *byte_values)
+        body = record * car_count
+    return make_datagram(
+        packet_format=packet_format,
+        packet_id=10,
+        packet_version=packet_version,
+        session_uid=session_uid,
+        frame=frame,
+        session_time=session_time_s,
+        player_car_index=player_car_index,
+        body=body,
         sequence=sequence,
     )
 
@@ -1378,6 +1409,11 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                     await asyncio.sleep(0.01)
                 assert current["status"] == "recording"
 
+                damage_bytes = [0] * 30
+                damage_bytes[0:4] = [1, 2, 3, 4]
+                damage_bytes[4:8] = [5, 6, 7, 8]
+                damage_bytes[12:15] = [10, 11, 12]
+                damage_bytes[21] = 13
                 payloads = [
                     _telemetry_packet(
                         frame=100,
@@ -1400,7 +1436,13 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                         sequence=11,
                     ).payload,
                     _car_status_packet(frame=100, sequence=12).payload,
-                    _advance(103, 13).payload,
+                    _car_damage_packet(
+                        frame=100,
+                        sequence=13,
+                        wear=(0.0, 25.5, 50.0, 100.0),
+                        byte_values=tuple(damage_bytes),
+                    ).payload,
+                    _advance(103, 14).payload,
                 ]
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
                     for payload in payloads:
@@ -1438,6 +1480,13 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                 assert status["frame_identifier"] == 100
                 assert status["fuel_in_tank_reported"] == 12.5
                 assert "_observed_monotonic_ns" not in status
+                damage = current["progress"]["live_car_damage"]
+                assert damage["status"] == "fresh"
+                assert damage["frame_identifier"] == 100
+                assert damage["observation_count"] == 1
+                assert damage["tyre_wear_percent"] == [0.0, 25.5, 50.0, 100.0]
+                assert damage["engine_damage_percent"] == 13
+                assert "_observed_monotonic_ns" not in damage
 
                 await asyncio.sleep(0.55)
                 stale = (
@@ -1455,6 +1504,11 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                 ).json()["data"]["progress"]["live_lap_timing"]
                 assert stale_timing["status"] == "stale"
                 assert stale_timing["age_ms"] > 500
+                stale_damage = (
+                    await client.get("/api/v1/recordings/current")
+                ).json()["data"]["progress"]["live_car_damage"]
+                assert stale_damage["status"] == "stale"
+                assert stale_damage["age_ms"] > 500
 
                 stopped = await client.post(
                     f"/api/v1/recordings/{recording_id}/stop",
@@ -1481,3 +1535,298 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                 assert [item.payload for item in recorded] == payloads
 
     asyncio.run(exercise())
+
+
+def _publish_live_damage(
+    observer: _AcquisitionObserver,
+    *,
+    frame: int = 100,
+    sequence: int = 10,
+    session_uid: int = SESSION_UID,
+    player_car_index: int = 0,
+    packet_format: int = 2025,
+    packet_version: int = 1,
+    wear: tuple[float, float, float, float] = (0.0, 25.5, 50.0, 100.0),
+    byte_values: tuple[int, ...] | None = None,
+) -> None:
+    if byte_values is None:
+        values = [0] * 30
+        values[0:4] = [1, 2, 3, 4]
+        values[4:8] = [5, 6, 7, 8]
+        values[12:15] = [10, 11, 12]
+        values[21] = 13
+        byte_values = tuple(values)
+    _process(
+        observer,
+        _car_damage_packet(
+            frame=frame,
+            sequence=sequence,
+            session_uid=session_uid,
+            player_car_index=player_car_index,
+            packet_format=packet_format,
+            packet_version=packet_version,
+            wear=wear,
+            byte_values=byte_values,
+        ),
+    )
+    _process(
+        observer,
+        _advance(
+            frame + 1,
+            sequence + 1,
+            session_uid=session_uid,
+            player_car_index=player_car_index,
+            packet_format=packet_format,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("packet_format", "player_car_index"), ((2025, 0), (2026, 23))
+)
+def test_live_damage_maps_supported_formats_from_damage_only_frames(
+    packet_format: int, player_car_index: int
+):
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_damage(
+        observer,
+        player_car_index=player_car_index,
+        packet_format=packet_format,
+    )
+
+    damage = observer.live_car_damage_snapshot()
+    assert damage["status"] == "fresh"
+    assert damage["session_uid"] == str(SESSION_UID)
+    assert damage["packet_format"] == packet_format
+    assert damage["frame_identifier"] == 100
+    assert damage["player_car_index"] == player_car_index
+    assert damage["tyre_wear_percent"] == [0.0, 25.5, 50.0, 100.0]
+    assert damage["tyre_damage_percent"] == [1, 2, 3, 4]
+    assert damage["brake_damage_percent"] == [5, 6, 7, 8]
+    assert damage["front_left_wing_damage_percent"] == 10
+    assert damage["front_right_wing_damage_percent"] == 11
+    assert damage["rear_wing_damage_percent"] == 12
+    assert damage["engine_damage_percent"] == 13
+    assert damage["validation_flags"] == []
+    assert damage["observation_count"] == 1
+    assert observer.live_telemetry_snapshot()["status"] == "waiting"
+    assert observer.live_lap_timing_snapshot()["status"] == "waiting"
+
+
+def test_live_damage_retains_sparse_observation_and_ages_independently():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_damage(observer)
+    initial = observer.live_car_damage_snapshot()
+    observed_ns = initial["_observed_monotonic_ns"]
+
+    _process(observer, _advance(102, 20))
+    _process(observer, _advance(103, 21))
+    later = observer.live_car_damage_snapshot(observed_ns + 501_000_000)
+
+    assert later["status"] == "stale"
+    assert later["age_ms"] == 501
+    assert later["frame_identifier"] == 100
+    assert later["tyre_wear_percent"] == [0.0, 25.5, 50.0, 100.0]
+    assert later["observation_count"] == 1
+    assert observer.live_telemetry_snapshot()["status"] == "waiting"
+
+
+def test_live_damage_uses_oldest_agreeing_receive_time_and_duplicate_does_not_refresh():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    base_ns = 4_000_000_000
+    packet = _car_damage_packet(frame=100, sequence=10)
+    observer.process(replace(packet, monotonic_ns=base_ns))
+    observer.process(replace(packet, monotonic_ns=base_ns + 300_000_000))
+    observer.process(
+        replace(_advance(101, 11), monotonic_ns=base_ns + 300_000_000)
+    )
+
+    damage = observer.live_car_damage_snapshot(base_ns + 300_000_000)
+    assert damage["status"] == "fresh"
+    assert damage["_observed_monotonic_ns"] == base_ns
+    assert damage["age_ms"] == 300
+    assert damage["observation_count"] == 1
+
+
+def test_live_damage_invalid_fields_are_null_without_suppressing_other_values():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    bytes_ = [0] * 30
+    bytes_[0:4] = [101, 2, 3, 4]
+    bytes_[4:8] = [5, 6, 7, 8]
+    bytes_[21] = 254
+    _publish_live_damage(
+        observer,
+        wear=(float("nan"), 25.0, 50.0, 100.0),
+        byte_values=tuple(bytes_),
+    )
+
+    damage = observer.live_car_damage_snapshot()
+    assert damage["status"] == "fresh"
+    assert damage["tyre_wear_percent"] == [None, 25.0, 50.0, 100.0]
+    assert damage["tyre_damage_percent"] == [None, 2, 3, 4]
+    assert damage["brake_damage_percent"] == [5, 6, 7, 8]
+    assert damage["engine_damage_percent"] is None
+    assert set(damage["validation_flags"]) == {
+        "invalid_car_damage_tyre_wear_rl_percent",
+        "invalid_car_damage_tyre_damage_rl_percent",
+        "invalid_car_damage_engine_damage_percent",
+    }
+
+
+def test_live_damage_conflicts_malformed_and_unsupported_packets_fail_closed():
+    conflicting = _AcquisitionObserver(reorder_window_frames=1)
+    _process(
+        conflicting,
+        _car_damage_packet(frame=100, sequence=10, wear=(1.0, 2.0, 3.0, 4.0)),
+    )
+    _process(
+        conflicting,
+        _car_damage_packet(frame=100, sequence=11, wear=(4.0, 3.0, 2.0, 1.0)),
+    )
+    _process(conflicting, _advance(101, 12))
+    conflict = conflicting.live_car_damage_snapshot()
+    assert conflict["status"] == "unavailable"
+    assert conflict["reason"] == "conflicting_car_damage_packets"
+    assert conflict["tyre_wear_percent"] == [None, None, None, None]
+
+    malformed = _AcquisitionObserver(reorder_window_frames=1)
+    _process(
+        malformed,
+        _car_damage_packet(frame=100, sequence=10, body=b"short damage body"),
+    )
+    _process(malformed, _advance(101, 11))
+    assert malformed.live_car_damage_snapshot()["reason"] == "car_damage_decode_failed"
+
+    unsupported = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_damage(unsupported, packet_version=2)
+    rejected = unsupported.live_car_damage_snapshot()
+    assert rejected["status"] == "unsupported"
+    assert rejected["reason"] == "car_damage_adapter_unsupported"
+
+
+def test_live_damage_requires_provenance_for_every_agreeing_candidate():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    observer._max_receive_time_entries = 0
+    _process(observer, _car_damage_packet(frame=100, sequence=10))
+    _process(observer, _advance(101, 11))
+
+    damage = observer.live_car_damage_snapshot()
+    assert damage["status"] == "unavailable"
+    assert damage["reason"] == "receive_provenance_unavailable"
+    assert damage["age_ms"] is None
+    assert damage["tyre_wear_percent"] == [None, None, None, None]
+    assert damage["observation_count"] == 1
+
+
+def test_live_damage_clears_on_player_and_flashback_boundaries():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_damage(observer)
+    _process(observer, _advance(102, 20, player_car_index=1))
+    cleared = observer.live_car_damage_snapshot()
+    assert cleared["status"] == "waiting"
+    assert cleared["observation_count"] == 0
+
+    _publish_live_damage(observer, frame=103, sequence=21, player_car_index=1)
+    assert observer.live_car_damage_snapshot()["observation_count"] == 1
+    _process(
+        observer,
+        _flashback_packet(
+            frame=105,
+            sequence=30,
+            session_time=14.0,
+            target_time=12.0,
+        ),
+    )
+    _process(observer, _advance(106, 31, player_car_index=1))
+    rewound = observer.live_car_damage_snapshot()
+    assert rewound["status"] == "waiting"
+    assert rewound["observation_count"] == 0
+
+
+def test_live_damage_resets_its_epoch_on_session_and_format_changes():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_damage(observer)
+    next_session = SESSION_UID + 100
+    _publish_live_damage(
+        observer,
+        frame=200,
+        sequence=30,
+        session_uid=next_session,
+    )
+    after_session = observer.live_car_damage_snapshot()
+    assert after_session["session_uid"] == str(next_session)
+    assert after_session["observation_count"] == 1
+
+    _publish_live_damage(
+        observer,
+        frame=202,
+        sequence=40,
+        player_car_index=23,
+        packet_format=2026,
+        session_uid=next_session,
+    )
+    after_format = observer.live_car_damage_snapshot()
+    assert after_format["session_uid"] == str(next_session)
+    assert after_format["packet_format"] == 2026
+    assert after_format["player_car_index"] == 23
+    assert after_format["observation_count"] == 1
+
+
+def test_live_damage_handles_frame_wrap_and_synthetic_session_time_rewind():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_damage(observer, frame=0xFFFFFFFE, sequence=10)
+    _publish_live_damage(observer, frame=0, sequence=20)
+    wrapped = observer.live_car_damage_snapshot()
+    assert wrapped["frame_identifier"] == 0
+    assert wrapped["observation_count"] == 2
+
+    regressed = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(regressed, frame=100)
+    _process(regressed, _car_damage_packet(frame=101, sequence=20))
+    _process(
+        regressed,
+        _lap_packet(
+            frame=101,
+            lap_number=3,
+            distance_m=125.0,
+            session_time=1.0,
+            current_lap_time_ms=1_000,
+            sequence=21,
+        ),
+    )
+    _process(regressed, _advance(102, 22))
+    reset = regressed.live_car_damage_snapshot()
+    assert reset["status"] == "waiting"
+    assert reset["observation_count"] == 0
+
+
+def test_live_damage_api_record_bounds_fixed_arrays_and_zeroes():
+    damage = LiveCarDamageRecord(
+        status="fresh",
+        reason=None,
+        age_ms=0,
+        observation_count=1,
+        tyre_wear_percent=(0.0, 25.5, None, 100.0),
+        tyre_damage_percent=(0, 1, None, 100),
+        brake_damage_percent=(0, 1, 2, 3),
+        engine_damage_percent=0,
+    )
+    assert damage.tyre_wear_percent == (0.0, 25.5, None, 100.0)
+    assert damage.engine_damage_percent == 0
+
+    with pytest.raises(ValidationError):
+        LiveCarDamageRecord(
+            status="fresh",
+            reason=None,
+            age_ms=0,
+            observation_count=1,
+            tyre_damage_percent=(0, 1, 2),
+        )
+    with pytest.raises(ValidationError):
+        LiveCarDamageRecord(
+            status="fresh",
+            reason=None,
+            age_ms=0,
+            observation_count=1,
+            engine_damage_percent=101,
+        )

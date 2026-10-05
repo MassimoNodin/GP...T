@@ -4,11 +4,13 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type {
   ApiResponse,
+  LiveCarDamageRecord,
   LiveCarStatusRecord,
   LiveLapTimingRecord,
   LiveTelemetryRecord,
   RecordingJobRecord,
 } from "@/lib/api";
+import { readCarDamageMonitor } from "@/lib/live";
 import { appScreenHref, isSelectionTransferBlocked } from "@/lib/navigation";
 
 const activeStatuses = new Set(["starting", "recording", "stopping"]);
@@ -211,6 +213,9 @@ export default function RecordingControls({
           ) : null}
           {progress.live_lap_timing ? (
             <LiveLapTimingPanel telemetry={progress.live_lap_timing} />
+          ) : null}
+          {progress.live_car_damage ? (
+            <LiveCarDamagePanel telemetry={progress.live_car_damage} />
           ) : null}
         </>
       )}
@@ -604,6 +609,164 @@ export function LiveLapTimingPanel({
       )}
     </section>
   );
+}
+
+export function LiveCarDamagePanel({
+  telemetry: inputTelemetry,
+  sourceKind = "recording",
+}: {
+  telemetry: LiveCarDamageRecord;
+  sourceKind?: "recording" | "replay";
+}) {
+  const telemetry = readCarDamageMonitor(inputTelemetry) ?? {
+    status: "unavailable" as const,
+    reason: "malformed_optional_fields",
+    age_ms: null,
+    validation_flags: [],
+  };
+  const wheels = [
+    { label: "Rear left", index: 0 },
+    { label: "Rear right", index: 1 },
+    { label: "Front left", index: 2 },
+    { label: "Front right", index: 3 },
+  ] as const;
+  const copy: Record<LiveCarDamageRecord["status"], string> = {
+    waiting: "Waiting for an admitted selected-player Car Damage packet.",
+    fresh: "Recent sparse Car Damage observation; it updates only when that packet arrives.",
+    stale:
+      `Last Car Damage observation was ${formatAge(telemetry.age_ms)} ago; values may have changed since.`,
+    unsupported:
+      sourceKind === "replay"
+        ? "Replay continues. This Car Damage packet version is unsupported."
+        : "Recording continues. This Car Damage packet version is unsupported.",
+    unavailable: liveCarDamageUnavailableReason(telemetry.reason),
+  };
+  const invalidFields = (telemetry.validation_flags ?? []).map((flag) =>
+    flag.replace("invalid_car_damage_", "").replaceAll("_", " "),
+  );
+  const observationCount =
+    Number.isInteger(telemetry.observation_count) &&
+    (telemetry.observation_count ?? -1) >= 0
+      ? telemetry.observation_count!.toLocaleString()
+      : "—";
+
+  return (
+    <section
+      className="live-telemetry live-car-damage"
+      data-state={telemetry.status}
+      aria-label="Sparse live player damage observation"
+    >
+      <div className="live-telemetry-heading">
+        <div>
+          <div className="eyebrow">
+            {sourceKind === "replay" ? "REPLAYED CAR DAMAGE" : "LIVE CAR DAMAGE"}
+          </div>
+          <p>{copy[telemetry.status]}</p>
+        </div>
+        <span className={`live-telemetry-state state-${telemetry.status}`}>
+          {telemetry.status.toUpperCase()}
+        </span>
+      </div>
+      {telemetry.status !== "waiting" && (
+        <>
+          <div className="live-car-damage-meta">
+            <span>{observationCount} admitted observations</span>
+            <span>
+              Source time {finiteNumber(telemetry.session_time_s)?.toFixed(2) ?? "—"} s
+            </span>
+            <span>Session {safeText(telemetry.session_uid)}</span>
+            <span>Player {safeInteger(telemetry.player_car_index)}</span>
+            <span>Format {safeInteger(telemetry.packet_format)}</span>
+            <span>Frame {safeInteger(telemetry.frame_identifier)}</span>
+          </div>
+          <div className="live-temperature-scroll" tabIndex={0}>
+            <table className="live-temperature-table">
+              <caption>Source-reported tyre and brake damage · percent</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Wheel</th>
+                  <th scope="col">Tyre wear</th>
+                  <th scope="col">Tyre damage</th>
+                  <th scope="col">Brake damage</th>
+                </tr>
+              </thead>
+              <tbody>
+                {wheels.map(({ label, index }) => (
+                  <tr key={label}>
+                    <th scope="row">{label}</th>
+                    <td>{percentArrayValue(telemetry.tyre_wear_percent, index, false)}</td>
+                    <td>{percentArrayValue(telemetry.tyre_damage_percent, index, true)}</td>
+                    <td>{percentArrayValue(telemetry.brake_damage_percent, index, true)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="live-telemetry-grid">
+            <LiveMetric label="FRONT LEFT WING" value={percentValue(telemetry.front_left_wing_damage_percent, true)} />
+            <LiveMetric label="FRONT RIGHT WING" value={percentValue(telemetry.front_right_wing_damage_percent, true)} />
+            <LiveMetric label="REAR WING" value={percentValue(telemetry.rear_wing_damage_percent, true)} />
+            <LiveMetric label="ENGINE DAMAGE" value={percentValue(telemetry.engine_damage_percent, true)} />
+          </div>
+          <p className="live-car-status-note">
+            These are packet-time observations. Sparse updates do not indicate packet loss or continuous car condition.
+          </p>
+          {invalidFields.length ? (
+            <p className="live-car-status-invalid" role="status">
+              Invalid fields are unavailable: {invalidFields.join(", ")}.
+            </p>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
+}
+
+function percentArrayValue(
+  values: readonly (number | null)[] | null | undefined,
+  index: number,
+  integer: boolean,
+) {
+  if (!Array.isArray(values) || values.length !== 4) return "—";
+  return percentValue(values[index], integer);
+}
+
+function percentValue(value: unknown, integer: boolean) {
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 100 &&
+    (!integer || Number.isInteger(value))
+    ? `${Number.isInteger(value) ? value : value.toFixed(1)}%`
+    : "—";
+}
+
+function liveCarDamageUnavailableReason(reason: string | null) {
+  if (reason === "receive_provenance_unavailable")
+    return "The selected Damage packet has no receive-time provenance.";
+  if (reason === "car_damage_decode_failed")
+    return "The selected Car Damage packet could not be decoded.";
+  if (reason === "conflicting_car_damage_packets")
+    return "Selected-player Damage records conflict within this frame.";
+  if (reason === "player_index_mismatch_in_frame")
+    return "The selected-player identity is ambiguous for this frame.";
+  if (reason === "operation_ended")
+    return "The recording or replay has ended; live observations are cleared.";
+  return reason ? reason.replaceAll("_", " ") : "Damage is unavailable for this frame.";
+}
+
+function finiteNumber(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function safeInteger(value: unknown) {
+  return Number.isSafeInteger(value) && (value as number) >= 0
+    ? String(value)
+    : "—";
+}
+
+function safeText(value: unknown) {
+  return typeof value === "string" && value.length <= 64 ? value : "—";
 }
 
 function recordingStatus(
