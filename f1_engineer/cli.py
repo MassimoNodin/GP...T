@@ -29,6 +29,7 @@ from .analysis.reference_selection import (
     ReferenceRequest,
     select_reference,
 )
+from .analysis.session_best import SessionBestStatus, assess_session_best
 from .analysis.quality import inspect_attempt_quality
 from .analysis.region_service import load_attempt_region_report
 from .analysis.trajectory_service import load_observed_trajectory
@@ -451,6 +452,15 @@ def _reference(args: argparse.Namespace) -> int:
     )
 
 
+def _session_best(args: argparse.Namespace) -> int:
+    result = assess_session_best(args.database, args.anchor_attempt_key)
+    _json_line(result.to_dict())
+    return 2 if result.status in {
+        SessionBestStatus.ANCHOR_UNAVAILABLE,
+        SessionBestStatus.ABSTAINED,
+    } else 0
+
+
 def _api(args: argparse.Namespace) -> int:
     try:
         import uvicorn
@@ -866,6 +876,19 @@ def build_parser() -> argparse.ArgumentParser:
     reference.add_argument("target_attempt_key", help="target attempt from the laps command")
     reference.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
     reference.set_defaults(handler=_reference)
+
+    session_best = commands.add_parser(
+        "session-best",
+        help="assess recorded times and eligible Time Trial best in one run/session/player",
+    )
+    session_best.add_argument(
+        "anchor_attempt_key",
+        help="explicit attempt key that anchors the run, session, player and context",
+    )
+    session_best.add_argument(
+        "--database", default=str(DEFAULT_DATABASE), help="SQLite database path"
+    )
+    session_best.set_defaults(handler=_session_best)
 
     api = commands.add_parser("api", help="serve the local telemetry API and import inbox")
     api.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")

@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, select_reference
+from ..analysis.session_best import assess_session_best
 from ..analysis.comparison_window import optional_distance_window
 from ..analysis.engineer_query import query_engineer_evidence
 from ..analysis.observation_set import build_observation_set
@@ -1157,6 +1158,28 @@ def create_app(
             ),
         )
         return APIResponse[ReferenceSelectionData](
+            data=_stringify_session_uids(result.to_dict())
+        )
+
+    @app.get(
+        "/api/v1/analysis/session-best",
+        response_model=APIResponse[dict[str, Any]],
+    )
+    def session_best_overview(
+        anchor_attempt_key: str = Query(min_length=1),
+    ) -> APIResponse[dict[str, Any]]:
+        try:
+            result = assess_session_best(
+                configured_database_path,
+                anchor_attempt_key,
+            )
+        except DatabaseSchemaError:
+            raise
+        except (OSError, sqlite3.Error):
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="session_best_source_unavailable"
+            )
+        return APIResponse[dict[str, Any]](
             data=_stringify_session_uids(result.to_dict())
         )
 

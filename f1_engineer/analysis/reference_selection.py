@@ -467,6 +467,21 @@ def _candidate_exclusions(
     if entry.attempt_number >= target.attempt_number:
         return ["recorded_after_target"]
 
+    return _candidate_policy_exclusions(
+        entry,
+        context_signature=target_signature,
+        capture_reasons=capture_reasons,
+    )
+
+
+def _candidate_policy_exclusions(
+    entry: StoredAttemptInventoryEntry,
+    *,
+    context_signature: tuple[object, ...],
+    capture_reasons: tuple[str, ...],
+) -> list[str]:
+    """Apply shared candidate eligibility independent of prior/anchor ordering."""
+
     reasons: list[str] = []
     if not entry.lifecycle_assessed or entry.superseded is None:
         reasons.append("lifecycle_evidence_unassessed")
@@ -502,7 +517,7 @@ def _candidate_exclusions(
     except TimeTrialContextError as exc:
         reasons.append(exc.reason_code)
     else:
-        if signature != target_signature:
+        if signature != context_signature:
             reasons.append("incompatible_time_trial_context")
     reasons.extend(capture_reasons)
     return list(dict.fromkeys(reasons))

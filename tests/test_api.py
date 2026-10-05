@@ -114,6 +114,37 @@ def test_lap_api_exposes_bounded_player_contexts(monkeypatch, tmp_path) -> None:
     assert attempt["player_car_setup_context"] == setup_context
 
 
+def test_session_best_api_requires_and_uses_explicit_context_anchor(
+    monkeypatch, tmp_path
+) -> None:
+    calls = []
+    monkeypatch.setattr(
+        api_module,
+        "assess_session_best",
+        lambda database, anchor: calls.append((database, anchor))
+        or SimpleNamespace(
+            to_dict=lambda: {
+                "status": "assessed",
+                "anchor_attempt_key": anchor,
+                "scope": {"session_uid": 4_294_967_296},
+            }
+        ),
+    )
+    app = create_app(tmp_path / "unused.sqlite3")
+
+    missing_anchor = _get(app, "/api/v1/analysis/session-best")
+    response = _get(
+        app,
+        "/api/v1/analysis/session-best",
+        params={"anchor_attempt_key": "run:42:0:3"},
+    )
+
+    assert missing_anchor.status_code == 422
+    assert response.status_code == 200
+    assert calls == [(tmp_path / "unused.sqlite3", "run:42:0:3")]
+    assert response.json()["data"]["scope"]["session_uid"] == "4294967296"
+
+
 def test_attempt_timing_api_is_standalone_and_stringifies_source_session_uid(
     monkeypatch, tmp_path
 ) -> None:

@@ -1024,6 +1024,45 @@ export interface ReferenceSelection {
   reasons: string[];
 }
 
+export interface SessionBestCandidate {
+  attempt_key: string;
+  attempt_number: number;
+  disposition: string;
+  lap_time_ms: number | null;
+  recorded_time_rank: number | null;
+  time_trial_eligibility: "eligible" | "excluded" | "not_assessed";
+  trace_sha256: string | null;
+  exclusion_reasons: string[];
+}
+
+export interface SessionBestOverview {
+  policy_version: string;
+  status: "assessed" | "abstained" | "anchor_unavailable";
+  anchor_attempt_key: string;
+  scope: Record<string, unknown> | null;
+  recorded_time_ordering: {
+    status: "available" | "no_recorded_times" | "unavailable";
+    diagnostic_only: true;
+    sort: string;
+    candidate_count: number | null;
+    timed_candidate_count: number | null;
+    candidates_omitted_count: number | null;
+  };
+  eligible_time_trial_best: {
+    status: string;
+    attempt: {
+      attempt_key: string;
+      attempt_number: number;
+      lap_time_ms: number | null;
+      trace_sha256: string | null;
+      trace_schema_version: number | null;
+    } | null;
+  };
+  candidates: SessionBestCandidate[];
+  reasons: string[];
+  limits: Record<string, number>;
+}
+
 export interface ResampledTrace {
   values: Record<string, Array<number | boolean | null>>;
   masks: Record<string, boolean[]>;

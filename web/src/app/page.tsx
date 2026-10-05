@@ -25,6 +25,7 @@ import {
   ProcessingRunSummary,
   RegionEvent,
   ReferenceSelection,
+  SessionBestOverview,
   RecordingJobRecord,
   SessionRecord,
   TrackModelRecord,
@@ -35,6 +36,7 @@ import RecordingInbox from "./RecordingInbox";
 import AttemptQualityPanel from "./AttemptQualityPanel";
 import PlayerParticipantContextPanel from "./PlayerParticipantContextPanel";
 import PlayerCarSetupContextPanel from "./PlayerCarSetupContextPanel";
+import SessionBestOverviewPanel from "./SessionBestOverviewPanel";
 import DiagnosticEvidencePanels from "./DiagnosticEvidencePanels";
 import AttemptTraceCharts from "./AttemptTraceCharts";
 import RunEvidencePanel from "./RunEvidencePanel";
@@ -338,6 +340,16 @@ export default async function Home({
         `/api/v1/references/session-best?${new URLSearchParams({ target_attempt_key: target.attempt_key })}`,
       )
     : Promise.resolve(null);
+  const sessionBestAnchorSelected = Boolean(
+    target &&
+      params.target_attempt_key &&
+      target.attempt_key === params.target_attempt_key,
+  );
+  const sessionBestRequest = sessionBestAnchorSelected && target
+    ? requestApi<SessionBestOverview>(
+        `/api/v1/analysis/session-best?${new URLSearchParams({ anchor_attempt_key: target.attempt_key })}`,
+      )
+    : Promise.resolve(null);
   const attemptQualityRequest = target
     ? requestApi<AttemptQualityReport>(
         `/api/v1/attempts/${encodeURIComponent(target.attempt_key)}/quality`,
@@ -422,8 +434,9 @@ export default async function Home({
         engineerQueryBody,
       )
     : Promise.resolve(null);
-  const [selectionResponse, manualComparisonResponse, qualityResponse, traceChartResponse, trajectoryResponse, regionResponse, observationSetResponse, pairedRegionResponse, engineerQueryResponse] = await Promise.all([
+  const [selectionResponse, sessionBestResponse, manualComparisonResponse, qualityResponse, traceChartResponse, trajectoryResponse, regionResponse, observationSetResponse, pairedRegionResponse, engineerQueryResponse] = await Promise.all([
     selectionRequest,
+    sessionBestRequest,
     manualComparisonRequest,
     attemptQualityRequest,
     attemptTraceChartRequest,
@@ -956,6 +969,15 @@ export default async function Home({
               </aside>
 
               <section className="analysis-column">
+                <SessionBestOverviewPanel
+                  report={sessionBestResponse?.data ?? null}
+                  anchorSelected={sessionBestAnchorSelected}
+                  unavailableReason={
+                    sessionBestResponse?.status === "unavailable"
+                      ? sessionBestResponse.reason
+                      : null
+                  }
+                />
                 {target ? (
                   <AttemptQualityPanel
                     report={attemptQuality}

@@ -148,6 +148,7 @@ def _write_synthetic_capture(
     completion_status: str = "complete",
     flashback_after_laps: bool = False,
     missing_telemetry: tuple[int, float, float] | None = None,
+    complete_final_lap: bool = False,
 ) -> None:
     sequence = 0
     frame = 0
@@ -216,7 +217,8 @@ def _write_synthetic_capture(
                 datagram_count += 1
             frame += 1
 
-        for lap_number in range(1, 5):
+        final_partial_lap = 5 if complete_final_lap else 4
+        for lap_number in range(1, final_partial_lap + 1):
             prior_duration_ms = _LAP_DURATIONS_MS.get(lap_number - 1, 0)
             if lap_number == 1:
                 write_sample(1, -0.5)
@@ -225,7 +227,7 @@ def _write_synthetic_capture(
                 0.5,
                 last_lap_time_ms=prior_duration_ms,
             )
-            if lap_number == 4:
+            if lap_number == final_partial_lap:
                 break
             for index in range(1, 200):
                 write_sample(

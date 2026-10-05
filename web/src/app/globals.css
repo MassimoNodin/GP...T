@@ -4708,6 +4708,103 @@ h1 span {
   padding-left: 3px;
   overflow-wrap: anywhere;
 }
+.session-best-overview {
+  padding: 16px;
+}
+.session-best-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 13px;
+  padding: 11px 12px;
+  border: 1px solid #2c3737;
+  background: rgba(9, 12, 13, 0.45);
+}
+.session-best-summary > div {
+  display: grid;
+  gap: 5px;
+}
+.session-best-summary span,
+.session-best-summary strong,
+.session-best-empty,
+.session-best-note,
+.session-best-omitted {
+  font: 8px/1.6 var(--font-mono);
+}
+.session-best-summary span {
+  color: #84918d;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.session-best-summary strong {
+  color: #d9e3de;
+  font-size: 10px;
+}
+.session-best-list {
+  display: grid;
+  gap: 4px;
+  max-height: 260px;
+  margin: 10px 0 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+.session-best-list li {
+  display: grid;
+  grid-template-columns: 35px minmax(90px, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #202829;
+  background: rgba(9, 12, 13, 0.35);
+  color: #aebbb5;
+  font: 8px/1.5 var(--font-mono);
+}
+.session-best-rank {
+  color: var(--mint);
+}
+.session-best-list li strong {
+  color: #e0e7e3;
+  font-size: 9px;
+}
+.session-best-eligibility {
+  color: #85918e;
+  text-transform: uppercase;
+}
+.session-best-eligible {
+  color: var(--mint);
+}
+.session-best-excluded {
+  color: var(--gold);
+}
+.session-best-list li small {
+  grid-column: 2 / -1;
+  color: #899692;
+  overflow-wrap: anywhere;
+}
+.session-best-empty,
+.session-best-warning,
+.session-best-note {
+  margin: 11px 0 0;
+  color: #98a49f;
+}
+.session-best-warning {
+  padding: 8px 10px;
+  border-left: 2px solid var(--gold);
+  background: rgba(205, 164, 91, 0.08);
+  overflow-wrap: anywhere;
+}
+.session-best-note {
+  padding-top: 10px;
+  border-top: 1px solid #252d2e;
+}
+.session-best-omitted {
+  display: block;
+  margin-top: 8px;
+  color: #84918d;
+}
 @media (max-width: 740px) {
   .paired-region-heading,
   .paired-region-card > header,
@@ -4740,5 +4837,11 @@ h1 span {
   .recorded-speech-controls {
     align-items: flex-start;
     flex-direction: column;
+  }
+  .session-best-list li {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+  }
+  .session-best-eligibility {
+    grid-column: 2 / -1;
   }
 }

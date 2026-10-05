@@ -892,6 +892,20 @@ Acceptance covers exact F1 25/2026 layouts, unsupported versions, malformed and 
 
 **Rationale:** Setup context is currently absent, and participant or team identity alone cannot establish that two laps used comparable settings. Preserving the game's reported setup supplies useful diagnostic context while keeping car-comparability and coaching claims behind their existing evidence gates.
 
+## Decision 0060: assess a run-scoped player best lap
+
+**Status:** accepted
+
+**Date:** 2026-10-05
+
+Add a player best-lap overview anchored by an explicit attempt key. The anchor fixes the processing run, session, player, and comparison context; never fall back to the newest session or attempt. Assess every attempt in that scope, including the anchor and later attempts. Keep the current prior-only reference selector unchanged: this overview does not authorize an earlier target's reference, rank laps across sessions, or generate coaching.
+
+Return recorded lap-time ordering as diagnostic evidence separately from a verified eligible Time Trial best. Reuse the current stable-context, lifecycle, game-validity, capture-loss, and checksummed-trace eligibility rules. Time Trial may produce a verified best or explicit abstention. Practice/Qualifying, Race, and unknown modes may show recorded-time ordering but cannot receive automatic eligible-best selection. Preserve source provenance and exclusion reasons.
+
+Keep assessment bounded to 256 scoped attempts, 1,024 context segments / 4 MiB, 64 MiB of trace files, and 100,000 trace rows. If any inventory or aggregate assessment limit is exceeded, abstain from verified selection rather than choose from a truncated candidate set. Return at most 32 compact candidate rows and report the omitted count. Share the result across CLI, API, and dashboard.
+
+**Rationale:** The existing selector compares only eligible prior laps against a completed target, so it cannot identify a session's fastest final lap. A separate run-scoped assessment advances the MVP's player-best view without changing reference authority or mixing conditions, modes, sessions, or players.
+
 ## Data flow
 
 ```text

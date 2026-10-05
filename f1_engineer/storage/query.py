@@ -166,6 +166,8 @@ class StoredAttemptInventoryEntry:
     superseded: bool | None = None
     lifecycle_assessed: bool = False
     trace_size_bytes: int | None = None
+    context_segment_count: int | None = None
+    context_bytes: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -783,12 +785,17 @@ def load_reference_inventory(
     attempt_key: str,
     *,
     max_prior_attempts: int | None = None,
+    include_after_target: bool = False,
+    max_scope_attempts: int | None = None,
     max_context_segments: int | None = None,
     max_context_bytes: int | None = None,
 ) -> StoredReferenceInventory | None:
-    """Read run-scoped attempt/context metadata for deterministic reference selection."""
+    """Read run-scoped attempt/context metadata for deterministic lap assessment."""
+    if not isinstance(include_after_target, bool):
+        raise ValueError("include_after_target must be a boolean")
     for name, limit in (
         ("max_prior_attempts", max_prior_attempts),
+        ("max_scope_attempts", max_scope_attempts),
         ("max_context_segments", max_context_segments),
         ("max_context_bytes", max_context_bytes),
     ):
@@ -796,6 +803,10 @@ def load_reference_inventory(
             not isinstance(limit, int) or isinstance(limit, bool) or limit < 0
         ):
             raise ValueError(f"{name} must be a non-negative integer")
+    if max_scope_attempts is not None and max_scope_attempts < 1:
+        raise ValueError("max_scope_attempts must be positive")
+    if include_after_target and max_prior_attempts is not None:
+        raise ValueError("max_prior_attempts cannot be combined with include_after_target")
     database_path = Path(database_path)
     with Database(database_path, read_only=True) as db:
         target = db.connection.execute(
@@ -811,14 +822,26 @@ def load_reference_inventory(
         attempt_scope = "s.run_id = ? AND s.session_uid = ? AND l.car_index = ?"
         scope_values = (target["run_id"], target["session_uid"], target["car_index"])
         attempt_filter = (
-            " AND l.attempt_number <= ?" if max_prior_attempts is not None else ""
+            " AND l.attempt_number <= ?"
+            if max_prior_attempts is not None and not include_after_target
+            else ""
         )
         attempt_parameters = (
             (*scope_values, target["attempt_number"])
-            if max_prior_attempts is not None
+            if attempt_filter
             else scope_values
         )
-        if max_prior_attempts is not None:
+        if max_scope_attempts is not None:
+            scoped_count = db.connection.execute(
+                f"""SELECT COUNT(*) AS attempt_count
+                      FROM lap_attempts l JOIN sessions s USING(session_key)
+                      JOIN processing_runs r USING(run_id)
+                     WHERE {attempt_scope} AND r.status = 'complete'""",
+                scope_values,
+            ).fetchone()["attempt_count"]
+            if int(scoped_count) > max_scope_attempts:
+                raise AttemptInventoryReadLimitError("scope_attempts")
+        if max_prior_attempts is not None and not include_after_target:
             prior_count = db.connection.execute(
                 f"""SELECT COUNT(*) AS attempt_count
                       FROM lap_attempts l JOIN sessions s USING(session_key)
@@ -904,14 +927,25 @@ def load_reference_inventory(
         ).fetchall()
 
     contexts_by_attempt: dict[str, list[tuple[int, Mapping[str, object] | None]]] = {}
+    context_segment_counts: dict[str, int] = {}
+    context_bytes_by_attempt: dict[str, int] = {}
     for context_row in context_rows:
+        attempt_key = str(context_row["attempt_key"])
         raw_context = (
             json.loads(context_row["context_json"])
             if context_row["context_json"] is not None
             else None
         )
-        contexts_by_attempt.setdefault(context_row["attempt_key"], []).append(
+        contexts_by_attempt.setdefault(attempt_key, []).append(
             (int(context_row["from_frame_identifier"]), raw_context)
+        )
+        context_segment_counts[attempt_key] = context_segment_counts.get(attempt_key, 0) + 1
+        context_bytes_by_attempt[attempt_key] = context_bytes_by_attempt.get(
+            attempt_key, 0
+        ) + (
+            len(str(context_row["context_json"]).encode("utf-8"))
+            if context_row["context_json"] is not None
+            else 0
         )
     attempts = tuple(
         StoredAttemptInventoryEntry(
@@ -937,6 +971,8 @@ def load_reference_inventory(
             superseded=None if row["superseded"] is None else bool(row["superseded"]),
             lifecycle_assessed=bool(row["lifecycle_assessed"]),
             trace_size_bytes=_trace_file_size(database_path, row["relative_path"]),
+            context_segment_count=context_segment_counts.get(row["attempt_key"], 0),
+            context_bytes=context_bytes_by_attempt.get(row["attempt_key"], 0),
         )
         for row in rows
     )
