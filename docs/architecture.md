@@ -1147,6 +1147,24 @@ Add group Start, Current, Detail/Segments, Pause, Resume and Stop API endpoints 
 
 **Rationale:** the capture writer's durable completion footer closes a file permanently. Treating pause as a temporary socket state would either append after a footer or leave the staging artifact incomplete. A durable group gives the user one lifecycle while preserving every existing per-file capture and import boundary.
 
+## Decision 0075: expose a bounded read-only run-artifact inventory
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Add `GET /api/v1/processing-runs/{run_id}/artifacts` for registered artifacts in one exact processing run. Accept `limit` 1–50 (default 50), `offset` 0–100,000 (default 0), and `kind=all|player_trace|car_observation_chunk` (default `all`). Strictly reject malformed or repeated query values. Use the standard versioned API envelope and existing local API / same-origin proxy protections. A missing or malformed run remains unavailable; never substitute another run.
+
+List registered rows only: `telemetry_files` joined through attempt/session ownership, and `car_observation_chunks` joined through session ownership. Exclude captures, staging files, databases, and unregistered temporary/orphan files. Count, page selection, and scalar metadata use one explicit SQLite read transaction. Order by artifact kind and registered primary key. Pages are independent snapshots. Preflight at most 100,001 run-scoped records; if more than 100,000 exist, return unavailable instead of a partial inventory. Bound stored identity values to 512 bytes, internal paths to 4 KiB, and each serialized page to 128 KiB.
+
+Return the exact run ID, capture hash and stored processing status, normalized query, total, page items, `has_more`, metadata-snapshot and filesystem-observation timestamps, plus an explicit bounded-evaluation failure reason where applicable. Each item has a stable opaque ID, kind and owning run; session UID and player attempt/car-slot or observation format/epoch/chunk ordinal; registered schema, row count and SHA-256; registration readiness (`ready`, `not_ready`, `unknown`); filesystem availability (`present`, `missing`, `unavailable`) with a bounded reason; observed logical size when safely available; and `checksum_verification="not_performed"`. Validate numeric and hash metadata. Malformed optional metadata becomes null/unknown with a reason; keep the registered row visible. `ready` means publication readiness recorded in SQLite. `present` means a regular file was observed at the allowed location. Neither asserts checksum validity, parseability, reference eligibility or coaching readiness.
+
+Resolve internal paths only beneath `<configured database filename>.traces/<exact run_id>/`. Reject absolute, drive-relative, UNC, traversal, alternate-stream and malformed paths. Inspect each component without following symlinks, Windows junctions or other reparse points. Evaluate at most the returned 50 paths and eight relative components per path. Use regular-file metadata only; never open file contents, hash, parse, or recursively discover files. Do not return absolute or relative paths. Filesystem observations occur after the SQLite snapshot, are non-atomic and may describe a later moment than stored hashes or sizes.
+
+Add a paginated inventory to `/sessions` only for the exact selected run. Preserve bounded selection state and distinguish request failure, unavailable evaluation, empty results, missing files and unready registrations. Do not add download, upload, delete, cleanup, repair, retention mutation, database migration, reservation change or evidence authority in this increment.
+
+**Rationale:** aggregate storage usage cannot identify which evidence artifacts belong to one processing run. A bounded registration-backed catalog makes that ownership inspectable without making claims about file integrity or granting filesystem mutation authority.
+
 ## Data flow
 
 ```text

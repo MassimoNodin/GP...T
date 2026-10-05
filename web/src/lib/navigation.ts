@@ -36,6 +36,8 @@ const retainedKeys = [
   "lap_order_session_uid",
   "assess_lap_order",
   "lifecycle_event_offset",
+  "artifact_kind",
+  "artifact_offset",
   "observation_session_uid",
   "observation_car_index",
   "observation_offset",

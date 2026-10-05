@@ -3,6 +3,8 @@ import type {
   CarObservationInventory,
   CarObservationPreview,
   ProcessingRunAttempt,
+  ProcessingRunArtifactInventory,
+  ProcessingRunArtifactKind,
   ProcessingRunDetail,
   ProcessingRunPage,
   ProcessingRunLifecycleEvent,
@@ -36,6 +38,10 @@ export default function RunEvidencePanel({
   runsFailure,
   archiveFilterValues,
   detail,
+  artifactInventory,
+  artifactInventoryFailure,
+  artifactOffset,
+  artifactKind,
   observationInventory,
   observationPreview,
   observationSessionUid,
@@ -59,6 +65,10 @@ export default function RunEvidencePanel({
   runsFailure: string | null;
   archiveFilterValues: RunArchiveFilterValues;
   detail: ProcessingRunDetail | null;
+  artifactInventory: ProcessingRunArtifactInventory | null;
+  artifactInventoryFailure: ObservationRequestFailure | null;
+  artifactOffset: number;
+  artifactKind: "all" | ProcessingRunArtifactKind;
   observationInventory: CarObservationInventory | null;
   observationPreview: CarObservationPreview | null;
   observationSessionUid: string | null;
@@ -150,7 +160,15 @@ export default function RunEvidencePanel({
                   </span>
                   <a
                     className="run-evidence-link"
-                    href={runUrl(screen, preservedQuery, run.run_id, runsPage.offset, 0, 0) ?? undefined}
+                    href={screenHref(screen, preservedQuery, {
+                      run_id: run.run_id,
+                      run_offset: String(runsPage.offset),
+                      session_offset: "0",
+                      attempt_offset: "0",
+                      lifecycle_event_offset: "0",
+                      artifact_kind: "all",
+                      artifact_offset: "0",
+                    }) ?? undefined}
                   >
                     Inspect evidence ↗
                   </a>
@@ -214,6 +232,129 @@ export default function RunEvidencePanel({
           lapOrderAssessment={lapOrderAssessment}
         />
       ) : null}
+      {screen === "sessions" && runId ? (
+        <RunArtifactInventoryPanel
+          inventory={artifactInventory}
+          failure={artifactInventoryFailure}
+          offset={artifactOffset}
+          kind={artifactKind}
+          runId={runId}
+          screen={screen}
+          preservedQuery={preservedQuery}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function RunArtifactInventoryPanel({
+  inventory,
+  failure,
+  offset,
+  kind,
+  runId,
+  screen,
+  preservedQuery,
+}: {
+  inventory: ProcessingRunArtifactInventory | null;
+  failure: ObservationRequestFailure | null;
+  offset: number;
+  kind: "all" | ProcessingRunArtifactKind;
+  runId: string;
+  screen: AppScreen;
+  preservedQuery: string;
+}) {
+  const hrefFor = (nextKind: "all" | ProcessingRunArtifactKind, nextOffset: number) =>
+    screenHref(screen, preservedQuery, {
+      run_id: runId,
+      artifact_kind: nextKind,
+      artifact_offset: String(nextOffset),
+    });
+
+  return (
+    <section className="run-artifact-inventory" aria-labelledby="run-artifact-inventory-title">
+      <div className="run-page-heading">
+        <div>
+          <span className="eyebrow">REGISTERED FILES · RUN {runId.slice(0, 12)}</span>
+          <h3 id="run-artifact-inventory-title">Run artifacts</h3>
+          <p>Registered player traces and all-car observation chunks for this exact run. File presence and registration readiness are separate; checksums are not rechecked here.</p>
+        </div>
+        {inventory ? <span>{inventory.total.toLocaleString()} registered</span> : null}
+      </div>
+
+      <nav className="run-artifact-filters" aria-label="Artifact types">
+        {([
+          ["all", "All artifacts"],
+          ["player_trace", "Player traces"],
+          ["car_observation_chunk", "Observation chunks"],
+        ] as const).map(([value, label]) => (
+          <a
+            key={value}
+            className={kind === value ? "active" : undefined}
+            aria-current={kind === value ? "page" : undefined}
+            href={hrefFor(value, 0) ?? undefined}
+          >
+            {label}
+          </a>
+        ))}
+      </nav>
+
+      {!inventory ? (
+        <p className={failure?.kind === "request_failed" ? "run-evidence-empty" : "run-evidence-error"} role="status">
+          {failure?.kind === "request_failed"
+            ? "The run artifact inventory could not be reached. Reload this page to retry."
+            : failure?.reason
+              ? `Run artifact inventory unavailable: ${humanize(failure.reason)}.`
+              : "The run artifact inventory is unavailable."}
+        </p>
+      ) : inventory.total === 0 ? (
+        <p className="run-evidence-empty">No registered {kind === "all" ? "artifacts" : kind === "player_trace" ? "player traces" : "observation chunks"} were found for this run.</p>
+      ) : inventory.items.length === 0 ? (
+        <p className="run-evidence-empty" role="status">
+          This artifact page is beyond the available results. <a href={hrefFor(kind, 0) ?? undefined}>Return to the first page</a>.
+        </p>
+      ) : (
+        <>
+          <ul className="run-link-list run-artifact-list">
+            {inventory.items.map((artifact) => (
+              <li className="run-link-item" key={artifact.artifact_id}>
+                <div>
+                  <strong>
+                    {artifact.artifact_kind === "player_trace" ? "Player trace" : "All-car observation chunk"}
+                    {artifact.session_uid ? ` · session ${artifact.session_uid}` : " · session identity unknown"}
+                  </strong>
+                  <span>
+                    {artifact.artifact_kind === "player_trace"
+                      ? `Attempt ${artifact.attempt_number ?? "unknown"} · car slot ${artifact.car_index ?? "unknown"}`
+                      : `Format ${artifact.packet_format ?? "unknown"} · epoch ${artifact.lifecycle_epoch ?? "unknown"} · chunk ${artifact.chunk_ordinal ?? "unknown"}`}
+                    {` · schema ${artifact.schema_version ?? "unknown"} · ${artifact.row_count === null ? "row count unknown" : `${artifact.row_count.toLocaleString()} rows`}`}
+                  </span>
+                  <small>
+                    Registration {humanize(artifact.registration_readiness)} · file {humanize(artifact.filesystem_availability)}
+                    {artifact.filesystem_reason ? ` (${humanize(artifact.filesystem_reason)})` : ""}
+                    {artifact.observed_size_bytes === null ? " · size unavailable" : ` · ${formatBytes(artifact.observed_size_bytes)}`}
+                    {artifact.stored_sha256 ? ` · stored SHA-256 ${artifact.stored_sha256}` : " · stored SHA-256 unavailable"}
+                    {" · checksum not rechecked"}
+                  </small>
+                  {artifact.metadata_reasons.length ? (
+                    <small>Metadata notes: {artifact.metadata_reasons.map(humanize).join(" · ")}</small>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <PageNavigation
+            label="Run artifacts"
+            offset={offset}
+            limit={inventory.query.limit}
+            total={inventory.total}
+            hrefForOffset={(nextOffset) => hrefFor(kind, nextOffset)}
+          />
+          <p className="run-artifact-observation-note">
+            Registration snapshot {inventory.metadata_snapshot_at_utc} · filesystem metadata observed {inventory.filesystem_observed_at_utc}. These are separate, non-atomic observations.
+          </p>
+        </>
+      )}
     </section>
   );
 }
@@ -291,6 +432,8 @@ function RunDetail({
             "observation_session_uid",
             "observation_car_index",
             "observation_offset",
+            "artifact_kind",
+            "artifact_offset",
           ]) ?? undefined}
         >
           Close details

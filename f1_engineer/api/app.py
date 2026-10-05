@@ -66,6 +66,10 @@ from ..storage.run_summaries import (
     list_processing_run_summaries,
     list_processing_run_lifecycle_events,
 )
+from ..storage.artifacts import (
+    RunArtifactInventoryUnavailable,
+    list_processing_run_artifacts,
+)
 from ..storage.usage import measure_storage_usage
 from ..storage.database import DatabaseSchemaError
 from ..tracks.model import TrackModel
@@ -647,6 +651,40 @@ class RunArchiveFilterValidationError(ValueError):
         self.reason = f"invalid_archive_filter_{field}"
 
 
+class RunArtifactQueryValidationError(ValueError):
+    def __init__(self, field: str) -> None:
+        super().__init__(field)
+        self.reason = f"invalid_processing_run_artifact_{field}"
+
+
+def _run_artifact_query(request: Request) -> tuple[str, int, int]:
+    allowed = {"kind", "limit", "offset"}
+    values: dict[str, str] = {}
+    for key, value in request.query_params.multi_items():
+        if key not in allowed:
+            raise RunArtifactQueryValidationError("query_parameter")
+        if key in values:
+            raise RunArtifactQueryValidationError("repeated_parameter")
+        values[key] = value
+
+    kind = values.get("kind", "all")
+    if kind not in {"all", "player_trace", "car_observation_chunk"}:
+        raise RunArtifactQueryValidationError("kind")
+    raw_limit = values.get("limit", "50")
+    if re.fullmatch(r"[0-9]{1,3}", raw_limit) is None:
+        raise RunArtifactQueryValidationError("limit")
+    limit = int(raw_limit)
+    if not 1 <= limit <= 50:
+        raise RunArtifactQueryValidationError("limit")
+    raw_offset = values.get("offset", "0")
+    if re.fullmatch(r"[0-9]{1,6}", raw_offset) is None:
+        raise RunArtifactQueryValidationError("offset")
+    offset = int(raw_offset)
+    if not 0 <= offset <= 100_000:
+        raise RunArtifactQueryValidationError("offset")
+    return kind, limit, offset
+
+
 def _run_archive_filters(request: Request) -> RunArchiveFilters:
     fields = (
         "q",
@@ -872,6 +910,65 @@ def create_app(
         if result is None:
             return APIResponse[dict[str, Any]](
                 status="unavailable", reason="processing_run_unavailable"
+            )
+        return APIResponse[dict[str, Any]](
+            data=_stringify_session_uids(result)
+        )
+
+    @app.get(
+        "/api/v1/processing-runs/{run_id}/artifacts",
+        response_model=APIResponse[dict[str, Any]],
+    )
+    def processing_run_artifacts(
+        run_id: str, request: Request
+    ) -> APIResponse[dict[str, Any]] | JSONResponse:
+        try:
+            kind, limit, offset = _run_artifact_query(request)
+        except RunArtifactQueryValidationError as exc:
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "api_version": "v1",
+                    "status": "unavailable",
+                    "data": None,
+                    "reason": exc.reason,
+                },
+            )
+        try:
+            result = list_processing_run_artifacts(
+                configured_database_path,
+                run_id,
+                kind=kind,
+                limit=limit,
+                offset=offset,
+            )
+        except RunArtifactInventoryUnavailable as exc:
+            if exc.reason_code == "processing_run_id_invalid":
+                return JSONResponse(
+                    status_code=422,
+                    content={
+                        "api_version": "v1",
+                        "status": "unavailable",
+                        "data": None,
+                        "reason": exc.reason_code,
+                    },
+                )
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason=exc.reason_code
+            )
+        except FileNotFoundError:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="configured_database_unavailable"
+            )
+        if result is None:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "api_version": "v1",
+                    "status": "unavailable",
+                    "data": None,
+                    "reason": "processing_run_unavailable",
+                },
             )
         return APIResponse[dict[str, Any]](
             data=_stringify_session_uids(result)

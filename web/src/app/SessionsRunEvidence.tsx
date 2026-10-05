@@ -2,6 +2,8 @@ import {
   LapAttemptPage,
   CarObservationInventory,
   CarObservationPreview,
+  ProcessingRunArtifactInventory,
+  ProcessingRunArtifactKind,
   ProcessingRunDetail,
   ProcessingRunPage,
   ProcessingRunSummary,
@@ -47,6 +49,8 @@ export default async function SessionsRunEvidence({
   const lifecycleEventOffset = pageOffset(
     firstParam(params.lifecycle_event_offset),
   );
+  const artifactRequest = inspectArtifactRequest(params);
+  const artifactSelectionMatches = singleParam(params.run_id) === runId;
   const archiveFilterRequest =
     screen === "sessions"
       ? inspectArchiveFilterRequest(params, runOffset)
@@ -72,7 +76,7 @@ export default async function SessionsRunEvidence({
   ) {
     appendArchiveFilterParams(runListQuery, archiveFilterRequest.entries);
   }
-  const [runsResponse, detailResponse] = await Promise.all([
+  const [runsResponse, detailResponse, artifactResponse] = await Promise.all([
     archiveFilterRequest?.failure
       ? Promise.resolve(null)
       : requestApi<ProcessingRunPage<ProcessingRunSummary>>(
@@ -83,7 +87,41 @@ export default async function SessionsRunEvidence({
           `/api/v1/processing-runs/${encodeURIComponent(runId)}?${detailQuery}`,
         )
       : Promise.resolve(null),
+    screen === "sessions" && runId && artifactSelectionMatches && !artifactRequest.failure
+      ? requestApi<ProcessingRunArtifactInventory>(
+          `/api/v1/processing-runs/${encodeURIComponent(runId)}/artifacts?${new URLSearchParams({
+            kind: artifactRequest.kind,
+            limit: "50",
+            offset: String(artifactRequest.offset),
+          })}`,
+        )
+      : Promise.resolve(null),
   ]);
+  const artifactInventory =
+    artifactResponse?.status === "ok" &&
+    artifactResponse.data &&
+    isMatchingArtifactInventory(
+      artifactResponse.data,
+      runId,
+      artifactRequest.kind,
+      artifactRequest.offset,
+    )
+      ? artifactResponse.data
+      : null;
+  const artifactInventoryFailure =
+    screen !== "sessions" || !runId
+      ? null
+      : !artifactSelectionMatches
+        ? { kind: "unavailable" as const, reason: "selected_run_identity_repeated" }
+        : artifactRequest.failure
+          ? { kind: "unavailable" as const, reason: artifactRequest.failure }
+          : artifactResponse === null
+            ? { kind: "request_failed" as const, reason: null }
+            : artifactResponse.status !== "ok" || !artifactResponse.data
+              ? { kind: "unavailable" as const, reason: artifactResponse.reason }
+              : artifactInventory === null
+                ? { kind: "unavailable" as const, reason: "processing_run_artifact_response_mismatch" }
+                : null;
   const detail = detailResponse?.status === "ok" ? detailResponse.data : null;
   const lapOrderAssessment = await loadLapOrderAssessment({
     requested: params.assess_lap_order !== undefined,
@@ -206,6 +244,10 @@ export default async function SessionsRunEvidence({
         runsFailure={runsFailure}
         archiveFilterValues={archiveFilterValues}
         detail={detail}
+        artifactInventory={artifactInventory}
+        artifactInventoryFailure={artifactInventoryFailure}
+        artifactOffset={artifactRequest.offset}
+        artifactKind={artifactRequest.kind}
         observationInventory={inventory}
         observationPreview={preview}
         observationSessionUid={observationSessionUid}
@@ -227,6 +269,110 @@ export default async function SessionsRunEvidence({
       />
     </>
   );
+}
+
+type ArtifactRequest = {
+  kind: "all" | ProcessingRunArtifactKind;
+  offset: number;
+  failure: string | null;
+};
+
+function inspectArtifactRequest(params: AppSearchParams): ArtifactRequest {
+  const rawKinds = params.artifact_kind;
+  const kindValues = rawKinds === undefined ? [] : Array.isArray(rawKinds) ? rawKinds : [rawKinds];
+  if (kindValues.length > 1) {
+    return { kind: "all", offset: 0, failure: "invalid_processing_run_artifact_repeated_parameter" };
+  }
+  const kindValue = kindValues[0] ?? "all";
+  if (!["all", "player_trace", "car_observation_chunk"].includes(kindValue)) {
+    return { kind: "all", offset: 0, failure: "invalid_processing_run_artifact_kind" };
+  }
+
+  const rawOffsets = params.artifact_offset;
+  const offsetValues = rawOffsets === undefined ? [] : Array.isArray(rawOffsets) ? rawOffsets : [rawOffsets];
+  if (offsetValues.length > 1) {
+    return { kind: kindValue as ArtifactRequest["kind"], offset: 0, failure: "invalid_processing_run_artifact_repeated_parameter" };
+  }
+  const offsetValue = offsetValues[0];
+  if (offsetValue === undefined) {
+    return { kind: kindValue as ArtifactRequest["kind"], offset: 0, failure: null };
+  }
+  if (!/^(?:0|[1-9][0-9]{0,5})$/.test(offsetValue)) {
+    return { kind: kindValue as ArtifactRequest["kind"], offset: 0, failure: "invalid_processing_run_artifact_offset" };
+  }
+  const offset = Number(offsetValue);
+  if (offset > 100_000) {
+    return { kind: kindValue as ArtifactRequest["kind"], offset: 0, failure: "invalid_processing_run_artifact_offset" };
+  }
+  return { kind: kindValue as ArtifactRequest["kind"], offset, failure: null };
+}
+
+function isMatchingArtifactInventory(
+  value: ProcessingRunArtifactInventory,
+  runId: string | null,
+  kind: ArtifactRequest["kind"],
+  offset: number,
+): boolean {
+  if (!runId || !value || typeof value !== "object") return false;
+  if (
+    value.run_id !== runId ||
+    value.query?.kind !== kind ||
+    value.query?.limit !== 50 ||
+    value.query?.offset !== offset ||
+    !Number.isSafeInteger(value.total) ||
+    value.total < 0 ||
+    !Array.isArray(value.items) ||
+    value.items.length > 50 ||
+    typeof value.has_more !== "boolean"
+  ) {
+    return false;
+  }
+  if (
+    !(value.capture_sha256 === null || /^[a-f0-9]{64}$/.test(value.capture_sha256)) ||
+    !(value.processing_status === null || ["processing", "complete", "failed"].includes(value.processing_status)) ||
+    !Array.isArray(value.run_metadata_reasons) ||
+    value.run_metadata_reasons.length > 8 ||
+    typeof value.metadata_snapshot_at_utc !== "string" ||
+    value.metadata_snapshot_at_utc.length > 40 ||
+    typeof value.filesystem_observed_at_utc !== "string" ||
+    value.filesystem_observed_at_utc.length > 40 ||
+    value.has_more !== (offset + value.items.length < value.total)
+  ) {
+    return false;
+  }
+  return value.items.every((item) => {
+    if (!item || typeof item !== "object") return false;
+    const nullableInteger = (candidate: unknown, minimum = 0, maximum = 2_147_483_647) =>
+      candidate === null ||
+      (Number.isSafeInteger(candidate) && Number(candidate) >= minimum && Number(candidate) <= maximum);
+    const nullableString = (candidate: unknown, maximumLength = 512) =>
+      candidate === null || (typeof candidate === "string" && candidate.length <= maximumLength);
+    return (
+      item.run_id === runId &&
+      /^[a-f0-9]{64}$/.test(item.artifact_id) &&
+      ["player_trace", "car_observation_chunk"].includes(item.artifact_kind) &&
+      (kind === "all" || item.artifact_kind === kind) &&
+      nullableString(item.session_uid, 20) &&
+      nullableString(item.attempt_key) &&
+      nullableInteger(item.attempt_number, 1) &&
+      nullableInteger(item.car_index, 0, 23) &&
+      nullableInteger(item.packet_format, 1, 65_535) &&
+      nullableInteger(item.lifecycle_epoch) &&
+      nullableInteger(item.chunk_ordinal) &&
+      nullableInteger(item.schema_version, 1, 65_535) &&
+      nullableInteger(item.row_count) &&
+      (item.stored_sha256 === null || /^[a-f0-9]{64}$/.test(item.stored_sha256)) &&
+      ["ready", "not_ready", "unknown"].includes(item.registration_readiness) &&
+      ["present", "missing", "unavailable"].includes(item.filesystem_availability) &&
+      nullableString(item.filesystem_reason, 128) &&
+      (item.observed_size_bytes === null ||
+        (Number.isSafeInteger(item.observed_size_bytes) && item.observed_size_bytes >= 0)) &&
+      item.checksum_verification === "not_performed" &&
+      Array.isArray(item.metadata_reasons) &&
+      item.metadata_reasons.length <= 16 &&
+      item.metadata_reasons.every((reason) => typeof reason === "string" && reason.length <= 128)
+    );
+  });
 }
 
 const archiveFilterKeys = [

@@ -4903,6 +4903,58 @@ h1 span {
   border: 1px solid #2b3735;
   background: rgba(10, 15, 14, 0.52);
 }
+.run-artifact-inventory {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #2b3735;
+  background: rgba(10, 15, 14, 0.52);
+}
+.run-artifact-inventory .run-page-heading {
+  align-items: flex-start;
+}
+.run-artifact-inventory .run-page-heading h3 {
+  margin: 4px 0 0;
+  color: #dce9e4;
+  font-size: 13px;
+}
+.run-artifact-inventory .run-page-heading p {
+  max-width: 760px;
+  margin-top: 5px;
+  line-height: 1.6;
+}
+.run-artifact-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid #283330;
+}
+.run-artifact-filters a {
+  color: #899590;
+  font: 8px var(--font-mono);
+  text-decoration: none;
+}
+.run-artifact-filters a:hover,
+.run-artifact-filters a.active {
+  color: #e4a11b;
+}
+.run-artifact-list {
+  margin-top: 0;
+}
+.run-artifact-list .run-link-item {
+  align-items: flex-start;
+}
+.run-artifact-list .run-link-item small {
+  overflow-wrap: anywhere;
+  color: #82908a;
+  font: 8px/1.6 var(--font-mono);
+}
+.run-artifact-observation-note {
+  margin: 10px 0 0;
+  color: #77837e;
+  font: 8px/1.5 var(--font-mono);
+}
 .run-detail-heading {
   align-items: center;
   padding-bottom: 13px;

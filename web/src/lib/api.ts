@@ -1047,6 +1047,49 @@ export interface ProcessingRunDetail {
   lifecycle_events: ProcessingRunPage<ProcessingRunLifecycleEvent>;
 }
 
+export type ProcessingRunArtifactKind =
+  | "player_trace"
+  | "car_observation_chunk";
+
+export interface ProcessingRunArtifact {
+  artifact_id: string;
+  artifact_kind: ProcessingRunArtifactKind;
+  run_id: string;
+  session_uid: string | null;
+  attempt_key: string | null;
+  attempt_number: number | null;
+  car_index: number | null;
+  packet_format: number | null;
+  lifecycle_epoch: number | null;
+  chunk_ordinal: number | null;
+  schema_version: number | null;
+  row_count: number | null;
+  stored_sha256: string | null;
+  registration_readiness: "ready" | "not_ready" | "unknown";
+  filesystem_availability: "present" | "missing" | "unavailable";
+  filesystem_reason: string | null;
+  observed_size_bytes: number | null;
+  checksum_verification: "not_performed";
+  metadata_reasons: string[];
+}
+
+export interface ProcessingRunArtifactInventory {
+  run_id: string;
+  capture_sha256: string | null;
+  processing_status: "processing" | "complete" | "failed" | null;
+  run_metadata_reasons: string[];
+  query: {
+    kind: "all" | ProcessingRunArtifactKind;
+    limit: number;
+    offset: number;
+  };
+  total: number;
+  items: ProcessingRunArtifact[];
+  has_more: boolean;
+  metadata_snapshot_at_utc: string;
+  filesystem_observed_at_utc: string;
+}
+
 export interface CarObservationSlot {
   car_index: number;
   observation_count: number;
