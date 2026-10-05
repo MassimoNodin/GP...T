@@ -24,6 +24,7 @@ import {
   LiveLapTimingPanel,
   LiveTelemetryPanel,
 } from "./RecordingControls";
+import LiveTelemetryChart from "./LiveTelemetryChart";
 
 type Status = "ready" | "unavailable" | "replaced" | "error" | "unselected" | "invalid";
 type MonitorRecord =
@@ -218,6 +219,22 @@ export default function LiveTelemetryView({
                   />
                 ) : null}
               </MonitorGroup>
+              {snapshot.live_telemetry ? (
+                <div className="live-monitor-group">
+                  <LiveTelemetryChart
+                    key={[
+                      snapshot.source,
+                      snapshot.operation_id,
+                      snapshot.live_telemetry.source_epoch ?? "missing-epoch",
+                      snapshot.live_telemetry.session_uid ?? "missing-session",
+                      snapshot.live_telemetry.packet_format ?? "missing-format",
+                      snapshot.live_telemetry.player_car_index ?? "missing-player",
+                    ].join(":")}
+                    telemetry={snapshot.live_telemetry}
+                    sourceState={snapshot.state}
+                  />
+                </div>
+              ) : null}
               <MonitorGroup
                 title="Car status"
                 telemetry={snapshot.live_car_status}

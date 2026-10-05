@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
+from uuid import uuid4
 from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
@@ -165,6 +167,7 @@ class AcquisitionObserver:
         self._live_reason: str | None = None
         self._live_snapshot: dict[str, object] | None = None
         self._live_received_monotonic_ns: int | None = None
+        self._live_source_epoch = uuid4().hex
         self._live_session_uid: int | None = None
         self._live_packet_format: PacketFormat | None = None
         self._live_player_index: int | None = None
@@ -333,6 +336,8 @@ class AcquisitionObserver:
             "status": status,
             "reason": self._live_reason,
             "age_ms": age_ms,
+            "source_epoch": self._live_source_epoch,
+            "session_time_s": None,
         }
         if self._live_snapshot is not None:
             snapshot.update(self._live_snapshot)
@@ -543,6 +548,7 @@ class AcquisitionObserver:
         return snapshot
 
     def _reset_live_monitor(self) -> None:
+        self._live_source_epoch = uuid4().hex
         self._live_status = "waiting"
         self._live_reason = None
         self._live_snapshot = None
@@ -944,6 +950,9 @@ class AcquisitionObserver:
                 "frame_identifier": frame.overall_frame_identifier,
                 "packet_format": int(packet.packet_format),
                 "player_car_index": car_index,
+                "session_time_s": _live_chart_source_time(
+                    packet.header.session_time
+                ),
                 "lap_number": car.current_lap_number if car.current_lap_number > 0 else None,
                 "lap_time_ms": car.current_lap_time_ms,
                 "game_invalid": car.current_lap_invalid_id != 0,
@@ -1911,6 +1920,7 @@ class AcquisitionObserver:
             "frame_identifier": frame.overall_frame_identifier,
             "packet_format": int(frame.packets[-1].packet_format),
             "player_car_index": player_index,
+            "session_time_s": None,
             "lap_number": None,
             "lap_time_ms": None,
             "game_invalid": None,
@@ -1928,6 +1938,7 @@ class AcquisitionObserver:
         }
 
     def _clear_live_sample(self) -> None:
+        self._live_source_epoch = uuid4().hex
         self._live_status = "waiting"
         self._live_reason = None
         self._live_snapshot = None
@@ -2367,6 +2378,12 @@ def _live_channel(
     value: object, validation_flags: tuple[str, ...], channel: str
 ) -> object | None:
     return None if f"invalid_{channel}" in validation_flags else value
+
+
+def _live_chart_source_time(value: float) -> float | None:
+    if not math.isfinite(value) or value < 0 or value > 86_400:
+        return None
+    return value
 
 
 def _reported_positive_ms(value: int) -> int | None:

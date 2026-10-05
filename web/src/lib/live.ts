@@ -98,11 +98,11 @@ export function readPinnedLiveCurrent(
     context: isRecord(contextValue)
       ? (contextValue as SessionContext)
       : null,
-    live_telemetry: readMonitor(
+    live_telemetry: readLiveTelemetryMonitor(
       source === "recording"
         ? progress?.live_telemetry
         : data.live_telemetry,
-    ) as LiveTelemetryRecord | null,
+    ),
     live_car_status: readMonitor(
       source === "recording"
         ? progress?.live_car_status
@@ -368,6 +368,48 @@ export function readMotionMonitor(value: unknown): LiveMotionRecord | null {
   };
 }
 
+export function readLiveTelemetryMonitor(value: unknown): LiveTelemetryRecord | null {
+  const monitor = readMonitor(value);
+  if (!monitor || !isRecord(value)) return null;
+  return {
+    ...(monitor as LiveTelemetryRecord),
+    source_epoch:
+      typeof value.source_epoch === "string" && value.source_epoch.length <= 64
+        ? value.source_epoch
+        : null,
+    session_uid:
+      typeof value.session_uid === "string" && /^\d{1,20}$/.test(value.session_uid)
+        ? value.session_uid
+        : null,
+    frame_identifier:
+      Number.isSafeInteger(value.frame_identifier) &&
+      (value.frame_identifier as number) >= 0 &&
+      (value.frame_identifier as number) <= 0xffff_ffff
+        ? (value.frame_identifier as number)
+        : null,
+    packet_format:
+      value.packet_format === 2025 || value.packet_format === 2026
+        ? value.packet_format
+        : null,
+    player_car_index:
+      Number.isSafeInteger(value.player_car_index) &&
+      (value.player_car_index as number) >= 0 &&
+      (value.player_car_index as number) <= 23
+        ? (value.player_car_index as number)
+        : null,
+    session_time_s:
+      typeof value.session_time_s === "number" &&
+      Number.isFinite(value.session_time_s) &&
+      value.session_time_s >= 0 &&
+      value.session_time_s <= 86_400
+        ? value.session_time_s
+        : null,
+    speed_kph: rangedNumber(value.speed_kph, 0, 500),
+    throttle: rangedNumber(value.throttle, 0, 1),
+    brake: rangedNumber(value.brake, 0, 1),
+  };
+}
+
 function percentArray(value: unknown, integer: boolean): readonly (number | null)[] | null {
   if (!Array.isArray(value) || value.length !== 4) return null;
   return value.map((item) => percent(item, integer));
@@ -414,6 +456,15 @@ function vector3(value: unknown): readonly [number, number, number] | null {
 
 function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function rangedNumber(value: unknown, min: number, max: number): number | null {
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= min &&
+    value <= max
+    ? value
+    : null;
 }
 
 function readMonitor(value: unknown):

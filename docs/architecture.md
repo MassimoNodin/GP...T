@@ -1099,6 +1099,20 @@ Do not add maps, trails, interpolation, geometry projection, jump detection, ori
 
 **Rationale:** Motion v1 already decodes world-position and world-velocity vectors for both supported formats. A separately aged selected-player monitor exposes those source values without requiring a lap join or implying a validated track map or inferred driving fact.
 
+## Decision 0072: render bounded browser-observed live telemetry
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Add speed, throttle, and brake charts to pinned `/live`, using only the existing selected-player `live_telemetry` snapshot and 500 ms poller. Each point must retain the selected Lap Data packet's source session time and pass the same session, format, player, frame, and freshness checks as the monitor. Add an opaque `source_epoch` to every live telemetry response, including waiting and unavailable states. Rotate it whenever live telemetry continuity resets through session, format, selected-player, ambiguity, explicit flashback, synthetic session-time rewind, or unknown-event quarantine. This lets the browser detect a reset that begins and recovers between polls.
+
+Keep chart history in component memory on `/live`, capped at 120 distinct admitted observations and the most recent 60 seconds of source session time. Deduplicate by source epoch and serial frame order, including frame wrap. Repeated polls, stale observations, paused replay snapshots, invalid identity, invalid age, and invalid channel values do not add points. A source-time regression clears history and waits for a later monotonic sample. Operation, epoch, session, format, player, request-failure, replacement, unmount, and terminal boundaries clear it. Missing new continuity metadata disables the chart without suppressing existing monitor fields.
+
+Render speed in km/h and throttle/brake in percent as separate observed dots without connecting lines. Label the chart as browser-observed, disclose the approximate polling cadence and skipped acquisition frames, and use source session time on the horizontal axis, including accelerated replay. Browser polling history is a presentation sample, not a complete capture trace. Add no server-side chart buffer, persistence, importer fields, interpolation, lap selection, derived metrics, or coaching authority.
+
+**Rationale:** source telemetry is already bounded and freshness-checked, but the live screen has no trend view. A small browser-only sample window avoids another acquisition history while an opaque continuity epoch prevents the display from silently crossing resets it may not observe directly.
+
 ## Data flow
 
 ```text

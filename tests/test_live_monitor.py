@@ -489,6 +489,7 @@ def _publish_frame(
     lap_number: int = 3,
     current_lap_time_ms: int = 34_567,
     last_lap_time_ms: int = 0,
+    session_time_s: float = 12.0,
     sector1_time_ms: int = 12_345,
     sector2_time_ms: int = 45_678,
     sector_id: int = 0,
@@ -523,7 +524,7 @@ def _publish_frame(
             frame=frame,
             lap_number=lap_number,
             distance_m=120.0,
-            session_time=12.0,
+            session_time=session_time_s,
             current_lap_time_ms=current_lap_time_ms,
             last_lap_time_ms=last_lap_time_ms,
             sector1_time_ms=sector1_time_ms,
@@ -592,6 +593,55 @@ def test_live_monitor_joins_reordered_player_packets_and_uses_canonical_values()
     assert live["tyre_inner_temperature_c"] == [0, 0, 0, 0]
     assert live["throttle"] == 0
     assert live["brake"] == 0
+
+
+def test_live_chart_source_epoch_and_session_time_follow_telemetry_boundaries():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    waiting = observer.live_telemetry_snapshot()
+    assert isinstance(waiting["source_epoch"], str)
+    assert waiting["session_time_s"] is None
+
+    _publish_frame(observer, frame=100)
+    fresh = observer.live_telemetry_snapshot()
+    assert fresh["status"] == "fresh"
+    assert fresh["source_epoch"] != waiting["source_epoch"]
+    assert fresh["session_time_s"] == 12.0
+
+    _process(
+        observer,
+        _flashback_packet(frame=102, sequence=20, session_time=12.1, target_time=5.0),
+    )
+    _process(observer, _advance(103, 21))
+    rewound = observer.live_telemetry_snapshot()
+    assert rewound["status"] == "unavailable"
+    assert rewound["source_epoch"] != fresh["source_epoch"]
+
+    _publish_frame(observer, frame=104, sequence=30)
+    recovered = observer.live_telemetry_snapshot()
+    assert recovered["status"] == "fresh"
+    assert recovered["source_epoch"] == rewound["source_epoch"]
+    assert recovered["session_time_s"] == 12.0
+
+    previous_epoch = recovered["source_epoch"]
+    _publish_frame(observer, frame=106, sequence=40, player_car_index=1)
+    changed_player = observer.live_telemetry_snapshot()
+    assert changed_player["status"] == "fresh"
+    assert changed_player["source_epoch"] != previous_epoch
+    assert changed_player["player_car_index"] == 1
+
+
+def test_invalid_live_chart_source_time_does_not_invalidate_other_telemetry():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(observer, frame=10, session_time_s=86_401.0)
+
+    live = observer.live_telemetry_snapshot()
+
+    assert live["status"] == "fresh"
+    assert live["session_time_s"] is None
+    assert live["speed_kph"] == 100
+    LiveTelemetryRecord.model_validate(
+        {key: value for key, value in live.items() if not key.startswith("_")}
+    )
 
 
 def test_live_monitor_uses_replay_delivery_clock_without_changing_source_datagrams():

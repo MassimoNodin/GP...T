@@ -98,10 +98,12 @@ export interface LiveTelemetryRecord {
   status: "waiting" | "fresh" | "stale" | "unsupported" | "unavailable";
   reason: string | null;
   age_ms: number | null;
+  source_epoch?: string | null;
   session_uid?: string | null;
   frame_identifier?: number | null;
   packet_format?: number | null;
   player_car_index?: number | null;
+  session_time_s?: number | null;
   lap_number?: number | null;
   lap_time_ms?: number | null;
   game_invalid?: boolean | null;

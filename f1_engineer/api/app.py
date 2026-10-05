@@ -198,10 +198,12 @@ class LiveTelemetryRecord(BaseModel):
     status: Literal["waiting", "fresh", "stale", "unsupported", "unavailable"]
     reason: str | None
     age_ms: int | None
+    source_epoch: str | None = Field(default=None, max_length=64)
     session_uid: str | None = None
     frame_identifier: int | None = None
     packet_format: int | None = None
     player_car_index: int | None = None
+    session_time_s: float | None = Field(default=None, ge=0, le=86_400)
     lap_number: int | None = None
     lap_time_ms: int | None = None
     game_invalid: bool | None = None
