@@ -175,6 +175,10 @@ export interface ReplayRecord {
   state:
     | "starting"
     | "playing"
+    | "pausing"
+    | "paused"
+    | "resuming"
+    | "stepping"
     | "stopping"
     | "stopped"
     | "completed"

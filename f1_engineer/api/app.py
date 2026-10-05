@@ -61,6 +61,12 @@ from .import_controller import ImportController
 from .replay_controller import ReplayController
 from .recording_controller import RecordingController
 
+REPLAY_CONTROL_CONFLICT_REASONS = {
+    "replay_not_playing",
+    "replay_not_paused",
+    "replay_step_in_progress",
+}
+
 
 PayloadT = TypeVar("PayloadT")
 
@@ -266,7 +272,18 @@ class ReplayRecord(BaseModel):
     capture_id: str
     capture_name: str
     speed: float
-    state: Literal["starting", "playing", "stopping", "stopped", "completed", "failed"]
+    state: Literal[
+        "starting",
+        "playing",
+        "pausing",
+        "paused",
+        "resuming",
+        "stepping",
+        "stopping",
+        "stopped",
+        "completed",
+        "failed",
+    ]
     elapsed_ms: int
     datagrams_delivered: int
     capture_complete: bool | None
@@ -832,6 +849,81 @@ def create_app(
         except ValueError as exc:
             reason = str(exc)
             status_code = 404 if reason == "playback_unavailable" else 503
+            return _api_error(status_code, reason)
+        return APIResponse[ReplayRecord](data=playback)
+
+    @app.post(
+        "/api/v1/replays/{playback_id}/pause",
+        response_model=APIResponse[ReplayRecord],
+        status_code=202,
+    )
+    def pause_replay(
+        playback_id: str,
+        authorization: str | None = Header(default=None),
+    ) -> APIResponse[ReplayRecord] | JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "replay_control_not_authorized")
+        try:
+            playback = replay_controller.pause_replay(playback_id)
+        except ValueError as exc:
+            reason = str(exc)
+            status_code = (
+                404
+                if reason == "playback_unavailable"
+                else 409
+                if reason in REPLAY_CONTROL_CONFLICT_REASONS
+                else 503
+            )
+            return _api_error(status_code, reason)
+        return APIResponse[ReplayRecord](data=playback)
+
+    @app.post(
+        "/api/v1/replays/{playback_id}/resume",
+        response_model=APIResponse[ReplayRecord],
+        status_code=202,
+    )
+    def resume_replay(
+        playback_id: str,
+        authorization: str | None = Header(default=None),
+    ) -> APIResponse[ReplayRecord] | JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "replay_control_not_authorized")
+        try:
+            playback = replay_controller.resume_replay(playback_id)
+        except ValueError as exc:
+            reason = str(exc)
+            status_code = (
+                404
+                if reason == "playback_unavailable"
+                else 409
+                if reason in REPLAY_CONTROL_CONFLICT_REASONS
+                else 503
+            )
+            return _api_error(status_code, reason)
+        return APIResponse[ReplayRecord](data=playback)
+
+    @app.post(
+        "/api/v1/replays/{playback_id}/step",
+        response_model=APIResponse[ReplayRecord],
+        status_code=202,
+    )
+    def step_replay(
+        playback_id: str,
+        authorization: str | None = Header(default=None),
+    ) -> APIResponse[ReplayRecord] | JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "replay_control_not_authorized")
+        try:
+            playback = replay_controller.step_replay(playback_id)
+        except ValueError as exc:
+            reason = str(exc)
+            status_code = (
+                404
+                if reason == "playback_unavailable"
+                else 409
+                if reason in REPLAY_CONTROL_CONFLICT_REASONS
+                else 503
+            )
             return _api_error(status_code, reason)
         return APIResponse[ReplayRecord](data=playback)
 

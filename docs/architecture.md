@@ -858,6 +858,24 @@ Keep the report evidence-only. Participant IDs, names, team IDs, `My Team`, and 
 
 **Rationale:** The current `driver_snapshots` are keyed by overall-frame identifier and are decoded before assembled-frame admission. They cannot safely describe which reported participant fields applied at a lap boundary across 32-bit frame wrap, reordered/late packets, player/format changes, or lifecycle epochs. A separate admitted timeline supports honest diagnostics and prepares later cross-session comparison without claiming more identity or vehicle compatibility than the game reports.
 
+## Decision 0058: add paused diagnostic replay and single-packet stepping
+
+**Status:** accepted
+
+**Date:** 2026-10-05
+
+Start app-managed diagnostic replay paused. Add Pause, Resume, and Step one packet controls through the existing local API and dashboard. Reuse the catalog-only `ReplaySource`, bounded acquisition observer, and shared local operation reservation. Keep speed fixed for the playback lifetime.
+
+Pause becomes effective only after the replay worker has reached a delivery boundary and acknowledges `paused`; packets delivered before that acknowledgement may finish processing. Retain at most the one raw datagram already read by the source while paused. A step is accepted only after pause acknowledgement and releases exactly one source datagram in capture order; the worker then returns to paused before another packet can be delivered. Do not accumulate step requests. A stepped packet advances the virtual replay clock to its source-relative delivery position. Resume shifts the replay clock by the paused duration so the source does not catch up against wall time or emit a pause backlog. Capture timestamps, source monotonic timestamps, sequence numbers, payload bytes, and game-frame evidence remain unchanged. Monitor freshness continues to age against runtime monotonic time while paused.
+
+Represent `pausing` and `stepping` as active transient states. Keep pause, resume, and step commands idempotent only where repeating the same settled state is safe; reject a second pending step. Stop remains prompt from every active state, including paused, and the operation reservation remains held until the reader and worker close. Playback is still ephemeral and never resumes after API restart.
+
+Expose no seek, frame stepping, capture rewrite, database migration, import, comparison, reference, analysis, or coaching behavior. Preserve the existing replay-speed set and diagnostic-only mode policies.
+
+Acceptance covers initially paused state with zero delivery, pause acknowledgement during pacing, stable delivery count after acknowledgement, exact single-packet steps, source ordering, paused-time exclusion from pacing, monitor freshness aging, duplicate/concurrent commands, EOF, malformed packets, session/rewind transitions, prompt Stop and reservation release. Exercise Melbourne and recovered Shanghai from the dashboard, retaining their source invalidity and incomplete-capture/lifecycle warnings; all supported modes remain diagnostic. Clean eligible Time Trial laps and independently reviewed real regions remain separate coaching-validation gates.
+
+**Rationale:** The plan explicitly requires deterministic replay and packet stepping. Paused, acknowledged controls make the existing captures easier to inspect while retaining their original timing and evidence provenance. The controls improve validation workflow without expanding analysis or coaching authority.
+
 ## Data flow
 
 ```text

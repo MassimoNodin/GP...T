@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import concurrent.futures
 import logging
 import math
 import threading
@@ -23,7 +24,15 @@ from .import_controller import ImportController
 
 logger = logging.getLogger(__name__)
 ALLOWED_REPLAY_SPEEDS = (0.5, 1.0, 2.0, 4.0)
-ACTIVE_REPLAY_STATES = {"starting", "playing", "stopping"}
+ACTIVE_REPLAY_STATES = {
+    "starting",
+    "playing",
+    "pausing",
+    "paused",
+    "resuming",
+    "stepping",
+    "stopping",
+}
 
 
 class ReplayController:
@@ -42,6 +51,7 @@ class ReplayController:
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task[Any] | None = None
+        self._source: ReplaySource | None = None
         self._playback_id: str | None = None
         self._snapshot: dict[str, Any] | None = None
         self._stop_requested = False
@@ -157,6 +167,102 @@ class ReplayController:
                 loop.call_soon_threadsafe(task.cancel)
         return self.current() or {}
 
+    def pause_replay(self, playback_id: str) -> dict[str, Any]:
+        return self._control_replay(playback_id, "pause")
+
+    def resume_replay(self, playback_id: str) -> dict[str, Any]:
+        return self._control_replay(playback_id, "resume")
+
+    def step_replay(self, playback_id: str) -> dict[str, Any]:
+        return self._control_replay(playback_id, "step")
+
+    def _control_replay(self, playback_id: str, action: str) -> dict[str, Any]:
+        self._ensure_ready()
+        with self._lock:
+            if playback_id != self._playback_id or self._snapshot is None:
+                raise ValueError("playback_unavailable")
+            state = self._snapshot.get("state")
+            if state not in ACTIVE_REPLAY_STATES:
+                raise ValueError("playback_unavailable")
+
+            if action == "pause":
+                if state in {"paused", "pausing"}:
+                    return self.current() or {}
+                if state != "playing":
+                    raise ValueError("replay_not_playing")
+                transitional_state = "pausing"
+            elif action == "resume":
+                if state in {"playing", "resuming"}:
+                    return self.current() or {}
+                if state != "paused":
+                    raise ValueError("replay_not_paused")
+                transitional_state = "resuming"
+            elif action == "step":
+                if state == "stepping":
+                    raise ValueError("replay_step_in_progress")
+                if state != "paused":
+                    raise ValueError("replay_not_paused")
+                transitional_state = "stepping"
+            else:
+                raise ValueError("replay_control_unsupported")
+
+            loop = self._loop
+            source = self._source
+            if loop is None or source is None:
+                raise ValueError("replay_not_ready")
+            self._snapshot["state"] = transitional_state
+
+        async def apply_control() -> None:
+            with self._lock:
+                if self._playback_id != playback_id or self._stop_requested:
+                    raise ValueError("playback_unavailable")
+            await getattr(source, action)()
+
+        control_coro = apply_control()
+        try:
+            future = asyncio.run_coroutine_threadsafe(control_coro, loop)
+        except RuntimeError as exc:
+            control_coro.close()
+            with self._lock:
+                if (
+                    self._playback_id == playback_id
+                    and self._snapshot is not None
+                    and self._snapshot.get("state") == transitional_state
+                ):
+                    self._snapshot["state"] = state
+            raise ValueError("replay_controller_unavailable") from exc
+        try:
+            future.result(timeout=2.0)
+        except ValueError:
+            with self._lock:
+                if (
+                    self._playback_id == playback_id
+                    and self._snapshot is not None
+                    and self._snapshot.get("state") == transitional_state
+                ):
+                    self._snapshot["state"] = state
+            raise
+        except TimeoutError as exc:
+            future.cancel()
+            with self._lock:
+                if (
+                    self._playback_id == playback_id
+                    and self._snapshot is not None
+                    and self._snapshot.get("state") == transitional_state
+                ):
+                    self._snapshot["state"] = state
+            raise ValueError("replay_controller_unavailable") from exc
+        except concurrent.futures.CancelledError as exc:
+            with self._lock:
+                if (
+                    self._playback_id == playback_id
+                    and self._snapshot is not None
+                    and self._snapshot.get("state") == transitional_state
+                ):
+                    self._snapshot["state"] = state
+            raise ValueError("replay_controller_unavailable") from exc
+        return self.current() or {}
+
     def current(self) -> dict[str, Any] | None:
         self._ensure_ready()
         with self._lock:
@@ -206,7 +312,6 @@ class ReplayController:
         speed: float,
     ) -> None:
         observer = AcquisitionObserver()
-        source = ReplaySource(source_path, speed=speed)
         started_ns = time.monotonic_ns()
         delivered = 0
         latest_context: dict[str, object] | None = None
@@ -215,6 +320,7 @@ class ReplayController:
         source_stable: bool | None = None
         eof = False
         last_publish_ns = 0
+        source: ReplaySource | None = None
 
         def publish(current_state: str) -> None:
             nonlocal latest_context
@@ -231,8 +337,12 @@ class ReplayController:
                 "state": current_state,
                 "elapsed_ms": max(0, (time.monotonic_ns() - started_ns) // 1_000_000),
                 "datagrams_delivered": delivered,
-                "capture_complete": source.complete if eof else None,
-                "capture_completion": copy.deepcopy(source.completion) if eof else None,
+                "capture_complete": source.complete if eof and source is not None else None,
+                "capture_completion": (
+                    copy.deepcopy(source.completion)
+                    if eof and source is not None
+                    else None
+                ),
                 "source_stable": source_stable,
                 "latest_context": latest_context,
                 "live_telemetry": observer.live_telemetry_snapshot(),
@@ -244,10 +354,23 @@ class ReplayController:
             }
             with self._lock:
                 if self._playback_id == playback_id:
+                    if (
+                        self._stop_requested
+                        and current_state not in {"stopped", "failed"}
+                    ):
+                        if current_state == "completed":
+                            snapshot["state"] = "stopped"
+                        else:
+                            return
                     self._snapshot = snapshot
 
+        def on_control_state(current_state: str) -> None:
+            nonlocal state
+            state = current_state
+            publish(current_state)
+
         async def run() -> None:
-            nonlocal delivered, latest_context, state, failure_reason, source_stable, eof, last_publish_ns
+            nonlocal delivered, latest_context, state, failure_reason, source_stable, eof, last_publish_ns, source
             loop = asyncio.get_running_loop()
             task = asyncio.current_task()
             stop_before_start = False
@@ -263,8 +386,15 @@ class ReplayController:
                     return
                 if _file_identity(source_path) != expected_identity:
                     raise ValueError("capture_changed_before_replay")
-                state = "playing"
-                publish(state)
+                source = ReplaySource(
+                    source_path,
+                    speed=speed,
+                    start_paused=True,
+                    on_control_state=on_control_state,
+                )
+                with self._lock:
+                    if self._playback_id == playback_id:
+                        self._source = source
                 iterator = source.packets()
                 try:
                     async for raw in iterator:
@@ -273,7 +403,7 @@ class ReplayController:
                         delivered += 1
                         latest_context = observer.latest_context
                         if delivered == 1 or delivered % 256 == 0 or delivery_ns - last_publish_ns >= 100_000_000:
-                            publish("playing")
+                            publish(state)
                             last_publish_ns = delivery_ns
                         # Provide cancellation points even when the requested
                         # playback speed is faster than packet processing.
@@ -328,6 +458,7 @@ class ReplayController:
                 if self._playback_id == playback_id:
                     self._loop = None
                     self._task = None
+                    self._source = None
                     self._thread = None
                     self._stop_requested = False
                     self._cancel_sent = False

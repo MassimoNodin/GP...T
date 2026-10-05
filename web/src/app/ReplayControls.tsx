@@ -1,19 +1,37 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { ApiResponse, RecordingSourceRecord, ReplayRecord } from "@/lib/api";
+import type {
+  ApiResponse,
+  RecordingSourceRecord,
+  ReplayRecord,
+} from "@/lib/api";
 import {
   LiveCarStatusPanel,
   LiveLapTimingPanel,
   LiveTelemetryPanel,
 } from "./RecordingControls";
 
-const activeStates = new Set(["starting", "playing", "stopping"]);
+const activeStates = new Set([
+  "starting",
+  "playing",
+  "pausing",
+  "paused",
+  "resuming",
+  "stepping",
+  "stopping",
+]);
 const replaySpeeds = [0.5, 1, 2, 4];
 
-export default function ReplayControls({ sources }: { sources: RecordingSourceRecord[] }) {
+export default function ReplayControls({
+  sources,
+}: {
+  sources: RecordingSourceRecord[];
+}) {
   const availableSources = sources.filter((source) => source.available);
-  const [captureId, setCaptureId] = useState(availableSources[0]?.capture_id ?? "");
+  const [captureId, setCaptureId] = useState(
+    availableSources[0]?.capture_id ?? "",
+  );
   const [speed, setSpeed] = useState(1);
   const [playback, setPlayback] = useState<ReplayRecord | null>(null);
   const [busy, setBusy] = useState(false);
@@ -80,7 +98,8 @@ export default function ReplayControls({ sources }: { sources: RecordingSourceRe
         body: JSON.stringify({ capture_id: captureId, speed }),
       });
       const body = (await response.json()) as ApiResponse<ReplayRecord>;
-      if (!response.ok || !body.data) throw new Error(body.reason ?? "replay_start_failed");
+      if (!response.ok || !body.data)
+        throw new Error(body.reason ?? "replay_start_failed");
       setPlayback(body.data);
     } catch (caught) {
       setError(replayError(caught));
@@ -94,11 +113,38 @@ export default function ReplayControls({ sources }: { sources: RecordingSourceRe
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(`/api/replays/${playback.playback_id}/stop`, {
-        method: "POST",
-      });
+      const response = await fetch(
+        `/api/replays/${playback.playback_id}/stop`,
+        {
+          method: "POST",
+        },
+      );
       const body = (await response.json()) as ApiResponse<ReplayRecord>;
-      if (!response.ok || !body.data) throw new Error(body.reason ?? "replay_stop_failed");
+      if (!response.ok || !body.data)
+        throw new Error(body.reason ?? "replay_stop_failed");
+      setPlayback(body.data);
+    } catch (caught) {
+      setError(replayError(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function control(action: "pause" | "resume" | "step") {
+    if (!playback) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/replays/${playback.playback_id}/${action}`,
+        {
+          method: "POST",
+        },
+      );
+      const body = (await response.json()) as ApiResponse<ReplayRecord>;
+      if (!response.ok || !body.data) {
+        throw new Error(body.reason ?? `replay_${action}_failed`);
+      }
       setPlayback(body.data);
     } catch (caught) {
       setError(replayError(caught));
@@ -111,21 +157,36 @@ export default function ReplayControls({ sources }: { sources: RecordingSourceRe
     <section className="replay-controls" aria-label="Diagnostic capture replay">
       <div className="replay-control-copy">
         <div className="recording-state-line">
-          <span className={`recording-light ${active ? "recording-light-active" : ""}`} />
-          <strong aria-live="polite">{playback ? replayStatus(playback.state) : "Diagnostic replay"}</strong>
-          {playback && <span className="recording-port">{playback.speed}×</span>}
+          <span
+            className={`recording-light ${active ? "recording-light-active" : ""}`}
+          />
+          <strong aria-live="polite">
+            {playback ? replayStatus(playback.state) : "Diagnostic replay"}
+          </strong>
+          {playback && (
+            <span className="recording-port">{playback.speed}×</span>
+          )}
         </div>
-        <p>{playback ? replayDescription(playback) : "Replay a catalog capture through the live monitors without starting the game or creating a new recording."}</p>
+        <p>
+          {playback
+            ? replayDescription(playback)
+            : "Replay a catalog capture through the live monitors without starting the game or creating a new recording."}
+        </p>
         {playback && (
           <div className="recording-metrics">
             <span>{formatDuration(playback.elapsed_ms)}</span>
-            <span>{playback.datagrams_delivered.toLocaleString()} packets delivered</span>
+            <span>
+              {playback.datagrams_delivered.toLocaleString()} packets delivered
+            </span>
             {playback.state === "completed" && (
               <span>
-                source footer {playback.capture_complete ? "complete" : "incomplete"}
+                source footer{" "}
+                {playback.capture_complete ? "complete" : "incomplete"}
               </span>
             )}
-            {playback.source_stable === false && <span>source changed while reading</span>}
+            {playback.source_stable === false && (
+              <span>source changed while reading</span>
+            )}
           </div>
         )}
       </div>
@@ -155,19 +216,56 @@ export default function ReplayControls({ sources }: { sources: RecordingSourceRe
             aria-label="Replay speed"
           >
             {replaySpeeds.map((value) => (
-              <option key={value} value={value}>{value}×</option>
+              <option key={value} value={value}>
+                {value}×
+              </option>
             ))}
           </select>
         </label>
         {active ? (
-          <button
-            className="import-button stop-recording-button"
-            type="button"
-            onClick={stop}
-            disabled={busy || playback?.state === "stopping"}
-          >
-            {playback?.state === "stopping" ? "Stopping…" : "Stop replay"}
-          </button>
+          <>
+            {playback?.state === "paused" ? (
+              <>
+                <button
+                  className="import-button"
+                  type="button"
+                  onClick={() => control("step")}
+                  disabled={busy}
+                >
+                  Step one packet
+                </button>
+                <button
+                  className="import-button"
+                  type="button"
+                  onClick={() => control("resume")}
+                  disabled={busy}
+                >
+                  Resume replay
+                </button>
+              </>
+            ) : playback?.state === "playing" ? (
+              <button
+                className="import-button"
+                type="button"
+                onClick={() => control("pause")}
+                disabled={busy}
+              >
+                Pause replay
+              </button>
+            ) : (
+              <button className="import-button" type="button" disabled>
+                {replayActionStatus(playback?.state)}
+              </button>
+            )}
+            <button
+              className="import-button stop-recording-button"
+              type="button"
+              onClick={stop}
+              disabled={busy || playback?.state === "stopping"}
+            >
+              {playback?.state === "stopping" ? "Stopping…" : "Stop replay"}
+            </button>
+          </>
         ) : (
           <button
             className="import-button"
@@ -175,7 +273,7 @@ export default function ReplayControls({ sources }: { sources: RecordingSourceRe
             onClick={start}
             disabled={busy || availableSources.length === 0 || !captureId}
           >
-            Start replay
+            Start paused
           </button>
         )}
       </div>
@@ -185,12 +283,25 @@ export default function ReplayControls({ sources }: { sources: RecordingSourceRe
           No available catalog captures can be replayed yet.
         </p>
       )}
-      {error && <p className="recording-control-alert" role="alert">{error}</p>}
+      {error && (
+        <p className="recording-control-alert" role="alert">
+          {error}
+        </p>
+      )}
       {playback && (
         <>
-          <LiveTelemetryPanel telemetry={playback.live_telemetry} sourceKind="replay" />
-          <LiveCarStatusPanel telemetry={playback.live_car_status} sourceKind="replay" />
-          <LiveLapTimingPanel telemetry={playback.live_lap_timing} sourceKind="replay" />
+          <LiveTelemetryPanel
+            telemetry={playback.live_telemetry}
+            sourceKind="replay"
+          />
+          <LiveCarStatusPanel
+            telemetry={playback.live_car_status}
+            sourceKind="replay"
+          />
+          <LiveLapTimingPanel
+            telemetry={playback.live_lap_timing}
+            sourceKind="replay"
+          />
         </>
       )}
     </section>
@@ -201,6 +312,10 @@ function replayStatus(state: ReplayRecord["state"]) {
   const labels: Record<ReplayRecord["state"], string> = {
     starting: "Preparing replay",
     playing: "Replaying capture",
+    pausing: "Pausing replay",
+    paused: "Replay paused",
+    resuming: "Resuming replay",
+    stepping: "Stepping one packet",
     stopping: "Stopping replay",
     stopped: "Replay stopped",
     completed: "Replay completed",
@@ -210,13 +325,29 @@ function replayStatus(state: ReplayRecord["state"]) {
 }
 
 function replayDescription(playback: ReplayRecord) {
+  if (playback.state === "starting") {
+    return `Opening ${playback.capture_name}. Replay will start paused so you can inspect packets one at a time.`;
+  }
   if (playback.state === "playing") {
     return `${playback.capture_name} at ${playback.speed}×. Monitor freshness measures playback delivery recency, not original capture recency or quality.`;
   }
+  if (playback.state === "pausing") {
+    return "Waiting for the replay worker to reach a packet boundary. Delivery stops when the paused state is acknowledged.";
+  }
+  if (playback.state === "paused") {
+    return `Paused after ${playback.datagrams_delivered.toLocaleString()} packets. Monitor freshness continues to age while replay is paused.`;
+  }
+  if (playback.state === "resuming")
+    return "Resuming the original capture pacing without catching up across the pause.";
+  if (playback.state === "stepping")
+    return "Delivering one raw packet in capture order, then pausing again.";
   if (playback.state === "completed") {
-    const footer = typeof playback.capture_completion?.status === "string"
-      ? playback.capture_completion.status
-      : playback.capture_complete ? "complete" : "incomplete or unavailable";
+    const footer =
+      typeof playback.capture_completion?.status === "string"
+        ? playback.capture_completion.status
+        : playback.capture_complete
+          ? "complete"
+          : "incomplete or unavailable";
     return `Read ${playback.datagrams_delivered.toLocaleString()} packets from ${playback.capture_name}. The source capture footer reports ${footer}; playback does not change that evidence.`;
   }
   if (playback.state === "stopped") {
@@ -225,12 +356,22 @@ function replayDescription(playback: ReplayRecord) {
   if (playback.state === "failed") {
     return `Replay failed${playback.failure_reason ? `: ${playback.failure_reason.replaceAll("_", " ")}` : "."} The source capture was left unchanged.`;
   }
-  if (playback.state === "stopping") return "Stopping and closing the capture reader.";
+  if (playback.state === "stopping")
+    return "Stopping and closing the capture reader.";
   return `Opening ${playback.capture_name}. Playback will not create an import or recording.`;
 }
 
+function replayActionStatus(state: ReplayRecord["state"] | undefined) {
+  if (state === "pausing") return "Waiting for pause…";
+  if (state === "resuming") return "Resuming…";
+  if (state === "stepping") return "Stepping…";
+  if (state === "stopping") return "Stopping…";
+  return "Preparing…";
+}
+
 function replayError(caught: unknown) {
-  const reason = caught instanceof Error ? caught.message : "replay_request_failed";
+  const reason =
+    caught instanceof Error ? caught.message : "replay_request_failed";
   if (reason.includes("another_local_operation_is_in_progress")) {
     return "An import, recording, or replay operation is already in progress.";
   }
@@ -242,6 +383,15 @@ function replayError(caught: unknown) {
   }
   if (reason.includes("replay_speed_unsupported")) {
     return "Choose a supported replay speed.";
+  }
+  if (reason.includes("replay_not_paused")) {
+    return "Wait for replay to pause before stepping or resuming.";
+  }
+  if (reason.includes("replay_step_in_progress")) {
+    return "Wait for the current packet step to finish before stepping again.";
+  }
+  if (reason.includes("replay_not_playing")) {
+    return "Replay must be playing before it can be paused.";
   }
   return "The replay request could not be completed.";
 }
