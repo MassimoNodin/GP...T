@@ -84,6 +84,15 @@ export default function RecordingControls({
           live_operation_id: recording.recording_id,
         })
       : null;
+  const hudHref =
+    group?.status === "recording" &&
+    recording?.status === "recording" &&
+    !isSelectionTransferBlocked(preservedQuery)
+      ? appScreenHref("hud", preservedQuery, {
+          live_source: "recording",
+          live_operation_id: recording.recording_id,
+        })
+      : null;
 
   useEffect(() => {
     if (!active) return;
@@ -456,6 +465,16 @@ export default function RecordingControls({
       {liveHref && (
         <a className="live-open-link" href={liveHref}>
           Open live telemetry <span aria-hidden="true">↗</span>
+        </a>
+      )}
+      {hudHref && (
+        <a
+          className="live-open-link"
+          href={hudHref}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Open browser HUD <span aria-hidden="true">↗</span>
         </a>
       )}
       {group && (

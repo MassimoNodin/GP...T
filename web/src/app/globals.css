@@ -6996,3 +6996,322 @@ body {
   color: #805b43;
   background: #fff8f2;
 }
+
+.live-source-actions {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  flex: none;
+}
+.browser-hud-page {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  color: #e3e9e5;
+  background: #0a0e0f;
+}
+.browser-hud-topbar {
+  display: flex;
+  min-height: 62px;
+  align-items: center;
+  gap: 20px;
+  padding: 0 clamp(14px, 3vw, 32px);
+  border-bottom: 1px solid #252e2f;
+  background: #101616;
+}
+.browser-hud-brand {
+  color: #e6ece8;
+  font: 600 18px var(--font-display);
+  text-decoration: none;
+}
+.browser-hud-brand .brand-dots {
+  color: #71c7b5;
+}
+.browser-hud-label {
+  color: #7e8c87;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.1em;
+}
+.browser-hud-back {
+  margin-left: auto;
+  color: #a7d7c5;
+  font: 9px var(--font-mono);
+  text-decoration: none;
+}
+.browser-hud-back:hover {
+  color: #e0fff0;
+}
+.browser-hud-stage {
+  --hud-opacity: 0.9;
+  --hud-base-font-size: 16px;
+  display: flex;
+  min-height: calc(100vh - 62px);
+  flex: 1;
+  box-sizing: border-box;
+  padding: clamp(14px, 3vw, 32px);
+}
+.browser-hud-stage.hud-align-top-left {
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+.browser-hud-stage.hud-align-top-right {
+  align-items: flex-start;
+  justify-content: flex-end;
+}
+.browser-hud-stage.hud-align-bottom-left {
+  align-items: flex-end;
+  justify-content: flex-start;
+}
+.browser-hud-stage.hud-align-bottom-right {
+  align-items: flex-end;
+  justify-content: flex-end;
+}
+.browser-hud-panel {
+  width: min(100%, 620px);
+  box-sizing: border-box;
+  padding: clamp(14px, 2.4vw, 24px);
+  border: 1px solid rgba(134, 161, 150, 0.28);
+  border-radius: 4px;
+  color: #e5ece8;
+  background: rgba(9, 15, 17, var(--hud-opacity));
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+  font-size: var(--hud-base-font-size);
+}
+.browser-hud-stage[data-theme="light"] .browser-hud-panel,
+.browser-hud-preview.hud-theme-light {
+  border-color: rgba(109, 129, 152, 0.3);
+  color: #25334a;
+  background: rgba(249, 251, 253, var(--hud-opacity));
+}
+.browser-hud-source {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(131, 153, 143, 0.22);
+}
+.browser-hud-source h1 {
+  max-width: min(50vw, 430px);
+  overflow: hidden;
+  margin: 5px 0 4px;
+  font-size: 1.25em;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.browser-hud-source p {
+  margin: 0;
+  color: #9aa9a2;
+  font: 0.54em var(--font-mono);
+  letter-spacing: 0.04em;
+}
+.browser-hud-stage[data-theme="light"] .browser-hud-source p,
+.browser-hud-preview.hud-theme-light small {
+  color: #64728a;
+}
+.browser-hud-group {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgba(131, 153, 143, 0.18);
+  background: rgba(5, 9, 10, 0.24);
+}
+.browser-hud-stage[data-theme="light"] .browser-hud-group {
+  border-color: rgba(109, 129, 152, 0.2);
+  background: rgba(255, 255, 255, 0.38);
+}
+.browser-hud-group > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #a3b1aa;
+  font: 0.52em var(--font-mono);
+  letter-spacing: 0.08em;
+}
+.browser-hud-stage[data-theme="light"] .browser-hud-group > header {
+  color: #5f6d84;
+}
+.hud-reading-state {
+  color: #8d9994;
+}
+.hud-state-fresh {
+  color: #82d4b2;
+}
+.hud-state-stale,
+.hud-state-identity-mismatch,
+.hud-state-identity-unavailable {
+  color: #e0b278;
+}
+.browser-hud-stage[data-theme="light"] .hud-state-fresh {
+  color: #147450;
+}
+.browser-hud-stage[data-theme="light"] .hud-state-stale,
+.browser-hud-stage[data-theme="light"] .hud-state-identity-mismatch,
+.browser-hud-stage[data-theme="light"] .hud-state-identity-unavailable {
+  color: #95601c;
+}
+.browser-hud-group-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 6px;
+  color: #75847e;
+  font: 0.48em var(--font-mono);
+}
+.browser-hud-stage[data-theme="light"] .browser-hud-group-meta {
+  color: #728097;
+}
+.browser-hud-group dl {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+  margin: 11px 0 0;
+}
+.browser-hud-group[aria-label="GAME LAP TIMING"] dl {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.browser-hud-metric {
+  min-width: 0;
+  padding: 8px 7px;
+  border-left: 2px solid rgba(113, 199, 181, 0.42);
+  background: rgba(255, 255, 255, 0.035);
+}
+.browser-hud-stage[data-theme="light"] .browser-hud-metric {
+  border-left-color: rgba(34, 125, 99, 0.45);
+  background: rgba(77, 100, 131, 0.055);
+}
+.browser-hud-metric dt {
+  color: #81908a;
+  font: 0.45em var(--font-mono);
+  letter-spacing: 0.06em;
+}
+.browser-hud-stage[data-theme="light"] .browser-hud-metric dt {
+  color: #64738b;
+}
+.browser-hud-metric dd {
+  margin: 5px 0 0;
+  color: #edf3ef;
+  font: 650 1.12em var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.browser-hud-stage[data-theme="light"] .browser-hud-metric dd {
+  color: #1e2e47;
+}
+.browser-hud-disclaimer {
+  margin: 12px 0 0;
+  color: #76847e;
+  font: 0.48em var(--font-mono);
+}
+.browser-hud-stage[data-theme="light"] .browser-hud-disclaimer {
+  color: #728097;
+}
+.browser-hud-state {
+  width: min(100%, 560px);
+  align-self: center;
+  box-sizing: border-box;
+  padding: 22px;
+  border: 1px solid #293532;
+  background: rgba(11, 17, 16, 0.88);
+}
+.browser-hud-state strong {
+  font: 500 1.2rem var(--font-display);
+}
+.browser-hud-state p {
+  margin: 9px 0 16px;
+  color: #99a6a1;
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+.settings-hud-section fieldset {
+  min-width: 0;
+  margin: 14px 0 0;
+  padding: 12px;
+  border: 1px solid #222b2b;
+}
+.settings-hud-section legend {
+  padding: 0 5px;
+  color: #8d9996;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.hud-alignment-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+.hud-alignment-grid label,
+.hud-theme-control label {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px;
+  border: 1px solid #293532;
+  color: #b3c0b9;
+  font-size: 10px;
+  cursor: pointer;
+}
+.hud-alignment-grid input,
+.hud-theme-control input {
+  accent-color: var(--mint);
+}
+.hud-theme-control {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.hud-range-grid {
+  margin-top: 12px;
+}
+.browser-hud-preview {
+  display: grid;
+  gap: 5px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgba(134, 161, 150, 0.28);
+  border-radius: 4px;
+  color: #e5ece8;
+  background: rgba(9, 15, 17, var(--hud-opacity));
+  font-size: var(--hud-base-font-size);
+}
+.browser-hud-preview > strong {
+  font: 650 0.95em var(--font-mono);
+}
+.browser-hud-preview > strong span {
+  color: var(--mint);
+}
+.browser-hud-preview > small {
+  color: #9aa9a2;
+  font: 0.55em var(--font-mono);
+}
+.browser-hud-page a:focus-visible,
+.settings-hud-section input:focus-visible,
+.settings-hud-section button:focus-visible {
+  outline: 2px solid #71c7b5;
+  outline-offset: 3px;
+}
+@media (max-width: 640px) {
+  .browser-hud-topbar {
+    min-height: 54px;
+    gap: 10px;
+  }
+  .browser-hud-label {
+    max-width: 38vw;
+    font-size: 7px;
+  }
+  .browser-hud-group dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .browser-hud-group[aria-label="GAME LAP TIMING"] dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .hud-alignment-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .settings-hud-section .settings-voice-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type {
   LiveCarDamageRecord,
   LiveCarSetupRecord,
@@ -12,10 +12,14 @@ import type {
   LiveTelemetryRecord,
 } from "@/lib/api";
 import {
-  readPinnedLiveCurrent,
+  isPinnedLiveActive,
   type LiveSource,
   type PinnedLiveSnapshot,
 } from "@/lib/live";
+import {
+  usePinnedLiveCurrent,
+  type PinnedLiveViewStatus,
+} from "@/lib/use-pinned-live-current";
 import {
   LiveCarDamagePanel,
   LiveCarSetupPanel,
@@ -28,7 +32,6 @@ import {
 } from "./RecordingControls";
 import LiveTelemetryChart from "./LiveTelemetryChart";
 
-type Status = "ready" | "unavailable" | "replaced" | "error" | "unselected" | "invalid";
 type MonitorRecord =
   | LiveTelemetryRecord
   | LiveCarStatusRecord
@@ -39,102 +42,28 @@ type MonitorRecord =
   | LiveMotionRecord
   | LiveSessionHistoryRecord;
 
-const activeRecordingStates = new Set(["starting", "recording", "stopping"]);
-const activeReplayStates = new Set([
-  "starting",
-  "playing",
-  "pausing",
-  "paused",
-  "resuming",
-  "stepping",
-  "stopping",
-]);
-
 export default function LiveTelemetryView({
   initialStatus,
   initialSnapshot,
   source,
   operationId,
   recordingsHref,
+  hudHref,
 }: {
-  initialStatus: Status;
+  initialStatus: PinnedLiveViewStatus;
   initialSnapshot: PinnedLiveSnapshot | null;
   source: LiveSource | null;
   operationId: string | null;
   recordingsHref: string | null;
+  hudHref: string | null;
 }) {
-  const [status, setStatus] = useState<Status>(initialStatus);
-  const [snapshot, setSnapshot] = useState<PinnedLiveSnapshot | null>(initialSnapshot);
-
-  useEffect(() => {
-    if (
-      !source ||
-      !operationId ||
-      (initialStatus !== "ready" && initialStatus !== "error") ||
-      (initialSnapshot && !isActive(initialSnapshot))
-    ) {
-      return;
-    }
-
-    let mounted = true;
-    let timer: ReturnType<typeof setTimeout>;
-    let controller: AbortController | null = null;
-
-    const poll = async () => {
-      const requestController = new AbortController();
-      controller = requestController;
-      let deadlineExpired = false;
-      const deadline = setTimeout(() => {
-        deadlineExpired = true;
-        requestController.abort();
-      }, 5000);
-      try {
-        const endpoint =
-          source === "recording"
-            ? "/api/recordings/current"
-            : "/api/replays/current";
-        const response = await fetch(endpoint, {
-          cache: "no-store",
-          signal: requestController.signal,
-        });
-        const body: unknown = await response.json();
-        if (!response.ok) throw new Error("live_source_unavailable");
-        const read = readPinnedLiveCurrent(source, operationId, body);
-        if (!mounted) return;
-        if (read.status === "ready") {
-          setStatus("ready");
-          setSnapshot(read.snapshot);
-          if (isActive(read.snapshot)) timer = setTimeout(poll, 500);
-          return;
-        }
-        if (read.status === "error") {
-          setStatus("error");
-          setSnapshot(null);
-          timer = setTimeout(poll, 1000);
-          return;
-        }
-        setStatus(read.status);
-        setSnapshot(null);
-      } catch {
-        if (!mounted || (requestController.signal.aborted && !deadlineExpired))
-          return;
-        setStatus("error");
-        setSnapshot(null);
-        timer = setTimeout(poll, 1000);
-      } finally {
-        clearTimeout(deadline);
-      }
-    };
-
-    timer = setTimeout(poll, 500);
-    return () => {
-      mounted = false;
-      clearTimeout(timer);
-      controller?.abort();
-    };
-  }, [initialSnapshot, initialStatus, operationId, source]);
-
-  const ended = snapshot !== null && !isActive(snapshot);
+  const { status, snapshot } = usePinnedLiveCurrent({
+    initialStatus,
+    initialSnapshot,
+    source,
+    operationId,
+  });
+  const ended = snapshot !== null && !isPinnedLiveActive(snapshot);
 
   return (
     <section className="live-source-panel" aria-label="Pinned live telemetry">
@@ -191,7 +120,24 @@ export default function LiveTelemetryView({
                   : "Current recording"}
               </h2>
             </div>
-            <span className={`recording-light ${isActive(snapshot) ? "recording-light-active" : ""}`} />
+            <div className="live-source-actions">
+              {isPinnedLiveActive(snapshot) && hudHref ? (
+                <a
+                  className="live-open-link"
+                  href={hudHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open browser HUD <span aria-hidden="true">↗</span>
+                </a>
+              ) : null}
+              <span
+                className={
+                  "recording-light " +
+                  (isPinnedLiveActive(snapshot) ? "recording-light-active" : "")
+                }
+              />
+            </div>
           </div>
           <div className="live-source-facts">
             <LiveFact label="OPERATION" value={snapshot.operation_id} />
@@ -400,13 +346,6 @@ function stateLabel(snapshot: PinnedLiveSnapshot) {
     : `Recording ${readableState}`;
 }
 
-function isActive(snapshot: PinnedLiveSnapshot) {
-  return snapshot.source === "recording"
-    ? activeRecordingStates.has(snapshot.state)
-    : activeReplayStates.has(snapshot.state);
-}
-
 function readable(value: string | null | undefined) {
   return value ? value.replaceAll("_", " ").toUpperCase() : "Unknown";
 }
-

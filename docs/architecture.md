@@ -1221,6 +1221,26 @@ The Next.js same-origin proxy uses a GET-specific local-origin/fetch-site guard,
 
 **Rationale:** after bounded catalog search and explicit selection, direct download completes a useful local review/export workflow without creating database artifacts or changing the source capture. Handle-based validation and bounded streaming make that action safe on the supported filesystems, while the metadata version and UI wording avoid presenting a file copy as verified evidence.
 
+## Decision 0079: add a pinned browser HUD and presentation-only preferences
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Add `/hud` as a compact browser display opened only for one explicitly pinned recording or replay. Require exactly one `live_source` (`recording` or `replay`) and one 32-character lowercase hexadecimal `live_operation_id`. Reject missing, repeated, malformed, or blocked selection state before any current-operation read; never look up or substitute the latest source. Open the HUD from the active operation controls or its pinned `/live` page through a user-initiated new tab link with `noopener`; provide a link back to the same `/live` selection. The corner setting positions a panel within the browser viewport and makes no always-on-top or in-game overlay claim.
+
+Extract the existing pinned-live poller into one shared client hook used by `/live` and `/hud`. Keep its serial requests, 500 ms active cadence, 1 second retry cadence, and 5 second request deadline, and continue validating each response through `readPinnedLiveCurrent`. Abort requests on unmount and when the document becomes hidden, clear displayed values while suspended, and resume reads only for the same pin when visible. Read errors clear values and retry; unavailable, replaced, and terminal operations clear values and stop without fallback. Paused replay remains monitored so delivery age can become stale; a paused recording group has no live segment to follow, and resume opens only the new segment ID.
+
+The compact display contains player speed, gear, RPM, throttle, and brake from the player telemetry group, plus lap number and current lap clock from the independently reported lap-timing group. Show telemetry values only when its group is fresh and has a valid source epoch, session, format, and player; show lap values only when its group is fresh and has valid session, format, and player identity. Lap timing remains independently available when Car Telemetry is waiting or absent. When both groups have complete shared identity, hide lap values if session, format, or player differs. Keep each group's provenance separate, preserve the telemetry source epoch, and never merge observations across epochs. Waiting, stale, unsupported, unavailable, malformed, or mismatched values are placeholders accompanied by that group's status and age. Lap number is limited to 1–255 and current lap time follows the producer's positive uint32 millisecond range. Do not retain history or synthesize client-side segments.
+
+Store HUD presentation preferences in a separate versioned browser-local record, with a 2 KiB UTF-8 limit and exact-key validation. Support four in-viewport corner alignments, panel opacity from 0.6 to 1.0, text scale from 0.8 to 1.5, and light or dark theme. Apply and Reset write one complete record atomically and publish effective values only after the write succeeds; Cancel discards draft form values. Cross-tab storage events reload valid preferences. Invalid, inaccessible, oversized, malformed, or unknown-version data uses safe defaults and remains untouched until an explicit Apply or Reset. Opacity affects the panel background only, keeping text fully legible. Store no telemetry, credentials, or service configuration.
+
+Exclude new API routes, schema changes, telemetry acquisition, source controls, charts, history, input devices, microphone access, global shortcuts, coaching, and native overlay behavior.
+
+**Acceptance:** exact and off-page pinned links; repeated, malformed, and blocked selections cause no read; recording and replay identity; replacement, terminal, read-error, timeout, unmount, and hidden-page clearing/cancellation; paused/stepped/resumed replay freshness; recording pause/resume requiring the new segment; valid and malformed field handling; independent session/format/player/epoch provenance; preference Apply/Cancel/Reset atomicity, inaccessible/malformed/oversized/unknown-version preservation, cross-tab updates, keyboard use, and narrow layouts. Existing captures confirm displayed values match the pinned `/live` source.
+
+**Rationale:** the app already has a pinned current-source reader and live telemetry monitors. Reusing one polling lifecycle gives a compact racing display without adding alternate source selection, data ownership, or inference. Browser-local presentation settings extend the existing preference boundary while keeping browser positioning and persistence distinct from telemetry service controls.
+
 ## Data flow
 
 ```text

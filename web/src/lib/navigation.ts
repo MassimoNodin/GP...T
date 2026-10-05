@@ -4,6 +4,7 @@ export type AppScreen =
   | "sessions"
   | "engineer"
   | "live"
+  | "hud"
   | "compare"
   | "track"
   | "settings";
@@ -106,6 +107,7 @@ export function appScreenPath(screen: AppScreen): string {
   if (screen === "sessions") return "/sessions";
   if (screen === "engineer") return "/engineer";
   if (screen === "live") return "/live";
+  if (screen === "hud") return "/hud";
   if (screen === "compare") return "/compare";
   if (screen === "track") return "/track";
   if (screen === "settings") return "/settings";

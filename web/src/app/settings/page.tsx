@@ -3,6 +3,7 @@ import { preservedAppStateQuery } from "@/lib/navigation";
 import AppHeader from "../AppHeader";
 import SettingsVoicePreferences from "../SettingsVoicePreferences";
 import SettingsStorageUsage from "../SettingsStorageUsage";
+import SettingsHudPreferences from "../SettingsHudPreferences";
 
 const sections = [
   { id: "general", label: "General" },
@@ -57,7 +58,7 @@ export default async function SettingsPage({
               <li><span className="settings-availability-dot" />AI Runtime <b>Not configured</b></li>
               <li><span className="settings-availability-dot" />Telemetry <b>Planned</b></li>
               <li><span className="settings-availability-dot" />Devices <b>Planned</b></li>
-              <li><span className="settings-availability-dot" />HUD <b>Planned</b></li>
+              <li><span className="settings-availability-dot is-ready" />HUD <b>Available</b></li>
               <li><span className="settings-availability-dot is-ready" />Storage <b>Measured</b></li>
             </ul>
           </aside>
@@ -94,13 +95,7 @@ export default async function SettingsPage({
               </div>
               <p className="settings-copy">Voice output uses the browser-discovered local voice. Device routing, microphone access, and speech input are not available.</p>
             </section>
-            <section className="settings-section settings-planned-section panel" id="hud">
-              <div className="settings-section-heading">
-                <div><span className="eyebrow">HUD</span><h2>Browser display</h2></div>
-                <span className="settings-state">PLANNED</span>
-              </div>
-              <p className="settings-copy">The app has no always-on-top or in-game overlay. A browser HUD surface is planned.</p>
-            </section>
+            <SettingsHudPreferences />
             <SettingsStorageUsage />
           </div>
         </div>

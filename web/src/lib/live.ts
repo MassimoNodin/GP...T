@@ -10,8 +10,56 @@ import type {
   LiveTelemetryRecord,
   SessionContext,
 } from "@/lib/api";
+import type { AppSearchParams } from "@/lib/navigation";
 
 export type LiveSource = "recording" | "replay";
+export type PinnedLiveSelection =
+  | { status: "ready"; source: LiveSource; operationId: string }
+  | { status: "unselected" | "invalid"; source: null; operationId: null };
+
+const activeRecordingStates = new Set(["starting", "recording", "stopping"]);
+const activeReplayStates = new Set([
+  "starting",
+  "playing",
+  "pausing",
+  "paused",
+  "resuming",
+  "stepping",
+  "stopping",
+]);
+
+export function isPinnedLiveActive(snapshot: PinnedLiveSnapshot) {
+  return snapshot.source === "recording"
+    ? activeRecordingStates.has(snapshot.state)
+    : activeReplayStates.has(snapshot.state);
+}
+
+export function readPinnedLiveSelection(
+  params: AppSearchParams,
+  blocked: boolean,
+): PinnedLiveSelection {
+  if (blocked) return { status: "invalid", source: null, operationId: null };
+  const sourceValue = params.live_source;
+  const operationValue = params.live_operation_id;
+  const sourceRepeated = Array.isArray(sourceValue);
+  const operationRepeated = Array.isArray(operationValue);
+  const source = sourceRepeated ? null : sourceValue;
+  const operationId = operationRepeated ? null : operationValue;
+  const noSelection = sourceValue === undefined && operationValue === undefined;
+  if (noSelection) {
+    return { status: "unselected", source: null, operationId: null };
+  }
+  if (
+    sourceRepeated ||
+    operationRepeated ||
+    (source !== "recording" && source !== "replay") ||
+    typeof operationId !== "string" ||
+    !/^[a-f0-9]{32}$/.test(operationId)
+  ) {
+    return { status: "invalid", source: null, operationId: null };
+  }
+  return { status: "ready", source, operationId };
+}
 
 export interface PinnedLiveSnapshot {
   source: LiveSource;

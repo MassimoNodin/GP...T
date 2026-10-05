@@ -76,6 +76,13 @@ export default function ReplayControls({
           live_operation_id: playback.playback_id,
         })
       : null;
+  const hudHref =
+    active && playback && !isSelectionTransferBlocked(preservedQuery)
+      ? appScreenHref("hud", preservedQuery, {
+          live_source: "replay",
+          live_operation_id: playback.playback_id,
+        })
+      : null;
 
   useEffect(() => {
     let mounted = true;
@@ -355,6 +362,16 @@ export default function ReplayControls({
       {liveHref && (
         <a className="live-open-link" href={liveHref}>
           Open replay telemetry <span aria-hidden="true">↗</span>
+        </a>
+      )}
+      {hudHref && (
+        <a
+          className="live-open-link"
+          href={hudHref}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Open browser HUD <span aria-hidden="true">↗</span>
         </a>
       )}
 

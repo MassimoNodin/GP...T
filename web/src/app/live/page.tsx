@@ -2,6 +2,7 @@ import type { RecordingJobRecord, ReplayRecord } from "@/lib/api";
 import { requestApi } from "@/lib/api";
 import {
   readPinnedLiveCurrent,
+  readPinnedLiveSelection,
   type LiveSource,
   type PinnedLiveRead,
   type PinnedLiveSnapshot,
@@ -25,38 +26,29 @@ export default async function LivePage({
   const params = await searchParams;
   const preservedQuery = preservedAppStateQuery(params);
   const blocked = isSelectionTransferBlocked(preservedQuery);
-  const sourceParam = singleParam(params.live_source);
-  const operationId = singleParam(params.live_operation_id);
-  const noSelection = sourceParam === undefined && operationId === undefined;
-  const duplicated = hasMultiple(params.live_source) || hasMultiple(params.live_operation_id);
-  const validSource =
-    sourceParam === "recording" || sourceParam === "replay"
-      ? sourceParam
-      : null;
-  const validOperationId =
-    typeof operationId === "string" && /^[a-f0-9]{32}$/.test(operationId)
-      ? operationId
-      : null;
+  const selection = readPinnedLiveSelection(params, blocked);
 
   let status: InitialStatus;
   let snapshot: PinnedLiveSnapshot | null = null;
   let source: LiveSource | null = null;
-  if (blocked) {
-    status = "invalid";
-  } else if (noSelection) {
-    status = "unselected";
-  } else if (duplicated || !validSource || !validOperationId) {
-    status = "invalid";
+  if (selection.status !== "ready") {
+    status = selection.status;
   } else {
-    source = validSource;
+    source = selection.source;
     const response =
       source === "recording"
         ? await requestApi<RecordingJobRecord>("/api/v1/recordings/current")
         : await requestApi<ReplayRecord>("/api/v1/replays/current");
-    const current = readPinnedLiveCurrent(source, validOperationId, response);
+    const current = readPinnedLiveCurrent(
+      source,
+      selection.operationId,
+      response,
+    );
     status = current.status;
     snapshot = current.snapshot;
   }
+  const operationId =
+    selection.status === "ready" ? selection.operationId : null;
 
   return (
     <div className="app-shell">
@@ -76,14 +68,15 @@ export default async function LivePage({
           </p>
         </section>
         <LiveTelemetryView
-          key={JSON.stringify([source, validOperationId, status, snapshot])}
+          key={JSON.stringify([source, operationId, status, snapshot])}
           initialStatus={status}
           initialSnapshot={snapshot}
           source={source}
-          operationId={validOperationId}
+          operationId={operationId}
           recordingsHref={
             blocked ? null : appScreenHref("recordings", preservedQuery)
           }
+          hudHref={blocked ? null : appScreenHref("hud", preservedQuery)}
         />
       </main>
       <footer className="footer-bar">
@@ -94,12 +87,4 @@ export default async function LivePage({
       </footer>
     </div>
   );
-}
-
-function singleParam(value: string | string[] | undefined) {
-  return Array.isArray(value) ? value[0] : value;
-}
-
-function hasMultiple(value: string | string[] | undefined) {
-  return Array.isArray(value) && value.length !== 1;
 }
