@@ -301,7 +301,7 @@ export interface PlayerParticipantContext {
     reason?: string;
   };
   observations: Array<Record<string, unknown>>;
-  observation_count: number;
+  observation_count?: number;
   observed_change_count: number;
   unknown_event_count: number;
   observations_omitted_count: number;
@@ -350,7 +350,7 @@ export interface PlayerCarSetupContext {
     reason?: string;
   };
   observations: Array<Record<string, unknown>>;
-  observation_count: number;
+  observation_count?: number;
   observed_change_count: number;
   unknown_event_count: number;
   observations_omitted_count: number;

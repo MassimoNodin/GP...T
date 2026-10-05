@@ -18,6 +18,7 @@ import {
 } from "@/lib/attempt-inventory";
 import AppHeader from "../AppHeader";
 import CompareResultPanel from "../CompareResultPanel";
+import { comparisonReportMatchesAttempts } from "@/lib/comparison-report-match";
 import {
   appScreenHref,
   isSelectionTransferBlocked,
@@ -334,8 +335,11 @@ export default async function ComparePage({
       resolvedTarget &&
       resolvedReference &&
       policy &&
-      rawComparison.target.attempt_key === resolvedTarget.attempt_key &&
-      rawComparison.reference.attempt_key === resolvedReference.attempt_key &&
+      comparisonReportMatchesAttempts(
+        rawComparison,
+        resolvedTarget,
+        resolvedReference,
+      ) &&
       rawComparison.comparison_policy === policy &&
       comparisonMatchesWindow(rawComparison, window, resolvedTarget, resolvedReference),
   );
@@ -719,7 +723,7 @@ export default async function ComparePage({
                     {comparisonResponse?.status === "ok" && !comparisonMatchesSelection && (
                       <StatePanel
                         title="The comparison response did not match the selected evidence"
-                        text="Its attempt identities, policy, or requested distance window differed from the selection, so it was not shown."
+                        text="Its attempt, run, session, car, trace hash, trace schema, policy, or requested distance window differed from the selection, so it was not shown."
                         alert
                       />
                     )}

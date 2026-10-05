@@ -3,6 +3,9 @@ import { appScreenHref } from "@/lib/navigation";
 import LinkedComparisonCharts from "./LinkedComparisonCharts";
 import ComparisonWindowPanel from "./ComparisonWindowPanel";
 import { buildComparisonCharts } from "./comparison-charts";
+import ComparisonConditionsPanel from "./ComparisonConditionsPanel";
+import PlayerParticipantContextPanel from "./PlayerParticipantContextPanel";
+import PlayerCarSetupContextPanel from "./PlayerCarSetupContextPanel";
 
 export default function CompareResultPanel({
   comparison,
@@ -58,6 +61,19 @@ export default function CompareResultPanel({
           run={comparison.processing_run_evidence?.reference ?? null}
         />
       </section>
+
+      <ComparisonConditionsPanel
+        target={comparison.observed_conditions?.target}
+        reference={comparison.observed_conditions?.reference}
+      />
+      <PlayerParticipantContextPanel
+        target={target.player_participant_context}
+        reference={reference.player_participant_context}
+      />
+      <PlayerCarSetupContextPanel
+        target={target.player_car_setup_context}
+        reference={reference.player_car_setup_context}
+      />
 
       <section className="metric-row compare-metric-row">
         <Metric

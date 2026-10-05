@@ -131,6 +131,13 @@ export default function PlayerCarSetupContextPanel({
   target: PlayerCarSetupContext | null | undefined;
   reference?: PlayerCarSetupContext | null;
 }) {
+  const safeTarget = safeCarSetupContext(target) ? target : null;
+  const safeReference =
+    reference === undefined
+      ? undefined
+      : safeCarSetupContext(reference)
+        ? reference
+        : null;
   return (
     <section
       className="participant-context panel"
@@ -145,14 +152,14 @@ export default function PlayerCarSetupContextPanel({
               : "Compare reported setups"}
           </h2>
         </div>
-        <span className="quality-state">{statusLabel(target?.status)}</span>
+        <span className="quality-state">{statusLabel(safeTarget?.status)}</span>
       </div>
       <div
-        className={`participant-context-grid ${reference === undefined ? "single" : ""}`}
+        className={`participant-context-grid ${safeReference === undefined ? "single" : ""}`}
       >
-        <SetupSummary heading="TARGET" report={target} />
-        {reference !== undefined ? (
-          <SetupSummary heading="REFERENCE" report={reference} />
+        <SetupSummary heading="TARGET" report={safeTarget} />
+        {safeReference !== undefined ? (
+          <SetupSummary heading="REFERENCE" report={safeReference} />
         ) : null}
       </div>
       <p className="participant-context-warning">
@@ -163,4 +170,100 @@ export default function PlayerCarSetupContextPanel({
       </p>
     </section>
   );
+}
+
+export function safeCarSetupContext(value: unknown): value is PlayerCarSetupContext {
+  const context = record(value);
+  const start = record(context?.at_start);
+  const setup = start?.setup;
+  return Boolean(
+    context &&
+      context.schema_version === 1 &&
+      context.continuity_claim === false &&
+      safeStatus(context.status) &&
+      record(context.scope) &&
+      Array.isArray(context.observations) &&
+      context.observations.length <= 16 &&
+      optionalCount(context.observation_count) &&
+      boundedCount(context.observed_change_count) &&
+      boundedCount(context.unknown_event_count) &&
+      boundedCount(context.observations_omitted_count) &&
+      start &&
+      (start.status === "reported" || start.status === "unknown") &&
+      (setup == null || safeSetupSnapshot(setup)) &&
+      (start.source == null || record(start.source)) &&
+      nullableFiniteNumber(start.next_front_wing_value) &&
+      optionalText(start.reason, 240) &&
+      optionalText(context.reason, 240) &&
+      optionalTextArray(context.reasons, 16) &&
+      (!context.limits || record(context.limits)),
+  );
+}
+
+function safeSetupSnapshot(value: unknown) {
+  const setup = record(value);
+  return Boolean(
+    setup &&
+      SETUP_FIELDS.every(([field]) => {
+        const value = setup[field];
+        return value === null || (typeof value === "number" && Number.isFinite(value));
+      }) &&
+      Array.isArray(setup.invalid_fields) &&
+      setup.invalid_fields.length <= 32 &&
+      setup.invalid_fields.every((field) => boundedText(field, 96)),
+  );
+}
+
+function safeStatus(value: unknown) {
+  return typeof value === "string" && [
+    "observed",
+    "observed_unchanged",
+    "observed_changed",
+    "unknown",
+    "incomplete",
+  ].includes(value);
+}
+
+function optionalCount(value: unknown) {
+  return value === undefined || boundedCount(value);
+}
+
+function boundedCount(value: unknown) {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= 1_000_000
+  );
+}
+
+function boundedText(value: unknown, limit: number) {
+  return typeof value === "string" && value.length > 0 && value.length <= limit;
+}
+
+function optionalText(value: unknown, limit: number) {
+  return value === undefined || value === null || boundedText(value, limit);
+}
+
+function optionalTextArray(value: unknown, limit: number) {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.length <= limit &&
+      value.every((item) => boundedText(item, 128)))
+  );
+}
+
+function nullableFiniteNumber(value: unknown) {
+  return (
+    value === undefined ||
+    value === null ||
+    (typeof value === "number" && Number.isFinite(value))
+  );
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }

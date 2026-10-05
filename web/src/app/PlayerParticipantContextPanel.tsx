@@ -83,6 +83,13 @@ export default function PlayerParticipantContextPanel({
   target: PlayerParticipantContext | null | undefined;
   reference?: PlayerParticipantContext | null;
 }) {
+  const safeTarget = safeParticipantContext(target) ? target : null;
+  const safeReference =
+    reference === undefined
+      ? undefined
+      : safeParticipantContext(reference)
+        ? reference
+        : null;
   return (
     <section
       className="participant-context panel"
@@ -94,13 +101,13 @@ export default function PlayerParticipantContextPanel({
           <h2>{reference === undefined ? "Player context" : "Compare reported context"}</h2>
         </div>
         <span className="quality-state">
-          {statusLabel(target?.status)}
+          {statusLabel(safeTarget?.status)}
         </span>
       </div>
-      <div className={`participant-context-grid ${reference === undefined ? "single" : ""}`}>
-        <ParticipantSummary heading="TARGET" report={target} />
-        {reference !== undefined ? (
-          <ParticipantSummary heading="REFERENCE" report={reference} />
+      <div className={`participant-context-grid ${safeReference === undefined ? "single" : ""}`}>
+        <ParticipantSummary heading="TARGET" report={safeTarget} />
+        {safeReference !== undefined ? (
+          <ParticipantSummary heading="REFERENCE" report={safeReference} />
         ) : null}
       </div>
       <p className="participant-context-warning">
@@ -109,4 +116,99 @@ export default function PlayerParticipantContextPanel({
       </p>
     </section>
   );
+}
+
+export function safeParticipantContext(value: unknown): value is PlayerParticipantContext {
+  const context = record(value);
+  const start = record(context?.at_start);
+  const participant = start?.participant;
+  return Boolean(
+    context &&
+      context.schema_version === 1 &&
+      context.continuity_claim === false &&
+      safeStatus(context.status) &&
+      record(context.scope) &&
+      Array.isArray(context.observations) &&
+      context.observations.length <= 16 &&
+      optionalCount(context.observation_count) &&
+      boundedCount(context.observed_change_count) &&
+      boundedCount(context.unknown_event_count) &&
+      boundedCount(context.observations_omitted_count) &&
+      start &&
+      (start.status === "reported" || start.status === "unknown") &&
+      (participant == null || safeParticipantSnapshot(participant)) &&
+      (start.source == null || record(start.source)) &&
+      optionalText(start.reason, 240) &&
+      optionalText(context.reason, 240) &&
+      optionalTextArray(context.reasons, 16) &&
+      (!context.limits || record(context.limits)),
+  );
+}
+
+function safeParticipantSnapshot(value: unknown) {
+  const participant = record(value);
+  return Boolean(
+    participant &&
+      typeof participant.name === "string" &&
+      participant.name.length <= 128 &&
+      [
+        "driver_id",
+        "network_id",
+        "team_id",
+        "race_number",
+        "nationality_id",
+        "your_telemetry",
+        "tech_level",
+        "platform_id",
+      ].every((field) => Number.isSafeInteger(participant[field])) &&
+      ["ai_controlled", "my_team"].every(
+        (field) => typeof participant[field] === "boolean",
+      ),
+  );
+}
+
+function safeStatus(value: unknown) {
+  return typeof value === "string" && [
+    "observed",
+    "observed_unchanged",
+    "observed_changed",
+    "unknown",
+    "incomplete",
+  ].includes(value);
+}
+
+function optionalCount(value: unknown) {
+  return value === undefined || boundedCount(value);
+}
+
+function boundedCount(value: unknown) {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= 1_000_000
+  );
+}
+
+function boundedText(value: unknown, limit: number) {
+  return typeof value === "string" && value.length > 0 && value.length <= limit;
+}
+
+function optionalText(value: unknown, limit: number) {
+  return value === undefined || value === null || boundedText(value, limit);
+}
+
+function optionalTextArray(value: unknown, limit: number) {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.length <= limit &&
+      value.every((item) => boundedText(item, 128)))
+  );
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
