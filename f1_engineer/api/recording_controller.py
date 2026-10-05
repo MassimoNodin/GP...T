@@ -14,6 +14,7 @@ from ..recording.capture import CaptureReader
 from ..recording.service import (
     LIVE_CAR_DAMAGE_FRESHNESS_LIMIT_MS,
     LIVE_CAR_SETUP_FRESHNESS_LIMIT_MS,
+    LIVE_MOTION_FRESHNESS_LIMIT_MS,
     LIVE_SESSION_CONDITIONS_FRESHNESS_LIMIT_MS,
     LIVE_CAR_STATUS_FRESHNESS_LIMIT_MS,
     LIVE_LAP_TIMING_FRESHNESS_LIMIT_MS,
@@ -167,6 +168,12 @@ class RecordingController:
                         "observation_count": 0,
                     },
                     "live_session_conditions": {
+                        "status": "waiting",
+                        "reason": None,
+                        "age_ms": None,
+                        "observation_count": 0,
+                    },
+                    "live_motion": {
                         "status": "waiting",
                         "reason": None,
                         "age_ms": None,
@@ -487,6 +494,7 @@ class RecordingController:
             "live_car_damage": LIVE_CAR_DAMAGE_FRESHNESS_LIMIT_MS,
             "live_car_setup": LIVE_CAR_SETUP_FRESHNESS_LIMIT_MS,
             "live_session_conditions": LIVE_SESSION_CONDITIONS_FRESHNESS_LIMIT_MS,
+            "live_motion": LIVE_MOTION_FRESHNESS_LIMIT_MS,
         }
         for name, freshness_limit_ms in freshness_limits.items():
             live = progress.get(name)

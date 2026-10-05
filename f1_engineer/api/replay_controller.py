@@ -14,6 +14,7 @@ from typing import Any
 from ..recording.service import (
     LIVE_CAR_DAMAGE_FRESHNESS_LIMIT_MS,
     LIVE_CAR_SETUP_FRESHNESS_LIMIT_MS,
+    LIVE_MOTION_FRESHNESS_LIMIT_MS,
     LIVE_SESSION_CONDITIONS_FRESHNESS_LIMIT_MS,
     LIVE_CAR_STATUS_FRESHNESS_LIMIT_MS,
     LIVE_LAP_TIMING_FRESHNESS_LIMIT_MS,
@@ -143,6 +144,10 @@ class ReplayController:
                     "observation_count": 0,
                 },
                 "live_session_conditions": {
+                    **_waiting_monitor(),
+                    "observation_count": 0,
+                },
+                "live_motion": {
                     **_waiting_monitor(),
                     "observation_count": 0,
                 },
@@ -300,6 +305,7 @@ class ReplayController:
             "live_car_damage": LIVE_CAR_DAMAGE_FRESHNESS_LIMIT_MS,
             "live_car_setup": LIVE_CAR_SETUP_FRESHNESS_LIMIT_MS,
             "live_session_conditions": LIVE_SESSION_CONDITIONS_FRESHNESS_LIMIT_MS,
+            "live_motion": LIVE_MOTION_FRESHNESS_LIMIT_MS,
         }
         for name, limit_ms in freshness_limits.items():
             monitor = result.get(name)
@@ -332,6 +338,12 @@ class ReplayController:
                 "observation_count": 0,
             }
             result["live_session_conditions"] = {
+                "status": "unavailable",
+                "reason": "operation_ended",
+                "age_ms": None,
+                "observation_count": 0,
+            }
+            result["live_motion"] = {
                 "status": "unavailable",
                 "reason": "operation_ended",
                 "age_ms": None,
@@ -388,6 +400,7 @@ class ReplayController:
                 "live_car_damage": observer.live_car_damage_snapshot(),
                 "live_car_setup": observer.live_car_setup_snapshot(),
                 "live_session_conditions": observer.live_session_conditions_snapshot(),
+                "live_motion": observer.live_motion_snapshot(),
                 "failure_reason": failure_reason,
                 "started_monotonic_ns": started_ns,
                 "progress_updated_monotonic_ns": time.monotonic_ns(),

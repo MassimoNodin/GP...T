@@ -10,6 +10,7 @@ import {
   LiveCarDamagePanel,
   LiveCarStatusPanel,
   LiveCarSetupPanel,
+  LiveMotionPanel,
   LiveSessionConditionsPanel,
   LiveLapTimingPanel,
   LiveTelemetryPanel,
@@ -338,6 +339,9 @@ export default function ReplayControls({
               telemetry={playback.live_session_conditions}
               sourceKind="replay"
             />
+          ) : null}
+          {playback.live_motion ? (
+            <LiveMotionPanel telemetry={playback.live_motion} sourceKind="replay" />
           ) : null}
         </>
       )}

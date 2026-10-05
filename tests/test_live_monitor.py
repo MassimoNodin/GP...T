@@ -16,6 +16,7 @@ httpx = pytest.importorskip("httpx")
 from f1_engineer.api.app import (
     LiveCarDamageRecord,
     LiveCarSetupRecord,
+    LiveMotionRecord,
     LiveSessionConditionsRecord,
     LiveTelemetryRecord,
     create_app,
@@ -31,6 +32,8 @@ _TELEMETRY_CAR = struct.Struct("<HfffBbHBBH4H4B4BH4f4B")
 _LAP_DATA_CAR = struct.Struct("<IIHBHBHBHBfff15BHHBfB")
 _CAR_DAMAGE_CAR = struct.Struct("<4f30B")
 _CAR_SETUP_CAR = struct.Struct("<4B4f9B4fBf")
+_MOTION_CAR_F1_25 = struct.Struct("<6f6h6f")
+_MOTION_CAR_2026 = struct.Struct("<6f9h3f")
 _CONTROL_TOKEN = "live-monitor-test-token"
 
 
@@ -312,6 +315,97 @@ def _session_conditions_packet(
         player_car_index=player_car_index,
         body=bytes(session_body),
         sequence=sequence,
+    )
+
+
+def _motion_packet(
+    *,
+    frame: int = 100,
+    sequence: int = 10,
+    session_uid: int = SESSION_UID,
+    packet_format: int = 2025,
+    packet_version: int = 1,
+    player_car_index: int = 0,
+    session_time_s: float = 12.5,
+    position: tuple[float, float, float] = (10.0, 20.0, 30.0),
+    velocity: tuple[float, float, float] = (1.0, 2.0, 3.0),
+    unrelated_car_position: tuple[float, float, float] | None = None,
+    body: bytes | None = None,
+):
+    if body is None:
+        car_count = 22 if packet_format == 2025 else 24
+        record = _MOTION_CAR_F1_25 if packet_format == 2025 else _MOTION_CAR_2026
+        records = []
+        for car_index in range(car_count):
+            car_position = position if car_index == player_car_index else (0.0, 0.0, 0.0)
+            if (
+                unrelated_car_position is not None
+                and car_index == (player_car_index + 1) % car_count
+            ):
+                car_position = unrelated_car_position
+            if packet_format == 2025:
+                records.append(
+                    record.pack(
+                        *car_position,
+                        *(velocity if car_index == player_car_index else (0.0, 0.0, 0.0)),
+                        32767, 0, 0, 0, 32767, 0,
+                        0.1, -0.2, 1.0,
+                        0.4, 0.5, 0.6,
+                    )
+                )
+            else:
+                records.append(
+                    record.pack(
+                        *car_position,
+                        *(velocity if car_index == player_car_index else (0.0, 0.0, 0.0)),
+                        32767, 0, 0, 0, 32767, 0, 100, -200, 1000,
+                        0.4, 0.5, 0.6,
+                    )
+                )
+        body = b"".join(records)
+    return make_datagram(
+        packet_format=packet_format,
+        packet_id=0,
+        packet_version=packet_version,
+        session_uid=session_uid,
+        frame=frame,
+        session_time=session_time_s,
+        player_car_index=player_car_index,
+        body=body,
+        sequence=sequence,
+    )
+
+
+def _publish_live_motion(
+    observer: _AcquisitionObserver,
+    *,
+    frame: int = 100,
+    sequence: int = 10,
+    session_uid: int = SESSION_UID,
+    packet_format: int = 2025,
+    player_car_index: int = 0,
+    **kwargs,
+) -> None:
+    _process(
+        observer,
+        _motion_packet(
+            frame=frame,
+            sequence=sequence,
+            session_uid=session_uid,
+            packet_format=packet_format,
+            player_car_index=player_car_index,
+            **kwargs,
+        ),
+    )
+    _process(
+        observer,
+        _advance(
+            frame + 1,
+            sequence + 1,
+            session_uid=session_uid,
+            player_car_index=player_car_index,
+            packet_format=packet_format,
+        ),
     )
 
 
@@ -1598,7 +1692,8 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                         track_temperature_c=35,
                         air_temperature_c=21,
                     ).payload,
-                    _advance(103, 16).payload,
+                    _motion_packet(frame=100, sequence=16, player_car_index=0).payload,
+                    _advance(103, 17).payload,
                 ]
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
                     for payload in payloads:
@@ -1660,6 +1755,14 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                 assert conditions["track_temperature_c"] == 35
                 assert conditions["air_temperature_c"] == 21
                 assert "_observed_monotonic_ns" not in conditions
+                motion = current["progress"]["live_motion"]
+                assert motion["status"] == "fresh"
+                assert motion["frame_identifier"] == 100
+                assert motion["player_car_index"] == 0
+                assert motion["observation_count"] == 1
+                assert motion["world_position_m"] == [10.0, 20.0, 30.0]
+                assert motion["world_velocity_mps"] == [1.0, 2.0, 3.0]
+                assert "_observed_monotonic_ns" not in motion
 
                 await asyncio.sleep(0.55)
                 stale = (
@@ -1692,6 +1795,11 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                 ).json()["data"]["progress"]["live_session_conditions"]
                 assert stale_conditions["status"] == "stale"
                 assert stale_conditions["age_ms"] > 500
+                stale_motion = (
+                    await client.get("/api/v1/recordings/current")
+                ).json()["data"]["progress"]["live_motion"]
+                assert stale_motion["status"] == "stale"
+                assert stale_motion["age_ms"] > 500
 
                 stopped = await client.post(
                     f"/api/v1/recordings/{recording_id}/stop",
@@ -2496,3 +2604,301 @@ def test_live_session_conditions_wrap_frames_and_api_preserves_signed_values():
             status="fresh", reason=None, age_ms=0, observation_count=1,
             air_temperature_c=-129,
         )
+
+
+def test_live_motion_api_requires_finite_fixed_xyz_vectors():
+    motion = LiveMotionRecord(
+        status="fresh",
+        reason=None,
+        age_ms=0,
+        observation_count=1,
+        player_car_index=23,
+        world_position_m=(0.0, -2.5, 10.25),
+        world_velocity_mps=(0.0, -1.0, 3.5),
+    )
+    assert motion.player_car_index == 23
+    assert motion.world_position_m == (0.0, -2.5, 10.25)
+    assert motion.world_velocity_mps == (0.0, -1.0, 3.5)
+    with pytest.raises(ValidationError):
+        LiveMotionRecord(
+            status="fresh",
+            reason=None,
+            age_ms=0,
+            observation_count=1,
+            world_position_m=(1.0, 2.0),
+        )
+    with pytest.raises(ValidationError):
+        LiveMotionRecord(
+            status="fresh",
+            reason=None,
+            age_ms=0,
+            observation_count=1,
+            world_velocity_mps=(1.0, float("nan"), 3.0),
+        )
+
+
+@pytest.mark.parametrize(("packet_format", "player_index"), ((2025, 0), (2026, 23)))
+def test_live_motion_maps_supported_formats_from_motion_only_frames(
+    packet_format: int, player_index: int
+):
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_motion(
+        observer,
+        packet_format=packet_format,
+        player_car_index=player_index,
+        position=(0.0, -2.5, 10.25),
+        velocity=(0.0, -1.0, 3.5),
+    )
+
+    motion = observer.live_motion_snapshot()
+    assert motion["status"] == "fresh"
+    assert motion["session_uid"] == str(SESSION_UID)
+    assert motion["packet_format"] == packet_format
+    assert motion["player_car_index"] == player_index
+    assert motion["frame_identifier"] == 100
+    assert motion["session_time_s"] == 12.5
+    assert motion["world_position_m"] == (0.0, -2.5, 10.25)
+    assert motion["world_velocity_mps"] == (0.0, -1.0, 3.5)
+    assert motion["validation_flags"] == []
+    assert motion["observation_count"] == 1
+    assert observer.live_telemetry_snapshot()["status"] == "waiting"
+    assert observer.live_lap_timing_snapshot()["status"] == "waiting"
+
+
+def test_live_motion_agrees_on_selected_raw_record_ignores_other_cars_and_uses_oldest_time():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    base_ns = 5_000_000_000
+    first = _motion_packet(frame=100, sequence=10, session_time_s=12.5)
+    other_car_changed = _motion_packet(
+        frame=100,
+        sequence=11,
+        session_time_s=12.6,
+        unrelated_car_position=(50.0, 60.0, 70.0),
+    )
+    observer.process(replace(first, monotonic_ns=base_ns))
+    observer.process(replace(other_car_changed, monotonic_ns=base_ns + 200_000_000))
+    observer.process(replace(_advance(101, 12), monotonic_ns=base_ns + 300_000_000))
+
+    motion = observer.live_motion_snapshot(base_ns + 400_000_000)
+    assert motion["status"] == "fresh"
+    assert motion["world_position_m"] == (10.0, 20.0, 30.0)
+    assert motion["world_velocity_mps"] == (1.0, 2.0, 3.0)
+    assert motion["session_time_s"] == 12.5
+    assert motion["_observed_monotonic_ns"] == base_ns
+    assert motion["age_ms"] == 400
+    assert motion["observation_count"] == 1
+
+
+def test_live_motion_conflicts_only_when_selected_records_differ():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _process(observer, _motion_packet(frame=100, sequence=10))
+    _process(
+        observer,
+        _motion_packet(frame=100, sequence=11, position=(11.0, 20.0, 30.0)),
+    )
+    _process(observer, _advance(101, 12))
+
+    motion = observer.live_motion_snapshot()
+    assert motion["status"] == "unavailable"
+    assert motion["reason"] == "conflicting_selected_player_motion_records"
+    assert motion["world_position_m"] is None
+    assert motion["world_velocity_mps"] is None
+    assert motion["observation_count"] == 0
+
+
+def test_live_motion_is_unavailable_when_same_frame_player_identity_conflicts():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _process(observer, _advance(100, 10, player_car_index=0))
+    _process(observer, _advance(100, 11, player_car_index=1))
+    _process(observer, _motion_packet(frame=100, sequence=12, player_car_index=0))
+    observer.finish()
+
+    motion = observer.live_motion_snapshot()
+    assert motion["status"] == "unavailable"
+    assert motion["reason"] == "player_identity_unavailable"
+    assert motion["player_car_index"] is None
+    assert motion["observation_count"] == 0
+
+
+def test_live_motion_validates_position_and_velocity_independently():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_motion(
+        observer,
+        position=(float("nan"), 2.0, 3.0),
+        velocity=(0.0, -1.0, 3.5),
+    )
+
+    motion = observer.live_motion_snapshot()
+    assert motion["status"] == "fresh"
+    assert motion["world_position_m"] is None
+    assert motion["world_velocity_mps"] == (0.0, -1.0, 3.5)
+    assert motion["validation_flags"] == ["invalid_motion_world_position"]
+
+    _publish_live_motion(
+        observer, frame=102, sequence=20, position=(1.0, 2.0, 3.0),
+        velocity=(1.0, float("inf"), 3.0),
+    )
+    motion = observer.live_motion_snapshot()
+    assert motion["world_position_m"] == (1.0, 2.0, 3.0)
+    assert motion["world_velocity_mps"] is None
+    assert motion["validation_flags"] == ["invalid_motion_world_velocity"]
+
+
+def test_live_motion_rejects_malformed_unsupported_and_incomplete_timestamp_evidence():
+    malformed = _AcquisitionObserver(reorder_window_frames=1)
+    short_body = _motion_packet().payload[29:-1]
+    _process(
+        malformed,
+        make_datagram(
+            packet_id=0,
+            session_uid=SESSION_UID,
+            frame=100,
+            player_car_index=0,
+            body=short_body,
+            sequence=10,
+        ),
+    )
+    _process(malformed, _advance(101, 11))
+    assert malformed.live_motion_snapshot()["reason"] == "motion_decode_failed"
+
+    unsupported = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_motion(unsupported, packet_version=2)
+    rejected = unsupported.live_motion_snapshot()
+    assert rejected["status"] == "unsupported"
+    assert rejected["reason"] == "motion_adapter_unsupported"
+    assert rejected["observation_count"] == 0
+
+    no_provenance = _AcquisitionObserver(reorder_window_frames=1)
+    no_provenance._max_receive_time_entries = 0
+    _publish_live_motion(no_provenance)
+    missing = no_provenance.live_motion_snapshot()
+    assert missing["status"] == "unavailable"
+    assert missing["reason"] == "receive_provenance_unavailable"
+    assert missing["observation_count"] == 0
+
+    partial = _AcquisitionObserver(reorder_window_frames=1)
+    partial._max_receive_time_entries = 1
+    _process(partial, _motion_packet(frame=100, sequence=10))
+    _process(
+        partial,
+        _motion_packet(
+            frame=100,
+            sequence=11,
+            unrelated_car_position=(20.0, 30.0, 40.0),
+        ),
+    )
+    _process(partial, _advance(101, 12))
+    evicted = partial.live_motion_snapshot()
+    assert evicted["status"] == "unavailable"
+    assert evicted["reason"] == "receive_provenance_unavailable"
+    assert evicted["observation_count"] == 0
+
+
+def test_live_motion_does_not_refresh_on_duplicates_late_or_unrelated_frames():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    first = _motion_packet(frame=100, sequence=10)
+    _process(observer, first)
+    _process(observer, _advance(101, 11))
+    initial = observer.live_motion_snapshot()
+    observed_ns = initial["_observed_monotonic_ns"]
+
+    _process(observer, replace(first, sequence=12))
+    _process(
+        observer,
+        _motion_packet(frame=100, sequence=13, position=(99.0, 98.0, 97.0)),
+    )
+    _process(observer, _car_damage_packet(frame=102, sequence=14))
+    _process(observer, _advance(103, 15))
+    aged = observer.live_motion_snapshot(observed_ns + 501_000_000)
+    assert aged["status"] == "stale"
+    assert aged["age_ms"] == 501
+    assert aged["_observed_monotonic_ns"] == observed_ns
+    assert aged["world_position_m"] == (10.0, 20.0, 30.0)
+    assert aged["observation_count"] == 1
+
+
+def test_live_motion_resets_on_player_session_format_and_explicit_rewind():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_motion(observer, player_car_index=0)
+    _process(observer, _advance(102, 20, player_car_index=1))
+    assert observer.live_motion_snapshot()["status"] == "waiting"
+    assert observer.live_motion_snapshot()["observation_count"] == 0
+
+    _publish_live_motion(observer, frame=103, sequence=21, player_car_index=1)
+    _process(
+        observer,
+        _flashback_packet(
+            frame=105, sequence=30, session_time=14.0, target_time=12.0,
+        ),
+    )
+    _process(observer, _advance(106, 31, player_car_index=1))
+    assert observer.live_motion_snapshot()["status"] == "waiting"
+
+    next_session = SESSION_UID + 100
+    _publish_live_motion(
+        observer,
+        frame=1,
+        sequence=40,
+        session_uid=next_session,
+        player_car_index=1,
+    )
+    assert observer.live_motion_snapshot()["session_uid"] == str(next_session)
+    assert observer.live_motion_snapshot()["observation_count"] == 1
+
+    _publish_live_motion(
+        observer,
+        frame=200,
+        sequence=50,
+        session_uid=next_session,
+        packet_format=2026,
+        player_car_index=23,
+    )
+    changed_format = observer.live_motion_snapshot()
+    assert changed_format["packet_format"] == 2026
+    assert changed_format["player_car_index"] == 23
+    assert changed_format["observation_count"] == 1
+
+
+def test_live_motion_resets_on_synthetic_session_time_regression_and_frame_wraps():
+    regressed = _AcquisitionObserver(reorder_window_frames=1)
+    _process(
+        regressed,
+        _motion_packet(frame=100, sequence=10, session_time_s=12.0),
+    )
+    _process(
+        regressed,
+        _lap_packet(
+            frame=100,
+            lap_number=3,
+            distance_m=120.0,
+            session_time=12.0,
+            current_lap_time_ms=12_000,
+            sequence=11,
+        ),
+    )
+    _process(regressed, _advance(101, 12))
+    assert regressed.live_motion_snapshot()["status"] == "fresh"
+    _process(
+        regressed,
+        _motion_packet(frame=102, sequence=13, session_time_s=1.0),
+    )
+    _process(
+        regressed,
+        _lap_packet(
+            frame=102,
+            lap_number=1,
+            distance_m=5.0,
+            session_time=1.0,
+            current_lap_time_ms=1_000,
+            sequence=14,
+        ),
+    )
+    _process(regressed, _advance(103, 15))
+    assert regressed.live_motion_snapshot()["status"] == "waiting"
+    assert regressed.live_motion_snapshot()["observation_count"] == 0
+
+    wrapped = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_motion(wrapped, frame=0xFFFFFFFE, sequence=10)
+    _publish_live_motion(wrapped, frame=0, sequence=20)
+    assert wrapped.live_motion_snapshot()["frame_identifier"] == 0
+    assert wrapped.live_motion_snapshot()["observation_count"] == 2

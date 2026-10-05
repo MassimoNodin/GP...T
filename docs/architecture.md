@@ -1081,6 +1081,24 @@ Do not add forecasts, rain probability, grip inference, strategy, session countd
 
 **Rationale:** canonical Session context already decodes weather and signed air/track temperatures, but the live view presents context without packet-age evidence. A dedicated session-wide observation group establishes provenance and recency without inheriting player identity or Lap Data requirements.
 
+## Decision 0071: expose sparse live player Motion vectors
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Add one optional `live_motion` group to recording, replay and pinned `/live`. Reuse the supported F1 25 and 2026 Motion v1 decoder. Expose selected-player world-position XYZ in metres and world-velocity XYZ in metres per second, plus session UID, wire format, player, overall frame, source session time, independent age and bounded observation count. Label coordinate axes explicitly; world Y is not altitude.
+
+Build the group from admitted Motion frames. It is selected-player scoped and does not require Lap Data in the same frame. Apply active session, wire-format, selected-player barrier and rewind quarantine. Same-frame selected-player raw Motion records must agree; unrelated cars do not conflict. Use each adapter's decoded record stride. Malformed or unsupported candidates, conflicting records, invalid player identity or missing receive/delivery provenance make only this group unavailable. Position and velocity validate independently, so one invalid vector is null with its own flag while the other can remain visible. For agreeing candidates use the oldest supporting timestamp. Duplicates, late packets and unrelated packet families never refresh it.
+
+Use the existing 500 ms recency threshold and label values as recent or stale packet observations. Count decoded, nonconflicting frames only when all supporting candidates have receive/delivery provenance. Session, player, format and rewind boundaries reset the group; paused replay ages from delivery time and terminal operations hide it. Keep one fixed-size snapshot and the existing bounded receive-time cache. Older API responses or malformed optional fields leave other monitors usable.
+
+Do not add maps, trails, interpolation, geometry projection, jump detection, orientation/G-force presentation, lap association, history/storage/import changes, derived heading/speed/displacement, or coaching.
+
+**Acceptance:** synthetic F1 25/2026 fixtures verify XYZ mapping, signed/zero values and player slot 23; Motion-only frames work without Lap Data; agreeing/conflicting candidates, unrelated-car changes, invalid vectors, malformed/unsupported packets and partial timestamp-cache eviction are covered; duplicates/late packets, frame wrap, identity changes, rewind quarantine, independent aging, paused replay and terminal clearing are verified; malformed/absent optional web data leaves other monitors usable; and Melbourne plus recovered Shanghai captures match admitted selected-player vectors and source identity against raw Motion records, including Shanghai session transitions. Imported traces, reference policy and coaching authority remain unchanged.
+
+**Rationale:** Motion v1 already decodes world-position and world-velocity vectors for both supported formats. A separately aged selected-player monitor exposes those source values without requiring a lap join or implying a validated track map or inferred driving fact.
+
 ## Data flow
 
 ```text

@@ -3,6 +3,7 @@ import type {
   LiveCarSetupRecord,
   LiveCarStatusRecord,
   LiveLapTimingRecord,
+  LiveMotionRecord,
   LiveSessionConditionsRecord,
   LiveTelemetryRecord,
   SessionContext,
@@ -21,6 +22,7 @@ export interface PinnedLiveSnapshot {
   live_car_damage: LiveCarDamageRecord | null;
   live_car_setup: LiveCarSetupRecord | null;
   live_session_conditions: LiveSessionConditionsRecord | null;
+  live_motion: LiveMotionRecord | null;
   capture_name: string | null;
   speed: number | null;
 }
@@ -125,6 +127,11 @@ export function readPinnedLiveCurrent(
       source === "recording"
         ? progress?.live_session_conditions
         : data.live_session_conditions,
+    ),
+    live_motion: readMotionMonitor(
+      source === "recording"
+        ? progress?.live_motion
+        : data.live_motion,
     ),
     capture_name:
       source === "replay" && typeof data.capture_name === "string"
@@ -317,6 +324,50 @@ export function readSessionConditionsMonitor(
   };
 }
 
+export function readMotionMonitor(value: unknown): LiveMotionRecord | null {
+  const monitor = readMonitor(value);
+  if (!monitor || !isRecord(value)) return null;
+  return {
+    ...(monitor as LiveMotionRecord),
+    reason:
+      typeof value.reason === "string" && value.reason.length <= 80
+        ? value.reason
+        : value.reason === null
+          ? null
+          : "malformed_optional_fields",
+    age_ms:
+      typeof value.age_ms === "number" &&
+      Number.isFinite(value.age_ms) &&
+      value.age_ms >= 0
+        ? value.age_ms
+        : null,
+    observation_count:
+      Number.isSafeInteger(value.observation_count) &&
+      (value.observation_count as number) >= 0 &&
+      (value.observation_count as number) <= 2_147_483_647
+        ? (value.observation_count as number)
+        : undefined,
+    session_uid:
+      typeof value.session_uid === "string" && value.session_uid.length <= 20
+        ? value.session_uid
+        : null,
+    frame_identifier: boundedInteger(value.frame_identifier),
+    packet_format: boundedInteger(value.packet_format),
+    player_car_index: boundedInteger(value.player_car_index),
+    session_time_s: finiteNumber(value.session_time_s),
+    world_position_m: vector3(value.world_position_m),
+    world_velocity_mps: vector3(value.world_velocity_mps),
+    validation_flags:
+      Array.isArray(value.validation_flags) &&
+      value.validation_flags.length <= 2 &&
+      value.validation_flags.every(
+        (flag) => typeof flag === "string" && flag.length <= 80,
+      )
+        ? value.validation_flags
+        : [],
+  };
+}
+
 function percentArray(value: unknown, integer: boolean): readonly (number | null)[] | null {
   if (!Array.isArray(value) || value.length !== 4) return null;
   return value.map((item) => percent(item, integer));
@@ -350,6 +401,17 @@ function signedWireInteger(value: unknown): number | null {
     : null;
 }
 
+function vector3(value: unknown): readonly [number, number, number] | null {
+  if (
+    !Array.isArray(value) ||
+    value.length !== 3 ||
+    !value.every((component) => typeof component === "number" && Number.isFinite(component))
+  ) {
+    return null;
+  }
+  return [value[0], value[1], value[2]];
+}
+
 function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -361,6 +423,7 @@ function readMonitor(value: unknown):
   | LiveCarDamageRecord
   | LiveCarSetupRecord
   | LiveSessionConditionsRecord
+  | LiveMotionRecord
   | null {
   if (!isRecord(value)) return null;
   if (

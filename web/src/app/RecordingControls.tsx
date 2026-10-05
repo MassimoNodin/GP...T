@@ -8,6 +8,7 @@ import type {
   LiveCarSetupRecord,
   LiveCarStatusRecord,
   LiveLapTimingRecord,
+  LiveMotionRecord,
   LiveSessionConditionsRecord,
   LiveTelemetryRecord,
   RecordingJobRecord,
@@ -15,6 +16,7 @@ import type {
 import {
   readCarDamageMonitor,
   readCarSetupMonitor,
+  readMotionMonitor,
   readSessionConditionsMonitor,
 } from "@/lib/live";
 import { appScreenHref, isSelectionTransferBlocked } from "@/lib/navigation";
@@ -228,6 +230,9 @@ export default function RecordingControls({
           ) : null}
           {progress.live_session_conditions ? (
             <LiveSessionConditionsPanel telemetry={progress.live_session_conditions} />
+          ) : null}
+          {progress.live_motion ? (
+            <LiveMotionPanel telemetry={progress.live_motion} />
           ) : null}
         </>
       )}
@@ -940,6 +945,115 @@ function liveSessionConditionsUnavailableReason(reason: string | null) {
 function setupTemperature(value: unknown) {
   return typeof value === "number" && Number.isInteger(value) && value >= -128 && value <= 127
     ? `${value} °C`
+    : "—";
+}
+
+export function LiveMotionPanel({
+  telemetry: inputTelemetry,
+  sourceKind = "recording",
+}: {
+  telemetry: LiveMotionRecord;
+  sourceKind?: "recording" | "replay";
+}) {
+  const telemetry = readMotionMonitor(inputTelemetry) ?? {
+    status: "unavailable" as const,
+    reason: "malformed_optional_fields",
+    age_ms: null,
+    validation_flags: [],
+  };
+  const statusCopy: Record<LiveMotionRecord["status"], string> = {
+    waiting: "Waiting for an admitted selected-player Motion packet.",
+    fresh: "Recent selected-player world position and velocity from Motion.",
+    stale: `Last Motion observation was ${formatAge(telemetry.age_ms)} ago; values may have changed since.`,
+    unsupported:
+      sourceKind === "replay"
+        ? "Replay continues. This Motion packet version is unsupported."
+        : "Recording continues. This Motion packet version is unsupported.",
+    unavailable: liveMotionUnavailableReason(telemetry.reason),
+  };
+  const observationCount =
+    Number.isInteger(telemetry.observation_count) &&
+    (telemetry.observation_count ?? -1) >= 0
+      ? telemetry.observation_count!.toLocaleString()
+      : "—";
+  const invalidFields = (telemetry.validation_flags ?? []).map((flag) =>
+    flag.replace("invalid_motion_", "").replaceAll("_", " "),
+  );
+  const position = telemetry.world_position_m;
+  const velocity = telemetry.world_velocity_mps;
+
+  return (
+    <section
+      className="live-telemetry live-motion"
+      data-state={telemetry.status}
+      aria-label="Live selected-player world position and velocity"
+    >
+      <div className="live-telemetry-heading">
+        <div>
+          <div className="eyebrow">
+            {sourceKind === "replay" ? "REPLAYED PLAYER MOTION" : "LIVE PLAYER MOTION"}
+          </div>
+          <p>{statusCopy[telemetry.status]}</p>
+        </div>
+        <span className={`live-telemetry-state state-${telemetry.status}`}>
+          {telemetry.status.toUpperCase()}
+        </span>
+      </div>
+      {telemetry.status !== "waiting" && (
+        <>
+          <div className="live-car-damage-meta">
+            <span>{observationCount} admitted observations</span>
+            <span>Session {safeText(telemetry.session_uid)}</span>
+            <span>Player {safeInteger(telemetry.player_car_index)}</span>
+            <span>Format {safeInteger(telemetry.packet_format)}</span>
+            <span>Frame {safeInteger(telemetry.frame_identifier)}</span>
+            <span>Source time {finiteNumber(telemetry.session_time_s)?.toFixed(2) ?? "—"} s</span>
+          </div>
+          <h3 className="live-subheading">World position · metres</h3>
+          <div className="live-telemetry-grid">
+            <LiveMetric label="WORLD X" value={motionComponent(position?.[0])} />
+            <LiveMetric label="WORLD Y" value={motionComponent(position?.[1])} />
+            <LiveMetric label="WORLD Z" value={motionComponent(position?.[2])} />
+          </div>
+          <h3 className="live-subheading">World velocity · m/s</h3>
+          <div className="live-telemetry-grid">
+            <LiveMetric label="VELOCITY X" value={motionComponent(velocity?.[0])} />
+            <LiveMetric label="VELOCITY Y" value={motionComponent(velocity?.[1])} />
+            <LiveMetric label="VELOCITY Z" value={motionComponent(velocity?.[2])} />
+          </div>
+          <p className="live-car-status-note">
+            Source-reported world axes are shown as supplied; Y is not interpreted as altitude and no track position is inferred.
+          </p>
+          {invalidFields.length ? (
+            <p className="live-car-status-invalid" role="status">
+              Unavailable vectors: {invalidFields.join(", ")}.
+            </p>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
+}
+
+function liveMotionUnavailableReason(reason: string | null) {
+  const reasons: Record<string, string> = {
+    motion_adapter_unsupported: "The game continues. This Motion packet version is unsupported.",
+    motion_decode_failed: "Motion values are hidden because this packet could not be decoded safely.",
+    player_index_mismatch_in_frame: "Motion values are hidden because this frame does not identify the selected player.",
+    player_index_out_of_range: "Motion values are hidden because the selected player is outside this packet's car records.",
+    player_identity_unavailable: "Motion values are hidden because the selected player could not be identified in this frame.",
+    conflicting_selected_player_motion_records: "Motion values are hidden because this frame contains conflicting records for the selected player.",
+    receive_provenance_unavailable: "Motion values are hidden because receive-time evidence is incomplete.",
+  };
+  const message = reason && Object.hasOwn(reasons, reason) ? reasons[reason] : null;
+  return typeof message === "string"
+    ? message
+    : "Player Motion is currently unavailable.";
+}
+
+function motionComponent(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value.toFixed(2)
     : "—";
 }
 

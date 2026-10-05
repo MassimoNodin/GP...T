@@ -68,6 +68,16 @@ def test_replay_damage_observation_ages_while_paused_and_clears_at_terminal_stat
             "track_temperature_c": 31,
             "_observed_monotonic_ns": observed_ns,
         },
+        "live_motion": {
+            "status": "fresh",
+            "reason": None,
+            "age_ms": 0,
+            "observation_count": 2,
+            "player_car_index": 23,
+            "world_position_m": [1.0, 2.0, 3.0],
+            "world_velocity_mps": [4.0, 5.0, 6.0],
+            "_observed_monotonic_ns": observed_ns,
+        },
     }
 
     paused = controller.current()
@@ -88,6 +98,10 @@ def test_replay_damage_observation_ages_while_paused_and_clears_at_terminal_stat
     assert paused["live_session_conditions"]["age_ms"] >= 700
     assert paused["live_session_conditions"]["weather_id"] == 1
     assert "_observed_monotonic_ns" not in paused["live_session_conditions"]
+    assert paused["live_motion"]["status"] == "stale"
+    assert paused["live_motion"]["age_ms"] >= 700
+    assert paused["live_motion"]["world_position_m"] == [1.0, 2.0, 3.0]
+    assert "_observed_monotonic_ns" not in paused["live_motion"]
 
     controller._snapshot["state"] = "completed"
     ended = controller.current()
@@ -104,6 +118,12 @@ def test_replay_damage_observation_ages_while_paused_and_clears_at_terminal_stat
         "observation_count": 0,
     }
     assert ended["live_session_conditions"] == {
+        "status": "unavailable",
+        "reason": "operation_ended",
+        "age_ms": None,
+        "observation_count": 0,
+    }
+    assert ended["live_motion"] == {
         "status": "unavailable",
         "reason": "operation_ended",
         "age_ms": None,
@@ -536,6 +556,14 @@ def test_replay_stop_during_eof_finalization_publishes_terminal_state(
             }
 
         def live_session_conditions_snapshot(self):
+            return {
+                "status": "waiting",
+                "reason": None,
+                "age_ms": None,
+                "observation_count": 0,
+            }
+
+        def live_motion_snapshot(self):
             return {
                 "status": "waiting",
                 "reason": None,

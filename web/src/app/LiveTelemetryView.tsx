@@ -6,6 +6,7 @@ import type {
   LiveCarSetupRecord,
   LiveCarStatusRecord,
   LiveLapTimingRecord,
+  LiveMotionRecord,
   LiveSessionConditionsRecord,
   LiveTelemetryRecord,
 } from "@/lib/api";
@@ -17,6 +18,7 @@ import {
 import {
   LiveCarDamagePanel,
   LiveCarSetupPanel,
+  LiveMotionPanel,
   LiveSessionConditionsPanel,
   LiveCarStatusPanel,
   LiveLapTimingPanel,
@@ -30,7 +32,8 @@ type MonitorRecord =
   | LiveLapTimingRecord
   | LiveCarDamageRecord
   | LiveCarSetupRecord
-  | LiveSessionConditionsRecord;
+  | LiveSessionConditionsRecord
+  | LiveMotionRecord;
 
 const activeRecordingStates = new Set(["starting", "recording", "stopping"]);
 const activeReplayStates = new Set([
@@ -271,6 +274,18 @@ export default function LiveTelemetryView({
                 {snapshot.live_session_conditions ? (
                   <LiveSessionConditionsPanel
                     telemetry={snapshot.live_session_conditions}
+                    sourceKind={snapshot.source}
+                  />
+                ) : null}
+              </MonitorGroup>
+              <MonitorGroup
+                title="Selected-player Motion"
+                telemetry={snapshot.live_motion}
+                sourceKind={snapshot.source}
+              >
+                {snapshot.live_motion ? (
+                  <LiveMotionPanel
+                    telemetry={snapshot.live_motion}
                     sourceKind={snapshot.source}
                   />
                 ) : null}
