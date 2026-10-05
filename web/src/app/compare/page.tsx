@@ -4,6 +4,7 @@ import type {
   LapAttemptPage,
   LapRecord,
   PairedRegionReport,
+  ObservedTrajectoryComparisonPreview,
   ProcessingRunDetail,
   ProcessingRunPage,
   ProcessingRunSession,
@@ -21,11 +22,13 @@ import {
 import AppHeader from "../AppHeader";
 import CompareResultPanel from "../CompareResultPanel";
 import PairedRegionPanel from "../PairedRegionPanel";
+import TrajectoryComparisonPanel from "../TrajectoryComparisonPanel";
 import { comparisonReportMatchesAttempts } from "@/lib/comparison-report-match";
 import {
   pairedRegionReportMatchesSelection,
   parseTrackModelKey,
 } from "@/lib/engineer-query-match";
+import { trajectoryComparisonReportMatchesSelection } from "@/lib/trajectory-comparison-match";
 import {
   appScreenHref,
   isSelectionTransferBlocked,
@@ -46,6 +49,7 @@ const selectionKeys = [
   "track_model_key",
   "window_start_m",
   "window_end_m",
+  "position_probe_m",
 ];
 
 export default async function ComparePage({
@@ -68,6 +72,7 @@ export default async function ComparePage({
     trackModelKey: one(params.track_model_key),
     windowStart: one(params.window_start_m),
     windowEnd: one(params.window_end_m),
+    positionProbe: one(params.position_probe_m),
   };
   const duplicateSelection = selectionKeys.some((key) =>
     hasDuplicate(params[key]),
@@ -471,6 +476,64 @@ export default async function ComparePage({
   const pairedRegionResponseMismatch = Boolean(
     pairedRegionResponse?.status === "ok" && !pairedRegionReport,
   );
+  const trajectoryComparisonReady = Boolean(
+    comparison && resolvedTarget && resolvedReference && policy,
+  );
+  const probeDistanceText = raw.positionProbe?.trim() ?? "";
+  const parsedProbeDistance = probeDistanceText
+    ? Number(probeDistanceText)
+    : null;
+  const requestedProbeDistanceM =
+    parsedProbeDistance !== null && Number.isFinite(parsedProbeDistance)
+      ? parsedProbeDistance
+      : null;
+  const invalidProbeDistance = Boolean(
+    probeDistanceText && requestedProbeDistanceM === null,
+  );
+  const trajectoryQuery = new URLSearchParams({
+    target_attempt_key: resolvedTarget?.attempt_key ?? "",
+    reference_attempt_key: resolvedReference?.attempt_key ?? "",
+    comparison_policy: policy ?? "",
+  });
+  if (probeDistanceText) {
+    trajectoryQuery.set("position_probe_m", probeDistanceText);
+  }
+  const trajectoryResponse =
+    trajectoryComparisonReady &&
+    !invalidProbeDistance &&
+    resolvedTarget &&
+    resolvedReference &&
+    policy
+      ? await requestApi<ObservedTrajectoryComparisonPreview>(
+          `/api/v1/compare/trajectories?${trajectoryQuery}`,
+        )
+      : null;
+  const trajectoryCandidate =
+    trajectoryResponse?.status === "ok" ? trajectoryResponse.data : null;
+  const trajectoryReport =
+    trajectoryCandidate &&
+    resolvedTarget &&
+    resolvedReference &&
+    policy &&
+    trajectoryComparisonReportMatchesSelection(trajectoryCandidate, {
+      target: resolvedTarget,
+      reference: resolvedReference,
+      comparisonPolicy: policy,
+      requestedProbeDistanceM,
+    })
+      ? trajectoryCandidate
+      : null;
+  const trajectoryResponseMismatch = Boolean(
+    trajectoryResponse?.status === "ok" && !trajectoryReport,
+  );
+  const trajectoryFormParams = buildTrajectoryFormParams(
+    preservedQuery,
+    runId,
+    session?.session_key ?? null,
+    resolvedTarget,
+    resolvedReference,
+    policy,
+  );
   const runPage = runsResponse?.status === "ok" ? runsResponse.data : null;
   const listedRuns = runPage?.items ?? [];
   const visibleRuns =
@@ -586,7 +649,7 @@ export default async function ComparePage({
         ) : duplicateSelection ? (
           <StatePanel
             title="Choose one value for each selection"
-            text="Repeated run, session, attempt, policy, or window parameters were rejected."
+            text="Repeated run, session, attempt, policy, model, window, or probe values were rejected."
             alert
           />
         ) : runsResponse?.status !== "ok" || !runPage ? (
@@ -1150,6 +1213,21 @@ export default async function ComparePage({
                           window={window}
                           preservedQuery={preservedQuery}
                         />
+                        <TrajectoryComparisonPanel
+                          report={trajectoryReport}
+                          unavailableReason={
+                            invalidProbeDistance
+                              ? "position_probe_distance_invalid"
+                              : trajectoryResponse?.status === "unavailable"
+                                ? trajectoryResponse.reason
+                                : trajectoryResponseMismatch
+                                  ? "trajectory_response_provenance_mismatch"
+                                  : null
+                          }
+                          probeDistanceM={raw.positionProbe ?? ""}
+                          formParams={trajectoryFormParams}
+                          formAction="/compare"
+                        />
                         {pairedRegionResponseMismatch && (
                           <StatePanel
                             title="The region response did not match the selected evidence"
@@ -1313,6 +1391,33 @@ function modePolicy(sessionType: string | null | undefined): Policy | null {
 
 function modelKey(model: TrackModelRecord) {
   return `${model.model_id}@${model.revision}`;
+}
+
+function buildTrajectoryFormParams(
+  preservedQuery: string,
+  runId: string | null,
+  sessionKey: string | null,
+  target: LapRecord | null,
+  reference: LapRecord | null,
+  policy: Policy | null,
+) {
+  const result: Record<string, string | string[]> = {};
+  for (const [key, value] of new URLSearchParams(preservedQuery)) {
+    if (key === "position_probe_m" || key === "selection_transfer") continue;
+    const previous = result[key];
+    result[key] =
+      previous === undefined
+        ? value
+        : Array.isArray(previous)
+          ? [...previous, value]
+          : [previous, value];
+  }
+  if (runId) result.run_id = runId;
+  if (sessionKey) result.session_key = sessionKey;
+  if (target) result.target_attempt_key = target.attempt_key;
+  if (reference) result.reference_choice = reference.attempt_key;
+  if (policy) result.comparison_policy = policy;
+  return result;
 }
 
 function isTrackModelRecord(value: unknown): value is TrackModelRecord {

@@ -8,22 +8,31 @@ export default function TrajectoryComparisonPanel({
   unavailableReason,
   probeDistanceM,
   formParams,
+  formAction = "/",
 }: {
   report: ObservedTrajectoryComparisonPreview | null;
   unavailableReason: string | null;
   probeDistanceM: string;
   formParams: Record<string, string | string[]>;
+  formAction?: string;
 }) {
   const probeForm = (
-    <form className="trajectory-probe-form" action="/" method="get">
+    <form className="trajectory-probe-form" action={formAction} method="get">
       {Object.entries(formParams).flatMap(([name, value]) =>
         Array.isArray(value)
           ? value.map((item, index) => (
-              <input key={`${name}-${index}`} type="hidden" name={name} value={item} />
+              <input
+                key={`${name}-${index}`}
+                type="hidden"
+                name={name}
+                value={item}
+              />
             ))
           : [<input key={name} type="hidden" name={name} value={value} />],
       )}
-      <label htmlFor="position-probe-m">Position probe · lap distance (m)</label>
+      <label htmlFor="position-probe-m">
+        Position probe · lap distance (m)
+      </label>
       <input
         id="position-probe-m"
         name="position_probe_m"
@@ -71,14 +80,18 @@ export default function TrajectoryComparisonPanel({
           <div className="eyebrow">OBSERVED WORLD-POSITION OVERLAY</div>
           <h3>Recorded paths in a shared frame</h3>
           <p>
-            World X/Z coordinates · metres · equal scale · discontinuities preserved
+            World X/Z coordinates · metres · equal scale · discontinuities
+            preserved
           </p>
         </div>
         <span className="trajectory-badge">DIAGNOSTIC ONLY</span>
       </header>
       {probeForm}
       {positionProbe ? (
-        <section className="trajectory-probe-evidence" aria-label="Position probe evidence">
+        <section
+          className="trajectory-probe-evidence"
+          aria-label="Position probe evidence"
+        >
           <header>
             <div>
               <div className="eyebrow">DISTANCE-ALIGNED POSITION PROBE</div>
@@ -87,9 +100,14 @@ export default function TrajectoryComparisonPanel({
                   ? "Requested distance unavailable"
                   : `${format(positionProbe.requested_distance_m)} m along lap`}
               </h4>
-              <p>Observed world position or interpolation between adjacent source samples.</p>
+              <p>
+                Observed world position or interpolation between adjacent source
+                samples.
+              </p>
             </div>
-            <span className={`trajectory-probe-status is-${positionProbe.status}`}>
+            <span
+              className={`trajectory-probe-status is-${positionProbe.status}`}
+            >
               {positionProbe.status}
             </span>
           </header>
@@ -108,7 +126,10 @@ export default function TrajectoryComparisonPanel({
                 <strong>Target minus reference</strong>
                 <span>ΔX {format(positionProbe.difference.world_x_m)} m</span>
                 <span>ΔZ {format(positionProbe.difference.world_z_m)} m</span>
-                <span>Horizontal separation {format(positionProbe.difference.horizontal_separation_m)} m</span>
+                <span>
+                  Horizontal separation{" "}
+                  {format(positionProbe.difference.horizontal_separation_m)} m
+                </span>
               </>
             ) : (
               <span>
@@ -147,12 +168,16 @@ export default function TrajectoryComparisonPanel({
             <article key={sideName}>
               <div className={`trajectory-comparison-dot is-${sideName}`} />
               <div>
-                <strong>{sideName === "target" ? "Target" : "Reference"}</strong>
+                <strong>
+                  {sideName === "target" ? "Target" : "Reference"}
+                </strong>
                 <small>{path.source.attempt_key}</small>
                 <small>
-                  {path.preview.source_position_point_count.toLocaleString()} source points ·{" "}
+                  {path.preview.source_position_point_count.toLocaleString()}{" "}
+                  source points ·{" "}
                   {path.preview.rendered_point_count.toLocaleString()} shown ·{" "}
-                  {(path.coverage.position_sample_coverage * 100).toFixed(1)}% coverage
+                  {(path.coverage.position_sample_coverage * 100).toFixed(1)}%
+                  coverage
                 </small>
                 {path.capture_evidence ? (
                   <small>
@@ -161,7 +186,9 @@ export default function TrajectoryComparisonPanel({
                       ? ` · footer ${path.capture_evidence.footer_status}`
                       : ""}
                   </small>
-                ) : <small>Capture completion unknown</small>}
+                ) : (
+                  <small>Capture completion unknown</small>
+                )}
                 <small>Game validity {gameValidity}</small>
                 {warnings.length ? (
                   <small className="trajectory-comparison-warning">
@@ -180,7 +207,11 @@ export default function TrajectoryComparisonPanel({
           role="img"
           aria-label="Target and reference observed paths plotted in world X and Z coordinates on the same metre scale"
         >
-          <rect width={side} height={side} className="trajectory-comparison-background" />
+          <rect
+            width={side}
+            height={side}
+            className="trajectory-comparison-background"
+          />
           <text x="22" y="28" className="trajectory-comparison-axis-label">
             WORLD Z ↑
           </text>
@@ -213,8 +244,9 @@ export default function TrajectoryComparisonPanel({
                 );
               }
               const path = coordinates
-                .map((point, pointIndex) =>
-                  `${pointIndex === 0 ? "M" : "L"}${point.x.toFixed(2)},${point.y.toFixed(2)}`,
+                .map(
+                  (point, pointIndex) =>
+                    `${pointIndex === 0 ? "M" : "L"}${point.x.toFixed(2)},${point.y.toFixed(2)}`,
                 )
                 .join(" ");
               return (
@@ -233,47 +265,59 @@ export default function TrajectoryComparisonPanel({
               );
             });
           })}
-          {positionProbe ? (["target", "reference"] as const).map((sideName) => {
-            const probe = positionProbe[sideName];
-            const position = probe.status === "available"
-              ? probe.position_world_xyz_m
-              : null;
-            if (!position) return null;
-            const cx = x(position.x);
-            const cy = y(position.z);
-            const color = sideName === "target" ? "#f0b45c" : "#71c7b5";
-            return sideName === "target" ? (
-              <circle
-                key={`probe-${sideName}`}
-                cx={cx}
-                cy={cy}
-                r="7"
-                fill={color}
-                stroke="#0a0e0f"
-                strokeWidth="2"
-                aria-hidden="true"
-              />
-            ) : (
-              <path
-                key={`probe-${sideName}`}
-                d={`M${cx},${cy - 8} L${cx + 8},${cy} L${cx},${cy + 8} L${cx - 8},${cy} Z`}
-                fill={color}
-                stroke="#0a0e0f"
-                strokeWidth="2"
-                aria-hidden="true"
-              />
-            );
-          }) : null}
+          {positionProbe
+            ? (["target", "reference"] as const).map((sideName) => {
+                const probe = positionProbe[sideName];
+                const position =
+                  probe.status === "available"
+                    ? probe.position_world_xyz_m
+                    : null;
+                if (!position) return null;
+                const cx = x(position.x);
+                const cy = y(position.z);
+                const color = sideName === "target" ? "#f0b45c" : "#71c7b5";
+                return sideName === "target" ? (
+                  <circle
+                    key={`probe-${sideName}`}
+                    cx={cx}
+                    cy={cy}
+                    r="7"
+                    fill={color}
+                    stroke="#0a0e0f"
+                    strokeWidth="2"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <path
+                    key={`probe-${sideName}`}
+                    d={`M${cx},${cy - 8} L${cx + 8},${cy} L${cx},${cy + 8} L${cx - 8},${cy} Z`}
+                    fill={color}
+                    stroke="#0a0e0f"
+                    strokeWidth="2"
+                    aria-hidden="true"
+                  />
+                );
+              })
+            : null}
         </svg>
       </div>
       <div className="trajectory-comparison-legend">
-        <span><i className="is-target" />Target · circle</span>
-        <span><i className="is-reference" />Reference · dashed</span>
-        {positionProbe ? <span>Probe markers · target circle / reference diamond</span> : null}
+        <span>
+          <i className="is-target" />
+          Target · circle
+        </span>
+        <span>
+          <i className="is-reference" />
+          Reference · dashed
+        </span>
+        {positionProbe ? (
+          <span>Probe markers · target circle / reference diamond</span>
+        ) : null}
         <span>Gaps are not connected</span>
       </div>
       <p className="trajectory-comparison-note">
-        These are the cars’ recorded positions. The probe uses world coordinates; it does not report line offset or time loss.
+        These are the cars’ recorded positions. The probe uses world
+        coordinates; it does not report line offset or time loss.
       </p>
     </section>
   );
@@ -293,31 +337,46 @@ function ProbeEvidence({
       {probe.status === "available" && position ? (
         <>
           <strong className="trajectory-probe-coordinates">
-            X {format(position.x)} · Y {format(position.y)} · Z {format(position.z)} m
+            X {format(position.x)} · Y {format(position.y)} · Z{" "}
+            {format(position.z)} m
           </strong>
           <small>
             {probe.method === "exact_source_observation"
               ? "Exact source observation"
               : `Linear interpolation · ${(100 * (probe.interpolation_fraction ?? 0)).toFixed(1)}%`}
-            {probe.segment_index == null ? "" : ` · segment ${probe.segment_index}`}
+            {probe.segment_index == null
+              ? ""
+              : ` · segment ${probe.segment_index}`}
           </small>
           <div className="trajectory-probe-anchors">
             {probe.source_anchors.map((anchor) => (
-              <small key={`${anchor.frame_identifier}-${anchor.session_time_s}`}>
-                Frame {anchor.frame_identifier} · {format(anchor.session_time_s)} s · {format(anchor.lap_distance_m)} m
+              <small
+                key={`${anchor.frame_identifier}-${anchor.session_time_s}`}
+              >
+                Frame {anchor.frame_identifier} ·{" "}
+                {format(anchor.session_time_s)} s ·{" "}
+                {format(anchor.lap_distance_m)} m
               </small>
             ))}
           </div>
           <small className="trajectory-probe-source">
-            Source {probe.source?.attempt_key ?? "unknown"} · trace {probe.source?.trace_sha256?.slice(0, 12) ?? "unknown"}… · schema {probe.source?.trace_schema_version ?? "unknown"}
+            Source {probe.source?.attempt_key ?? "unknown"} · trace{" "}
+            {probe.source?.trace_sha256?.slice(0, 12) ?? "unknown"}… · schema{" "}
+            {probe.source?.trace_schema_version ?? "unknown"}
           </small>
         </>
       ) : (
         <>
           <strong>Unavailable</strong>
-          <small>{probe.reason_code ? humanize(probe.reason_code) : "Source position evidence unavailable."}</small>
+          <small>
+            {probe.reason_code
+              ? humanize(probe.reason_code)
+              : "Source position evidence unavailable."}
+          </small>
           <small className="trajectory-probe-source">
-            Source {probe.source?.attempt_key ?? "unknown"} · trace {probe.source?.trace_sha256?.slice(0, 12) ?? "unknown"}… · schema {probe.source?.trace_schema_version ?? "unknown"}
+            Source {probe.source?.attempt_key ?? "unknown"} · trace{" "}
+            {probe.source?.trace_sha256?.slice(0, 12) ?? "unknown"}… · schema{" "}
+            {probe.source?.trace_schema_version ?? "unknown"}
           </small>
         </>
       )}
