@@ -16,6 +16,7 @@ export default function AppHeader({
     { screen: "recordings" as const, label: "Recordings" },
     { screen: "sessions" as const, label: "Sessions" },
     { screen: "compare" as const, label: "Compare" },
+    { screen: "track" as const, label: "Track" },
     { screen: "engineer" as const, label: "Engineer" },
     { screen: "live" as const, label: "Live" },
   ].map((item) => ({

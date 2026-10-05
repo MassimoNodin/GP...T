@@ -4,7 +4,8 @@ export type AppScreen =
   | "sessions"
   | "engineer"
   | "live"
-  | "compare";
+  | "compare"
+  | "track";
 export type ImportReturnScreen = "dashboard" | "recordings";
 
 export type AppSearchParams = Record<string, string | string[] | undefined>;
@@ -90,6 +91,7 @@ export function appScreenPath(screen: AppScreen): string {
   if (screen === "engineer") return "/engineer";
   if (screen === "live") return "/live";
   if (screen === "compare") return "/compare";
+  if (screen === "track") return "/track";
   return "/";
 }
 

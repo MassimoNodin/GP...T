@@ -461,6 +461,26 @@ function RunDetail({
                     target_attempt_key: attempt.attempt_key,
                     engineer_intent: "attempt_summary",
                   })}
+                  trackHref={screenHref(
+                    "track",
+                    preservedQuery,
+                    {
+                      run_id: summary.run_id,
+                      session_key: attempt.session_key,
+                      target_attempt_key: attempt.attempt_key,
+                      attempt_offset: "0",
+                    },
+                    [
+                      "reference_choice",
+                      "comparison_policy",
+                      "window_start_m",
+                      "window_end_m",
+                      "observation_attempt_key",
+                      "position_probe_m",
+                      "engineer_intent",
+                      "engineer_region_identifier",
+                    ],
+                  )}
                   href={screenHref(
                     "dashboard",
                     preservedQuery,
@@ -864,10 +884,12 @@ function AttemptRow({
   attempt,
   href,
   summaryHref,
+  trackHref,
 }: {
   attempt: ProcessingRunAttempt;
   href: string | null;
   summaryHref: string | null;
+  trackHref: string | null;
 }) {
   const timing = attempt.timing_evidence;
   const lifecycleStatus = !attempt.lifecycle_assessed || attempt.superseded === null
@@ -898,6 +920,7 @@ function AttemptRow({
       </div>
       <div className="run-link-actions">
         {summaryHref ? <a href={summaryHref}>Summarize attempt ↗</a> : null}
+        {trackHref ? <a href={trackHref}>Inspect track ↗</a> : null}
         <a href={href ?? undefined}>Open attempt ↗</a>
       </div>
     </li>

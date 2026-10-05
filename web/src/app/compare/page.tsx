@@ -11,6 +11,11 @@ import type {
   SessionContext,
 } from "@/lib/api";
 import { requestApi } from "@/lib/api";
+import {
+  attemptInventoryUrl,
+  exactLapAttempt,
+  lapAttemptPageMatchesScope,
+} from "@/lib/attempt-inventory";
 import AppHeader from "../AppHeader";
 import CompareResultPanel from "../CompareResultPanel";
 import {
@@ -109,29 +114,33 @@ export default async function ComparePage({
     session &&
     runId
       ? await requestApi<LapAttemptPage>(
-          `/api/v1/processing-runs/${encodeURIComponent(runId)}/sessions/${encodeURIComponent(session.session_uid)}/lap-attempts?${attemptPageQuery({
+          attemptInventoryUrl({
+            runId,
+            sessionUid: session.session_uid,
             offset: attemptOffset,
             targetAttemptKey: raw.targetKey,
             referenceAttemptKey:
               raw.referenceChoice && raw.referenceChoice !== "session_best"
                 ? raw.referenceChoice
                 : undefined,
-          })}`,
+          }),
         )
       : null;
   const attemptPageCandidate =
     attemptPageResponse?.status === "ok" ? attemptPageResponse.data : null;
   const attemptPage =
-    attemptPageCandidate?.run_id === runId &&
-    attemptPageCandidate.session_uid === session?.session_uid
+    runId && session &&
+    lapAttemptPageMatchesScope(
+      attemptPageCandidate,
+      runId,
+      session.session_uid,
+    )
       ? attemptPageCandidate
       : null;
   const laps = attemptPage?.items ?? [];
   const selectedAttempt = (attemptKey: string | undefined) =>
-    attemptKey
-      ? attemptPage?.selected_attempts.find(
-          (item) => item.requested_attempt_key === attemptKey,
-        )?.attempt ?? null
+    runId && session
+      ? exactLapAttempt(attemptPage, attemptKey, runId, session.session_uid)
       : null;
   const target = selectedAttempt(raw.targetKey);
   const targetMatchesSelection = Boolean(
@@ -237,12 +246,14 @@ export default async function ComparePage({
   const automaticReferenceMetadataResponse =
     automaticReferenceKey && runId && session
       ? await requestApi<LapAttemptPage>(
-          `/api/v1/processing-runs/${encodeURIComponent(runId)}/sessions/${encodeURIComponent(session.session_uid)}/lap-attempts?${attemptPageQuery({
+          attemptInventoryUrl({
+            runId,
+            sessionUid: session.session_uid,
             offset: 0,
             limit: 1,
             targetAttemptKey: resolvedTarget?.attempt_key,
             referenceAttemptKey: automaticReferenceKey,
-          })}`,
+          }),
         )
       : null;
   const automaticReference =
@@ -867,30 +878,6 @@ function comparisonQuery(
   if (window) {
     query.set("window_start_m", String(window[0]));
     query.set("window_end_m", String(window[1]));
-  }
-  return query.toString();
-}
-
-function attemptPageQuery({
-  offset,
-  limit = 50,
-  targetAttemptKey,
-  referenceAttemptKey,
-}: {
-  offset: number;
-  limit?: number;
-  targetAttemptKey?: string;
-  referenceAttemptKey?: string;
-}) {
-  const query = new URLSearchParams({
-    limit: String(limit),
-    offset: String(offset),
-  });
-  if (targetAttemptKey) {
-    query.set("selected_target_attempt_key", targetAttemptKey);
-  }
-  if (referenceAttemptKey) {
-    query.set("selected_reference_attempt_key", referenceAttemptKey);
   }
   return query.toString();
 }

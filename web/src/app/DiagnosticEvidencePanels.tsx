@@ -11,21 +11,28 @@ export default function DiagnosticEvidencePanels({
   regionReport,
   regionUnavailableReason,
   showRegionPanel,
+  selectedRegionId,
+  onSelectedRegionChange,
 }: {
   trajectoryReport: AttemptTrajectoryPreview | null;
   trajectoryUnavailableReason: string | null;
   regionReport: AttemptRegionReport | null;
   regionUnavailableReason: string | null;
   showRegionPanel: boolean;
+  selectedRegionId?: string | null;
+  onSelectedRegionChange?: (identifier: string | null) => void;
 }) {
-  const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
+  const [internalSelectedRegionId, setInternalSelectedRegionId] = useState<string | null>(null);
+  const activeRegionId = selectedRegionId === undefined
+    ? internalSelectedRegionId
+    : selectedRegionId;
   const sourcesMatch =
     trajectoryReport !== null &&
     regionReport !== null &&
     sameSource(trajectoryReport, regionReport);
   const selectedRegion =
     sourcesMatch && regionReport
-      ? regionReport.regions.find((region) => region.identifier === selectedRegionId) ?? null
+      ? regionReport.regions.find((region) => region.identifier === activeRegionId) ?? null
       : null;
 
   return (
@@ -49,7 +56,7 @@ export default function DiagnosticEvidencePanels({
         <AttemptRegionsPanel
           report={regionReport}
           unavailableReason={regionUnavailableReason}
-          selectedRegionId={selectedRegionId}
+          selectedRegionId={activeRegionId}
           onSelectRegion={sourcesMatch ? toggleRegion : undefined}
         />
       ) : null}
@@ -57,8 +64,10 @@ export default function DiagnosticEvidencePanels({
   );
 
   function toggleRegion(identifier: string) {
-    const shouldInspect = selectedRegionId !== identifier;
-    setSelectedRegionId(shouldInspect ? identifier : null);
+    const nextRegionId = activeRegionId === identifier ? null : identifier;
+    if (selectedRegionId === undefined) setInternalSelectedRegionId(nextRegionId);
+    onSelectedRegionChange?.(nextRegionId);
+    const shouldInspect = nextRegionId !== null;
     if (shouldInspect) {
       requestAnimationFrame(() => {
         document
