@@ -5,8 +5,26 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from .continuity import MAX_SESSION_TIME_GAP_S, session_time_discontinuity
-from .resampling import ResampledTrace, ResamplingConfig, TraceSample, resample_trace
-from ..storage.query import StoredAttemptTrace, load_attempt_trace, load_reference_inventory
+from .resampling import (
+    ResampledTrace,
+    ResamplingConfig,
+    TraceSample,
+    estimate_resampling_work,
+    resample_trace,
+)
+from .source_limits import (
+    ANALYSIS_SOURCE_CONTEXT_BYTE_LIMIT,
+    ANALYSIS_SOURCE_CONTEXT_SEGMENT_LIMIT,
+    ANALYSIS_SOURCE_TRACE_BYTE_LIMIT,
+    ANALYSIS_SOURCE_TRACE_ROW_LIMIT,
+)
+from ..storage.query import (
+    AttemptTraceReadLimitError,
+    StoredAttemptTrace,
+    load_attempt_capture_quality_evidence,
+    load_attempt_trace,
+    load_reference_inventory,
+)
 
 
 QUALITY_REPORT_VERSION = 2
@@ -89,6 +107,7 @@ QUALITY_RESAMPLING = ResamplingConfig()
 _FRAME_MASK = 0xFFFFFFFF
 _SERIAL_HALF_RANGE = 0x80000000
 _MAX_GRID_POINTS = 100_000
+QUALITY_WEB_RESAMPLING_WORK_LIMIT = 16_000_000
 _MAX_EXAMPLES = 20
 _CHANNELS = (
     "time_s",
@@ -178,14 +197,57 @@ def inspect_attempt_quality(
     database_path: str | Path, attempt_key: str
 ) -> dict[str, object] | None:
     """Return standalone quality evidence for any persisted attempt with a trace."""
-    attempt = load_attempt_trace(
-        database_path, attempt_key, columns=QUALITY_TRACE_COLUMNS
+    return _inspect_attempt_quality(database_path, attempt_key, web_bounded=False)
+
+
+def inspect_attempt_quality_web(
+    database_path: str | Path, attempt_key: str
+) -> dict[str, object] | None:
+    """Return one-attempt web quality evidence under source and work limits."""
+    return _inspect_attempt_quality(database_path, attempt_key, web_bounded=True)
+
+
+def _inspect_attempt_quality(
+    database_path: str | Path, attempt_key: str, *, web_bounded: bool
+) -> dict[str, object] | None:
+    read_limits = (
+        {
+            "max_trace_bytes": ANALYSIS_SOURCE_TRACE_BYTE_LIMIT,
+            "max_trace_rows": ANALYSIS_SOURCE_TRACE_ROW_LIMIT,
+            "max_context_segments": ANALYSIS_SOURCE_CONTEXT_SEGMENT_LIMIT,
+            "max_context_bytes": ANALYSIS_SOURCE_CONTEXT_BYTE_LIMIT,
+            "max_attempt_metadata_bytes": 64 * 1024,
+        }
+        if web_bounded
+        else {}
     )
+    try:
+        attempt = load_attempt_trace(
+            database_path,
+            attempt_key,
+            columns=QUALITY_TRACE_COLUMNS,
+            **read_limits,
+        )
+    except AttemptTraceReadLimitError as exc:
+        raise ValueError(
+            f"attempt_quality_source_{exc.limit_kind}_limit_exceeded"
+        ) from exc
     if attempt is None:
         return None
-    inventory = load_reference_inventory(database_path, attempt_key)
-    if inventory is None:
-        return None
+    if web_bounded:
+        evidence = load_attempt_capture_quality_evidence(database_path, attempt_key)
+        if evidence is None:
+            return None
+        capture_complete = evidence.capture_complete
+        raw_completion = evidence.capture_completion
+        capture_quality = dict(evidence.processing_quality)
+    else:
+        inventory = load_reference_inventory(database_path, attempt_key)
+        if inventory is None:
+            return None
+        capture_complete = inventory.capture_complete
+        raw_completion = inventory.capture_completion
+        capture_quality = dict(inventory.processing_quality)
 
     samples = attempt.samples
     trace_samples = tuple(TraceSample.from_record(sample) for sample in samples)
@@ -210,15 +272,29 @@ def inspect_attempt_quality(
     resampled = None
     resampling_reason = grid_reason
     if grid:
-        try:
-            resampled = resample_trace(
-                trace_samples,
-                grid,
+        resampling_work_allowed = True
+        if web_bounded:
+            reserved_work = estimate_resampling_work(
+                len(trace_samples),
+                len(grid),
                 QUALITY_RESAMPLING,
-                track_length_m=report_track_length,
+                hard_block_count=_quality_resampling_hard_block_count(
+                    trace_samples, report_track_length
+                ),
             )
-        except ValueError as exc:
-            resampling_reason = str(exc)
+            if reserved_work > QUALITY_WEB_RESAMPLING_WORK_LIMIT:
+                resampling_work_allowed = False
+                resampling_reason = "quality_resampling_work_limit_exceeded"
+        if resampling_work_allowed:
+            try:
+                resampled = resample_trace(
+                    trace_samples,
+                    grid,
+                    QUALITY_RESAMPLING,
+                    track_length_m=report_track_length,
+                )
+            except ValueError as exc:
+                resampling_reason = str(exc)
 
     channels = {
         channel: _availability(samples, field, special=channel == "time_s")
@@ -263,8 +339,6 @@ def inspect_attempt_quality(
         track_length_m=report_track_length,
         unavailable_reason=resampling_reason,
     )
-    capture_quality = dict(inventory.processing_quality)
-    raw_completion = inventory.capture_completion
     completion = raw_completion if isinstance(raw_completion, Mapping) else None
     recording_fields = (
         "elapsed_ms",
@@ -296,7 +370,7 @@ def inspect_attempt_quality(
         else "invalid_shape"
     )
     recording = {
-        "capture_complete": inventory.capture_complete,
+        "capture_complete": capture_complete,
         "footer_available": completion is not None,
         "footer_evidence_status": footer_evidence_status,
         "footer_status": footer_status,
@@ -821,6 +895,35 @@ def _distance_grid(
     if final - first + 1 > _MAX_GRID_POINTS:
         return (), "observed_distance_range_exceeds_quality_grid_limit"
     return tuple(float(value) for value in range(first, final + 1)), None
+
+
+def _quality_resampling_hard_block_count(
+    samples: Sequence[TraceSample], track_length_m: float | None
+) -> int:
+    """Conservatively count adjacent source pairs that may create hard blocks."""
+    count = 0
+    previous: TraceSample | None = None
+    for sample in samples:
+        distance = sample.distance_m
+        if (
+            distance is None
+            or sample.time_s is None
+            or distance < 0
+            or (track_length_m is not None and distance > track_length_m)
+        ):
+            previous = None
+            continue
+        if previous is not None:
+            previous_distance = previous.distance_m
+            previous_time = previous.time_s
+            if (
+                previous_distance is not None
+                and previous_time is not None
+                and (distance <= previous_distance or sample.time_s < previous_time)
+            ):
+                count += 1
+        previous = sample
+    return count
 
 
 def _distance_support(

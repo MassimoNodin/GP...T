@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from f1_engineer.analysis import quality as quality_module
 from f1_engineer.api import app as api_module
 from f1_engineer.api.app import create_app
-from f1_engineer.storage.query import StoredAttemptTrace, StoredReferenceInventory
+from f1_engineer.storage.query import (
+    AttemptTraceReadLimitError,
+    StoredAttemptTrace,
+    StoredReferenceInventory,
+)
 
 
 def _attempt(
@@ -112,6 +117,37 @@ def _report(
     return result
 
 
+def _web_report(monkeypatch, attempt: StoredAttemptTrace, completion=None):
+    trace_limits: dict[str, object] = {}
+
+    def load_trace(*_args, **kwargs):
+        trace_limits.update(kwargs)
+        return attempt
+
+    monkeypatch.setattr(quality_module, "load_attempt_trace", load_trace)
+    monkeypatch.setattr(
+        quality_module,
+        "load_attempt_capture_quality_evidence",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            capture_complete=False,
+            capture_completion=completion,
+            processing_quality=_inventory(attempt).processing_quality,
+        ),
+    )
+    monkeypatch.setattr(
+        quality_module,
+        "load_reference_inventory",
+        lambda *_args, **_kwargs: pytest.fail(
+            "bounded web quality must not enumerate a reference inventory"
+        ),
+    )
+    report = quality_module.inspect_attempt_quality_web(
+        "unused.sqlite3", attempt.attempt_key
+    )
+    assert report is not None
+    return report, trace_limits
+
+
 def test_quality_is_reference_independent_for_invalid_partial_race_attempt(
     monkeypatch,
 ) -> None:
@@ -126,6 +162,67 @@ def test_quality_is_reference_independent_for_invalid_partial_race_attempt(
     assert report["distance_support"]["channels"]["speed_mps"]["observed_range_coverage"] == 1.0
     assert report["distance_support"]["channels"]["speed_mps"]["full_track_coverage"] == pytest.approx(31 / 101)
     assert report["evidence"]["recording"]["counters"]["queue_dropped"] is None
+
+
+def test_web_quality_uses_shared_source_limits_and_matches_cli_report(monkeypatch) -> None:
+    attempt = _attempt(game_valid=False)
+    cli_report = _report(monkeypatch, attempt)
+    web_report, limits = _web_report(monkeypatch, attempt)
+
+    assert limits == {
+        "columns": quality_module.QUALITY_TRACE_COLUMNS,
+        "max_trace_bytes": 64 * 1024 * 1024,
+        "max_trace_rows": 100_000,
+        "max_context_segments": 1_024,
+        "max_context_bytes": 4 * 1024 * 1024,
+        "max_attempt_metadata_bytes": 64 * 1024,
+    }
+    assert web_report == cli_report
+
+
+def test_web_quality_refuses_source_limit_and_resampling_work(monkeypatch) -> None:
+    attempt = _attempt()
+
+    monkeypatch.setattr(
+        quality_module,
+        "load_attempt_trace",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AttemptTraceReadLimitError("rows")
+        ),
+    )
+    with pytest.raises(ValueError, match="attempt_quality_source_rows_limit_exceeded"):
+        quality_module.inspect_attempt_quality_web("unused.sqlite3", attempt.attempt_key)
+
+    monkeypatch.setattr(
+        quality_module,
+        "load_attempt_trace",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AttemptTraceReadLimitError("metadata_bytes")
+        ),
+    )
+    with pytest.raises(
+        ValueError,
+        match="attempt_quality_source_metadata_bytes_limit_exceeded",
+    ):
+        quality_module.inspect_attempt_quality_web("unused.sqlite3", attempt.attempt_key)
+
+    _web_report(monkeypatch, attempt)
+    monkeypatch.setattr(
+        quality_module,
+        "estimate_resampling_work",
+        lambda *_args, **_kwargs: quality_module.QUALITY_WEB_RESAMPLING_WORK_LIMIT + 1,
+    )
+    monkeypatch.setattr(
+        quality_module,
+        "resample_trace",
+        lambda *_args, **_kwargs: pytest.fail(
+            "resampling must not run after the work reservation exceeds its limit"
+        ),
+    )
+    report = quality_module.inspect_attempt_quality_web("unused.sqlite3", attempt.attempt_key)
+    assert report is not None
+    assert report["distance_support"]["status"] == "unavailable"
+    assert report["distance_support"]["reason"] == "quality_resampling_work_limit_exceeded"
 
 
 def test_quality_keeps_unknown_track_length_and_schema_v1_motion_unavailable(
@@ -499,7 +596,7 @@ def test_quality_api_returns_versioned_report_without_reference_selection(
     monkeypatch, tmp_path
 ) -> None:
     report = {"report_version": 1, "identity": {"session_uid": 42}}
-    monkeypatch.setattr(api_module, "inspect_attempt_quality", lambda *_args: report)
+    monkeypatch.setattr(api_module, "inspect_attempt_quality_web", lambda *_args: report)
     app = create_app(tmp_path / "unused.sqlite3")
 
     async def request():

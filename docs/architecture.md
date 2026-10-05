@@ -995,6 +995,22 @@ Strictly reject duplicate JSON keys, malformed Unicode, excessive nesting, nonfi
 
 **Rationale:** Production ranking currently has no approved model, while positive integration tests install approval only inside their test process. A fingerprint-bound startup registry makes reviewed definitions usable without treating a generated draft, recorded trajectory, or client request as review evidence.
 
+## Decision 0066: bound web quality inspection for one selected attempt
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Use the existing D0014 attempt-quality report in the web application only after resolving one exact selected attempt. Bound its trace read to 64 MiB and 100,000 rows, context to 1,024 segments and 4 MiB, and each selected-attempt assessment, quality, and timing JSON document to 64 KiB. Bound its distance grid to 100,000 points. Apply SQL byte guards before transferring bounded metadata and normalize deeply nested or oversized-integer JSON to explicit unavailability. Before distance resampling, reserve work with the shared D0042 `estimate_resampling_work` policy and a 16,000,000-work-unit ceiling. Exceeding a source limit makes the report unavailable with an explicit reason; exceeding a distance grid or resampling-work limit leaves the quality report available while identifying distance support as unavailable.
+
+Read capture footer and processing-quality evidence directly from the selected attempt's owning run and capture. Do not load a reference inventory or enumerate other attempts to produce this report. Keep the existing CLI inspection behavior unchanged. The API report remains diagnostic for every game mode and attempt disposition, and does not grant reference, geometry, ranking, or coaching eligibility.
+
+Before rendering in Dashboard or Track Analysis, validate the report against the selected attempt's key, run, session, car, attempt number, trace checksum, schema and row count, and validate the bounded nested shape used by the quality panel. A stale, malformed or mismatched report is unavailable and cannot hide the selected-attempt trace or path panels.
+
+**Acceptance:** source limits fail explicitly before oversized trace, context, or selected-attempt metadata is transferred or decoded; malformed nested or integer-overflow JSON becomes explicit unavailable evidence; capture metadata comes from one run without unrelated candidate inventory; resampling never starts when the shared estimate exceeds the work ceiling; valid Melbourne invalid/partial attempts and Shanghai incomplete-capture evidence retain their existing measurements; legacy schemas and Race/unknown modes remain inspectable; malformed, stale, oversized and mismatched web reports do not render; channel counts agree with their selected trace row count; and Dashboard and Track use the same report matcher. Report measurements and CLI behavior remain unchanged beneath the web bounds.
+
+**Rationale:** D0014's report is useful on Track Analysis because it distinguishes capture, replay, validity and channel-coverage evidence. Its current web path reads an unbounded trace and a run-scoped inventory of other attempts. Exact-attempt source limits and preflight work admission make reuse predictable without changing D0014 measurement semantics or D0042's shared resampling policy.
+
 ## Data flow
 
 ```text

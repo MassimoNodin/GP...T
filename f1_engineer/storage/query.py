@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import io
+import math
 import os
 import sqlite3
 from contextlib import contextmanager
@@ -90,6 +91,56 @@ ENGINEER_ATTEMPT_METADATA_LIMITS = {
     "player_participant_context_bytes": MAX_PLAYER_PARTICIPANT_CONTEXT_BYTES,
     "player_car_setup_context_bytes": MAX_PLAYER_CAR_SETUP_CONTEXT_BYTES,
 }
+
+
+def _quality_json_shape_within_bounds(value: object) -> bool:
+    stack = [(value, 0)]
+    remaining_nodes = 250_000
+    while stack:
+        current, depth = stack.pop()
+        remaining_nodes -= 1
+        if remaining_nodes < 0 or depth > 16:
+            return False
+        if current is None or isinstance(current, bool):
+            continue
+        if isinstance(current, str):
+            if len(current) > 4_096:
+                return False
+            continue
+        if isinstance(current, int):
+            continue
+        if isinstance(current, float):
+            if not math.isfinite(current):
+                return False
+            continue
+        if isinstance(current, (list, tuple)):
+            if len(current) > 2_048:
+                return False
+            stack.extend((item, depth + 1) for item in current)
+            continue
+        if isinstance(current, dict):
+            if len(current) > 512:
+                return False
+            for key, item in current.items():
+                if not isinstance(key, str) or len(key) > 128:
+                    return False
+                stack.append((item, depth + 1))
+            continue
+        return False
+    return True
+
+
+def _quality_context_scalar(value: object) -> bool:
+    if value is None or isinstance(value, bool):
+        return True
+    if isinstance(value, str):
+        return len(value) <= 4_096
+    if isinstance(value, int):
+        try:
+            return math.isfinite(float(value))
+        except OverflowError:
+            return False
+    return isinstance(value, float) and math.isfinite(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +236,13 @@ class StoredReferenceInventory:
     attempts: tuple[StoredAttemptInventoryEntry, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class StoredAttemptCaptureEvidence:
+    capture_complete: bool
+    capture_completion: object | None
+    processing_quality: Mapping[str, object]
+
+
 class AttemptTraceReadLimitError(ValueError):
     """Raised when a bounded trace consumer refuses an oversized artifact."""
 
@@ -201,6 +259,14 @@ class AttemptInventoryReadLimitError(ValueError):
         super().__init__(f"attempt_inventory_{limit_kind}_limit_exceeded")
 
 
+class AttemptQualityReadLimitError(ValueError):
+    """Raised when one-attempt quality metadata exceeds its read bounds."""
+
+    def __init__(self, limit_kind: str) -> None:
+        self.limit_kind = limit_kind
+        super().__init__(f"attempt_quality_source_{limit_kind}_limit_exceeded")
+
+
 @contextmanager
 def _query_connection(
     database_path: str | Path, connection: sqlite3.Connection | None = None
@@ -210,6 +276,75 @@ def _query_connection(
         return
     with Database(Path(database_path), read_only=True) as db:
         yield db.connection
+
+
+def load_attempt_capture_quality_evidence(
+    database_path: str | Path, attempt_key: str
+) -> StoredAttemptCaptureEvidence | None:
+    """Read bounded footer and capture counters for one attempt's owning run."""
+    with Database(Path(database_path), read_only=True) as db:
+        row = db.connection.execute(
+            """SELECT c.complete AS capture_complete,
+                      CASE WHEN LENGTH(CAST(c.completion_json AS BLOB)) <= ?
+                           THEN c.completion_json END AS completion_json,
+                      LENGTH(CAST(c.completion_json AS BLOB)) AS completion_bytes,
+                      CASE WHEN LENGTH(CAST(r.metrics_json AS BLOB)) <= ?
+                           THEN r.metrics_json END AS metrics_json,
+                      LENGTH(CAST(r.metrics_json AS BLOB)) AS metrics_bytes
+                 FROM lap_attempts l JOIN sessions s USING(session_key)
+                 JOIN processing_runs r USING(run_id)
+                 LEFT JOIN captures c USING(capture_sha256)
+                WHERE l.attempt_key = ? AND r.status = 'complete'""",
+            (
+                MAX_OBSERVATION_CAPTURE_COMPLETION_BYTES,
+                MAX_OBSERVATION_SESSION_METRICS_BYTES,
+                attempt_key,
+            ),
+        ).fetchone()
+    if row is None:
+        return None
+    completion_bytes = row["completion_bytes"]
+    if (
+        completion_bytes is not None
+        and int(completion_bytes) > MAX_OBSERVATION_CAPTURE_COMPLETION_BYTES
+    ):
+        raise AttemptQualityReadLimitError("completion_bytes")
+    metrics_bytes = row["metrics_bytes"]
+    if (
+        metrics_bytes is not None
+        and int(metrics_bytes) > MAX_OBSERVATION_SESSION_METRICS_BYTES
+    ):
+        raise AttemptQualityReadLimitError("processing_metrics_bytes")
+
+    completion_raw = row["completion_json"]
+    if completion_raw is None:
+        completion: object | None = None
+    else:
+        try:
+            completion = json.loads(completion_raw)
+        except (TypeError, ValueError, RecursionError):
+            completion = "invalid_json"
+
+    metrics_raw = row["metrics_json"]
+    if metrics_raw is None:
+        capture_quality: Mapping[str, object] = {}
+    else:
+        try:
+            metrics = json.loads(metrics_raw)
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise ValueError("attempt_quality_processing_metrics_invalid") from exc
+        if not isinstance(metrics, dict):
+            raise ValueError("attempt_quality_processing_metrics_invalid")
+        if not _quality_json_shape_within_bounds(metrics):
+            raise ValueError("attempt_quality_processing_metrics_invalid")
+        value = metrics.get("capture_quality", {})
+        capture_quality = value if isinstance(value, dict) else {}
+
+    return StoredAttemptCaptureEvidence(
+        capture_complete=bool(row["capture_complete"]),
+        capture_completion=completion,
+        processing_quality=capture_quality,
+    )
 
 
 def load_attempt_draft_authoring_snapshot(
@@ -246,6 +381,7 @@ def load_attempt_trace(
     max_trace_rows: int | None = None,
     max_context_segments: int | None = None,
     max_context_bytes: int | None = None,
+    max_attempt_metadata_bytes: int | None = None,
 ) -> StoredAttemptTrace | None:
     """Load a completed attempt after verifying its published Parquet trace."""
     database_path = Path(database_path)
@@ -253,20 +389,49 @@ def load_attempt_trace(
         row = db.connection.execute(
             """SELECT l.attempt_key, l.car_index, l.attempt_number,
                       l.disposition, l.lap_time_ms, l.start_observed, l.pit_encountered,
-                      l.game_valid, l.reference_eligible, l.exclusion_reasons_json,
+                      l.game_valid, l.reference_eligible,
+                      CASE WHEN LENGTH(CAST(l.exclusion_reasons_json AS BLOB)) <= ?
+                           THEN l.exclusion_reasons_json END AS exclusion_reasons_json,
+                      LENGTH(CAST(l.exclusion_reasons_json AS BLOB)) AS exclusion_reasons_bytes,
                       l.superseded, l.lifecycle_assessed,
                       s.session_uid, s.run_id, t.relative_path, t.row_count,
-                      t.sha256, t.quality_json, t.schema_version,
-                      e.evidence_json AS timing_evidence_json
+                      t.sha256,
+                      CASE WHEN LENGTH(CAST(t.quality_json AS BLOB)) <= ?
+                           THEN t.quality_json END AS quality_json,
+                      LENGTH(CAST(t.quality_json AS BLOB)) AS quality_bytes,
+                      t.schema_version,
+                      CASE WHEN LENGTH(CAST(e.evidence_json AS BLOB)) <= ?
+                           THEN e.evidence_json END AS timing_evidence_json,
+                      LENGTH(CAST(e.evidence_json AS BLOB)) AS timing_evidence_bytes
                  FROM lap_attempts l JOIN sessions s USING(session_key)
                  JOIN processing_runs r USING(run_id)
                  JOIN telemetry_files t USING(attempt_key)
                  LEFT JOIN attempt_timing_evidence e USING(attempt_key)
                 WHERE l.attempt_key = ? AND t.ready = 1 AND r.status = 'complete'""",
-            (attempt_key,),
+            (
+                max_attempt_metadata_bytes
+                if max_attempt_metadata_bytes is not None
+                else 9223372036854775807,
+                max_attempt_metadata_bytes
+                if max_attempt_metadata_bytes is not None
+                else 9223372036854775807,
+                max_attempt_metadata_bytes
+                if max_attempt_metadata_bytes is not None
+                else 9223372036854775807,
+                attempt_key,
+            ),
         ).fetchone()
         if row is None:
             return None
+        if max_attempt_metadata_bytes is not None and any(
+            row[key] is not None and int(row[key]) > max_attempt_metadata_bytes
+            for key in (
+                "exclusion_reasons_bytes",
+                "quality_bytes",
+                "timing_evidence_bytes",
+            )
+        ):
+            raise AttemptTraceReadLimitError("metadata_bytes")
         if max_trace_rows is not None and int(row["row_count"]) > max_trace_rows:
             raise AttemptTraceReadLimitError("rows")
         if max_context_segments is not None or max_context_bytes is not None:
@@ -335,15 +500,65 @@ def load_attempt_trace(
     if metadata.num_rows != row["row_count"]:
         raise ValueError("trace row count does not match SQLite")
 
+    def decode_context(raw: object) -> Mapping[str, object] | None:
+        if raw is None:
+            return None
+        try:
+            context = json.loads(raw)
+        except (TypeError, ValueError, RecursionError):
+            if max_context_bytes is not None:
+                return None
+            raise
+        if max_context_bytes is not None:
+            if (
+                not isinstance(context, dict)
+                or len(context) > 32
+                or any(
+                    not isinstance(key, str)
+                    or len(key) > 128
+                    or not _quality_context_scalar(value)
+                    or (isinstance(value, str) and len(value) > 4_096)
+                    for key, value in context.items()
+                )
+            ):
+                return None
+        return context
+
     contexts = tuple(
         (
             int(context_row["from_frame_identifier"]),
-            json.loads(context_row["context_json"])
-            if context_row["context_json"] is not None
-            else None,
+            decode_context(context_row["context_json"]),
         )
         for context_row in context_rows
     )
+    try:
+        raw_exclusion_reasons = json.loads(row["exclusion_reasons_json"])
+        quality = json.loads(row["quality_json"])
+        timing_evidence = (
+            json.loads(row["timing_evidence_json"])
+            if row["timing_evidence_json"]
+            else {
+                "status": "unavailable",
+                "reasons": ["not_available_for_legacy_import"],
+            }
+        )
+    except (TypeError, ValueError, RecursionError) as exc:
+        if max_attempt_metadata_bytes is not None:
+            raise AttemptTraceReadLimitError("metadata_json") from exc
+        raise
+    if max_attempt_metadata_bytes is not None and (
+        not isinstance(raw_exclusion_reasons, list)
+        or any(not isinstance(reason, str) for reason in raw_exclusion_reasons)
+        or not isinstance(quality, dict)
+        or not isinstance(timing_evidence, dict)
+    ):
+        raise AttemptTraceReadLimitError("metadata_shape")
+    exclusion_reasons = tuple(raw_exclusion_reasons)
+    if max_attempt_metadata_bytes is not None and any(
+        not _quality_json_shape_within_bounds(value)
+        for value in (exclusion_reasons, quality, timing_evidence)
+    ):
+        raise AttemptTraceReadLimitError("metadata_shape")
     return StoredAttemptTrace(
         attempt_key=row["attempt_key"],
         run_id=row["run_id"],
@@ -353,10 +568,10 @@ def load_attempt_trace(
         lap_time_ms=row["lap_time_ms"],
         game_valid=None if row["game_valid"] is None else bool(row["game_valid"]),
         reference_eligible=bool(row["reference_eligible"]),
-        exclusion_reasons=tuple(json.loads(row["exclusion_reasons_json"])),
+        exclusion_reasons=exclusion_reasons,
         trace_sha256=row["sha256"],
         trace_schema_version=row["schema_version"],
-        quality=json.loads(row["quality_json"]),
+        quality=quality,
         context_segments=contexts,
         samples=tuple(table.to_pylist()),
         attempt_number=row["attempt_number"],
@@ -364,14 +579,7 @@ def load_attempt_trace(
         pit_encountered=bool(row["pit_encountered"]),
         superseded=None if row["superseded"] is None else bool(row["superseded"]),
         lifecycle_assessed=bool(row["lifecycle_assessed"]),
-        timing_evidence=(
-            json.loads(row["timing_evidence_json"])
-            if row["timing_evidence_json"]
-            else {
-                "status": "unavailable",
-                "reasons": ["not_available_for_legacy_import"],
-            }
-        ),
+        timing_evidence=timing_evidence,
         source_sample_count=int(row["row_count"]),
         player_participant_context=player_participant_context,
         player_car_setup_context=player_car_setup_context,

@@ -50,6 +50,7 @@ import ComparisonConditionsPanel from "./ComparisonConditionsPanel";
 import LapDebriefPanel from "./LapDebriefPanel";
 import { comparisonReportMatchesAttempts } from "@/lib/comparison-report-match";
 import { attemptTraceChartReportMatchesSelection } from "@/lib/attempt-trace-chart-match";
+import { attemptQualityReportMatchesSelection } from "@/lib/attempt-quality-match";
 import { buildRecordedSpeechPlan } from "@/lib/recorded-speech-plan";
 import {
   appScreenHref,
@@ -336,8 +337,22 @@ export default async function Home({
     pairedRegionRequest,
     engineerQueryRequest,
   ]);
-  const attemptQuality =
+  const qualityCandidate =
     qualityResponse?.status === "ok" ? qualityResponse.data : null;
+  const qualityIdentityMismatch = Boolean(
+    qualityCandidate && target &&
+      !attemptQualityReportMatchesSelection(qualityCandidate, target),
+  );
+  const attemptQuality = qualityCandidate && target && !qualityIdentityMismatch
+    ? qualityCandidate
+    : null;
+  const qualityUnavailableReason = qualityIdentityMismatch
+    ? "attempt_quality_provenance_or_shape_mismatch"
+    : qualityResponse?.status === "unavailable"
+      ? qualityResponse.reason
+      : qualityResponse
+        ? "attempt_quality_unavailable"
+        : "local_api_request_failed";
   const traceChartCandidate =
     traceChartResponse?.status === "ok" ? traceChartResponse.data : null;
   const traceChartIdentityMismatch = Boolean(
@@ -960,11 +975,7 @@ export default async function Home({
                 {target ? (
                   <AttemptQualityPanel
                     report={attemptQuality}
-                    unavailableReason={
-                      qualityResponse?.status === "unavailable"
-                        ? qualityResponse.reason
-                        : null
-                    }
+                    unavailableReason={qualityUnavailableReason}
                   />
                 ) : null}
                 {target && !comparison ? (

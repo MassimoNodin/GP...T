@@ -19,6 +19,7 @@ from f1_engineer.storage.query import (
     TRAJECTORY_TRACE_COLUMNS,
     AttemptTraceReadLimitError,
     load_attempt_policy_metadata,
+    load_attempt_capture_quality_evidence,
     load_attempt_trace,
     list_car_observation_inventory,
     load_car_observation_preview,
@@ -156,6 +157,15 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert stored_attempt.trace_sha256
     assert stored_attempt.trace_schema_version == TRACE_SCHEMA_VERSION == 4
     assert stored_attempt.context_segments[0][1]["game_mode"] == "time_trial"
+    capture_quality_evidence = load_attempt_capture_quality_evidence(
+        database_path, stored_attempt.attempt_key
+    )
+    assert capture_quality_evidence is not None
+    assert capture_quality_evidence.capture_complete is True
+    assert isinstance(capture_quality_evidence.capture_completion, dict)
+    assert capture_quality_evidence.processing_quality[
+        "missing_car_telemetry_lap_sample_count"
+    ] == 1
     observation_inventory = list_car_observation_inventory(
         database_path, imported.run_id, SESSION_UID
     )
@@ -281,6 +291,22 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
         bounds.setattr(query_module, "MAX_OBSERVATION_SESSION_METRICS_BYTES", 1)
         with pytest.raises(ValueError, match="observation_session_metrics_limit_exceeded"):
             list_car_observation_inventory(database_path, imported.run_id, SESSION_UID)
+        with pytest.raises(
+            ValueError,
+            match="attempt_quality_source_processing_metrics_bytes_limit_exceeded",
+        ):
+            load_attempt_capture_quality_evidence(
+                database_path, stored_attempt.attempt_key
+            )
+    with monkeypatch.context() as bounds:
+        bounds.setattr(query_module, "MAX_OBSERVATION_CAPTURE_COMPLETION_BYTES", 1)
+        with pytest.raises(
+            ValueError,
+            match="attempt_quality_source_completion_bytes_limit_exceeded",
+        ):
+            load_attempt_capture_quality_evidence(
+                database_path, stored_attempt.attempt_key
+            )
     with monkeypatch.context() as bounds:
         bounds.setattr(query_module, "MAX_OBSERVATION_PREVIEW_MANIFEST_BYTES", 1)
         with pytest.raises(ValueError, match="observation_preview_manifest_limit_exceeded"):
@@ -457,6 +483,167 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
     assert other_details is not None
     assert other_details["trace_path"] != details["trace_path"]
     assert get_lap(database_path, laps[0]["attempt_key"]) is not None
+
+    with pytest.raises(
+        AttemptTraceReadLimitError,
+        match="attempt_trace_metadata_bytes_limit_exceeded",
+    ):
+        load_attempt_trace(
+            database_path,
+            laps[0]["attempt_key"],
+            max_attempt_metadata_bytes=1,
+        )
+
+    deeply_nested_json = "[" * 5_000 + "0" + "]" * 5_000
+    oversized_integer_json = '{"value":' + "9" * 5_000 + "}"
+    with Database(database_path) as db:
+        db.connection.execute(
+            "UPDATE captures SET completion_json=? WHERE capture_sha256=?",
+            (deeply_nested_json, imported.capture_sha256),
+        )
+        db.connection.commit()
+    invalid_footer = load_attempt_capture_quality_evidence(
+        database_path, laps[0]["attempt_key"]
+    )
+    assert invalid_footer is not None
+    assert invalid_footer.capture_completion == "invalid_json"
+    with Database(database_path) as db:
+        db.connection.execute(
+            "UPDATE captures SET completion_json=? WHERE capture_sha256=?",
+            (oversized_integer_json, imported.capture_sha256),
+        )
+        db.connection.commit()
+    invalid_integer_footer = load_attempt_capture_quality_evidence(
+        database_path, laps[0]["attempt_key"]
+    )
+    assert invalid_integer_footer is not None
+    assert invalid_integer_footer.capture_completion == "invalid_json"
+
+    with Database(database_path) as db:
+        db.connection.execute(
+            "UPDATE telemetry_files SET quality_json=? WHERE attempt_key=?",
+            (deeply_nested_json, laps[0]["attempt_key"]),
+        )
+        db.connection.commit()
+    with pytest.raises(
+        AttemptTraceReadLimitError,
+        match="attempt_trace_metadata_json_limit_exceeded",
+    ):
+        load_attempt_trace(
+            database_path,
+            laps[0]["attempt_key"],
+            max_attempt_metadata_bytes=64 * 1024,
+            max_context_bytes=4 * 1024 * 1024,
+        )
+    with Database(database_path) as db:
+        db.connection.execute(
+            "UPDATE telemetry_files SET quality_json='{}' WHERE attempt_key=?",
+            (laps[0]["attempt_key"],),
+        )
+        db.connection.execute(
+            "UPDATE lap_context_segments SET context_json=? WHERE attempt_key=? AND ordinal=0",
+            (deeply_nested_json, laps[0]["attempt_key"]),
+        )
+        db.connection.commit()
+    context_attempt = load_attempt_trace(
+        database_path,
+        laps[0]["attempt_key"],
+        max_attempt_metadata_bytes=64 * 1024,
+        max_context_bytes=4 * 1024 * 1024,
+    )
+    assert context_attempt is not None
+    assert context_attempt.context_segments[0][1] is None
+
+    oversized_context_integer = '{"track_length_m":' + "9" * 401 + "}"
+    with Database(database_path) as db:
+        db.connection.execute(
+            "UPDATE lap_context_segments SET context_json=? WHERE attempt_key=? AND ordinal=0",
+            (oversized_context_integer, laps[0]["attempt_key"]),
+        )
+        db.connection.commit()
+    oversized_context_attempt = load_attempt_trace(
+        database_path,
+        laps[0]["attempt_key"],
+        max_context_bytes=4 * 1024 * 1024,
+    )
+    assert oversized_context_attempt is not None
+    assert oversized_context_attempt.context_segments[0][1] is None
+
+    with Database(database_path) as db:
+        db.connection.execute(
+            "UPDATE telemetry_files SET quality_json='{}' WHERE attempt_key=?",
+            (laps[0]["attempt_key"],),
+        )
+        db.connection.execute(
+            "INSERT OR REPLACE INTO attempt_timing_evidence(attempt_key, status, evidence_json) VALUES (?, 'unavailable', '42')",
+            (laps[0]["attempt_key"],),
+        )
+        db.connection.commit()
+    with pytest.raises(
+        AttemptTraceReadLimitError,
+        match="attempt_trace_metadata_shape_limit_exceeded",
+    ):
+        load_attempt_trace(
+            database_path,
+            laps[0]["attempt_key"],
+            max_attempt_metadata_bytes=64 * 1024,
+            max_context_bytes=4 * 1024 * 1024,
+        )
+
+    malformed_metadata_cases = (
+        (
+            "UPDATE telemetry_files SET quality_json='42' WHERE attempt_key=?",
+            (laps[0]["attempt_key"],),
+        ),
+        (
+            "UPDATE lap_attempts SET exclusion_reasons_json='{}' WHERE attempt_key=?",
+            (laps[0]["attempt_key"],),
+        ),
+    )
+    for statement, parameters in malformed_metadata_cases:
+        with Database(database_path) as db:
+            db.connection.execute(
+                "UPDATE telemetry_files SET quality_json='{}' WHERE attempt_key=?",
+                (laps[0]["attempt_key"],),
+            )
+            db.connection.execute(
+                "UPDATE lap_attempts SET exclusion_reasons_json='[]' WHERE attempt_key=?",
+                (laps[0]["attempt_key"],),
+            )
+            db.connection.execute(
+                "UPDATE attempt_timing_evidence SET evidence_json='{}' WHERE attempt_key=?",
+                (laps[0]["attempt_key"],),
+            )
+            db.connection.execute(statement, parameters)
+            db.connection.commit()
+        with pytest.raises(
+            AttemptTraceReadLimitError,
+            match="attempt_trace_metadata_shape_limit_exceeded",
+        ):
+            load_attempt_trace(
+                database_path,
+                laps[0]["attempt_key"],
+                max_attempt_metadata_bytes=64 * 1024,
+                max_context_bytes=4 * 1024 * 1024,
+            )
+
+    for malformed_metrics in (
+        '{"capture_quality":' + deeply_nested_json + "}",
+        '{"capture_quality":' + oversized_integer_json + "}",
+    ):
+        with Database(database_path) as db:
+            db.connection.execute(
+                "UPDATE processing_runs SET metrics_json=? WHERE run_id=?",
+                (malformed_metrics, imported.run_id),
+            )
+            db.connection.commit()
+        with pytest.raises(
+            ValueError,
+            match="attempt_quality_processing_metrics_invalid",
+        ):
+            load_attempt_capture_quality_evidence(
+                database_path, laps[0]["attempt_key"]
+            )
 
 
 def test_observation_import_bounds_distinct_session_streams(tmp_path, monkeypatch) -> None:

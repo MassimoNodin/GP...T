@@ -24,7 +24,7 @@ from ..analysis.paired_region_service import (
     PairedRegionReportUnavailable,
     compare_attempt_regions,
 )
-from ..analysis.quality import inspect_attempt_quality
+from ..analysis.quality import inspect_attempt_quality_web
 from ..analysis.region_service import RegionReportUnavailable, load_attempt_region_report
 from ..analysis.service import compare_attempts
 from ..analysis.trajectory import TrajectoryPreviewUnavailable
@@ -787,7 +787,9 @@ def create_app(
     )
     def attempt_quality(attempt_key: str) -> APIResponse[dict[str, Any]]:
         try:
-            result = inspect_attempt_quality(configured_database_path, attempt_key)
+            result = inspect_attempt_quality_web(
+                configured_database_path, attempt_key
+            )
         except (ValueError, OSError) as exc:
             return APIResponse[dict[str, Any]](
                 status="unavailable",

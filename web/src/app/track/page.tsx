@@ -1,5 +1,6 @@
 import type {
   AttemptRegionReport,
+  AttemptQualityReport,
   AttemptTraceChartReport,
   AttemptTrajectoryPreview,
   LapAttemptPage,
@@ -8,6 +9,7 @@ import type {
 } from "@/lib/api";
 import { requestApi } from "@/lib/api";
 import { attemptTraceChartReportMatchesSelection } from "@/lib/attempt-trace-chart-match";
+import { attemptQualityReportMatchesSelection } from "@/lib/attempt-quality-match";
 import {
   ATTEMPT_INVENTORY_PAGE_SIZE,
   attemptInventoryUrl,
@@ -18,6 +20,7 @@ import AppHeader from "../AppHeader";
 import TrackDiagnosticEvidencePanels from "../TrackDiagnosticEvidencePanels";
 import DraftTrackModelPanel from "../DraftTrackModelPanel";
 import AttemptTraceCharts from "../AttemptTraceCharts";
+import AttemptQualityPanel from "../AttemptQualityPanel";
 import {
   appScreenHref,
   isSelectionTransferBlocked,
@@ -122,6 +125,11 @@ export default async function TrackPage({
         `/api/v1/attempts/${encodeURIComponent(attempt.attempt_key)}/traces`,
       )
     : Promise.resolve(null);
+  const qualityRequest = attempt
+    ? requestApi<AttemptQualityReport>(
+        `/api/v1/attempts/${encodeURIComponent(attempt.attempt_key)}/quality`,
+      )
+    : Promise.resolve(null);
   const trajectoryRequest = attempt
     ? requestApi<AttemptTrajectoryPreview>(
         `/api/v1/attempts/${encodeURIComponent(attempt.attempt_key)}/trajectory`,
@@ -135,11 +143,30 @@ export default async function TrackPage({
         })}`,
       )
     : Promise.resolve(null);
-  const [traceChartResponse, trajectoryResponse, regionResponse] = await Promise.all([
+  const [qualityResponse, traceChartResponse, trajectoryResponse, regionResponse] = await Promise.all([
+    qualityRequest,
     traceChartRequest,
     trajectoryRequest,
     regionsRequest,
   ]);
+
+  const qualityCandidate = qualityResponse?.status === "ok"
+    ? qualityResponse.data
+    : null;
+  const qualityIdentityMismatch = Boolean(
+    qualityCandidate && attempt &&
+      !attemptQualityReportMatchesSelection(qualityCandidate, attempt),
+  );
+  const qualityReport = qualityCandidate && !qualityIdentityMismatch
+    ? qualityCandidate
+    : null;
+  const qualityUnavailableReason = qualityIdentityMismatch
+    ? "attempt_quality_provenance_or_shape_mismatch"
+    : qualityResponse?.status === "unavailable"
+      ? qualityResponse.reason
+      : qualityResponse
+        ? "attempt_quality_unavailable"
+        : "local_api_request_failed";
 
   const traceChartCandidate = traceChartResponse?.status === "ok"
     ? traceChartResponse.data
@@ -413,6 +440,11 @@ export default async function TrackPage({
             <AttemptTraceCharts
               report={traceChartReport}
               unavailableReason={traceChartUnavailableReason}
+            />
+
+            <AttemptQualityPanel
+              report={qualityReport}
+              unavailableReason={qualityUnavailableReason}
             />
 
             {selectedModel && !regionIdentityMismatch && regionReport?.model ? (
