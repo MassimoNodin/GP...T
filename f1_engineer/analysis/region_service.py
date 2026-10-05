@@ -90,7 +90,7 @@ def load_attempt_region_report(
     _require_estimated_source_within_limits(estimate)
 
     try:
-        context, context_mode = _stable_region_context(
+        context, context_mode = stable_region_context(
             estimate.context_segments, estimate.attempt_key
         )
     except TimeTrialContextError as exc:
@@ -226,7 +226,7 @@ def load_attempt_region_report(
     }
 
 
-def _stable_region_context(
+def stable_region_context(
     context_segments: tuple[tuple[int, Mapping[str, object] | None], ...],
     attempt_key: str,
 ) -> tuple[Mapping[str, object], str]:

@@ -95,6 +95,103 @@ def test_compare_cli_rejects_an_incomplete_window(monkeypatch) -> None:
         cli._compare(args)
 
 
+def test_draft_track_model_cli_exports_builder_model_atomically(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    regions_file = tmp_path / "regions.json"
+    regions_file.write_text(
+        json.dumps(
+            [
+                {
+                    "identifier": "window-1",
+                    "label": "Window 1",
+                    "start_distance_m": 100,
+                    "end_distance_m": 200,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "export.json"
+    calls: dict[str, object] = {}
+
+    def build(database, attempt_key, **kwargs):
+        calls.update(database=database, attempt_key=attempt_key, **kwargs)
+        return {
+            "model": {
+                "schema_version": 1,
+                "model_id": "user-draft",
+                "revision": 1,
+                "validation_status": "draft",
+                "corners": [],
+            },
+            "source": {"attempt_key": attempt_key},
+            "warnings": [{"code": "capture_incomplete", "text": "Capture incomplete."}],
+            "verification_scope": "distance windows only",
+        }
+
+    monkeypatch.setattr(cli, "build_draft_track_model", build)
+    args = cli.build_parser().parse_args(
+        [
+            "draft-track-model",
+            "run:42:0:1",
+            "--database",
+            "db.sqlite3",
+            "--model-id",
+            "user-draft",
+            "--revision",
+            "3",
+            "--layout-id",
+            "layout-a",
+            "--regions-json",
+            str(regions_file),
+            "--output",
+            str(output),
+        ]
+    )
+
+    assert cli._draft_track_model(args) == 0
+    exported = json.loads(output.read_text(encoding="utf-8"))
+    status = json.loads(capsys.readouterr().out)
+    assert exported["validation_status"] == "draft"
+    assert calls["database"] == "db.sqlite3"
+    assert calls["revision"] == 3
+    assert calls["regions"][0]["start_distance_m"] == 100
+    assert status["catalog_installation"] == "not_performed"
+
+
+def test_draft_track_model_cli_does_not_overwrite_without_flag(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    regions_file = tmp_path / "regions.json"
+    regions_file.write_text("[]", encoding="utf-8")
+    output = tmp_path / "export.json"
+    output.write_text("preserve", encoding="utf-8")
+    monkeypatch.setattr(
+        cli,
+        "build_draft_track_model",
+        lambda *_args, **_kwargs: {"model": {}, "source": {}, "warnings": []},
+    )
+    args = cli.build_parser().parse_args(
+        [
+            "draft-track-model",
+            "run:42:0:1",
+            "--model-id",
+            "user-draft",
+            "--layout-id",
+            "layout-a",
+            "--regions-json",
+            str(regions_file),
+            "--output",
+            str(output),
+        ]
+    )
+
+    assert cli._draft_track_model(args) == 2
+    assert capsys.readouterr().err.startswith("error: output already exists")
+    assert output.read_text(encoding="utf-8") == "preserve"
+
+
 def test_car_observation_cli_commands_forward_bounded_selection(
     monkeypatch, capsys
 ) -> None:

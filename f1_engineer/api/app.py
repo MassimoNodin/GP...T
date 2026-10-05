@@ -7,9 +7,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Generic, Literal, TypeVar
 
-from fastapi import FastAPI, Header, Path as ApiPath, Query
+from fastapi import FastAPI, Header, Path as ApiPath, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, select_reference
 from ..analysis.session_best import assess_session_best
@@ -30,6 +32,10 @@ from ..analysis.trajectory_service import load_observed_trajectory_preview
 from ..analysis.trace_chart_service import (
     TraceChartUnavailable,
     load_attempt_trace_chart_preview,
+)
+from ..tracks.draft_authoring import (
+    MAX_DRAFT_MODEL_REQUEST_BYTES,
+    build_draft_track_model,
 )
 from ..storage.import_jobs import list_recording_sources
 from ..storage.importer import DEFAULT_DATABASE, list_laps, list_sessions
@@ -345,6 +351,37 @@ class ReferenceSelectionData(BaseModel):
     selected_reference: dict[str, Any] | None
     candidates: list[ReferenceCandidate]
     reasons: list[str]
+
+
+class DraftRegionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    identifier: str = Field(min_length=1, max_length=128)
+    label: str = Field(min_length=1, max_length=96)
+    start_distance_m: int | float
+    end_distance_m: int | float
+    braking_search_window_m: tuple[int | float, int | float] | None = None
+    turn_in_search_window_m: tuple[int | float, int | float] | None = None
+    throttle_pickup_window_m: tuple[int | float, int | float] | None = None
+
+
+class DraftTrackModelBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    source_attempt_key: str = Field(min_length=1, max_length=256)
+    model_id: str = Field(min_length=1, max_length=128)
+    revision: int = Field(ge=1)
+    layout_id: str = Field(min_length=1, max_length=128)
+    regions: list[DraftRegionBody] = Field(min_length=1, max_length=64)
+
+
+def _draft_track_model_request_schema() -> dict[str, Any]:
+    schema = DraftTrackModelBody.model_json_schema()
+    definitions = schema.pop("$defs", {})
+    region_schema = definitions.get("DraftRegionBody")
+    if isinstance(region_schema, dict):
+        schema["properties"]["regions"]["items"] = region_schema
+    return schema
 
 
 def create_app(
@@ -727,6 +764,94 @@ def create_app(
     def track_models() -> APIResponse[list[TrackModelRecord]]:
         return APIResponse[list[TrackModelRecord]](
             data=list_registered_track_models(track_model_catalog)
+        )
+
+    @app.post(
+        "/api/v1/track-models/draft",
+        response_model=APIResponse[dict[str, Any]],
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": _draft_track_model_request_schema()
+                    }
+                },
+            }
+        },
+    )
+    async def draft_track_model(
+        request: Request,
+    ) -> APIResponse[dict[str, Any]]:
+        declared_length = request.headers.get("content-length")
+        if declared_length is not None:
+            try:
+                if int(declared_length) > MAX_DRAFT_MODEL_REQUEST_BYTES:
+                    return JSONResponse(
+                        status_code=413,
+                        content={
+                            "api_version": "v1",
+                            "status": "unavailable",
+                            "data": None,
+                            "reason": "draft_model_request_size_limit_exceeded",
+                        },
+                    )
+            except ValueError:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "api_version": "v1",
+                        "status": "unavailable",
+                        "data": None,
+                        "reason": "invalid_content_length",
+                    },
+                )
+        body_bytes = bytearray()
+        async for chunk in request.stream():
+            if len(body_bytes) + len(chunk) > MAX_DRAFT_MODEL_REQUEST_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "api_version": "v1",
+                        "status": "unavailable",
+                        "data": None,
+                        "reason": "draft_model_request_size_limit_exceeded",
+                    },
+                )
+            body_bytes.extend(chunk)
+        try:
+            body = DraftTrackModelBody.model_validate_json(bytes(body_bytes))
+        except ValidationError as exc:
+            raise RequestValidationError(exc.errors()) from exc
+        if len(body.model_dump_json().encode("utf-8")) > MAX_DRAFT_MODEL_REQUEST_BYTES:
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason="draft_model_request_size_limit_exceeded",
+            )
+        try:
+            result = await run_in_threadpool(
+                build_draft_track_model,
+                configured_database_path,
+                body.source_attempt_key,
+                model_id=body.model_id,
+                revision=body.revision,
+                layout_id=body.layout_id,
+                regions=[region.model_dump() for region in body.regions],
+            )
+        except DatabaseSchemaError:
+            raise
+        except (OSError, sqlite3.Error):
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason="draft_model_source_unavailable",
+            )
+        except ValueError as exc:
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason=str(exc),
+            )
+        return APIResponse[dict[str, Any]](
+            data=_stringify_session_uids(result)
         )
 
     @app.get(

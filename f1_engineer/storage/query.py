@@ -4,9 +4,11 @@ import json
 import hashlib
 import io
 import os
+import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Iterator, Mapping
 
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
@@ -197,6 +199,42 @@ class AttemptInventoryReadLimitError(ValueError):
     def __init__(self, limit_kind: str) -> None:
         self.limit_kind = limit_kind
         super().__init__(f"attempt_inventory_{limit_kind}_limit_exceeded")
+
+
+@contextmanager
+def _query_connection(
+    database_path: str | Path, connection: sqlite3.Connection | None = None
+) -> Iterator[sqlite3.Connection]:
+    if connection is not None:
+        yield connection
+        return
+    with Database(Path(database_path), read_only=True) as db:
+        yield db.connection
+
+
+def load_attempt_draft_authoring_snapshot(
+    database_path: str | Path,
+    attempt_key: str,
+    *,
+    max_context_segments: int,
+    max_context_bytes: int,
+) -> tuple[StoredAttemptTrace | None, dict[str, object] | None]:
+    """Load attempt policy and provenance metadata from one bounded DB snapshot."""
+    with Database(Path(database_path), read_only=True) as db:
+        db.connection.execute("BEGIN")
+        attempt = load_attempt_policy_metadata(
+            database_path,
+            attempt_key,
+            max_context_segments=max_context_segments,
+            max_context_bytes=max_context_bytes,
+            _connection=db.connection,
+        )
+        if attempt is None:
+            return None, None
+        metadata = load_attempt_engineer_summary_metadata(
+            database_path, attempt_key, _connection=db.connection
+        )
+    return attempt, metadata
 
 
 def load_attempt_trace(
@@ -465,14 +503,15 @@ def load_attempt_policy_metadata(
     *,
     max_context_segments: int | None = None,
     max_context_bytes: int | None = None,
+    _connection: sqlite3.Connection | None = None,
 ) -> StoredAttemptTrace | None:
     """Load bounded SQLite evidence needed to validate a comparison policy.
 
     This deliberately does not read or decode the attempt's Parquet trace. Any
     subsequent telemetry preview must load and verify that trace independently.
     """
-    with Database(Path(database_path), read_only=True) as db:
-        row = db.connection.execute(
+    with _query_connection(database_path, _connection) as connection:
+        row = connection.execute(
             """SELECT l.attempt_key, l.car_index, l.attempt_number,
                       l.disposition, l.lap_time_ms, l.start_observed, l.pit_encountered,
                       l.game_valid, l.reference_eligible, l.exclusion_reasons_json,
@@ -490,7 +529,7 @@ def load_attempt_policy_metadata(
         if row is None:
             return None
         if max_context_segments is not None or max_context_bytes is not None:
-            context_size = db.connection.execute(
+            context_size = connection.execute(
                 """SELECT COUNT(*) AS segment_count,
                           COALESCE(SUM(LENGTH(CAST(context_json AS BLOB))), 0) AS context_bytes
                      FROM lap_context_segments WHERE attempt_key = ?""",
@@ -506,7 +545,7 @@ def load_attempt_policy_metadata(
                 and int(context_size["context_bytes"]) > max_context_bytes
             ):
                 raise AttemptTraceReadLimitError("context_bytes")
-        context_rows = db.connection.execute(
+        context_rows = connection.execute(
             """SELECT from_frame_identifier, context_json
                  FROM lap_context_segments WHERE attempt_key = ? ORDER BY ordinal""",
             (attempt_key,),
@@ -597,7 +636,10 @@ def load_attempt_timing_evidence(
 
 
 def load_attempt_engineer_summary_metadata(
-    database_path: str | Path, attempt_key: str
+    database_path: str | Path,
+    attempt_key: str,
+    *,
+    _connection: sqlite3.Connection | None = None,
 ) -> dict[str, object] | None:
     """Load bounded SQLite-only evidence for a deterministic attempt summary.
 
@@ -605,8 +647,8 @@ def load_attempt_engineer_summary_metadata(
     columns are omitted before SQLite returns them and are marked as truncated.
     """
     limits = ENGINEER_ATTEMPT_METADATA_LIMITS
-    with Database(database_path, read_only=True) as db:
-        row = db.connection.execute(
+    with _query_connection(database_path, _connection) as connection:
+        row = connection.execute(
             """SELECT l.attempt_key, l.attempt_number, l.lap_number,
                       l.disposition, l.lap_time_ms, l.game_valid,
                       l.start_observed, l.pit_encountered, l.superseded,
@@ -661,13 +703,13 @@ def load_attempt_engineer_summary_metadata(
         ).fetchone()
         player_participant_context = (
             load_attempt_player_participant_context(
-                db.connection, attempt_key
+                connection, attempt_key
             )
             if row is not None
             else None
         )
         player_car_setup_context = (
-            load_attempt_player_car_setup_context(db.connection, attempt_key)
+            load_attempt_player_car_setup_context(connection, attempt_key)
             if row is not None
             else None
         )

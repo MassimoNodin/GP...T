@@ -39,6 +39,7 @@ import PlayerCarSetupContextPanel from "./PlayerCarSetupContextPanel";
 import SessionBestOverviewPanel from "./SessionBestOverviewPanel";
 import DiagnosticEvidencePanels from "./DiagnosticEvidencePanels";
 import AttemptTraceCharts from "./AttemptTraceCharts";
+import DraftTrackModelPanel from "./DraftTrackModelPanel";
 import RunEvidencePanel from "./RunEvidencePanel";
 import TrajectoryComparisonPanel from "./TrajectoryComparisonPanel";
 import LinkedComparisonCharts from "./LinkedComparisonCharts";
@@ -977,6 +978,15 @@ export default async function Home({
                       ? sessionBestResponse.reason
                       : null
                   }
+                />
+                <DraftTrackModelPanel
+                  key={target?.attempt_key ?? "no-selected-attempt"}
+                  attempt={target}
+                  explicitlySelected={Boolean(
+                    target &&
+                      params.target_attempt_key &&
+                      target.attempt_key === params.target_attempt_key,
+                  )}
                 />
                 {target ? (
                   <AttemptQualityPanel

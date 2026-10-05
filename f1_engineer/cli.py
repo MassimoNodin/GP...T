@@ -50,6 +50,10 @@ from .storage.query import (
 from .storage.run_summaries import list_processing_run_lifecycle_events
 from .udp.models import DecodedPacket
 from .udp.source import ReplaySource, UDPSource
+from .tracks.draft_authoring import (
+    MAX_DRAFT_MODEL_REQUEST_BYTES,
+    build_draft_track_model,
+)
 from .tracks.geometry_loader import load_geometry_model
 from .tracks.registry import load_track_model_catalog
 
@@ -459,6 +463,39 @@ def _session_best(args: argparse.Namespace) -> int:
         SessionBestStatus.ANCHOR_UNAVAILABLE,
         SessionBestStatus.ABSTAINED,
     } else 0
+
+
+def _draft_track_model(args: argparse.Namespace) -> int:
+    regions_path = Path(args.regions_json)
+    with regions_path.open("rb") as stream:
+        content = stream.read(MAX_DRAFT_MODEL_REQUEST_BYTES + 1)
+    if len(content) > MAX_DRAFT_MODEL_REQUEST_BYTES:
+        raise ValueError("draft_model_request_size_limit_exceeded")
+    regions = json.loads(content.decode("utf-8"))
+    result = build_draft_track_model(
+        args.database,
+        args.source_attempt_key,
+        model_id=args.model_id,
+        revision=args.revision,
+        layout_id=args.layout_id,
+        regions=regions,
+    )
+    output = Path(args.output)
+    if output.exists() and not args.overwrite:
+        print(f"error: output already exists: {output} (use --overwrite)", file=sys.stderr)
+        return 2
+    _write_json_document(output, result["model"], overwrite=args.overwrite)
+    _json_line(
+        {
+            "status": "draft_model_exported",
+            "output": str(output),
+            "source": result["source"],
+            "warnings": result["warnings"],
+            "verification_scope": result["verification_scope"],
+            "catalog_installation": "not_performed",
+        }
+    )
+    return 0
 
 
 def _api(args: argparse.Namespace) -> int:
@@ -998,6 +1035,26 @@ def build_parser() -> argparse.ArgumentParser:
     traces.add_argument("--output", required=True, help="destination versioned JSON path")
     traces.add_argument("--overwrite", action="store_true", help="replace an existing output file")
     traces.set_defaults(handler=_traces)
+
+    draft_model = commands.add_parser(
+        "draft-track-model",
+        help="build and export an unvalidated distance-region model from an explicit attempt",
+    )
+    draft_model.add_argument(
+        "source_attempt_key", help="source attempt key printed by the laps command"
+    )
+    draft_model.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
+    draft_model.add_argument("--model-id", required=True, help="user-chosen model identifier")
+    draft_model.add_argument("--revision", type=int, default=1, help="draft model revision")
+    draft_model.add_argument("--layout-id", required=True, help="caller-declared circuit layout ID")
+    draft_model.add_argument(
+        "--regions-json",
+        required=True,
+        help="JSON array of named distance windows (maximum 64 KiB)",
+    )
+    draft_model.add_argument("--output", required=True, help="destination draft model JSON path")
+    draft_model.add_argument("--overwrite", action="store_true", help="replace an existing output file")
+    draft_model.set_defaults(handler=_draft_track_model)
 
     regions = commands.add_parser(
         "regions", help="inspect one attempt against a configured diagnostic distance-region model"

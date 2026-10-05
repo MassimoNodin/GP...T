@@ -197,10 +197,13 @@ export interface ReplayRecord {
 
 export interface SessionContext {
   session_uid?: string;
+  packet_format?: number;
+  track_id?: number;
   track_name?: string | null;
   track_length_m?: number | null;
   session_type?: string | null;
   game_mode?: string | null;
+  rule_set?: string | null;
   weather_name?: string | null;
 }
 
@@ -233,6 +236,41 @@ export interface TrackModelRecord {
   origin?: "packaged" | "local_draft" | "unattributed";
   content_sha256?: string | null;
   source_filename?: string | null;
+}
+
+export interface DraftRegionInput {
+  identifier: string;
+  label: string;
+  start_distance_m: number;
+  end_distance_m: number;
+  braking_search_window_m?: [number, number];
+  turn_in_search_window_m?: [number, number];
+  throttle_pickup_window_m?: [number, number];
+}
+
+export interface DraftTrackModelDocument {
+  schema_version: 1;
+  model_id: string;
+  revision: number;
+  packet_format: number;
+  track_id: number;
+  track_name: string;
+  layout_id: string;
+  track_length_m: number;
+  distance_origin_m: 0;
+  provenance: string;
+  validation_status: "draft";
+  corners: DraftRegionInput[];
+}
+
+export interface DraftTrackModelBuildResult {
+  status: "draft_model_built";
+  verification_scope: string;
+  model: DraftTrackModelDocument;
+  source: Record<string, unknown>;
+  warnings: Array<{ code: string; text: string }>;
+  authoring_limits: Record<string, number>;
+  catalog_installation: "not_performed";
 }
 
 export interface PlayerParticipantSnapshot {

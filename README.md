@@ -4,6 +4,10 @@ A local-first race engineer for F1 25 and its 2026 Season Pack. The system is be
 
 **The name:** GP...T is a personal nod to the GP race-engineer call on Max Verstappen's radio, with the added T completing the GPT wordplay. The app has its own voice and visual identity: precise, evidence-led, and local-first.
 
+## Product UI destination
+
+The eight design references in [`mock-images/`](mock-images/) are the target for the product's dashboard, live telemetry, engineer, lap comparison, settings, recordings, track analysis, and sessions screens. The implementation plan is in [`docs/implementation-plan.md`](docs/implementation-plan.md), with its accepted architectural boundary in [Decision 0061](docs/architecture.md#decision-0061-deliver-the-mock-product-through-evidence-backed-web-capabilities). This is a feature-backed web redesign: existing evidence and controls are reused, missing capabilities are planned in stages, and desktop-only controls are adapted to browser limits. Mock values and claims are not current app behavior and must not be shown as real telemetry.
+
 ## Current slice
 
 The foundation captures raw UDP datagrams, inspects captures, and replays them through the same packet-header and session pipeline. During app-managed recording, the dashboard shows synchronized player lap state, validity, pit/driver status, speed, gear, RPM, throttle, and brake, plus independent live Car Status and reported lap-timing groups. Car Status shows reported fuel, remaining laps, tyre codes and age, front brake bias, and pit limiter; lap timing shows the current lap and sector plus game-reported previous-lap and sector-one/two times. Each group has an explicit availability and freshness state; fuel quantity has no assigned unit. Captures retain unknown and malformed datagrams that reach the recorder; the bounded UDP receive queue reports any packets it had to drop.

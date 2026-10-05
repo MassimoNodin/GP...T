@@ -27,6 +27,24 @@ def _get(
     return asyncio.run(request())
 
 
+def _post(app, path: str, body: object) -> httpx.Response:
+    async def request() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(path, json=body)
+
+    return asyncio.run(request())
+
+
+def _post_content(app, path: str, content: bytes) -> httpx.Response:
+    async def request() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(path, content=content)
+
+    return asyncio.run(request())
+
+
 def test_sessions_api_is_versioned_and_keeps_session_uid_as_text(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         api_module,
@@ -455,6 +473,103 @@ def test_track_model_catalog_exposes_draft_revision_and_provenance(tmp_path) -> 
     assert model["region_count"] == 6
     assert "not been validated" in model["provenance"]
     assert "path" not in model
+
+
+def test_draft_track_model_api_returns_read_only_builder_result(monkeypatch, tmp_path) -> None:
+    calls: dict[str, object] = {}
+
+    def build(database, attempt_key, **kwargs):
+        calls.update(database=database, attempt_key=attempt_key, **kwargs)
+        return {
+            "status": "draft_model_built",
+            "model": {"model_id": "user-draft", "validation_status": "draft"},
+            "source": {"attempt_key": attempt_key},
+            "warnings": [],
+            "catalog_installation": "not_performed",
+        }
+
+    monkeypatch.setattr(api_module, "build_draft_track_model", build)
+    database = tmp_path / "read-only.sqlite3"
+    response = _post(
+        create_app(database),
+        "/api/v1/track-models/draft",
+        {
+            "source_attempt_key": "run:42:0:1",
+            "model_id": "user-draft",
+            "revision": 1,
+            "layout_id": "my-layout",
+            "regions": [
+                {
+                    "identifier": "window-1",
+                    "label": "Window 1",
+                    "start_distance_m": 100,
+                    "end_distance_m": 200,
+                    "braking_search_window_m": [110, 130],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["model"]["validation_status"] == "draft"
+    assert response.json()["data"]["catalog_installation"] == "not_performed"
+    assert calls["attempt_key"] == "run:42:0:1"
+    assert calls["layout_id"] == "my-layout"
+    assert calls["regions"][0]["identifier"] == "window-1"
+    assert calls["regions"][0]["braking_search_window_m"] == (110, 130)
+    assert not database.exists()
+
+
+def test_draft_track_model_api_documents_its_bounded_request_schema(tmp_path) -> None:
+    operation = create_app(tmp_path / "unused.sqlite3").openapi()["paths"][
+        "/api/v1/track-models/draft"
+    ]["post"]
+    body_schema = operation["requestBody"]["content"]["application/json"]["schema"]
+
+    assert body_schema["properties"]["regions"]["maxItems"] == 64
+    region_schema = body_schema["properties"]["regions"]["items"]
+    assert region_schema["additionalProperties"] is False
+    assert "nominal_apex_m" not in region_schema["properties"]
+
+
+def test_draft_track_model_api_rejects_unknown_request_fields() -> None:
+    response = _post(
+        create_app("unused.sqlite3"),
+        "/api/v1/track-models/draft",
+        {
+            "source_attempt_key": "run:42:0:1",
+            "model_id": "user-draft",
+            "revision": 1,
+            "layout_id": "my-layout",
+            "regions": [
+                {
+                    "identifier": "window-1",
+                    "label": "Window 1",
+                    "start_distance_m": 100,
+                    "end_distance_m": 200,
+                    "nominal_apex_m": 150,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_draft_track_model_api_rejects_oversized_body_before_json_parse(monkeypatch) -> None:
+    monkeypatch.setattr(
+        api_module,
+        "build_draft_track_model",
+        lambda *_args, **_kwargs: pytest.fail("oversized body reached the builder"),
+    )
+    response = _post_content(
+        create_app("unused.sqlite3"),
+        "/api/v1/track-models/draft",
+        b" " * (api_module.MAX_DRAFT_MODEL_REQUEST_BYTES + 1),
+    )
+
+    assert response.status_code == 413
+    assert response.json()["reason"] == "draft_model_request_size_limit_exceeded"
 
 
 def test_attempt_trajectory_api_returns_bounded_preview_and_string_session_uid(
