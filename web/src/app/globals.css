@@ -3902,6 +3902,49 @@ h1 span {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.live-temperature-scroll {
+  max-width: 100%;
+  margin-top: 12px;
+  overflow-x: auto;
+  border: 1px solid #293532;
+}
+.live-temperature-scroll:focus-visible {
+  outline: 2px solid var(--mint);
+  outline-offset: 2px;
+}
+.live-temperature-table {
+  width: 100%;
+  min-width: 360px;
+  border-collapse: collapse;
+  background: #111716;
+  color: #e2eae5;
+  font: 10px var(--font-mono);
+}
+.live-temperature-table caption {
+  padding: 8px 10px;
+  color: #929e9b;
+  text-align: left;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.live-temperature-table th,
+.live-temperature-table td {
+  padding: 8px 10px;
+  border-top: 1px solid #293532;
+  text-align: left;
+  white-space: nowrap;
+}
+.live-temperature-table thead th {
+  color: #71807c;
+  font-size: 8px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+}
+.live-temperature-table tbody th {
+  color: #a9b5b0;
+  font-weight: 500;
+}
 .live-car-status-note,
 .live-car-status-invalid {
   margin: 8px 0 0;

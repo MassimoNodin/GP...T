@@ -417,6 +417,9 @@ def test_2026_car_telemetry_v1_uses_one_byte_engine_temperature() -> None:
     assert player.speed_kph == 223
     assert player.gear == 5
     assert player.engine_temperature_c == 118
+    assert player.brake_temperature_c == (400, 401, 402, 403)
+    assert player.tyre_surface_temperature_c == (81, 82, 83, 84)
+    assert player.tyre_inner_temperature_c == (71, 72, 73, 74)
     assert player.drs == 1
     assert player.tyre_pressure_psi == pytest.approx((23.1, 23.2, 23.3, 23.4))
     assert result.telemetry.suggested_gear == 6
@@ -653,6 +656,10 @@ def test_2026_packet_16_does_not_poison_live_packet_6_snapshot() -> None:
     assert live["player_car_index"] == 23
     assert live["speed_kph"] == 223
     assert live["throttle"] == 0.75
+    assert live["engine_temperature_c"] == 118
+    assert live["brake_temperature_c"] == [400, 401, 402, 403]
+    assert live["tyre_surface_temperature_c"] == [81, 82, 83, 84]
+    assert live["tyre_inner_temperature_c"] == [71, 72, 73, 74]
     live_status = observer.live_car_status_snapshot()
     assert live_status["status"] == "fresh"
     assert live_status["player_car_index"] == 23

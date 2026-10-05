@@ -230,6 +230,18 @@ export function LiveTelemetryPanel({
   telemetry: LiveTelemetryRecord;
   sourceKind?: "recording" | "replay";
 }) {
+  const temperatureWheels = [
+    { label: "Rear left", index: 0 },
+    { label: "Rear right", index: 1 },
+    { label: "Front left", index: 2 },
+    { label: "Front right", index: 3 },
+  ] as const;
+  const engineTemperatureMaximum =
+    telemetry.packet_format === 2025
+      ? 65_535
+      : telemetry.packet_format === 2026
+        ? 255
+        : -1;
   const statusCopy: Record<LiveTelemetryRecord["status"], string> = {
     waiting: "Waiting for a synchronized player frame.",
     fresh:
@@ -296,6 +308,13 @@ export function LiveTelemetryPanel({
             }
           />
           <LiveMetric
+            label="ENGINE TEMP"
+            value={temperatureValue(
+              telemetry.engine_temperature_c,
+              engineTemperatureMaximum,
+            )}
+          />
+          <LiveMetric
             label="THROTTLE"
             value={withUnit(telemetry.throttle, "%", 0, 100)}
           />
@@ -310,7 +329,84 @@ export function LiveTelemetryPanel({
           />
         </div>
       )}
+      {telemetry.status !== "waiting" && (
+        <div
+          className="live-temperature-scroll"
+          tabIndex={0}
+          aria-label="Wheel temperature readings; scroll horizontally if needed"
+        >
+          <table className="live-temperature-table">
+            <caption>Source-reported wheel temperatures · °C</caption>
+            <thead>
+              <tr>
+                <th scope="col">Wheel</th>
+                <th scope="col">Brake</th>
+                <th scope="col">Tyre surface</th>
+                <th scope="col">Tyre inner</th>
+              </tr>
+            </thead>
+            <tbody>
+              {temperatureWheels.map(({ label, index }) => (
+                <tr key={label}>
+                  <th scope="row">{label}</th>
+                  <td>
+                    {wheelTemperature(telemetry.brake_temperature_c, index, 65_535)}
+                  </td>
+                  <td>
+                    {wheelTemperature(
+                      telemetry.tyre_surface_temperature_c,
+                      index,
+                      255,
+                    )}
+                  </td>
+                  <td>
+                    {wheelTemperature(
+                      telemetry.tyre_inner_temperature_c,
+                      index,
+                      255,
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
+  );
+}
+
+function temperatureValue(value: unknown, maximum: number): string {
+  return isTemperature(value, maximum) ? `${value} °C` : "—";
+}
+
+function wheelTemperature(
+  values: unknown,
+  index: number,
+  maximum: number,
+): string {
+  if (!isTemperatureArray(values, maximum)) return "—";
+  const value: unknown = values[index];
+  return isTemperature(value, maximum) ? `${value} °C` : "—";
+}
+
+function isTemperatureArray(
+  value: unknown,
+  maximum: number,
+): value is readonly number[] {
+  return (
+    Array.isArray(value) &&
+    value.length === 4 &&
+    value.every((item) => isTemperature(item, maximum))
+  );
+}
+
+function isTemperature(value: unknown, maximum: number): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= maximum
   );
 }
 

@@ -38,6 +38,9 @@ def test_car_telemetry_v1_decodes_all_records_and_normal_fields() -> None:
     assert math.isclose(result.telemetry.cars[0].throttle, 0.8, rel_tol=1e-6)
     assert result.telemetry.cars[0].steering == -0.25
     assert result.telemetry.cars[0].brake_temperature_c == (400, 401, 402, 403)
+    assert result.telemetry.cars[0].tyre_surface_temperature_c == (91, 92, 93, 94)
+    assert result.telemetry.cars[0].tyre_inner_temperature_c == (101, 102, 103, 104)
+    assert result.telemetry.cars[0].engine_temperature_c == 95
     assert result.telemetry.cars[0].tyre_pressure_psi == pytest.approx((23.1, 23.2, 23.3, 23.4))
     assert result.telemetry.mfd_panel_index == 2
     assert result.telemetry.mfd_panel_index_secondary_player == 255

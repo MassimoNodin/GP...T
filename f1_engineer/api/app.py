@@ -212,6 +212,27 @@ class LiveTelemetryRecord(BaseModel):
     engine_rpm: int | None = None
     throttle: float | None = None
     brake: float | None = None
+    engine_temperature_c: Annotated[
+        int, Field(strict=True, ge=0, le=65_535)
+    ] | None = None
+    brake_temperature_c: tuple[
+        Annotated[int, Field(strict=True, ge=0, le=65_535)],
+        Annotated[int, Field(strict=True, ge=0, le=65_535)],
+        Annotated[int, Field(strict=True, ge=0, le=65_535)],
+        Annotated[int, Field(strict=True, ge=0, le=65_535)],
+    ] | None = None
+    tyre_surface_temperature_c: tuple[
+        Annotated[int, Field(strict=True, ge=0, le=255)],
+        Annotated[int, Field(strict=True, ge=0, le=255)],
+        Annotated[int, Field(strict=True, ge=0, le=255)],
+        Annotated[int, Field(strict=True, ge=0, le=255)],
+    ] | None = None
+    tyre_inner_temperature_c: tuple[
+        Annotated[int, Field(strict=True, ge=0, le=255)],
+        Annotated[int, Field(strict=True, ge=0, le=255)],
+        Annotated[int, Field(strict=True, ge=0, le=255)],
+        Annotated[int, Field(strict=True, ge=0, le=255)],
+    ] | None = None
 
 
 class LiveCarStatusRecord(BaseModel):

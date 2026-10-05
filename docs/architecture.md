@@ -1011,6 +1011,22 @@ Before rendering in Dashboard or Track Analysis, validate the report against the
 
 **Rationale:** D0014's report is useful on Track Analysis because it distinguishes capture, replay, validity and channel-coverage evidence. Its current web path reads an unbounded trace and a run-scoped inventory of other attempts. Exact-attempt source limits and preflight work admission make reuse predictable without changing D0014 measurement semantics or D0042's shared resampling policy.
 
+## Decision 0067: expose source-reported live player temperatures
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Project source-reported engine temperature and the four-wheel brake, tyre-surface, and tyre-inner temperatures from the already decoded Car Telemetry packet into the existing bounded live player telemetry snapshot. Preserve the packet's fixed wheel order as rear-left, rear-right, front-left, front-right. Bind these values to the same session, wire format, player, assembled frame, and receive-time provenance as the admitted live telemetry snapshot. They share its freshness, stale, unsupported, session/player/format reset, and rewind behavior; another packet family must not refresh them.
+
+Display the measurements in the shared live telemetry panel used by recording, replay, and pinned `/live`. Keep arrays fixed at four entries and observer state bounded. Treat missing, older, or malformed optional API values as unavailable without suppressing the existing telemetry panel. Do not change trace schemas, imports, or stored attempt data.
+
+These values remain literal observations, including reported zeroes. Validate only their unsigned wire representation: brake temperatures are 16-bit, tyre surface and inner temperatures are 8-bit, and engine temperature is 16-bit in F1 25 or 8-bit in 2026. These are encoding bounds, not thermal thresholds. Do not infer valid thermal ranges, apply optimal-temperature colours, diagnose overheating or wear, estimate setup pressure, add history charts, or make thermal coaching claims. Gameplay mode does not alter whether a successfully decoded player snapshot is inspectable.
+
+**Acceptance:** synthetic F1 25 and 2026 packets verify all wheel positions and their different engine-temperature wire widths; exact frame/player/format selection and receive-time provenance are retained; malformed and unsupported packets, missing provenance, duplicate/late frames, player or format changes, and rewind boundaries cannot attach or refresh incorrect measurements; replay freshness ages from delivery time; the API preserves zeroes and four-value ordering; malformed or absent optional web fields leave existing telemetry available; and Melbourne plus recovered Shanghai captures replay through the existing observer without import or trace changes.
+
+**Rationale:** the versioned Car Telemetry adapters already decode these source measurements, but the live snapshot currently discards them. An additive projection of the admitted snapshot makes useful observations visible while reusing established synchronization, bounded-memory, and freshness rules and granting no analysis or coaching authority.
+
 ## Data flow
 
 ```text

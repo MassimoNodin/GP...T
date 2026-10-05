@@ -108,6 +108,10 @@ export interface LiveTelemetryRecord {
   engine_rpm?: number | null;
   throttle?: number | null;
   brake?: number | null;
+  engine_temperature_c?: number | null;
+  brake_temperature_c?: readonly number[] | null;
+  tyre_surface_temperature_c?: readonly number[] | null;
+  tyre_inner_temperature_c?: readonly number[] | null;
 }
 
 export interface LiveCarStatusRecord {

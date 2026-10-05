@@ -10,9 +10,10 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("fastapi")
+from pydantic import ValidationError
 httpx = pytest.importorskip("httpx")
 
-from f1_engineer.api.app import create_app
+from f1_engineer.api.app import LiveTelemetryRecord, create_app
 from f1_engineer.recording.service import _AcquisitionObserver
 from f1_engineer.recording.capture import CaptureReader
 from tests.helpers import make_datagram
@@ -34,13 +35,19 @@ def _telemetry_packet(
     packet_version: int = 1,
     throttle: float = 0.75,
     brake: float = 0.2,
+    engine_temperature_c: int = 95,
+    brake_temperature_c: tuple[int, int, int, int] = (0, 0, 0, 0),
+    tyre_surface_temperature_c: tuple[int, int, int, int] = (0, 0, 0, 0),
+    tyre_inner_temperature_c: tuple[int, int, int, int] = (0, 0, 0, 0),
 ):
     records = []
     for car_index in range(22):
         fields = (
             (100 + car_index, throttle, 0.0, brake, 0, 0, 11_000, 0, 0, 0)
-            + (0,) * 12
-            + (95,)
+            + brake_temperature_c
+            + tyre_surface_temperature_c
+            + tyre_inner_temperature_c
+            + (engine_temperature_c,)
             + (1.0,) * 4
             + (0,) * 4
         )
@@ -163,6 +170,39 @@ def _session_packet_for_mode(
     )
 
 
+def test_live_telemetry_api_bounds_source_temperature_wire_values():
+    telemetry = LiveTelemetryRecord(
+        status="fresh",
+        reason=None,
+        age_ms=0,
+        packet_format=2026,
+        engine_temperature_c=255,
+        brake_temperature_c=(0, 1, 65_534, 65_535),
+        tyre_surface_temperature_c=(0, 1, 254, 255),
+        tyre_inner_temperature_c=(0, 1, 254, 255),
+    )
+
+    assert telemetry.engine_temperature_c == 255
+    assert telemetry.brake_temperature_c == (0, 1, 65_534, 65_535)
+    assert telemetry.tyre_surface_temperature_c == (0, 1, 254, 255)
+
+    with pytest.raises(ValidationError):
+        LiveTelemetryRecord(
+            status="fresh",
+            reason=None,
+            age_ms=0,
+            tyre_surface_temperature_c=(0, 1, 255, 256),
+        )
+
+    with pytest.raises(ValidationError):
+        LiveTelemetryRecord(
+            status="fresh",
+            reason=None,
+            age_ms=0,
+            brake_temperature_c=(0, 1, 2),
+        )
+
+
 def _publish_frame(
     observer: _AcquisitionObserver,
     *,
@@ -182,6 +222,10 @@ def _publish_frame(
     sector_id: int = 0,
     throttle: float = 0.75,
     brake: float = 0.2,
+    engine_temperature_c: int = 95,
+    brake_temperature_c: tuple[int, int, int, int] = (0, 0, 0, 0),
+    tyre_surface_temperature_c: tuple[int, int, int, int] = (0, 0, 0, 0),
+    tyre_inner_temperature_c: tuple[int, int, int, int] = (0, 0, 0, 0),
 ) -> None:
     status_bodies = (
         car_status_bodies
@@ -196,6 +240,10 @@ def _publish_frame(
                 player_car_index=player_car_index,
                 throttle=throttle,
                 brake=brake,
+                engine_temperature_c=engine_temperature_c,
+                brake_temperature_c=brake_temperature_c,
+                tyre_surface_temperature_c=tyre_surface_temperature_c,
+                tyre_inner_temperature_c=tyre_inner_temperature_c,
             )
         )
     _process(observer,
@@ -266,6 +314,10 @@ def test_live_monitor_joins_reordered_player_packets_and_uses_canonical_values()
     assert live["speed_kph"] == 101
     assert live["gear"] == 0
     assert live["engine_rpm"] == 11_000
+    assert live["engine_temperature_c"] == 95
+    assert live["brake_temperature_c"] == [0, 0, 0, 0]
+    assert live["tyre_surface_temperature_c"] == [0, 0, 0, 0]
+    assert live["tyre_inner_temperature_c"] == [0, 0, 0, 0]
     assert live["throttle"] == 0
     assert live["brake"] == 0
 
@@ -318,6 +370,29 @@ def test_live_monitor_marks_missing_same_frame_car_telemetry_unavailable():
     assert live["speed_kph"] is None
     assert live["throttle"] is None
     assert live["brake"] is None
+    assert live["engine_temperature_c"] is None
+    assert live["brake_temperature_c"] is None
+    assert live["tyre_surface_temperature_c"] is None
+    assert live["tyre_inner_temperature_c"] is None
+
+
+def test_live_monitor_preserves_source_temperature_wheel_order_and_zeroes():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_frame(
+        observer,
+        frame=100,
+        engine_temperature_c=0,
+        brake_temperature_c=(400, 401, 402, 403),
+        tyre_surface_temperature_c=(91, 0, 93, 94),
+        tyre_inner_temperature_c=(101, 102, 103, 104),
+    )
+
+    live = observer.live_telemetry_snapshot()
+
+    assert live["engine_temperature_c"] == 0
+    assert live["brake_temperature_c"] == [400, 401, 402, 403]
+    assert live["tyre_surface_temperature_c"] == [91, 0, 93, 94]
+    assert live["tyre_inner_temperature_c"] == [101, 102, 103, 104]
 
 
 def test_live_car_status_joins_the_same_player_frame_and_exposes_canonical_values():
@@ -1304,7 +1379,14 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                 assert current["status"] == "recording"
 
                 payloads = [
-                    _telemetry_packet(frame=100, sequence=10).payload,
+                    _telemetry_packet(
+                        frame=100,
+                        sequence=10,
+                        engine_temperature_c=0,
+                        brake_temperature_c=(400, 401, 402, 403),
+                        tyre_surface_temperature_c=(91, 92, 93, 94),
+                        tyre_inner_temperature_c=(101, 102, 103, 104),
+                    ).payload,
                     _lap_packet(
                         frame=100,
                         lap_number=2,
@@ -1336,6 +1418,10 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                 assert live["status"] == "fresh"
                 assert live["speed_kph"] == 100
                 assert live["lap_time_ms"] == 1_234
+                assert live["engine_temperature_c"] == 0
+                assert live["brake_temperature_c"] == [400, 401, 402, 403]
+                assert live["tyre_surface_temperature_c"] == [91, 92, 93, 94]
+                assert live["tyre_inner_temperature_c"] == [101, 102, 103, 104]
                 assert "_observed_monotonic_ns" not in live
                 timing = current["progress"]["live_lap_timing"]
                 assert timing["status"] == "fresh"

@@ -17,7 +17,7 @@ from ..sessions.manager import SessionTracker
 from ..telemetry.canonical import CarSample, make_car_sample
 from ..telemetry.frames import FrameAssembler
 from ..udp.car_status import CarStatusDecoder, CarStatusPacket
-from ..udp.car_telemetry import CarTelemetryDecoder
+from ..udp.car_telemetry import CarTelemetryData, CarTelemetryDecoder
 from ..udp.decoder import PacketDecoder
 from ..udp.events import EventDecoder
 from ..udp.lap_data import CarLapData, LapDataDecoder
@@ -537,7 +537,7 @@ class AcquisitionObserver:
             self._discard_frame_receive_times(frame)
             return
 
-        decoded_telemetry: dict[int, tuple[object, DecodedPacket]] = {}
+        decoded_telemetry: dict[int, tuple[CarTelemetryData, DecodedPacket]] = {}
         telemetry_errors: list[tuple[DecodedPacket, str]] = []
         for packet in frame.packets:
             if packet.packet_kind is PacketId.CAR_TELEMETRY_2:
@@ -639,6 +639,9 @@ class AcquisitionObserver:
                 latest_reason = "car_telemetry_decode_failed"
 
             selected_receive_ns = self._frame_receive_time(frame, selected_packets)
+            temperature_source_admitted = (
+                telemetry is not None and selected_receive_ns is not None
+            )
 
             car = result.lap_data.cars[car_index]
             car_status, car_status_reason = _join_car_status(
@@ -702,6 +705,26 @@ class AcquisitionObserver:
                 ),
                 "brake": _live_channel(
                     sample.brake, sample.validation_flags, "brake"
+                ),
+                "engine_temperature_c": (
+                    telemetry.engine_temperature_c
+                    if temperature_source_admitted
+                    else None
+                ),
+                "brake_temperature_c": (
+                    list(telemetry.brake_temperature_c)
+                    if temperature_source_admitted
+                    else None
+                ),
+                "tyre_surface_temperature_c": (
+                    list(telemetry.tyre_surface_temperature_c)
+                    if temperature_source_admitted
+                    else None
+                ),
+                "tyre_inner_temperature_c": (
+                    list(telemetry.tyre_inner_temperature_c)
+                    if temperature_source_admitted
+                    else None
                 ),
             }
             latest_values = values
@@ -1059,6 +1082,10 @@ class AcquisitionObserver:
             "engine_rpm": None,
             "throttle": None,
             "brake": None,
+            "engine_temperature_c": None,
+            "brake_temperature_c": None,
+            "tyre_surface_temperature_c": None,
+            "tyre_inner_temperature_c": None,
         }
 
     def _clear_live_sample(self) -> None:
