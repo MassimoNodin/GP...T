@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type {
   LiveCarDamageRecord,
+  LiveCarSetupRecord,
   LiveCarStatusRecord,
   LiveLapTimingRecord,
   LiveTelemetryRecord,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/live";
 import {
   LiveCarDamagePanel,
+  LiveCarSetupPanel,
   LiveCarStatusPanel,
   LiveLapTimingPanel,
   LiveTelemetryPanel,
@@ -24,7 +26,8 @@ type MonitorRecord =
   | LiveTelemetryRecord
   | LiveCarStatusRecord
   | LiveLapTimingRecord
-  | LiveCarDamageRecord;
+  | LiveCarDamageRecord
+  | LiveCarSetupRecord;
 
 const activeRecordingStates = new Set(["starting", "recording", "stopping"]);
 const activeReplayStates = new Set([
@@ -241,6 +244,18 @@ export default function LiveTelemetryView({
                 {snapshot.live_car_damage ? (
                   <LiveCarDamagePanel
                     telemetry={snapshot.live_car_damage}
+                    sourceKind={snapshot.source}
+                  />
+                ) : null}
+              </MonitorGroup>
+              <MonitorGroup
+                title="Sparse Car Setups observation"
+                telemetry={snapshot.live_car_setup}
+                sourceKind={snapshot.source}
+              >
+                {snapshot.live_car_setup ? (
+                  <LiveCarSetupPanel
+                    telemetry={snapshot.live_car_setup}
                     sourceKind={snapshot.source}
                   />
                 ) : null}

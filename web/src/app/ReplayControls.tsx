@@ -9,6 +9,7 @@ import type {
 import {
   LiveCarDamagePanel,
   LiveCarStatusPanel,
+  LiveCarSetupPanel,
   LiveLapTimingPanel,
   LiveTelemetryPanel,
 } from "./RecordingControls";
@@ -322,6 +323,12 @@ export default function ReplayControls({
           {playback.live_car_damage ? (
             <LiveCarDamagePanel
               telemetry={playback.live_car_damage}
+              sourceKind="replay"
+            />
+          ) : null}
+          {playback.live_car_setup ? (
+            <LiveCarSetupPanel
+              telemetry={playback.live_car_setup}
               sourceKind="replay"
             />
           ) : null}

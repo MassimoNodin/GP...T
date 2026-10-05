@@ -5,12 +5,13 @@ import { useRouter } from "next/navigation";
 import type {
   ApiResponse,
   LiveCarDamageRecord,
+  LiveCarSetupRecord,
   LiveCarStatusRecord,
   LiveLapTimingRecord,
   LiveTelemetryRecord,
   RecordingJobRecord,
 } from "@/lib/api";
-import { readCarDamageMonitor } from "@/lib/live";
+import { readCarDamageMonitor, readCarSetupMonitor } from "@/lib/live";
 import { appScreenHref, isSelectionTransferBlocked } from "@/lib/navigation";
 
 const activeStatuses = new Set(["starting", "recording", "stopping"]);
@@ -216,6 +217,9 @@ export default function RecordingControls({
           ) : null}
           {progress.live_car_damage ? (
             <LiveCarDamagePanel telemetry={progress.live_car_damage} />
+          ) : null}
+          {progress.live_car_setup ? (
+            <LiveCarSetupPanel telemetry={progress.live_car_setup} />
           ) : null}
         </>
       )}
@@ -722,6 +726,114 @@ export function LiveCarDamagePanel({
   );
 }
 
+export function LiveCarSetupPanel({
+  telemetry: inputTelemetry,
+  sourceKind = "recording",
+}: {
+  telemetry: LiveCarSetupRecord;
+  sourceKind?: "recording" | "replay";
+}) {
+  const telemetry = readCarSetupMonitor(inputTelemetry) ?? {
+    status: "unavailable" as const,
+    reason: "malformed_optional_fields",
+    age_ms: null,
+    validation_flags: [],
+  };
+  const statusCopy: Record<LiveCarSetupRecord["status"], string> = {
+    waiting: "Waiting for an admitted selected-player Car Setups packet.",
+    fresh: "Recent sparse setup observation; it updates only when that packet arrives.",
+    stale: `Last setup observation was ${formatAge(telemetry.age_ms)} ago; settings may have changed since.`,
+    unsupported:
+      sourceKind === "replay"
+        ? "Replay continues. This Car Setups packet version is unsupported."
+        : "Recording continues. This Car Setups packet version is unsupported.",
+    unavailable: liveCarSetupUnavailableReason(telemetry.reason),
+  };
+  const invalidFields = (telemetry.validation_flags ?? []).map((flag) =>
+    flag.replace("invalid_car_setup_", "").replaceAll("_", " "),
+  );
+  const observationCount =
+    Number.isInteger(telemetry.observation_count) &&
+    (telemetry.observation_count ?? -1) >= 0
+      ? telemetry.observation_count!.toLocaleString()
+      : "—";
+
+  return (
+    <section
+      className="live-telemetry live-car-setup"
+      data-state={telemetry.status}
+      aria-label="Sparse live player setup observation"
+    >
+      <div className="live-telemetry-heading">
+        <div>
+          <div className="eyebrow">
+            {sourceKind === "replay" ? "REPLAYED CAR SETUP" : "LIVE CAR SETUP"}
+          </div>
+          <p>{statusCopy[telemetry.status]}</p>
+        </div>
+        <span className={`live-telemetry-state state-${telemetry.status}`}>
+          {telemetry.status.toUpperCase()}
+        </span>
+      </div>
+      {telemetry.status !== "waiting" && (
+        <>
+          <div className="live-car-damage-meta">
+            <span>{observationCount} admitted observations</span>
+            <span>
+              Source time {finiteNumber(telemetry.session_time_s)?.toFixed(2) ?? "—"} s
+            </span>
+            <span>Session {safeText(telemetry.session_uid)}</span>
+            <span>Player {safeInteger(telemetry.player_car_index)}</span>
+            <span>Format {safeInteger(telemetry.packet_format)}</span>
+            <span>Frame {safeInteger(telemetry.frame_identifier)}</span>
+          </div>
+          <h3 className="live-subheading">Aero and differential</h3>
+          <div className="live-telemetry-grid">
+            <LiveMetric label="CURRENT FRONT WING" value={setupInteger(telemetry.front_wing)} />
+            <LiveMetric label="REAR WING" value={setupInteger(telemetry.rear_wing)} />
+            <LiveMetric label="ON-THROTTLE DIFFERENTIAL" value={setupPercent(telemetry.on_throttle_differential)} />
+            <LiveMetric label="OFF-THROTTLE DIFFERENTIAL" value={setupPercent(telemetry.off_throttle_differential)} />
+            <LiveMetric label="NEXT-PIT FRONT WING REQUEST" value={setupFloat(telemetry.next_front_wing_value)} />
+          </div>
+          <h3 className="live-subheading">Suspension and brakes</h3>
+          <div className="live-telemetry-grid">
+            <LiveMetric label="FRONT CAMBER" value={setupFloat(telemetry.front_camber)} />
+            <LiveMetric label="REAR CAMBER" value={setupFloat(telemetry.rear_camber)} />
+            <LiveMetric label="FRONT TOE" value={setupFloat(telemetry.front_toe)} />
+            <LiveMetric label="REAR TOE" value={setupFloat(telemetry.rear_toe)} />
+            <LiveMetric label="FRONT SUSPENSION" value={setupInteger(telemetry.front_suspension)} />
+            <LiveMetric label="REAR SUSPENSION" value={setupInteger(telemetry.rear_suspension)} />
+            <LiveMetric label="FRONT ANTI-ROLL BAR" value={setupInteger(telemetry.front_anti_roll_bar)} />
+            <LiveMetric label="REAR ANTI-ROLL BAR" value={setupInteger(telemetry.rear_anti_roll_bar)} />
+            <LiveMetric label="FRONT SUSPENSION HEIGHT" value={setupInteger(telemetry.front_suspension_height)} />
+            <LiveMetric label="REAR SUSPENSION HEIGHT" value={setupInteger(telemetry.rear_suspension_height)} />
+            <LiveMetric label="BRAKE PRESSURE" value={setupPercent(telemetry.brake_pressure_percent)} />
+            <LiveMetric label="BRAKE BIAS" value={setupPercent(telemetry.brake_bias_percent)} />
+            <LiveMetric label="ENGINE BRAKING" value={setupPercent(telemetry.engine_braking_percent)} />
+          </div>
+          <h3 className="live-subheading">Tyre setup and fuel</h3>
+          <div className="live-telemetry-grid">
+            <LiveMetric label="REAR LEFT PRESSURE" value={setupFloat(telemetry.rear_left_tyre_pressure_psi, " psi")} />
+            <LiveMetric label="REAR RIGHT PRESSURE" value={setupFloat(telemetry.rear_right_tyre_pressure_psi, " psi")} />
+            <LiveMetric label="FRONT LEFT PRESSURE" value={setupFloat(telemetry.front_left_tyre_pressure_psi, " psi")} />
+            <LiveMetric label="FRONT RIGHT PRESSURE" value={setupFloat(telemetry.front_right_tyre_pressure_psi, " psi")} />
+            <LiveMetric label="BALLAST" value={setupInteger(telemetry.ballast)} />
+            <LiveMetric label="SETUP FUEL LOAD" value={setupFloat(telemetry.fuel_load)} />
+          </div>
+          <p className="live-car-status-note">
+            Values are source-reported setup observations. The next-pit wing request is separate from current wing; fuel and tyre values are not live condition or setup advice.
+          </p>
+          {invalidFields.length ? (
+            <p className="live-car-status-invalid" role="status">
+              Invalid fields are unavailable: {invalidFields.join(", ")}.
+            </p>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
+}
+
 function percentArrayValue(
   values: readonly (number | null)[] | null | undefined,
   index: number,
@@ -753,6 +865,38 @@ function liveCarDamageUnavailableReason(reason: string | null) {
   if (reason === "operation_ended")
     return "The recording or replay has ended; live observations are cleared.";
   return reason ? reason.replaceAll("_", " ") : "Damage is unavailable for this frame.";
+}
+
+function liveCarSetupUnavailableReason(reason: string | null) {
+  if (reason === "receive_provenance_unavailable")
+    return "The selected Car Setups packet has no receive-time provenance.";
+  if (reason === "car_setup_decode_failed")
+    return "The selected Car Setups packet could not be decoded.";
+  if (reason === "conflicting_car_setup_packets")
+    return "Selected-player setup records or the next-pit wing request conflict within this frame.";
+  if (reason === "player_index_mismatch_in_frame")
+    return "The selected-player identity is ambiguous for this frame.";
+  if (reason === "operation_ended")
+    return "The recording or replay has ended; live observations are cleared.";
+  return reason ? reason.replaceAll("_", " ") : "Car setup is unavailable for this frame.";
+}
+
+function setupInteger(value: number | null | undefined) {
+  return Number.isInteger(value) && value !== null && value !== undefined
+    ? String(value)
+    : "—";
+}
+
+function setupPercent(value: number | null | undefined) {
+  return Number.isInteger(value) && value !== null && value !== undefined
+    ? `${value}%`
+    : "—";
+}
+
+function setupFloat(value: number | null | undefined, suffix = "") {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${value.toFixed(2)}${suffix}`
+    : "—";
 }
 
 function finiteNumber(value: number | null | undefined) {

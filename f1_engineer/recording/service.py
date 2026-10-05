@@ -4,7 +4,7 @@ import asyncio
 import time
 from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -22,6 +22,7 @@ from ..telemetry.canonical import (
 from ..telemetry.frames import FrameAssembler
 from ..udp.car_status import CarStatusDecoder, CarStatusPacket
 from ..udp.car_damage import CarDamageDecoder, CarDamageData
+from ..udp.car_setups import CAR_SETUP_V1_RECORD_SIZE, CarSetupData, CarSetupsDecoder
 from ..udp.car_telemetry import CarTelemetryData, CarTelemetryDecoder
 from ..udp.decoder import PacketDecoder
 from ..udp.events import EventDecoder
@@ -36,7 +37,9 @@ LIVE_TELEMETRY_FRESHNESS_LIMIT_MS = 500
 LIVE_CAR_STATUS_FRESHNESS_LIMIT_MS = 500
 LIVE_LAP_TIMING_FRESHNESS_LIMIT_MS = 500
 LIVE_CAR_DAMAGE_FRESHNESS_LIMIT_MS = 500
+LIVE_CAR_SETUP_FRESHNESS_LIMIT_MS = 500
 _LIVE_CAR_DAMAGE_OBSERVATION_COUNT_MAX = 2_147_483_647
+_LIVE_CAR_SETUP_OBSERVATION_COUNT_MAX = 2_147_483_647
 
 _LIVE_CAR_DAMAGE_WHEEL_FIELDS = {
     "tyre_wear_percent": "tyre_wear",
@@ -50,6 +53,31 @@ _LIVE_CAR_DAMAGE_SCALAR_FIELDS = (
     "engine_damage_percent",
 )
 _LIVE_CAR_DAMAGE_WHEEL_SUFFIXES = ("rl", "rr", "fl", "fr")
+_LIVE_CAR_SETUP_FIELDS = (
+    "front_wing",
+    "rear_wing",
+    "on_throttle_differential",
+    "off_throttle_differential",
+    "front_camber",
+    "rear_camber",
+    "front_toe",
+    "rear_toe",
+    "front_suspension",
+    "rear_suspension",
+    "front_anti_roll_bar",
+    "rear_anti_roll_bar",
+    "front_suspension_height",
+    "rear_suspension_height",
+    "brake_pressure_percent",
+    "brake_bias_percent",
+    "engine_braking_percent",
+    "rear_left_tyre_pressure_psi",
+    "rear_right_tyre_pressure_psi",
+    "front_left_tyre_pressure_psi",
+    "front_right_tyre_pressure_psi",
+    "ballast",
+    "fuel_load",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +94,7 @@ class RecordingSnapshot:
     live_car_status: dict[str, object]
     live_lap_timing: dict[str, object]
     live_car_damage: dict[str, object]
+    live_car_setup: dict[str, object]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -81,6 +110,7 @@ class RecordingSnapshot:
             "live_car_status": dict(self.live_car_status),
             "live_lap_timing": dict(self.live_lap_timing),
             "live_car_damage": dict(self.live_car_damage),
+            "live_car_setup": dict(self.live_car_setup),
         }
 
 
@@ -118,6 +148,7 @@ class AcquisitionObserver:
         self.car_telemetry_decoder = CarTelemetryDecoder()
         self.car_status_decoder = CarStatusDecoder()
         self.car_damage_decoder = CarDamageDecoder()
+        self.car_setups_decoder = CarSetupsDecoder()
         self.counts: Counter[str] = Counter(completed_frames=0)
         self.latest_context: dict[str, object] | None = None
         self._live_status = "waiting"
@@ -143,8 +174,13 @@ class AcquisitionObserver:
         self._live_car_damage_snapshot: dict[str, object] | None = None
         self._live_car_damage_received_monotonic_ns: int | None = None
         self._live_car_damage_observation_count = 0
+        self._live_car_setup = "waiting"
+        self._live_car_setup_reason: str | None = None
+        self._live_car_setup_snapshot: dict[str, object] | None = None
+        self._live_car_setup_received_monotonic_ns: int | None = None
+        self._live_car_setup_observation_count = 0
         self._receive_times: OrderedDict[tuple[int, int, bytes], int] = OrderedDict()
-        self._max_receive_time_entries = self.frames.max_open_frames * 5 + 4
+        self._max_receive_time_entries = self.frames.max_open_frames * 6 + 4
         self._finished = False
 
     def process(
@@ -236,6 +272,7 @@ class AcquisitionObserver:
                 PacketId.CAR_TELEMETRY_2,
                 PacketId.CAR_STATUS,
                 PacketId.CAR_DAMAGE,
+                PacketId.CAR_SETUPS,
             }:
                 self._remember_receive_time(raw, packet, observed_monotonic_ns)
         self._count_completed(self._consume_frames(completed))
@@ -383,6 +420,40 @@ class AcquisitionObserver:
             )
         return snapshot
 
+    def live_car_setup_snapshot(
+        self, now_monotonic_ns: int | None = None
+    ) -> dict[str, object]:
+        """Return the last sparse player setup observation with independent freshness."""
+        now = time.monotonic_ns() if now_monotonic_ns is None else now_monotonic_ns
+        age_ms = (
+            None
+            if self._live_car_setup_received_monotonic_ns is None
+            else max(
+                0,
+                (now - self._live_car_setup_received_monotonic_ns) // 1_000_000,
+            )
+        )
+        status = self._live_car_setup
+        if (
+            age_ms is not None
+            and age_ms > LIVE_CAR_SETUP_FRESHNESS_LIMIT_MS
+            and status in {"fresh", "unavailable"}
+        ):
+            status = "stale"
+        snapshot: dict[str, object] = {
+            "status": status,
+            "reason": self._live_car_setup_reason,
+            "age_ms": age_ms,
+            "observation_count": self._live_car_setup_observation_count,
+        }
+        if self._live_car_setup_snapshot is not None:
+            snapshot.update(self._live_car_setup_snapshot)
+        if self._live_car_setup_received_monotonic_ns is not None:
+            snapshot["_observed_monotonic_ns"] = (
+                self._live_car_setup_received_monotonic_ns
+            )
+        return snapshot
+
     def _reset_live_monitor(self) -> None:
         self._live_status = "waiting"
         self._live_reason = None
@@ -397,6 +468,7 @@ class AcquisitionObserver:
         self._reset_live_car_status_monitor()
         self._reset_live_lap_timing_monitor()
         self._reset_live_car_damage_monitor()
+        self._reset_live_car_setup_monitor()
         self._receive_times.clear()
 
     def _observe_player_identity(self, packet: DecodedPacket) -> None:
@@ -561,6 +633,11 @@ class AcquisitionObserver:
         ]
         if damage_packets:
             self._observe_live_car_damage(frame, damage_packets)
+        setup_packets = [
+            packet for packet in frame.packets if packet.packet_kind is PacketId.CAR_SETUPS
+        ]
+        if setup_packets:
+            self._observe_live_car_setup(frame, setup_packets)
         car_status_candidates = []
         for packet in frame.packets:
             if packet.packet_kind is not PacketId.CAR_STATUS:
@@ -880,6 +957,7 @@ class AcquisitionObserver:
                 PacketId.CAR_TELEMETRY_2,
                 PacketId.CAR_STATUS,
                 PacketId.CAR_DAMAGE,
+                PacketId.CAR_SETUPS,
             }
         ]
         if not times or any(value is None for value in times):
@@ -894,6 +972,7 @@ class AcquisitionObserver:
                 PacketId.CAR_TELEMETRY_2,
                 PacketId.CAR_STATUS,
                 PacketId.CAR_DAMAGE,
+                PacketId.CAR_SETUPS,
             }:
                 self._receive_times.pop(
                     (
@@ -1134,6 +1213,125 @@ class AcquisitionObserver:
         self._live_car_damage_reason = None
         self._live_car_damage_received_monotonic_ns = received_ns
 
+    def _observe_live_car_setup(
+        self, frame: PacketFrame, setup_packets: list[DecodedPacket]
+    ) -> None:
+        player_index = self._live_player_index
+        if player_index is None:
+            return
+        selected = [
+            packet
+            for packet in setup_packets
+            if packet.header.player_car_index == player_index
+        ]
+        if not selected:
+            self._set_live_car_setup_unavailable(
+                frame,
+                player_index,
+                "player_index_mismatch_in_frame",
+                setup_packets,
+            )
+            return
+
+        decoded: list[
+            tuple[DecodedPacket, CarSetupData, float | None, tuple[str, ...]]
+        ] = []
+        failures: list[bool] = []
+        raw_player_records: set[bytes] = set()
+        for packet in selected:
+            result = self.car_setups_decoder.decode(packet)
+            if result.error is not None or result.setups is None:
+                failures.append(self._is_unsupported_adapter(packet))
+                continue
+            if not 0 <= player_index < len(result.setups.cars):
+                self._set_live_car_setup_unavailable(
+                    frame,
+                    player_index,
+                    "player_car_index_out_of_range",
+                    selected,
+                )
+                return
+            decoded.append(
+                (
+                    packet,
+                    result.setups.cars[player_index],
+                    result.setups.next_front_wing_value,
+                    result.setups.invalid_packet_fields,
+                )
+            )
+            start = player_index * CAR_SETUP_V1_RECORD_SIZE
+            end = start + CAR_SETUP_V1_RECORD_SIZE
+            raw_player_records.add(packet.body[start:end] + packet.body[-4:])
+
+        if failures:
+            unsupported = any(failures)
+            self._set_live_car_setup_unavailable(
+                frame,
+                player_index,
+                "car_setup_adapter_unsupported"
+                if unsupported
+                else "car_setup_decode_failed",
+                selected,
+                status="unsupported" if unsupported else "unavailable",
+            )
+            return
+
+        if len(raw_player_records) > 1:
+            self._set_live_car_setup_unavailable(
+                frame,
+                player_index,
+                "conflicting_car_setup_packets",
+                selected,
+            )
+            return
+
+        received_ns = self._frame_receive_time(frame, selected)
+        if received_ns is None:
+            self._live_car_setup_snapshot = self._empty_live_car_setup_snapshot(
+                frame, player_index
+            )
+            self._live_car_setup = "unavailable"
+            self._live_car_setup_reason = "receive_provenance_unavailable"
+            self._live_car_setup_received_monotonic_ns = None
+            return
+
+        self._live_car_setup_observation_count = min(
+            self._live_car_setup_observation_count + 1,
+            _LIVE_CAR_SETUP_OBSERVATION_COUNT_MAX,
+        )
+        source_packet, setup, next_front_wing, invalid_packet_fields = min(
+            decoded,
+            key=lambda item: self._receive_times.get(
+                (
+                    frame.session_uid,
+                    frame.overall_frame_identifier,
+                    item[0].wire_fingerprint,
+                ),
+                received_ns,
+            ),
+        )
+        values = asdict(setup)
+        invalid_fields = values.pop("invalid_fields")
+        validation_flags = [
+            f"invalid_car_setup_{field}" for field in invalid_fields
+        ]
+        if "next_front_wing_value" in invalid_packet_fields:
+            validation_flags.append("invalid_car_setup_next_front_wing_value")
+        snapshot: dict[str, object] = {
+            "session_uid": str(frame.session_uid),
+            "frame_identifier": frame.overall_frame_identifier,
+            "packet_format": int(source_packet.packet_format),
+            "player_car_index": player_index,
+            "session_time_s": source_packet.header.session_time,
+            **values,
+            "next_front_wing_value": next_front_wing,
+            "validation_flags": validation_flags,
+        }
+        self._live_car_setup_snapshot = snapshot
+        self._live_car_setup = "fresh"
+        self._live_car_setup_reason = None
+        self._live_car_setup_received_monotonic_ns = received_ns
+
     def _set_live_car_damage_unavailable(
         self,
         frame: PacketFrame,
@@ -1212,6 +1410,13 @@ class AcquisitionObserver:
         self._live_car_damage_received_monotonic_ns = None
         self._live_car_damage_observation_count = 0
 
+    def _reset_live_car_setup_monitor(self) -> None:
+        self._live_car_setup = "waiting"
+        self._live_car_setup_reason = None
+        self._live_car_setup_snapshot = None
+        self._live_car_setup_received_monotonic_ns = None
+        self._live_car_setup_observation_count = 0
+
     @staticmethod
     def _empty_live_lap_timing_snapshot(
         frame: PacketFrame, player_index: int
@@ -1247,6 +1452,40 @@ class AcquisitionObserver:
         for field in _LIVE_CAR_DAMAGE_SCALAR_FIELDS:
             snapshot[field] = None
         return snapshot
+
+    @staticmethod
+    def _empty_live_car_setup_snapshot(
+        frame: PacketFrame, player_index: int
+    ) -> dict[str, object]:
+        snapshot: dict[str, object] = {
+            "session_uid": str(frame.session_uid),
+            "frame_identifier": frame.overall_frame_identifier,
+            "packet_format": int(frame.packets[-1].packet_format),
+            "player_car_index": player_index,
+            "session_time_s": None,
+            "next_front_wing_value": None,
+            "validation_flags": [],
+        }
+        snapshot.update({field: None for field in _LIVE_CAR_SETUP_FIELDS})
+        return snapshot
+
+    def _set_live_car_setup_unavailable(
+        self,
+        frame: PacketFrame,
+        player_index: int,
+        reason: str,
+        selected_packets: list[DecodedPacket],
+        *,
+        status: str = "unavailable",
+    ) -> None:
+        self._live_car_setup_snapshot = self._empty_live_car_setup_snapshot(
+            frame, player_index
+        )
+        self._live_car_setup = status
+        self._live_car_setup_reason = reason
+        self._live_car_setup_received_monotonic_ns = self._frame_receive_time(
+            frame, selected_packets
+        )
 
     def _set_live_car_status_unavailable(
         self,
@@ -1327,6 +1566,7 @@ class AcquisitionObserver:
         self._clear_live_car_status_sample()
         self._reset_live_lap_timing_monitor()
         self._reset_live_car_damage_monitor()
+        self._reset_live_car_setup_monitor()
 
     @classmethod
     def _is_newer_frame(cls, candidate: int, current: int) -> bool:
@@ -1356,6 +1596,12 @@ class AcquisitionObserver:
             return not self.car_damage_decoder.supports(
                 packet.packet_format,
                 PacketId.CAR_DAMAGE,
+                packet.header.packet_version,
+            )
+        if packet.packet_kind is PacketId.CAR_SETUPS:
+            return not self.car_setups_decoder.supports(
+                packet.packet_format,
+                PacketId.CAR_SETUPS,
                 packet.header.packet_version,
             )
         return False
@@ -1437,6 +1683,16 @@ async def record_udp_capture(
             ),
             live_car_damage=(
                 observer.live_car_damage_snapshot()
+                if observer is not None
+                else {
+                    "status": "unavailable",
+                    "reason": "live_monitor_not_enabled",
+                    "age_ms": None,
+                    "observation_count": 0,
+                }
+            ),
+            live_car_setup=(
+                observer.live_car_setup_snapshot()
                 if observer is not None
                 else {
                     "status": "unavailable",

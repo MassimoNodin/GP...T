@@ -13,7 +13,12 @@ pytest.importorskip("fastapi")
 from pydantic import ValidationError
 httpx = pytest.importorskip("httpx")
 
-from f1_engineer.api.app import LiveCarDamageRecord, LiveTelemetryRecord, create_app
+from f1_engineer.api.app import (
+    LiveCarDamageRecord,
+    LiveCarSetupRecord,
+    LiveTelemetryRecord,
+    create_app,
+)
 from f1_engineer.recording.service import _AcquisitionObserver
 from f1_engineer.recording.capture import CaptureReader
 from tests.helpers import make_datagram
@@ -24,6 +29,7 @@ from tests.test_lap_tracking import SESSION_UID, _lap_packet, _session_packet
 _TELEMETRY_CAR = struct.Struct("<HfffBbHBBH4H4B4BH4f4B")
 _LAP_DATA_CAR = struct.Struct("<IIHBHBHBHBfff15BHHBfB")
 _CAR_DAMAGE_CAR = struct.Struct("<4f30B")
+_CAR_SETUP_CAR = struct.Struct("<4B4f9B4fBf")
 _CONTROL_TOKEN = "live-monitor-test-token"
 
 
@@ -137,11 +143,85 @@ def _car_damage_packet(
     )
 
 
-def _flashback_packet(*, frame: int, sequence: int, session_time: float, target_time: float):
+def _car_setup_packet(
+    *,
+    frame: int,
+    sequence: int,
+    session_uid: int = SESSION_UID,
+    player_car_index: int = 0,
+    packet_format: int = 2025,
+    packet_version: int = 1,
+    session_time_s: float = 0.0,
+    front_wing: int = 20,
+    next_front_wing_value: float = 45.5,
+    front_camber: float = -3.5,
+    other_car_front_wing: int | None = None,
+    body: bytes | None = None,
+):
+    car_count = 24 if packet_format == 2026 else 22
+    if body is None:
+        records = []
+        for car_index in range(car_count):
+            current_front_wing = (
+                front_wing
+                if car_index == player_car_index or other_car_front_wing is None
+                else other_car_front_wing
+            )
+            records.append(
+                _CAR_SETUP_CAR.pack(
+                    current_front_wing,
+                    30,
+                    50,
+                    55,
+                    front_camber,
+                    -1.5,
+                    0.1,
+                    0.2,
+                    5,
+                    6,
+                    7,
+                    8,
+                    9,
+                    10,
+                    100,
+                    55,
+                    20,
+                    22.0,
+                    22.1,
+                    22.2,
+                    22.3,
+                    10,
+                    30.5,
+                )
+            )
+        body = b"".join(records) + struct.pack("<f", next_front_wing_value)
+    return make_datagram(
+        packet_format=packet_format,
+        packet_id=5,
+        packet_version=packet_version,
+        session_uid=session_uid,
+        frame=frame,
+        session_time=session_time_s,
+        player_car_index=player_car_index,
+        body=body,
+        sequence=sequence,
+    )
+
+
+def _flashback_packet(
+    *,
+    frame: int,
+    sequence: int,
+    session_time: float,
+    target_time: float,
+    session_uid: int = SESSION_UID,
+    packet_format: int = 2025,
+):
     details = struct.pack("<If", frame - 5, target_time) + b"\x00" * 4
     return make_datagram(
+        packet_format=packet_format,
         packet_id=3,
-        session_uid=SESSION_UID,
+        session_uid=session_uid,
         frame=frame,
         session_time=session_time,
         body=b"FLBK" + details,
@@ -1442,7 +1522,8 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                         wear=(0.0, 25.5, 50.0, 100.0),
                         byte_values=tuple(damage_bytes),
                     ).payload,
-                    _advance(103, 14).payload,
+                    _car_setup_packet(frame=100, sequence=14).payload,
+                    _advance(103, 15).payload,
                 ]
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
                     for payload in payloads:
@@ -1487,6 +1568,14 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                 assert damage["tyre_wear_percent"] == [0.0, 25.5, 50.0, 100.0]
                 assert damage["engine_damage_percent"] == 13
                 assert "_observed_monotonic_ns" not in damage
+                setup = current["progress"]["live_car_setup"]
+                assert setup["status"] == "fresh"
+                assert setup["frame_identifier"] == 100
+                assert setup["observation_count"] == 1
+                assert setup["front_wing"] == 20
+                assert setup["fuel_load"] == 30.5
+                assert setup["next_front_wing_value"] == 45.5
+                assert "_observed_monotonic_ns" not in setup
 
                 await asyncio.sleep(0.55)
                 stale = (
@@ -1509,6 +1598,11 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                 ).json()["data"]["progress"]["live_car_damage"]
                 assert stale_damage["status"] == "stale"
                 assert stale_damage["age_ms"] > 500
+                stale_setup = (
+                    await client.get("/api/v1/recordings/current")
+                ).json()["data"]["progress"]["live_car_setup"]
+                assert stale_setup["status"] == "stale"
+                assert stale_setup["age_ms"] > 500
 
                 stopped = await client.post(
                     f"/api/v1/recordings/{recording_id}/stop",
@@ -1829,4 +1923,293 @@ def test_live_damage_api_record_bounds_fixed_arrays_and_zeroes():
             age_ms=0,
             observation_count=1,
             engine_damage_percent=101,
+        )
+
+
+def _publish_live_car_setup(
+    observer: _AcquisitionObserver,
+    *,
+    frame: int = 100,
+    sequence: int = 10,
+    session_uid: int = SESSION_UID,
+    player_car_index: int = 0,
+    packet_format: int = 2025,
+    packet_version: int = 1,
+    session_time_s: float = 12.5,
+    **kwargs,
+) -> None:
+    _process(
+        observer,
+        _car_setup_packet(
+            frame=frame,
+            sequence=sequence,
+            session_uid=session_uid,
+            player_car_index=player_car_index,
+            packet_format=packet_format,
+            packet_version=packet_version,
+            session_time_s=session_time_s,
+            **kwargs,
+        ),
+    )
+    _process(
+        observer,
+        _advance(
+            frame + 1,
+            sequence + 1,
+            session_uid=session_uid,
+            player_car_index=player_car_index,
+            packet_format=packet_format,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("packet_format", "player_car_index"), ((2025, 0), (2026, 23))
+)
+def test_live_setup_maps_supported_formats_from_setup_only_frames(
+    packet_format: int, player_car_index: int
+):
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_car_setup(
+        observer,
+        player_car_index=player_car_index,
+        packet_format=packet_format,
+    )
+
+    setup = observer.live_car_setup_snapshot()
+    assert setup["status"] == "fresh"
+    assert setup["session_uid"] == str(SESSION_UID)
+    assert setup["packet_format"] == packet_format
+    assert setup["frame_identifier"] == 100
+    assert setup["player_car_index"] == player_car_index
+    assert setup["session_time_s"] == 12.5
+    assert setup["front_wing"] == 20
+    assert setup["rear_wing"] == 30
+    assert setup["on_throttle_differential"] == 50
+    assert setup["off_throttle_differential"] == 55
+    assert setup["front_camber"] == -3.5
+    assert setup["rear_camber"] == -1.5
+    assert setup["front_toe"] == pytest.approx(0.1)
+    assert setup["rear_toe"] == pytest.approx(0.2)
+    assert setup["front_suspension"] == 5
+    assert setup["rear_suspension"] == 6
+    assert setup["front_anti_roll_bar"] == 7
+    assert setup["rear_anti_roll_bar"] == 8
+    assert setup["front_suspension_height"] == 9
+    assert setup["rear_suspension_height"] == 10
+    assert setup["brake_pressure_percent"] == 100
+    assert setup["brake_bias_percent"] == 55
+    assert setup["engine_braking_percent"] == 20
+    assert setup["rear_left_tyre_pressure_psi"] == 22.0
+    assert setup["rear_right_tyre_pressure_psi"] == pytest.approx(22.1)
+    assert setup["front_left_tyre_pressure_psi"] == pytest.approx(22.2)
+    assert setup["front_right_tyre_pressure_psi"] == pytest.approx(22.3)
+    assert setup["ballast"] == 10
+    assert setup["fuel_load"] == 30.5
+    assert setup["next_front_wing_value"] == 45.5
+    assert setup["validation_flags"] == []
+    assert setup["observation_count"] == 1
+    assert observer.live_telemetry_snapshot()["status"] == "waiting"
+    assert observer.live_lap_timing_snapshot()["status"] == "waiting"
+
+
+def test_live_setup_retains_sparse_observation_and_ages_independently():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_car_setup(observer)
+    initial = observer.live_car_setup_snapshot()
+    observed_ns = initial["_observed_monotonic_ns"]
+
+    _process(observer, _car_damage_packet(frame=102, sequence=20))
+    _process(observer, _advance(103, 21))
+    later = observer.live_car_setup_snapshot(observed_ns + 501_000_000)
+
+    assert later["status"] == "stale"
+    assert later["age_ms"] == 501
+    assert later["frame_identifier"] == 100
+    assert later["front_wing"] == 20
+    assert later["observation_count"] == 1
+    assert observer.live_car_damage_snapshot()["status"] == "fresh"
+
+
+def test_live_setup_uses_oldest_receive_time_and_ignores_duplicates_late_and_other_car_changes():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    base_ns = 5_000_000_000
+    first = _car_setup_packet(frame=100, sequence=10)
+    other_car_changed = _car_setup_packet(
+        frame=100,
+        sequence=11,
+        other_car_front_wing=99,
+    )
+    observer.process(replace(first, monotonic_ns=base_ns))
+    observer.process(replace(first, monotonic_ns=base_ns + 200_000_000))
+    observer.process(replace(other_car_changed, monotonic_ns=base_ns + 300_000_000))
+    observer.process(
+        replace(_advance(101, 12), monotonic_ns=base_ns + 300_000_000)
+    )
+    observer.process(
+        replace(
+            _car_setup_packet(frame=100, sequence=13, front_wing=77),
+            monotonic_ns=base_ns + 400_000_000,
+        )
+    )
+
+    setup = observer.live_car_setup_snapshot(base_ns + 400_000_000)
+    assert setup["status"] == "fresh"
+    assert setup["_observed_monotonic_ns"] == base_ns
+    assert setup["age_ms"] == 400
+    assert setup["observation_count"] == 1
+
+
+@pytest.mark.parametrize("conflict_kind", ["record", "next_front_wing"])
+def test_live_setup_rejects_conflicting_selected_player_evidence(conflict_kind: str):
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _process(observer, _car_setup_packet(frame=100, sequence=10))
+    if conflict_kind == "record":
+        conflict = _car_setup_packet(frame=100, sequence=11, front_wing=21)
+    else:
+        conflict = _car_setup_packet(
+            frame=100, sequence=11, next_front_wing_value=46.0
+        )
+    _process(observer, conflict)
+    _process(observer, _advance(101, 12))
+
+    setup = observer.live_car_setup_snapshot()
+    assert setup["status"] == "unavailable"
+    assert setup["reason"] == "conflicting_car_setup_packets"
+    assert setup["front_wing"] is None
+    assert setup["next_front_wing_value"] is None
+    assert setup["observation_count"] == 0
+
+
+def test_live_setup_invalid_floats_are_null_and_flagged_independently():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_car_setup(
+        observer,
+        front_camber=float("nan"),
+        next_front_wing_value=float("inf"),
+    )
+
+    setup = observer.live_car_setup_snapshot()
+    assert setup["status"] == "fresh"
+    assert setup["front_wing"] == 20
+    assert setup["front_camber"] is None
+    assert setup["rear_camber"] == -1.5
+    assert setup["next_front_wing_value"] is None
+    assert set(setup["validation_flags"]) == {
+        "invalid_car_setup_front_camber",
+        "invalid_car_setup_next_front_wing_value",
+    }
+
+
+def test_live_setup_malformed_unsupported_and_missing_provenance_are_unavailable():
+    malformed = _AcquisitionObserver(reorder_window_frames=1)
+    _process(
+        malformed,
+        _car_setup_packet(frame=100, sequence=10, body=b"short setup body"),
+    )
+    _process(malformed, _advance(101, 11))
+    assert malformed.live_car_setup_snapshot()["reason"] == "car_setup_decode_failed"
+
+    unsupported = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_car_setup(unsupported, packet_version=2)
+    rejected = unsupported.live_car_setup_snapshot()
+    assert rejected["status"] == "unsupported"
+    assert rejected["reason"] == "car_setup_adapter_unsupported"
+
+    no_provenance = _AcquisitionObserver(reorder_window_frames=1)
+    no_provenance._max_receive_time_entries = 0
+    _process(no_provenance, _car_setup_packet(frame=100, sequence=10))
+    _process(no_provenance, _advance(101, 11))
+    missing = no_provenance.live_car_setup_snapshot()
+    assert missing["status"] == "unavailable"
+    assert missing["reason"] == "receive_provenance_unavailable"
+    assert missing["observation_count"] == 0
+
+
+def test_live_setup_resets_on_player_session_format_rewind_and_frame_wrap():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_car_setup(observer)
+    _process(observer, _advance(102, 20, player_car_index=1))
+    assert observer.live_car_setup_snapshot()["status"] == "waiting"
+    assert observer.live_car_setup_snapshot()["observation_count"] == 0
+
+    _publish_live_car_setup(observer, frame=103, sequence=21, player_car_index=1)
+    next_session = SESSION_UID + 100
+    _publish_live_car_setup(
+        observer,
+        frame=200,
+        sequence=30,
+        player_car_index=1,
+        session_uid=next_session,
+    )
+    assert observer.live_car_setup_snapshot()["observation_count"] == 1
+    _publish_live_car_setup(
+        observer,
+        frame=202,
+        sequence=40,
+        player_car_index=23,
+        packet_format=2026,
+        session_uid=next_session,
+    )
+    assert observer.live_car_setup_snapshot()["packet_format"] == 2026
+    assert observer.live_car_setup_snapshot()["player_car_index"] == 23
+    assert observer.live_car_setup_snapshot()["observation_count"] == 1
+
+    _process(
+        observer,
+        _flashback_packet(
+            frame=204,
+            sequence=50,
+            session_time=14.0,
+            target_time=12.0,
+            session_uid=next_session,
+            packet_format=2026,
+        ),
+    )
+    _process(
+        observer,
+        _advance(205, 51, player_car_index=23, packet_format=2026, session_uid=next_session),
+    )
+    assert observer.live_car_setup_snapshot()["status"] == "waiting"
+    assert observer.live_car_setup_snapshot()["observation_count"] == 0
+
+    wrapped = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_car_setup(wrapped, frame=0xFFFFFFFE, sequence=10)
+    _publish_live_car_setup(wrapped, frame=0, sequence=20)
+    assert wrapped.live_car_setup_snapshot()["frame_identifier"] == 0
+    assert wrapped.live_car_setup_snapshot()["observation_count"] == 2
+
+
+def test_live_setup_api_record_bounds_wire_values_and_zeroes():
+    setup = LiveCarSetupRecord(
+        status="fresh",
+        reason=None,
+        age_ms=0,
+        observation_count=1,
+        front_wing=0,
+        brake_bias_percent=0,
+        front_camber=0.0,
+        fuel_load=0.0,
+        next_front_wing_value=0.0,
+    )
+    assert setup.front_wing == 0
+    assert setup.brake_bias_percent == 0
+    assert setup.fuel_load == 0.0
+    assert setup.next_front_wing_value == 0.0
+
+    with pytest.raises(ValidationError):
+        LiveCarSetupRecord(
+            status="fresh",
+            reason=None,
+            age_ms=0,
+            observation_count=1,
+            front_wing=256,
+        )
+    with pytest.raises(ValidationError):
+        LiveCarSetupRecord(
+            status="fresh",
+            reason=None,
+            age_ms=0,
+            observation_count=1,
+            front_camber=float("nan"),
         )

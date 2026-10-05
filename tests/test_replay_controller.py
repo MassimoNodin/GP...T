@@ -49,6 +49,15 @@ def test_replay_damage_observation_ages_while_paused_and_clears_at_terminal_stat
             "tyre_wear_percent": [10.0, 20.0, 30.0, 40.0],
             "_observed_monotonic_ns": observed_ns,
         },
+        "live_car_setup": {
+            "status": "fresh",
+            "reason": None,
+            "age_ms": 0,
+            "observation_count": 2,
+            "front_wing": 22,
+            "next_front_wing_value": 47.5,
+            "_observed_monotonic_ns": observed_ns,
+        },
     }
 
     paused = controller.current()
@@ -61,10 +70,20 @@ def test_replay_damage_observation_ages_while_paused_and_clears_at_terminal_stat
         40.0,
     ]
     assert "_observed_monotonic_ns" not in paused["live_car_damage"]
+    assert paused["live_car_setup"]["status"] == "stale"
+    assert paused["live_car_setup"]["age_ms"] >= 700
+    assert paused["live_car_setup"]["front_wing"] == 22
+    assert "_observed_monotonic_ns" not in paused["live_car_setup"]
 
     controller._snapshot["state"] = "completed"
     ended = controller.current()
     assert ended["live_car_damage"] == {
+        "status": "unavailable",
+        "reason": "operation_ended",
+        "age_ms": None,
+        "observation_count": 0,
+    }
+    assert ended["live_car_setup"] == {
         "status": "unavailable",
         "reason": "operation_ended",
         "age_ms": None,
@@ -481,6 +500,14 @@ def test_replay_stop_during_eof_finalization_publishes_terminal_state(
             return {"status": "waiting", "reason": None, "age_ms": None}
 
         def live_car_damage_snapshot(self):
+            return {
+                "status": "waiting",
+                "reason": None,
+                "age_ms": None,
+                "observation_count": 0,
+            }
+
+        def live_car_setup_snapshot(self):
             return {
                 "status": "waiting",
                 "reason": None,

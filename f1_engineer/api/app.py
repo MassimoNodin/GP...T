@@ -305,6 +305,43 @@ class LiveCarDamageRecord(BaseModel):
     validation_flags: list[str] = Field(default_factory=list, max_length=16)
 
 
+class LiveCarSetupRecord(BaseModel):
+    status: Literal["waiting", "fresh", "stale", "unsupported", "unavailable"]
+    reason: str | None
+    age_ms: int | None
+    observation_count: int = Field(ge=0, le=2_147_483_647)
+    session_uid: str | None = None
+    frame_identifier: int | None = None
+    packet_format: int | None = None
+    player_car_index: int | None = None
+    session_time_s: Annotated[float, Field(strict=True, allow_inf_nan=False)] | None = None
+    front_wing: Annotated[int, Field(strict=True, ge=0, le=255)] | None = None
+    rear_wing: Annotated[int, Field(strict=True, ge=0, le=255)] | None = None
+    on_throttle_differential: Annotated[int, Field(strict=True, ge=0, le=255)] | None = None
+    off_throttle_differential: Annotated[int, Field(strict=True, ge=0, le=255)] | None = None
+    front_camber: Annotated[float, Field(strict=True, allow_inf_nan=False)] | None = None
+    rear_camber: Annotated[float, Field(strict=True, allow_inf_nan=False)] | None = None
+    front_toe: Annotated[float, Field(strict=True, allow_inf_nan=False)] | None = None
+    rear_toe: Annotated[float, Field(strict=True, allow_inf_nan=False)] | None = None
+    front_suspension: Annotated[int, Field(strict=True, ge=0, le=255)] | None = None
+    rear_suspension: Annotated[int, Field(strict=True, ge=0, le=255)] | None = None
+    front_anti_roll_bar: Annotated[int, Field(strict=True, ge=0, le=255)] | None = None
+    rear_anti_roll_bar: Annotated[int, Field(strict=True, ge=0, le=255)] | None = None
+    front_suspension_height: Annotated[int, Field(strict=True, ge=0, le=255)] | None = None
+    rear_suspension_height: Annotated[int, Field(strict=True, ge=0, le=255)] | None = None
+    brake_pressure_percent: Annotated[int, Field(strict=True, ge=0, le=255)] | None = None
+    brake_bias_percent: Annotated[int, Field(strict=True, ge=0, le=255)] | None = None
+    engine_braking_percent: Annotated[int, Field(strict=True, ge=0, le=255)] | None = None
+    rear_left_tyre_pressure_psi: Annotated[float, Field(strict=True, allow_inf_nan=False)] | None = None
+    rear_right_tyre_pressure_psi: Annotated[float, Field(strict=True, allow_inf_nan=False)] | None = None
+    front_left_tyre_pressure_psi: Annotated[float, Field(strict=True, allow_inf_nan=False)] | None = None
+    front_right_tyre_pressure_psi: Annotated[float, Field(strict=True, allow_inf_nan=False)] | None = None
+    ballast: Annotated[int, Field(strict=True, ge=0, le=255)] | None = None
+    fuel_load: Annotated[float, Field(strict=True, allow_inf_nan=False)] | None = None
+    next_front_wing_value: Annotated[float, Field(strict=True, allow_inf_nan=False)] | None = None
+    validation_flags: list[str] = Field(default_factory=list, max_length=16)
+
+
 class RecordingProgressRecord(BaseModel):
     state: str
     elapsed_ms: int
@@ -318,6 +355,7 @@ class RecordingProgressRecord(BaseModel):
     live_car_status: LiveCarStatusRecord | None = None
     live_lap_timing: LiveLapTimingRecord | None = None
     live_car_damage: LiveCarDamageRecord | None = None
+    live_car_setup: LiveCarSetupRecord | None = None
 
 
 class RecordingJobRecord(BaseModel):
@@ -373,6 +411,7 @@ class ReplayRecord(BaseModel):
     live_lap_timing: LiveLapTimingRecord
     failure_reason: str | None
     live_car_damage: LiveCarDamageRecord | None = None
+    live_car_setup: LiveCarSetupRecord | None = None
 
 
 class LapRecord(BaseModel):

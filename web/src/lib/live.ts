@@ -1,5 +1,6 @@
 import type {
   LiveCarDamageRecord,
+  LiveCarSetupRecord,
   LiveCarStatusRecord,
   LiveLapTimingRecord,
   LiveTelemetryRecord,
@@ -17,6 +18,7 @@ export interface PinnedLiveSnapshot {
   live_car_status: LiveCarStatusRecord | null;
   live_lap_timing: LiveLapTimingRecord | null;
   live_car_damage: LiveCarDamageRecord | null;
+  live_car_setup: LiveCarSetupRecord | null;
   capture_name: string | null;
   speed: number | null;
 }
@@ -112,6 +114,11 @@ export function readPinnedLiveCurrent(
         ? progress?.live_car_damage
         : data.live_car_damage,
     ),
+    live_car_setup: readCarSetupMonitor(
+      source === "recording"
+        ? progress?.live_car_setup
+        : data.live_car_setup,
+    ),
     capture_name:
       source === "replay" && typeof data.capture_name === "string"
         ? data.capture_name
@@ -173,6 +180,86 @@ export function readCarDamageMonitor(value: unknown): LiveCarDamageRecord | null
   };
 }
 
+const carSetupIntegerFields = [
+  "front_wing",
+  "rear_wing",
+  "on_throttle_differential",
+  "off_throttle_differential",
+  "front_suspension",
+  "rear_suspension",
+  "front_anti_roll_bar",
+  "rear_anti_roll_bar",
+  "front_suspension_height",
+  "rear_suspension_height",
+  "brake_pressure_percent",
+  "brake_bias_percent",
+  "engine_braking_percent",
+  "ballast",
+] as const;
+
+const carSetupFloatFields = [
+  "front_camber",
+  "rear_camber",
+  "front_toe",
+  "rear_toe",
+  "rear_left_tyre_pressure_psi",
+  "rear_right_tyre_pressure_psi",
+  "front_left_tyre_pressure_psi",
+  "front_right_tyre_pressure_psi",
+  "fuel_load",
+  "next_front_wing_value",
+] as const;
+
+export function readCarSetupMonitor(value: unknown): LiveCarSetupRecord | null {
+  const monitor = readMonitor(value);
+  if (!monitor || !isRecord(value)) return null;
+  const fields: Record<string, number | null> = {};
+  for (const field of carSetupIntegerFields) {
+    fields[field] = wireInteger(value[field]);
+  }
+  for (const field of carSetupFloatFields) {
+    fields[field] = finiteNumber(value[field]);
+  }
+  return {
+    ...(monitor as LiveCarSetupRecord),
+    reason:
+      typeof value.reason === "string" && value.reason.length <= 80
+        ? value.reason
+        : value.reason === null
+          ? null
+          : "malformed_optional_fields",
+    age_ms:
+      typeof value.age_ms === "number" &&
+      Number.isFinite(value.age_ms) &&
+      value.age_ms >= 0
+        ? value.age_ms
+        : null,
+    observation_count:
+      Number.isSafeInteger(value.observation_count) &&
+      (value.observation_count as number) >= 0 &&
+      (value.observation_count as number) <= 2_147_483_647
+        ? (value.observation_count as number)
+        : undefined,
+    session_uid:
+      typeof value.session_uid === "string" && value.session_uid.length <= 20
+        ? value.session_uid
+        : null,
+    frame_identifier: boundedInteger(value.frame_identifier),
+    packet_format: boundedInteger(value.packet_format),
+    player_car_index: boundedInteger(value.player_car_index),
+    session_time_s: finiteNumber(value.session_time_s),
+    ...fields,
+    validation_flags:
+      Array.isArray(value.validation_flags) &&
+      value.validation_flags.length <= 16 &&
+      value.validation_flags.every(
+        (flag) => typeof flag === "string" && flag.length <= 80,
+      )
+        ? value.validation_flags
+        : [],
+  };
+}
+
 function percentArray(value: unknown, integer: boolean): readonly (number | null)[] | null {
   if (!Array.isArray(value) || value.length !== 4) return null;
   return value.map((item) => percent(item, integer));
@@ -194,6 +281,12 @@ function boundedInteger(value: unknown): number | null {
     : null;
 }
 
+function wireInteger(value: unknown): number | null {
+  return Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 255
+    ? (value as number)
+    : null;
+}
+
 function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -203,6 +296,7 @@ function readMonitor(value: unknown):
   | LiveCarStatusRecord
   | LiveLapTimingRecord
   | LiveCarDamageRecord
+  | LiveCarSetupRecord
   | null {
   if (!isRecord(value)) return null;
   if (
@@ -218,7 +312,8 @@ function readMonitor(value: unknown):
     | LiveTelemetryRecord
     | LiveCarStatusRecord
     | LiveLapTimingRecord
-    | LiveCarDamageRecord;
+    | LiveCarDamageRecord
+    | LiveCarSetupRecord;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

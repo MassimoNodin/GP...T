@@ -89,6 +89,7 @@ export interface RecordingProgressRecord {
   live_car_status?: LiveCarStatusRecord | null;
   live_lap_timing?: LiveLapTimingRecord | null;
   live_car_damage?: LiveCarDamageRecord | null;
+  live_car_setup?: LiveCarSetupRecord | null;
 }
 
 export interface LiveTelemetryRecord {
@@ -170,6 +171,43 @@ export interface LiveCarDamageRecord {
   validation_flags?: string[];
 }
 
+export interface LiveCarSetupRecord {
+  status: "waiting" | "fresh" | "stale" | "unsupported" | "unavailable";
+  reason: string | null;
+  age_ms: number | null;
+  observation_count?: number;
+  session_uid?: string | null;
+  frame_identifier?: number | null;
+  packet_format?: number | null;
+  player_car_index?: number | null;
+  session_time_s?: number | null;
+  front_wing?: number | null;
+  rear_wing?: number | null;
+  on_throttle_differential?: number | null;
+  off_throttle_differential?: number | null;
+  front_camber?: number | null;
+  rear_camber?: number | null;
+  front_toe?: number | null;
+  rear_toe?: number | null;
+  front_suspension?: number | null;
+  rear_suspension?: number | null;
+  front_anti_roll_bar?: number | null;
+  rear_anti_roll_bar?: number | null;
+  front_suspension_height?: number | null;
+  rear_suspension_height?: number | null;
+  brake_pressure_percent?: number | null;
+  brake_bias_percent?: number | null;
+  engine_braking_percent?: number | null;
+  rear_left_tyre_pressure_psi?: number | null;
+  rear_right_tyre_pressure_psi?: number | null;
+  front_left_tyre_pressure_psi?: number | null;
+  front_right_tyre_pressure_psi?: number | null;
+  ballast?: number | null;
+  fuel_load?: number | null;
+  next_front_wing_value?: number | null;
+  validation_flags?: string[];
+}
+
 export interface RecordingJobRecord {
   recording_id: string;
   status:
@@ -218,6 +256,7 @@ export interface ReplayRecord {
   live_car_status: LiveCarStatusRecord;
   live_lap_timing: LiveLapTimingRecord;
   live_car_damage?: LiveCarDamageRecord | null;
+  live_car_setup?: LiveCarSetupRecord | null;
   failure_reason: string | null;
 }
 

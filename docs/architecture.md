@@ -1045,6 +1045,24 @@ Do not add history, storage, schema or importer changes, damage trends, diagnose
 
 **Rationale:** supported Car Damage decoding and canonical validation already exist, but live inspection omits this evidence. A separate sparse observation group provides useful source values without forcing slower Damage packets into the exact-frame Lap Data join or presenting them as continuously updated car condition.
 
+## Decision 0069: expose independently aged live player setup observations
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Add one optional `live_car_setup` group to recording, replay and pinned `/live`. Reuse the supported F1 25 and 2026 Car Setups decoders and the existing admitted-frame session, player, format, lifecycle and rewind barriers. Expose the selected player's 23 reported setup fields, the player-only next-pit front-wing request, source session, wire format, player, frame and session time, independent age, bounded observation count and validation flags. Keep next-pit front wing distinct from current front wing; setup fuel load distinct from Car Status fuel; and setup tyre pressures distinct from temperature or wear evidence. Preserve zeroes and unavailable nonfinite source floats.
+
+Treat a supported, admitted Car Setups frame as a standalone sparse observation. Do not require Lap Data in the same frame and do not associate it with a lap sample. For multiple selected-player candidates in a frame, require identical raw bytes for that player's 50-byte record and the trailing next-front-wing value; changes to other cars' records do not create a selected-player conflict. Malformed or unsupported candidates, conflicting player evidence, ambiguous identity, or missing receive/delivery provenance make only this group unavailable. For agreeing candidates use the oldest supporting receive/delivery time; duplicates and late packets never refresh it. Frames without Car Setups retain the previous observation while its age increases. Other packet families never refresh it.
+
+Use the existing 500 ms recency threshold and label values as a recent or stale observation. Count admitted, decoded, nonconflicting observations with receive/delivery provenance within the current identity epoch. Session, player, format and rewind boundaries clear values and reset the count. Paused replay ages from delivery time; terminal operations hide values. Keep one fixed-size snapshot and the existing bounded receive-time cache. Older API responses or malformed optional fields leave other monitors usable.
+
+Do not add setup editing, history, change trends, performance inference, optimal-setting ranges, recommendations, storage, schema or importer changes, or coaching authority. Source-reported setup values do not establish performance equivalence or prove that the setup was applied for an entire lap.
+
+**Acceptance:** synthetic F1 25/2026 packets verify all 23 fields, zeroes, invalid float handling, and separate next-pit front-wing reporting; Setup-only admitted frames work without Lap Data; unrelated cars' changes do not conflict while differing selected-player bytes or next-wing values do; malformed/unsupported packets, missing provenance, duplicates/late packets, cache eviction, frame wrap and session/player/format/rewind boundaries are covered; paused replay ages naturally and terminal operations clear the group; older API responses and malformed optional web fields do not affect other monitors; and Melbourne plus recovered Shanghai projections match selected raw setup records with existing capture qualifications retained.
+
+**Rationale:** the existing decoder and D0059 stored-evidence contract already preserve source-reported setup values, but live inspection omits them. A separate sparse observation group makes this evidence visible without joining it to Lap Data or presenting settings as continuous condition, analysis, or advice.
+
 ## Data flow
 
 ```text

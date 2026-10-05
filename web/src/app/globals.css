@@ -3960,6 +3960,13 @@ h1 span {
   color: #93a098;
   font: 9px var(--font-mono);
 }
+.live-subheading {
+  margin: 14px 0 0;
+  color: #a9b5b0;
+  font: 9px var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
 .live-car-status-invalid {
   color: #d6ae77;
 }
