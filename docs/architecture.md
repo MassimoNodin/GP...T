@@ -1127,6 +1127,26 @@ Inspect filesystem metadata only. Do not open the database, captures, Parquet fi
 
 **Rationale:** Settings has an explicit managed-storage usage requirement. A metadata-only API with hard traversal bounds makes the configured local footprint visible without coupling inspection to recording/import controllers or implying cleanup safety. Keeping scopes independent avoids false totals when data locations overlap.
 
+## Decision 0074: model pause and resume as durable capture groups of finalized segments
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+One recording group owns a sequence of immutable capture segments. Each segment remains a separate schema-v1 `.f1ecap` with its own writer, complete footer, no-replacement publication, capture catalog identity, import job, checksum, processing run and attempt keys. Never append after a footer or concatenate segments. Add durable `recording_groups`, nullable group/ordinal ownership on existing `recording_jobs`, and at most 1,025 transition events per group. Preserve existing standalone recording rows and add no fabricated group/pause history. Limit a group to 256 segments and list at most 50 segments per API response.
+
+Group states are `starting`, `recording`, `pausing`, `paused`, `resuming`, `stopping`, `complete`, `failed` and `interrupted`. Start creates the group and segment 1 while acquiring the existing exclusive operation reservation. Pause durably requests segment shutdown; acknowledge `paused` only after the footer is flushed/fsynced, the segment is published and its completion state is committed. Keep the reservation while paused. Resume allocates a fresh segment and fresh UDP source, writer, observer and freshness epoch; acknowledge `recording` only after acquisition starts. Stop while active finalizes the current segment; Stop while paused completes the group without creating an empty segment. Stop during pausing makes that in-flight finalization terminal. Hold the reservation until durable terminal bookkeeping is complete.
+
+Pause and Resume requests include the expected group revision and current segment identity. Reject stale or incompatible transitions with explicit conflict reasons; delayed/repeated requests must not close a later segment or allocate duplicate segments. Legacy Start creates a one-segment group and keeps its existing segment response. Legacy Stop resolves only the exact segment's owning active group; old completed segment IDs never stop a later segment. Legacy Current remains a segment response.
+
+Store bounded pause/resume transition events with request, acknowledgement and next-segment acquisition timestamps. The guaranteed paused interval is from pause acknowledgement to the next segment's observed acquisition start; expose it as application-observed control/acquisition boundaries. Finalization latency and the precise game packets missed around transitions remain unknown. Wall-clock regressions make derived durations unavailable. Capture source timestamps remain unchanged; attempts and trace continuity never cross segments.
+
+On startup, after obtaining the existing controller lock, reconcile a published segment only when its complete footer and group/segment header identities match durable metadata. Then mark all surviving nonterminal groups—including paused groups—interrupted. Never auto-resume UDP after restart. Keep staging artifacts for inspection. Earlier complete segments remain importable when a later segment fails. A published file is the publication commit; if database settlement fails, retain the reservation and retry in a background reconciler. Do not put recovery scans in status polling.
+
+Add group Start, Current, Detail/Segments, Pause, Resume and Stop API endpoints with existing bearer-token and same-origin mutation protections. Each segment keeps its own catalog/import identity; imports remain individual and import/replay/new capture are blocked during a paused group. Keep `/live` pinned to one segment: pause ends that live source and resume links to the new segment, never carrying chart history across the gap.
+
+**Rationale:** the capture writer's durable completion footer closes a file permanently. Treating pause as a temporary socket state would either append after a footer or leave the staging artifact incomplete. A durable group gives the user one lifecycle while preserving every existing per-file capture and import boundary.
+
 ## Data flow
 
 ```text

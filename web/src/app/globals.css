@@ -3688,8 +3688,38 @@ h1 span {
 }
 .recording-control-actions {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   flex: 0 0 auto;
   gap: 8px;
+}
+.recording-group-history {
+  flex: 1 0 100%;
+  padding-top: 13px;
+  border-top: 1px solid #293532;
+}
+.recording-group-history > .eyebrow {
+  color: #a9b6b1;
+  font: 9px var(--font-mono);
+  letter-spacing: 0.11em;
+}
+.recording-group-history .inbox-list {
+  margin-top: 9px;
+}
+.recording-group-history .recording-control-actions {
+  justify-content: center;
+  margin-top: 10px;
+  color: #929e9b;
+  font: 9px var(--font-mono);
+}
+.recording-pause-gaps {
+  display: grid;
+  gap: 5px;
+  margin: 9px 0 0;
+  padding: 0;
+  color: #c5a987;
+  font: 9px var(--font-mono);
+  list-style: none;
 }
 .stop-recording-button {
   border-color: #735441;

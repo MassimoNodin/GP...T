@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type {
   ApiResponse,
@@ -11,6 +11,9 @@ import type {
   LiveMotionRecord,
   LiveSessionConditionsRecord,
   LiveTelemetryRecord,
+  RecordingGroupEventRecord,
+  RecordingGroupRecord,
+  RecordingGroupSegmentPage,
   RecordingJobRecord,
 } from "@/lib/api";
 import {
@@ -21,24 +24,58 @@ import {
 } from "@/lib/live";
 import { appScreenHref, isSelectionTransferBlocked } from "@/lib/navigation";
 
-const activeStatuses = new Set(["starting", "recording", "stopping"]);
+const activeGroupStatuses = new Set([
+  "starting",
+  "recording",
+  "pausing",
+  "paused",
+  "resuming",
+  "stopping",
+]);
+const transitionStatuses = new Set([
+  "starting",
+  "pausing",
+  "resuming",
+  "stopping",
+]);
+const SEGMENT_PAGE_SIZE = 50;
 
 export default function RecordingControls({
   initialRecording,
+  initialGroup,
   initialError,
   preservedQuery = "",
 }: {
   initialRecording: RecordingJobRecord | null;
+  initialGroup: RecordingGroupRecord | null;
   initialError: boolean;
   preservedQuery?: string;
 }) {
   const [recording, setRecording] = useState(initialRecording);
+  const [group, setGroup] = useState(initialGroup);
+  const [history, setHistory] = useState<{
+    groupId: string | null;
+    segments: RecordingJobRecord[];
+    total: number;
+    events: RecordingGroupEventRecord[];
+    unavailable: boolean;
+  }>({
+    groupId: initialGroup?.group_id ?? null,
+    segments: [],
+    total: 0,
+    events: [],
+    unavailable: false,
+  });
+  const [segmentOffset, setSegmentOffset] = useState(0);
+  const previousHistoryGroupId = useRef(initialGroup?.group_id ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
-  const active = recording ? activeStatuses.has(recording.status) : false;
+  const active = group ? activeGroupStatuses.has(group.status) : false;
   const liveHref =
-    active && recording && !isSelectionTransferBlocked(preservedQuery)
+    group?.status === "recording" &&
+    recording?.status === "recording" &&
+    !isSelectionTransferBlocked(preservedQuery)
       ? appScreenHref("live", preservedQuery, {
           live_source: "recording",
           live_operation_id: recording.recording_id,
@@ -52,25 +89,40 @@ export default function RecordingControls({
 
     const poll = async () => {
       try {
-        const response = await fetch("/api/recordings/current", {
-          cache: "no-store",
-        });
-        const body = (await response.json()) as ApiResponse<RecordingJobRecord>;
-        if (!response.ok || body.status !== "ok") {
-          throw new Error(body.reason ?? "recording_status_unavailable");
+        const [groupResponse, recordingResponse] = await Promise.all([
+          fetch("/api/recording-groups/current", { cache: "no-store" }),
+          fetch("/api/recordings/current", { cache: "no-store" }),
+        ]);
+        const groupBody =
+          (await groupResponse.json()) as ApiResponse<RecordingGroupRecord>;
+        const recordingBody =
+          (await recordingResponse.json()) as ApiResponse<RecordingJobRecord>;
+        if (!groupResponse.ok || groupBody.status !== "ok") {
+          throw new Error(groupBody.reason ?? "recording_status_unavailable");
         }
         if (!mounted) return;
-        const next = body.data;
-        setRecording(next);
+        const nextGroup = groupBody.data;
+        setGroup(nextGroup);
+        if (recordingResponse.ok && recordingBody.status === "ok") {
+          setRecording(recordingBody.data);
+        }
         setError(null);
-        if (next && !activeStatuses.has(next.status)) {
+        if (nextGroup && !activeGroupStatuses.has(nextGroup.status)) {
           router.refresh();
           return;
         }
       } catch {
         if (mounted) setError("Recording status is temporarily unavailable.");
       }
-      if (mounted) timer = setTimeout(poll, 250);
+      if (mounted) {
+        const cadence =
+          group && transitionStatuses.has(group.status)
+            ? 250
+            : group?.status === "paused"
+              ? 2000
+              : 1000;
+        timer = setTimeout(poll, cadence);
+      }
     };
 
     timer = setTimeout(poll, 400);
@@ -78,23 +130,134 @@ export default function RecordingControls({
       mounted = false;
       clearTimeout(timer);
     };
-  }, [active, router]);
+  }, [active, group?.status, router]);
+
+  useEffect(() => {
+    const groupId = group?.group_id ?? null;
+    if (previousHistoryGroupId.current !== groupId) {
+      previousHistoryGroupId.current = groupId;
+      setHistory({
+        groupId,
+        segments: [],
+        total: 0,
+        events: [],
+        unavailable: false,
+      });
+      if (segmentOffset !== 0) {
+        setSegmentOffset(0);
+        return;
+      }
+    }
+    if (!group) {
+      setHistory({
+        groupId: null,
+        segments: [],
+        total: 0,
+        events: [],
+        unavailable: false,
+      });
+      return;
+    }
+    let mounted = true;
+    const load = async () => {
+      try {
+        const [segmentResponse, eventResponse] = await Promise.all([
+          fetch(
+            `/api/recording-groups/${group.group_id}/segments?limit=${SEGMENT_PAGE_SIZE}&offset=${segmentOffset}`,
+            { cache: "no-store" },
+          ),
+          fetch(`/api/recording-groups/${group.group_id}/events`, {
+            cache: "no-store",
+          }),
+        ]);
+        const segmentBody =
+          (await segmentResponse.json()) as ApiResponse<RecordingGroupSegmentPage>;
+        const eventBody = (await eventResponse.json()) as ApiResponse<
+          RecordingGroupEventRecord[]
+        >;
+        if (!mounted) return;
+        if (
+          segmentResponse.ok &&
+          segmentBody.status === "ok" &&
+          segmentBody.data &&
+          eventResponse.ok &&
+          eventBody.status === "ok" &&
+          eventBody.data
+        ) {
+          setHistory({
+            groupId: group.group_id,
+            segments: segmentBody.data.items,
+            total: segmentBody.data.total_count,
+            events: eventBody.data,
+            unavailable: false,
+          });
+        } else {
+          setHistory({
+            groupId: group.group_id,
+            segments: [],
+            total: 0,
+            events: [],
+            unavailable: true,
+          });
+        }
+      } catch {
+        if (mounted) {
+          setHistory({
+            groupId: group.group_id,
+            segments: [],
+            total: 0,
+            events: [],
+            unavailable: true,
+          });
+          setError("Recording history is temporarily unavailable.");
+        }
+      }
+    };
+    void load();
+    return () => {
+      mounted = false;
+    };
+  }, [group?.group_id, group?.segment_count, group?.status, segmentOffset]);
 
   async function start() {
-    await send("/api/recordings/start");
+    await sendGroup("/api/recording-groups/start");
   }
 
   async function stop() {
-    if (!recording) return;
-    await send(`/api/recordings/${recording.recording_id}/stop`);
+    if (!group) return;
+    await sendGroup(`/api/recording-groups/${group.group_id}/stop`);
   }
 
-  async function send(url: string) {
+  async function pause() {
+    if (!group?.current_recording_id) return;
+    await sendGroup(`/api/recording-groups/${group.group_id}/pause`, {
+      expected_revision: group.transition_revision,
+      expected_recording_id: group.current_recording_id,
+    });
+  }
+
+  async function resume() {
+    if (!group?.last_recording_id) return;
+    await sendGroup(`/api/recording-groups/${group.group_id}/resume`, {
+      expected_revision: group.transition_revision,
+      expected_recording_id: group.last_recording_id,
+    });
+  }
+
+  async function sendGroup(url: string, payload?: object) {
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(url, { method: "POST" });
-      const body = (await response.json()) as ApiResponse<RecordingJobRecord>;
+      const response = await fetch(url, {
+        method: "POST",
+        ...(payload
+          ? {
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(payload),
+            }
+          : {}),
+      });
+      const body = (await response.json()) as ApiResponse<RecordingGroupRecord>;
       if (!response.ok || !body.data) {
         const reason = body.reason ?? "recording_request_failed";
         throw new Error(
@@ -102,11 +265,15 @@ export default function RecordingControls({
             ? "An import or recording operation is already running."
             : reason === "recording_controller_unavailable"
               ? "The local recording service is unavailable. Restart the API and refresh."
-              : "The recording request could not be completed.",
+              : reason === "recording_group_segment_limit_reached"
+                ? "This recording reached the 256-segment limit. Stop it to finalize the capture group."
+                : reason === "recording_group_transition_conflict"
+                  ? "The recording changed before that action completed. Refreshing its status."
+                  : "The recording request could not be completed.",
         );
       }
-      setRecording(body.data);
-      if (body.data.status === "complete") router.refresh();
+      setGroup(body.data);
+      if (!activeGroupStatuses.has(body.data.status)) router.refresh();
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -119,9 +286,22 @@ export default function RecordingControls({
   }
 
   const progress = recording?.progress;
-  const summary = recording?.summary;
+  const summary = group?.summary ?? recording?.summary;
   const context = progress?.latest_context;
   const isReceiving = (progress?.received ?? 0) > 0;
+  const currentOrdinal =
+    recording?.segment_ordinal ?? group?.segment_count ?? null;
+  const visibleHistory =
+    history.groupId === group?.group_id
+      ? history
+      : {
+          groupId: group?.group_id ?? null,
+          segments: [],
+          total: 0,
+          events: [],
+          unavailable: false,
+        };
+  const pauseIntervals = derivePauseIntervals(visibleHistory.events);
 
   return (
     <div className="recording-controls">
@@ -131,26 +311,35 @@ export default function RecordingControls({
             className={`recording-light ${active ? "recording-light-active" : ""}`}
           />
           <strong aria-live="polite">
-            {recordingStatus(recording, isReceiving)}
+            {recordingGroupStatus(group, recording, isReceiving)}
           </strong>
-          {recording && (
-            <span className="recording-port">UDP {recording.bind_port}</span>
+          {group && (
+            <span className="recording-port">
+              Segment {currentOrdinal ?? "—"} of {group.segment_count} · UDP{" "}
+              {group.bind_port}
+            </span>
           )}
         </div>
         <p>
-          {active
+          {active && group?.status !== "paused"
             ? context
               ? `${context.track_name ?? "Unknown track"} · ${label(context.session_type)} · ${label(context.game_mode)}`
               : "Listening for telemetry. Time Trial, Race, and unknown modes are recorded the same way."
-            : recording?.status === "complete" && recording.published
+            : group?.status === "complete"
               ? "Capture finalized and available in the inbox below. Review receive losses before using it as analysis evidence."
-              : recording?.status === "interrupted"
+              : group?.status === "interrupted"
                 ? "The previous recording was interrupted. Its staging file was retained; start a new capture to continue."
-                : recording?.status === "failed"
+                : group?.status === "failed"
                   ? "The capture could not be published. Its staging file, if present, was retained for inspection."
                   : "Start UDP capture to create a recording directly in the local inbox."}
         </p>
-        {active && progress && (
+        {active && group?.status === "paused" && (
+          <p>
+            The current segment is finalized. Resume starts a new capture
+            segment when telemetry returns.
+          </p>
+        )}
+        {active && progress && group?.status !== "paused" && (
           <div className="recording-metrics">
             <span>{formatDuration(progress.elapsed_ms)}</span>
             <span>{progress.recorded.toLocaleString()} written</span>
@@ -163,7 +352,7 @@ export default function RecordingControls({
             )}
           </div>
         )}
-        {!active && recording?.status === "complete" && summary && (
+        {!active && group?.status === "complete" && summary && (
           <div className="recording-metrics">
             <span>
               {numeric(summary, "received").toLocaleString()} received
@@ -182,19 +371,39 @@ export default function RecordingControls({
           onClick={start}
           disabled={busy || active || initialError}
         >
-          {recording?.status === "complete" || recording?.status === "failed"
+          {group?.status === "complete" || group?.status === "failed"
             ? "Start another recording"
-            : recording?.status === "interrupted"
+            : group?.status === "interrupted"
               ? "Start new recording"
               : "Start recording"}
         </button>
+        {group?.status === "recording" && (
+          <button
+            className="import-button"
+            type="button"
+            onClick={pause}
+            disabled={busy || !group.current_recording_id}
+          >
+            Pause recording
+          </button>
+        )}
+        {group?.status === "paused" && (
+          <button
+            className="import-button"
+            type="button"
+            onClick={resume}
+            disabled={busy || group.segment_count >= 256}
+          >
+            Resume recording
+          </button>
+        )}
         <button
           className="import-button stop-recording-button"
           type="button"
           onClick={stop}
-          disabled={busy || !active || recording?.status === "stopping"}
+          disabled={busy || !active || group?.status === "stopping"}
         >
-          {recording?.status === "stopping" ? "Finalizing…" : "Stop recording"}
+          {group?.status === "stopping" ? "Finalizing…" : "Stop recording"}
         </button>
       </div>
       {error && (
@@ -208,12 +417,12 @@ export default function RecordingControls({
           this page.
         </p>
       )}
-      {recording?.failure_reason && !active && (
+      {group?.failure_reason && !active && (
         <p className="recording-control-alert" role="status">
-          {recording.failure_reason.replaceAll("_", " ")}
+          {group.failure_reason.replaceAll("_", " ")}
         </p>
       )}
-      {active && progress && (
+      {active && progress && group?.status === "recording" && (
         <>
           <LiveTelemetryPanel telemetry={progress.live_telemetry} />
           {progress.live_car_status ? (
@@ -229,7 +438,9 @@ export default function RecordingControls({
             <LiveCarSetupPanel telemetry={progress.live_car_setup} />
           ) : null}
           {progress.live_session_conditions ? (
-            <LiveSessionConditionsPanel telemetry={progress.live_session_conditions} />
+            <LiveSessionConditionsPanel
+              telemetry={progress.live_session_conditions}
+            />
           ) : null}
           {progress.live_motion ? (
             <LiveMotionPanel telemetry={progress.live_motion} />
@@ -240,6 +451,96 @@ export default function RecordingControls({
         <a className="live-open-link" href={liveHref}>
           Open live telemetry <span aria-hidden="true">↗</span>
         </a>
+      )}
+      {group && (
+        <section
+          className="recording-group-history"
+          aria-label="Capture segments"
+        >
+          <div className="eyebrow">CAPTURE SEGMENTS</div>
+          <p>
+            Each segment is a separate recording. Pause boundaries mark
+            app-observed gaps between acquisitions.
+          </p>
+          {visibleHistory.unavailable && (
+            <p className="recording-control-alert" role="status">
+              Segment history is temporarily unavailable. Refresh to load it
+              again.
+            </p>
+          )}
+          {pauseIntervals.length > 0 && (
+            <ul className="recording-pause-gaps">
+              {pauseIntervals.map((interval) => (
+                <li key={interval.key}>
+                  {interval.duration === null
+                    ? `Pause boundary · ${formatDateTime(interval.start)}`
+                    : `App-observed pause · ${formatDuration(interval.duration)} · ${formatDateTime(interval.start)}`}
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="inbox-list">
+            {visibleHistory.segments.map((segment) => {
+              const segmentSummary = segment.summary;
+              return (
+                <div className="inbox-item" key={segment.recording_id}>
+                  <div className="inbox-file">
+                    <strong>
+                      Segment {segment.segment_ordinal ?? "—"} ·{" "}
+                      {segment.status}
+                    </strong>
+                    <span>
+                      {segment.started_at_utc
+                        ? formatDateTime(segment.started_at_utc)
+                        : "Start time unavailable"}
+                      {segmentSummary
+                        ? ` · ${numeric(segmentSummary, "received").toLocaleString()} received · ${numeric(segmentSummary, "recorded").toLocaleString()} written`
+                        : " · No finalized counters"}
+                      {segment.failure_reason
+                        ? ` · ${segment.failure_reason.replaceAll("_", " ")}`
+                        : ""}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {visibleHistory.total > SEGMENT_PAGE_SIZE && (
+            <div className="recording-control-actions">
+              <button
+                className="import-button"
+                type="button"
+                disabled={segmentOffset === 0}
+                onClick={() =>
+                  setSegmentOffset(
+                    Math.max(0, segmentOffset - SEGMENT_PAGE_SIZE),
+                  )
+                }
+              >
+                Previous segments
+              </button>
+              <span>
+                {segmentOffset + 1}–
+                {Math.min(
+                  segmentOffset + visibleHistory.segments.length,
+                  visibleHistory.total,
+                )} of {visibleHistory.total}
+              </span>
+              <button
+                className="import-button"
+                type="button"
+                disabled={
+                  segmentOffset + SEGMENT_PAGE_SIZE >= visibleHistory.total
+                }
+                onClick={() =>
+                  setSegmentOffset(segmentOffset + SEGMENT_PAGE_SIZE)
+                }
+              >
+                More segments
+              </button>
+            </div>
+          )}
+        </section>
       )}
     </div>
   );
@@ -1136,17 +1437,25 @@ function safeText(value: unknown) {
   return typeof value === "string" && value.length <= 64 ? value : "—";
 }
 
-function recordingStatus(
+function recordingGroupStatus(
+  group: RecordingGroupRecord | null,
   recording: RecordingJobRecord | null,
   receiving: boolean,
 ) {
-  if (!recording) return "Recording idle";
-  if (recording.status === "starting") return "Preparing UDP recording";
-  if (recording.status === "recording")
-    return receiving ? "Recording telemetry" : "Listening for telemetry";
-  if (recording.status === "stopping") return "Finalizing capture";
-  if (recording.status === "complete") return "Capture finalized";
-  if (recording.status === "failed") return "Recording failed";
+  if (!group) return "Recording idle";
+  const ordinal = recording?.segment_ordinal ?? group.segment_count;
+  if (group.status === "starting") return "Preparing recording segment";
+  if (group.status === "recording")
+    return receiving
+      ? `Recording segment ${ordinal}`
+      : `Listening for telemetry · segment ${ordinal}`;
+  if (group.status === "pausing") return "Finalizing segment for pause";
+  if (group.status === "paused")
+    return `Recording paused · ${group.segment_count} segment${group.segment_count === 1 ? "" : "s"} saved`;
+  if (group.status === "resuming") return "Starting next recording segment";
+  if (group.status === "stopping") return "Finalizing capture group";
+  if (group.status === "complete") return "Capture group finalized";
+  if (group.status === "failed") return "Recording failed";
   return "Recording interrupted";
 }
 
@@ -1154,6 +1463,44 @@ function formatDuration(value: number) {
   const totalSeconds = Math.floor(value / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   return `${String(minutes).padStart(2, "0")}:${String(totalSeconds % 60).padStart(2, "0")}`;
+}
+
+function derivePauseIntervals(events: RecordingGroupEventRecord[]) {
+  const intervals: Array<{
+    key: number;
+    start: string;
+    duration: number | null;
+  }> = [];
+  for (const pause of events) {
+    if (pause.event_kind !== "pause_acknowledged") continue;
+    const resumed = events.find(
+      (event) =>
+        event.event_kind === "acquisition_started" &&
+        event.event_ordinal > pause.event_ordinal,
+    );
+    const startAt = Date.parse(pause.event_at_utc);
+    const endAt = resumed ? Date.parse(resumed.event_at_utc) : Number.NaN;
+    const duration =
+      Number.isFinite(startAt) && Number.isFinite(endAt) && endAt >= startAt
+        ? endAt - startAt
+        : null;
+    intervals.push({
+      key: pause.event_ordinal,
+      start: pause.event_at_utc,
+      duration,
+    });
+  }
+  return intervals;
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf())
+    ? "time unavailable"
+    : new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        timeStyle: "medium",
+      }).format(date);
 }
 
 function numeric(values: Record<string, unknown>, key: string) {

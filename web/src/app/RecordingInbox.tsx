@@ -1,6 +1,7 @@
 import type {
   ApiResponse,
   ImportJobRecord,
+  RecordingGroupRecord,
   RecordingJobRecord,
   RecordingSourceRecord,
 } from "@/lib/api";
@@ -26,6 +27,7 @@ const importErrorText: Record<string, string> = {
 export default function RecordingInbox({
   sourcesResponse,
   recordingResponse,
+  groupResponse,
   jobResponse,
   importError,
   returnTo = "dashboard",
@@ -33,6 +35,7 @@ export default function RecordingInbox({
 }: {
   sourcesResponse: ApiResponse<RecordingSourceRecord[]> | null;
   recordingResponse: ApiResponse<RecordingJobRecord> | null;
+  groupResponse: ApiResponse<RecordingGroupRecord> | null;
   jobResponse: ApiResponse<ImportJobRecord> | null;
   importError?: string;
   returnTo?: ImportReturnScreen;
@@ -58,6 +61,7 @@ export default function RecordingInbox({
 
       <RecordingControls
         initialRecording={recordingResponse?.data ?? null}
+        initialGroup={groupResponse?.data ?? null}
         initialError={!recordingResponse || recordingResponse.status !== "ok"}
         preservedQuery={preservedQuery}
       />

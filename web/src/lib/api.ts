@@ -262,6 +262,62 @@ export interface RecordingJobRecord {
   failure_reason: string | null;
   published: boolean;
   progress: RecordingProgressRecord | null;
+  group_id?: string | null;
+  segment_ordinal?: number | null;
+}
+
+export type RecordingGroupStatus =
+  | "starting"
+  | "recording"
+  | "pausing"
+  | "paused"
+  | "resuming"
+  | "stopping"
+  | "complete"
+  | "failed"
+  | "interrupted";
+
+export interface RecordingGroupRecord {
+  group_id: string;
+  status: RecordingGroupStatus;
+  bind_host: string;
+  bind_port: number;
+  transition_revision: number;
+  created_at_utc: string;
+  updated_at_utc: string;
+  started_at_utc: string | null;
+  finished_at_utc: string | null;
+  current_recording_id: string | null;
+  last_recording_id: string | null;
+  segment_count: number;
+  summary: Record<string, unknown> | null;
+  failure_reason: string | null;
+}
+
+export interface RecordingGroupEventRecord {
+  event_ordinal: number;
+  event_kind:
+    | "start_requested"
+    | "acquisition_started"
+    | "pause_requested"
+    | "pause_acknowledged"
+    | "resume_requested"
+    | "stop_requested"
+    | "complete"
+    | "failed"
+    | "interrupted";
+  event_at_utc: string;
+  recording_id: string | null;
+  transition_revision: number;
+  details: Record<string, unknown> | null;
+}
+
+export interface RecordingGroupSegmentPage {
+  items: RecordingJobRecord[];
+  total_count: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
 }
 
 export interface ReplayRecord {

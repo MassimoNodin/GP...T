@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 import time
 from uuid import uuid4
 from collections import Counter, OrderedDict
@@ -2017,10 +2018,24 @@ async def record_udp_capture(
     duration: float | None = None,
     overwrite: bool = False,
     collect_inventory: bool = True,
+    recording_group_id: str | None = None,
+    recording_id: str | None = None,
+    segment_ordinal: int | None = None,
     on_snapshot: Callable[[RecordingSnapshot], None] | None = None,
     on_event: Callable[[dict[str, object]], None] | None = None,
 ) -> RecordingResult:
     """Capture raw UDP first, then process a copy through the shared pipeline."""
+    if any(value is not None for value in (recording_group_id, recording_id, segment_ordinal)):
+        if (
+            not isinstance(recording_group_id, str)
+            or re.fullmatch(r"[a-f0-9]{32}", recording_group_id) is None
+            or not isinstance(recording_id, str)
+            or re.fullmatch(r"[a-f0-9]{32}", recording_id) is None
+            or isinstance(segment_ordinal, bool)
+            or not isinstance(segment_ordinal, int)
+            or not 1 <= segment_ordinal <= 256
+        ):
+            raise ValueError("recording_group_capture_identity_invalid")
     output_path = Path(output)
     source = UDPSource(host=host, port=port, queue_size=queue_size)
     pipeline = TelemetryPipeline() if collect_inventory else None
@@ -2184,6 +2199,15 @@ async def record_udp_capture(
                 "application_version": __version__,
                 "bind_host": host,
                 "bind_port": port,
+                **(
+                    {
+                        "recording_group_id": recording_group_id,
+                        "recording_id": recording_id,
+                        "segment_ordinal": segment_ordinal,
+                    }
+                    if recording_group_id is not None
+                    else {}
+                ),
             },
             overwrite=overwrite,
         )

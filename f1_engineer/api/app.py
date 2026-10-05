@@ -452,6 +452,56 @@ class RecordingJobRecord(BaseModel):
     failure_reason: str | None
     published: bool
     progress: RecordingProgressRecord | None = None
+    group_id: str | None = None
+    segment_ordinal: int | None = Field(default=None, ge=1, le=256)
+
+
+class RecordingGroupRecord(BaseModel):
+    group_id: str
+    status: Literal[
+        "starting", "recording", "pausing", "paused", "resuming", "stopping",
+        "complete", "failed", "interrupted",
+    ]
+    bind_host: str
+    bind_port: int
+    transition_revision: int = Field(ge=0)
+    created_at_utc: str
+    updated_at_utc: str
+    started_at_utc: str | None
+    finished_at_utc: str | None
+    current_recording_id: str | None
+    last_recording_id: str | None
+    segment_count: int = Field(ge=1, le=256)
+    summary: dict[str, Any] | None
+    failure_reason: str | None
+
+
+class RecordingGroupEventRecord(BaseModel):
+    event_ordinal: int = Field(ge=0)
+    event_kind: Literal[
+        "start_requested", "acquisition_started", "pause_requested",
+        "pause_acknowledged", "resume_requested", "stop_requested",
+        "complete", "failed", "interrupted",
+    ]
+    event_at_utc: str
+    recording_id: str | None
+    transition_revision: int = Field(ge=0)
+    details: dict[str, Any] | None
+
+
+class RecordingGroupSegmentPage(BaseModel):
+    items: list[RecordingJobRecord]
+    total_count: int = Field(ge=0, le=256)
+    limit: int = Field(ge=1, le=50)
+    offset: int = Field(ge=0, le=256)
+    has_more: bool
+
+
+class RecordingGroupTransitionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    expected_revision: int = Field(ge=0)
+    expected_recording_id: str = Field(pattern=r"^[a-f0-9]{32}$")
 
 
 class ReplayStartRequest(BaseModel):
@@ -1223,6 +1273,174 @@ def create_app(
                 configured_database_path, configured_recordings_root
             )
         )
+
+    @app.post(
+        "/api/v1/recording-groups/start",
+        response_model=APIResponse[RecordingGroupRecord],
+        status_code=202,
+    )
+    def start_recording_group(
+        authorization: str | None = Header(default=None),
+    ) -> APIResponse[RecordingGroupRecord] | JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "recording_control_not_authorized")
+        try:
+            group = recording_controller.start_recording_group()
+        except ValueError as exc:
+            reason = str(exc)
+            status_code = (
+                409
+                if reason
+                in {
+                    "another_local_operation_is_in_progress",
+                    "recording_controller_busy",
+                    "recording_group_transition_conflict",
+                }
+                else 503
+            )
+            return _api_error(status_code, reason)
+        return APIResponse[RecordingGroupRecord](data=group)
+
+    @app.get(
+        "/api/v1/recording-groups/current",
+        response_model=APIResponse[RecordingGroupRecord],
+    )
+    def current_recording_group() -> APIResponse[RecordingGroupRecord] | JSONResponse:
+        try:
+            group = recording_controller.current_group()
+        except ValueError as exc:
+            return _api_error(503, str(exc))
+        return APIResponse[RecordingGroupRecord](data=group)
+
+    @app.get(
+        "/api/v1/recording-groups/{group_id}",
+        response_model=APIResponse[RecordingGroupRecord],
+    )
+    def recording_group(group_id: str) -> APIResponse[RecordingGroupRecord] | JSONResponse:
+        try:
+            group = recording_controller.group(group_id)
+        except ValueError as exc:
+            return _api_error(503, str(exc))
+        if group is None:
+            return _api_error(404, "recording_group_unavailable")
+        return APIResponse[RecordingGroupRecord](data=group)
+
+    @app.get(
+        "/api/v1/recording-groups/{group_id}/segments",
+        response_model=APIResponse[RecordingGroupSegmentPage],
+    )
+    def recording_group_segments(
+        group_id: str,
+        limit: int = Query(default=50, ge=1, le=50),
+        offset: int = Query(default=0, ge=0, le=256),
+    ) -> APIResponse[RecordingGroupSegmentPage] | JSONResponse:
+        try:
+            page = recording_controller.group_segments(
+                group_id, limit=limit, offset=offset
+            )
+        except ValueError as exc:
+            reason = str(exc)
+            return _api_error(
+                404 if reason == "recording_group_unavailable" else 422,
+                reason,
+            )
+        return APIResponse[RecordingGroupSegmentPage](data=page)
+
+    @app.get(
+        "/api/v1/recording-groups/{group_id}/events",
+        response_model=APIResponse[list[RecordingGroupEventRecord]],
+    )
+    def recording_group_events(
+        group_id: str,
+    ) -> APIResponse[list[RecordingGroupEventRecord]] | JSONResponse:
+        try:
+            events = recording_controller.group_events(group_id)
+        except ValueError as exc:
+            reason = str(exc)
+            return _api_error(
+                404 if reason == "recording_group_unavailable" else 503,
+                reason,
+            )
+        return APIResponse[list[RecordingGroupEventRecord]](data=events)
+
+    @app.post(
+        "/api/v1/recording-groups/{group_id}/pause",
+        response_model=APIResponse[RecordingGroupRecord],
+        status_code=202,
+    )
+    def pause_recording_group(
+        group_id: str,
+        body: RecordingGroupTransitionBody,
+        authorization: str | None = Header(default=None),
+    ) -> APIResponse[RecordingGroupRecord] | JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "recording_control_not_authorized")
+        try:
+            group = recording_controller.pause_recording_group(
+                group_id,
+                expected_revision=body.expected_revision,
+                expected_recording_id=body.expected_recording_id,
+            )
+        except ValueError as exc:
+            reason = str(exc)
+            return _api_error(
+                404 if reason == "recording_group_unavailable" else
+                409 if reason == "recording_group_transition_conflict" else 503,
+                reason,
+            )
+        return APIResponse[RecordingGroupRecord](data=group)
+
+    @app.post(
+        "/api/v1/recording-groups/{group_id}/resume",
+        response_model=APIResponse[RecordingGroupRecord],
+        status_code=202,
+    )
+    def resume_recording_group(
+        group_id: str,
+        body: RecordingGroupTransitionBody,
+        authorization: str | None = Header(default=None),
+    ) -> APIResponse[RecordingGroupRecord] | JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "recording_control_not_authorized")
+        try:
+            group = recording_controller.resume_recording_group(
+                group_id,
+                expected_revision=body.expected_revision,
+                expected_recording_id=body.expected_recording_id,
+            )
+        except ValueError as exc:
+            reason = str(exc)
+            return _api_error(
+                404 if reason == "recording_group_unavailable" else
+                409 if reason in {
+                    "recording_group_transition_conflict",
+                    "recording_group_segment_limit_reached",
+                    "another_local_operation_is_in_progress",
+                } else 503,
+                reason,
+            )
+        return APIResponse[RecordingGroupRecord](data=group)
+
+    @app.post(
+        "/api/v1/recording-groups/{group_id}/stop",
+        response_model=APIResponse[RecordingGroupRecord],
+        status_code=202,
+    )
+    def stop_recording_group(
+        group_id: str,
+        authorization: str | None = Header(default=None),
+    ) -> APIResponse[RecordingGroupRecord] | JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "recording_control_not_authorized")
+        try:
+            group = recording_controller.stop_recording_group(group_id)
+        except ValueError as exc:
+            reason = str(exc)
+            return _api_error(
+                404 if reason == "recording_group_unavailable" else 503,
+                reason,
+            )
+        return APIResponse[RecordingGroupRecord](data=group)
 
     @app.get(
         "/api/v1/recordings/current",

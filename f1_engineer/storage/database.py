@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 class DatabaseSchemaError(ValueError):
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS schema_info (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     version INTEGER NOT NULL
 );
-INSERT OR IGNORE INTO schema_info(singleton, version) VALUES (1, 12);
+INSERT OR IGNORE INTO schema_info(singleton, version) VALUES (1, 13);
 
 CREATE TABLE IF NOT EXISTS captures (
     capture_sha256 TEXT PRIMARY KEY,
@@ -251,6 +251,47 @@ CREATE TABLE IF NOT EXISTS import_jobs (
     failure_reason TEXT
 );
 
+CREATE TABLE IF NOT EXISTS recording_groups (
+    group_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL CHECK (status IN (
+        'starting', 'recording', 'pausing', 'paused', 'resuming',
+        'stopping', 'complete', 'failed', 'interrupted'
+    )),
+    bind_host TEXT NOT NULL,
+    bind_port INTEGER NOT NULL CHECK (bind_port BETWEEN 0 AND 65535),
+    transition_revision INTEGER NOT NULL DEFAULT 0 CHECK (transition_revision >= 0),
+    created_at_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at_utc TEXT,
+    finished_at_utc TEXT,
+    current_recording_id TEXT,
+    last_recording_id TEXT,
+    segment_count INTEGER NOT NULL DEFAULT 0 CHECK (segment_count BETWEEN 0 AND 256),
+    summary_json TEXT,
+    failure_reason TEXT
+);
+
+CREATE TABLE IF NOT EXISTS recording_group_events (
+    group_id TEXT NOT NULL REFERENCES recording_groups(group_id) ON DELETE CASCADE,
+    event_ordinal INTEGER NOT NULL CHECK (event_ordinal >= 0),
+    event_kind TEXT NOT NULL CHECK (event_kind IN (
+        'start_requested', 'acquisition_started', 'pause_requested',
+        'pause_acknowledged', 'resume_requested', 'stop_requested',
+        'complete', 'failed', 'interrupted'
+    )),
+    event_at_utc TEXT NOT NULL,
+    recording_id TEXT,
+    transition_revision INTEGER NOT NULL,
+    details_json TEXT,
+    PRIMARY KEY(group_id, event_ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_recording_group_events_latest
+    ON recording_group_events(group_id, event_ordinal DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_recording_group
+    ON recording_groups((1)) WHERE status IN (
+        'starting', 'recording', 'pausing', 'paused', 'resuming', 'stopping'
+    );
+
 CREATE TABLE IF NOT EXISTS recording_jobs (
     recording_id TEXT PRIMARY KEY,
     status TEXT NOT NULL CHECK (status IN ('starting', 'recording', 'stopping', 'complete', 'failed', 'interrupted')),
@@ -263,7 +304,9 @@ CREATE TABLE IF NOT EXISTS recording_jobs (
     started_at_utc TEXT,
     finished_at_utc TEXT,
     summary_json TEXT,
-    failure_reason TEXT
+    failure_reason TEXT,
+    group_id TEXT REFERENCES recording_groups(group_id),
+    segment_ordinal INTEGER CHECK (segment_ordinal BETWEEN 1 AND 256)
 );
 
 CREATE INDEX IF NOT EXISTS idx_import_jobs_capture ON import_jobs(capture_id, created_at_utc);
@@ -546,6 +589,27 @@ class Database:
             )
             self.connection.commit()
             version = 12
+        if version == 12:
+            columns = {
+                row["name"]
+                for row in self.connection.execute("PRAGMA table_info(recording_jobs)")
+            }
+            if "group_id" not in columns:
+                self.connection.execute(
+                    "ALTER TABLE recording_jobs ADD COLUMN group_id TEXT REFERENCES recording_groups(group_id)"
+                )
+            if "segment_ordinal" not in columns:
+                self.connection.execute(
+                    "ALTER TABLE recording_jobs ADD COLUMN segment_ordinal INTEGER"
+                )
+            self.connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_recording_group_segment ON recording_jobs(group_id, segment_ordinal) WHERE group_id IS NOT NULL"
+            )
+            self.connection.execute(
+                "UPDATE schema_info SET version = 13 WHERE singleton = 1"
+            )
+            self.connection.commit()
+            version = 13
         if version != SCHEMA_VERSION:
             self.connection.close()
             raise ValueError(f"database schema {version} is not supported")
@@ -554,6 +618,9 @@ class Database:
         )
         self.connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_recording_jobs_latest ON recording_jobs(updated_at_utc DESC)"
+        )
+        self.connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_recording_group_segment ON recording_jobs(group_id, segment_ordinal) WHERE group_id IS NOT NULL"
         )
         self.connection.commit()
 
