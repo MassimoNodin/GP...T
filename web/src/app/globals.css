@@ -1903,6 +1903,14 @@ h1 span {
   font-size: 10px;
   line-height: 1.7;
 }
+.window-brief-unavailable {
+  margin: 13px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #5a4733;
+  color: #c4ad8f;
+  font-size: 10px;
+  line-height: 1.6;
+}
 .window-measured-brief details {
   margin-top: 8px;
 }

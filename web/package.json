@@ -6,7 +6,8 @@
     "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1",
-    "test:speech": "node scripts/recorded-speech-check.mjs"
+    "test:speech": "node scripts/recorded-speech-check.mjs",
+    "test:comparison-window": "node scripts/comparison-window-brief-check.mjs"
   },
   "dependencies": {
     "next": "16.3.8",

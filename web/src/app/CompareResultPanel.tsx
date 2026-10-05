@@ -1,6 +1,7 @@
 import type { Comparison, LapRecord, ProcessingRunSummary } from "@/lib/api";
 import { appScreenHref } from "@/lib/navigation";
 import LinkedComparisonCharts from "./LinkedComparisonCharts";
+import ComparisonWindowPanel from "./ComparisonWindowPanel";
 import { buildComparisonCharts } from "./comparison-charts";
 
 export default function CompareResultPanel({
@@ -82,6 +83,17 @@ export default function CompareResultPanel({
           tone="neutral"
         />
       </section>
+
+      {window && comparison.comparison_window ? (
+        <ComparisonWindowPanel
+          comparison={comparison}
+          report={comparison.comparison_window}
+          brief={comparison.distance_window_brief ?? null}
+          target={target}
+          reference={reference}
+          window={window}
+        />
+      ) : null}
 
       <section className="quality-row panel" aria-label="Reported lap and sector timing">
         <div className="quality-title">
