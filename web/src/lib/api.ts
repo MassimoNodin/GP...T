@@ -90,6 +90,7 @@ export interface RecordingProgressRecord {
   live_lap_timing?: LiveLapTimingRecord | null;
   live_car_damage?: LiveCarDamageRecord | null;
   live_car_setup?: LiveCarSetupRecord | null;
+  live_session_conditions?: LiveSessionConditionsRecord | null;
 }
 
 export interface LiveTelemetryRecord {
@@ -208,6 +209,22 @@ export interface LiveCarSetupRecord {
   validation_flags?: string[];
 }
 
+export interface LiveSessionConditionsRecord {
+  status: "waiting" | "fresh" | "stale" | "unsupported" | "unavailable";
+  reason: string | null;
+  age_ms: number | null;
+  observation_count?: number;
+  session_uid?: string | null;
+  frame_identifier?: number | null;
+  packet_format?: number | null;
+  session_time_s?: number | null;
+  weather_id?: number | null;
+  weather_name?: string | null;
+  air_temperature_c?: number | null;
+  track_temperature_c?: number | null;
+  validation_flags?: string[];
+}
+
 export interface RecordingJobRecord {
   recording_id: string;
   status:
@@ -257,6 +274,7 @@ export interface ReplayRecord {
   live_lap_timing: LiveLapTimingRecord;
   live_car_damage?: LiveCarDamageRecord | null;
   live_car_setup?: LiveCarSetupRecord | null;
+  live_session_conditions?: LiveSessionConditionsRecord | null;
   failure_reason: string | null;
 }
 

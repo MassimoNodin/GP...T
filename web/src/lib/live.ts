@@ -3,6 +3,7 @@ import type {
   LiveCarSetupRecord,
   LiveCarStatusRecord,
   LiveLapTimingRecord,
+  LiveSessionConditionsRecord,
   LiveTelemetryRecord,
   SessionContext,
 } from "@/lib/api";
@@ -19,6 +20,7 @@ export interface PinnedLiveSnapshot {
   live_lap_timing: LiveLapTimingRecord | null;
   live_car_damage: LiveCarDamageRecord | null;
   live_car_setup: LiveCarSetupRecord | null;
+  live_session_conditions: LiveSessionConditionsRecord | null;
   capture_name: string | null;
   speed: number | null;
 }
@@ -118,6 +120,11 @@ export function readPinnedLiveCurrent(
       source === "recording"
         ? progress?.live_car_setup
         : data.live_car_setup,
+    ),
+    live_session_conditions: readSessionConditionsMonitor(
+      source === "recording"
+        ? progress?.live_session_conditions
+        : data.live_session_conditions,
     ),
     capture_name:
       source === "replay" && typeof data.capture_name === "string"
@@ -260,6 +267,56 @@ export function readCarSetupMonitor(value: unknown): LiveCarSetupRecord | null {
   };
 }
 
+export function readSessionConditionsMonitor(
+  value: unknown,
+): LiveSessionConditionsRecord | null {
+  const monitor = readMonitor(value);
+  if (!monitor || !isRecord(value)) return null;
+  return {
+    ...(monitor as LiveSessionConditionsRecord),
+    reason:
+      typeof value.reason === "string" && value.reason.length <= 80
+        ? value.reason
+        : value.reason === null
+          ? null
+          : "malformed_optional_fields",
+    age_ms:
+      typeof value.age_ms === "number" &&
+      Number.isFinite(value.age_ms) &&
+      value.age_ms >= 0
+        ? value.age_ms
+        : null,
+    observation_count:
+      Number.isSafeInteger(value.observation_count) &&
+      (value.observation_count as number) >= 0 &&
+      (value.observation_count as number) <= 2_147_483_647
+        ? (value.observation_count as number)
+        : undefined,
+    session_uid:
+      typeof value.session_uid === "string" && value.session_uid.length <= 20
+        ? value.session_uid
+        : null,
+    frame_identifier: boundedInteger(value.frame_identifier),
+    packet_format: boundedInteger(value.packet_format),
+    session_time_s: finiteNumber(value.session_time_s),
+    weather_id: wireInteger(value.weather_id),
+    weather_name:
+      typeof value.weather_name === "string" && value.weather_name.length <= 32
+        ? value.weather_name
+        : null,
+    air_temperature_c: signedWireInteger(value.air_temperature_c),
+    track_temperature_c: signedWireInteger(value.track_temperature_c),
+    validation_flags:
+      Array.isArray(value.validation_flags) &&
+      value.validation_flags.length <= 4 &&
+      value.validation_flags.every(
+        (flag) => typeof flag === "string" && flag.length <= 80,
+      )
+        ? value.validation_flags
+        : [],
+  };
+}
+
 function percentArray(value: unknown, integer: boolean): readonly (number | null)[] | null {
   if (!Array.isArray(value) || value.length !== 4) return null;
   return value.map((item) => percent(item, integer));
@@ -287,6 +344,12 @@ function wireInteger(value: unknown): number | null {
     : null;
 }
 
+function signedWireInteger(value: unknown): number | null {
+  return Number.isInteger(value) && (value as number) >= -128 && (value as number) <= 127
+    ? (value as number)
+    : null;
+}
+
 function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -297,6 +360,7 @@ function readMonitor(value: unknown):
   | LiveLapTimingRecord
   | LiveCarDamageRecord
   | LiveCarSetupRecord
+  | LiveSessionConditionsRecord
   | null {
   if (!isRecord(value)) return null;
   if (

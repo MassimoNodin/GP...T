@@ -38,8 +38,10 @@ LIVE_CAR_STATUS_FRESHNESS_LIMIT_MS = 500
 LIVE_LAP_TIMING_FRESHNESS_LIMIT_MS = 500
 LIVE_CAR_DAMAGE_FRESHNESS_LIMIT_MS = 500
 LIVE_CAR_SETUP_FRESHNESS_LIMIT_MS = 500
+LIVE_SESSION_CONDITIONS_FRESHNESS_LIMIT_MS = 500
 _LIVE_CAR_DAMAGE_OBSERVATION_COUNT_MAX = 2_147_483_647
 _LIVE_CAR_SETUP_OBSERVATION_COUNT_MAX = 2_147_483_647
+_LIVE_SESSION_CONDITIONS_OBSERVATION_COUNT_MAX = 2_147_483_647
 
 _LIVE_CAR_DAMAGE_WHEEL_FIELDS = {
     "tyre_wear_percent": "tyre_wear",
@@ -95,6 +97,7 @@ class RecordingSnapshot:
     live_lap_timing: dict[str, object]
     live_car_damage: dict[str, object]
     live_car_setup: dict[str, object]
+    live_session_conditions: dict[str, object]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -111,6 +114,7 @@ class RecordingSnapshot:
             "live_lap_timing": dict(self.live_lap_timing),
             "live_car_damage": dict(self.live_car_damage),
             "live_car_setup": dict(self.live_car_setup),
+            "live_session_conditions": dict(self.live_session_conditions),
         }
 
 
@@ -179,8 +183,13 @@ class AcquisitionObserver:
         self._live_car_setup_snapshot: dict[str, object] | None = None
         self._live_car_setup_received_monotonic_ns: int | None = None
         self._live_car_setup_observation_count = 0
+        self._live_session_conditions = "waiting"
+        self._live_session_conditions_reason: str | None = None
+        self._live_session_conditions_snapshot: dict[str, object] | None = None
+        self._live_session_conditions_received_monotonic_ns: int | None = None
+        self._live_session_conditions_observation_count = 0
         self._receive_times: OrderedDict[tuple[int, int, bytes], int] = OrderedDict()
-        self._max_receive_time_entries = self.frames.max_open_frames * 6 + 4
+        self._max_receive_time_entries = self.frames.max_open_frames * 7 + 4
         self._finished = False
 
     def process(
@@ -273,6 +282,7 @@ class AcquisitionObserver:
                 PacketId.CAR_STATUS,
                 PacketId.CAR_DAMAGE,
                 PacketId.CAR_SETUPS,
+                PacketId.SESSION,
             }:
                 self._remember_receive_time(raw, packet, observed_monotonic_ns)
         self._count_completed(self._consume_frames(completed))
@@ -454,6 +464,41 @@ class AcquisitionObserver:
             )
         return snapshot
 
+    def live_session_conditions_snapshot(
+        self, now_monotonic_ns: int | None = None
+    ) -> dict[str, object]:
+        """Return the last sparse session conditions with independent freshness."""
+        now = time.monotonic_ns() if now_monotonic_ns is None else now_monotonic_ns
+        age_ms = (
+            None
+            if self._live_session_conditions_received_monotonic_ns is None
+            else max(
+                0,
+                (now - self._live_session_conditions_received_monotonic_ns)
+                // 1_000_000,
+            )
+        )
+        status = self._live_session_conditions
+        if (
+            age_ms is not None
+            and age_ms > LIVE_SESSION_CONDITIONS_FRESHNESS_LIMIT_MS
+            and status in {"fresh", "unavailable"}
+        ):
+            status = "stale"
+        snapshot: dict[str, object] = {
+            "status": status,
+            "reason": self._live_session_conditions_reason,
+            "age_ms": age_ms,
+            "observation_count": self._live_session_conditions_observation_count,
+        }
+        if self._live_session_conditions_snapshot is not None:
+            snapshot.update(self._live_session_conditions_snapshot)
+        if self._live_session_conditions_received_monotonic_ns is not None:
+            snapshot["_observed_monotonic_ns"] = (
+                self._live_session_conditions_received_monotonic_ns
+            )
+        return snapshot
+
     def _reset_live_monitor(self) -> None:
         self._live_status = "waiting"
         self._live_reason = None
@@ -469,6 +514,7 @@ class AcquisitionObserver:
         self._reset_live_lap_timing_monitor()
         self._reset_live_car_damage_monitor()
         self._reset_live_car_setup_monitor()
+        self._reset_live_session_conditions_monitor()
         self._receive_times.clear()
 
     def _observe_player_identity(self, packet: DecodedPacket) -> None:
@@ -537,14 +583,6 @@ class AcquisitionObserver:
                 packet.packet_format is not self.sessions.current_packet_format
                 for packet in frame.packets
             )
-            or self._live_player_index is None
-            or (
-                self._live_player_barrier_frame is not None
-                and self._is_newer_frame(
-                    self._live_player_barrier_frame,
-                    frame.overall_frame_identifier,
-                )
-            )
         ):
             self._discard_frame_receive_times(frame)
             return
@@ -558,20 +596,42 @@ class AcquisitionObserver:
         unknown_event = any(event.error is not None for event in events)
         if explicit_rewind or unknown_event:
             self._clear_live_sample()
-            self._live_snapshot = self._empty_live_snapshot(
-                frame, self._live_player_index
-            )
-            self._live_status = "unavailable"
-            self._live_reason = (
-                "flashback_boundary" if explicit_rewind else "event_evidence_unknown"
-            )
-            self._set_live_lap_timing_unavailable(
-                frame,
-                self._live_player_index,
-                self._live_reason,
-                [],
-            )
+            self._reset_live_session_conditions_monitor()
+            if self._live_player_index is not None:
+                self._live_snapshot = self._empty_live_snapshot(
+                    frame, self._live_player_index
+                )
+                self._live_status = "unavailable"
+                self._live_reason = (
+                    "flashback_boundary"
+                    if explicit_rewind
+                    else "event_evidence_unknown"
+                )
+                self._set_live_lap_timing_unavailable(
+                    frame,
+                    self._live_player_index,
+                    self._live_reason,
+                    [],
+                )
             self._live_last_session_time_s = None
+            self._discard_frame_receive_times(frame)
+            return
+
+        session_packets = [
+            packet for packet in frame.packets if packet.packet_kind is PacketId.SESSION
+        ]
+        if session_packets:
+            self._observe_live_session_conditions(frame, session_packets)
+        if (
+            self._live_player_index is None
+            or (
+                self._live_player_barrier_frame is not None
+                and self._is_newer_frame(
+                    self._live_player_barrier_frame,
+                    frame.overall_frame_identifier,
+                )
+            )
+        ):
             self._discard_frame_receive_times(frame)
             return
 
@@ -604,6 +664,7 @@ class AcquisitionObserver:
             )
             if clock_regression:
                 self._clear_live_sample()
+                self._reset_live_session_conditions_monitor()
                 self._live_snapshot = self._empty_live_snapshot(
                     frame, self._live_player_index
                 )
@@ -958,6 +1019,7 @@ class AcquisitionObserver:
                 PacketId.CAR_STATUS,
                 PacketId.CAR_DAMAGE,
                 PacketId.CAR_SETUPS,
+                PacketId.SESSION,
             }
         ]
         if not times or any(value is None for value in times):
@@ -973,6 +1035,7 @@ class AcquisitionObserver:
                 PacketId.CAR_STATUS,
                 PacketId.CAR_DAMAGE,
                 PacketId.CAR_SETUPS,
+                PacketId.SESSION,
             }:
                 self._receive_times.pop(
                     (
@@ -1213,6 +1276,78 @@ class AcquisitionObserver:
         self._live_car_damage_reason = None
         self._live_car_damage_received_monotonic_ns = received_ns
 
+    def _observe_live_session_conditions(
+        self, frame: PacketFrame, session_packets: list[DecodedPacket]
+    ) -> None:
+        decoded: list[tuple[DecodedPacket, SessionContext]] = []
+        failures: list[bool] = []
+        for packet in session_packets:
+            result = self.session_context_decoder.decode(packet)
+            if result.error is not None or result.context is None:
+                failures.append(self._is_unsupported_adapter(packet))
+                continue
+            decoded.append((packet, result.context))
+
+        if failures:
+            unsupported = any(failures)
+            self._set_live_session_conditions_unavailable(
+                frame,
+                "session_context_adapter_unsupported"
+                if unsupported
+                else "session_context_decode_failed",
+                status="unsupported" if unsupported else "unavailable",
+                packets=session_packets,
+            )
+            return
+
+        if len({context for _packet, context in decoded}) > 1:
+            self._set_live_session_conditions_unavailable(
+                frame,
+                "conflicting_session_context_packets",
+                packets=session_packets,
+            )
+            return
+
+        received_ns = self._frame_receive_time(frame, session_packets)
+        if received_ns is None:
+            self._live_session_conditions_snapshot = (
+                self._empty_live_session_conditions_snapshot(frame)
+            )
+            self._live_session_conditions = "unavailable"
+            self._live_session_conditions_reason = "receive_provenance_unavailable"
+            self._live_session_conditions_received_monotonic_ns = None
+            return
+
+        self._live_session_conditions_observation_count = min(
+            self._live_session_conditions_observation_count + 1,
+            _LIVE_SESSION_CONDITIONS_OBSERVATION_COUNT_MAX,
+        )
+        source_packet, context = min(
+            decoded,
+            key=lambda item: self._receive_times.get(
+                (
+                    frame.session_uid,
+                    frame.overall_frame_identifier,
+                    item[0].wire_fingerprint,
+                ),
+                received_ns,
+            ),
+        )
+        self._live_session_conditions_snapshot = {
+            "session_uid": str(context.session_uid),
+            "packet_format": int(context.packet_format),
+            "frame_identifier": frame.overall_frame_identifier,
+            "session_time_s": source_packet.header.session_time,
+            "weather_id": context.weather_id,
+            "weather_name": context.weather_name,
+            "air_temperature_c": context.air_temperature_c,
+            "track_temperature_c": context.track_temperature_c,
+            "validation_flags": [],
+        }
+        self._live_session_conditions = "fresh"
+        self._live_session_conditions_reason = None
+        self._live_session_conditions_received_monotonic_ns = received_ns
+
     def _observe_live_car_setup(
         self, frame: PacketFrame, setup_packets: list[DecodedPacket]
     ) -> None:
@@ -1417,6 +1552,13 @@ class AcquisitionObserver:
         self._live_car_setup_received_monotonic_ns = None
         self._live_car_setup_observation_count = 0
 
+    def _reset_live_session_conditions_monitor(self) -> None:
+        self._live_session_conditions = "waiting"
+        self._live_session_conditions_reason = None
+        self._live_session_conditions_snapshot = None
+        self._live_session_conditions_received_monotonic_ns = None
+        self._live_session_conditions_observation_count = 0
+
     @staticmethod
     def _empty_live_lap_timing_snapshot(
         frame: PacketFrame, player_index: int
@@ -1485,6 +1627,39 @@ class AcquisitionObserver:
         self._live_car_setup_reason = reason
         self._live_car_setup_received_monotonic_ns = self._frame_receive_time(
             frame, selected_packets
+        )
+
+    @staticmethod
+    def _empty_live_session_conditions_snapshot(
+        frame: PacketFrame,
+    ) -> dict[str, object]:
+        return {
+            "session_uid": str(frame.session_uid),
+            "frame_identifier": frame.overall_frame_identifier,
+            "packet_format": int(frame.packets[-1].packet_format),
+            "session_time_s": None,
+            "weather_id": None,
+            "weather_name": None,
+            "air_temperature_c": None,
+            "track_temperature_c": None,
+            "validation_flags": [],
+        }
+
+    def _set_live_session_conditions_unavailable(
+        self,
+        frame: PacketFrame,
+        reason: str,
+        *,
+        status: str = "unavailable",
+        packets: list[DecodedPacket],
+    ) -> None:
+        self._live_session_conditions_snapshot = (
+            self._empty_live_session_conditions_snapshot(frame)
+        )
+        self._live_session_conditions = status
+        self._live_session_conditions_reason = reason
+        self._live_session_conditions_received_monotonic_ns = (
+            self._frame_receive_time(frame, packets)
         )
 
     def _set_live_car_status_unavailable(
@@ -1604,6 +1779,12 @@ class AcquisitionObserver:
                 PacketId.CAR_SETUPS,
                 packet.header.packet_version,
             )
+        if packet.packet_kind is PacketId.SESSION:
+            return not self.session_context_decoder.supports(
+                packet.packet_format,
+                PacketId.SESSION,
+                packet.header.packet_version,
+            )
         return False
 
 
@@ -1693,6 +1874,16 @@ async def record_udp_capture(
             ),
             live_car_setup=(
                 observer.live_car_setup_snapshot()
+                if observer is not None
+                else {
+                    "status": "unavailable",
+                    "reason": "live_monitor_not_enabled",
+                    "age_ms": None,
+                    "observation_count": 0,
+                }
+            ),
+            live_session_conditions=(
+                observer.live_session_conditions_snapshot()
                 if observer is not None
                 else {
                     "status": "unavailable",

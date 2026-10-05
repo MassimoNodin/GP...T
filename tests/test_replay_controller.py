@@ -58,6 +58,16 @@ def test_replay_damage_observation_ages_while_paused_and_clears_at_terminal_stat
             "next_front_wing_value": 47.5,
             "_observed_monotonic_ns": observed_ns,
         },
+        "live_session_conditions": {
+            "status": "fresh",
+            "reason": None,
+            "age_ms": 0,
+            "observation_count": 2,
+            "weather_id": 1,
+            "air_temperature_c": 18,
+            "track_temperature_c": 31,
+            "_observed_monotonic_ns": observed_ns,
+        },
     }
 
     paused = controller.current()
@@ -74,6 +84,10 @@ def test_replay_damage_observation_ages_while_paused_and_clears_at_terminal_stat
     assert paused["live_car_setup"]["age_ms"] >= 700
     assert paused["live_car_setup"]["front_wing"] == 22
     assert "_observed_monotonic_ns" not in paused["live_car_setup"]
+    assert paused["live_session_conditions"]["status"] == "stale"
+    assert paused["live_session_conditions"]["age_ms"] >= 700
+    assert paused["live_session_conditions"]["weather_id"] == 1
+    assert "_observed_monotonic_ns" not in paused["live_session_conditions"]
 
     controller._snapshot["state"] = "completed"
     ended = controller.current()
@@ -84,6 +98,12 @@ def test_replay_damage_observation_ages_while_paused_and_clears_at_terminal_stat
         "observation_count": 0,
     }
     assert ended["live_car_setup"] == {
+        "status": "unavailable",
+        "reason": "operation_ended",
+        "age_ms": None,
+        "observation_count": 0,
+    }
+    assert ended["live_session_conditions"] == {
         "status": "unavailable",
         "reason": "operation_ended",
         "age_ms": None,
@@ -508,6 +528,14 @@ def test_replay_stop_during_eof_finalization_publishes_terminal_state(
             }
 
         def live_car_setup_snapshot(self):
+            return {
+                "status": "waiting",
+                "reason": None,
+                "age_ms": None,
+                "observation_count": 0,
+            }
+
+        def live_session_conditions_snapshot(self):
             return {
                 "status": "waiting",
                 "reason": None,

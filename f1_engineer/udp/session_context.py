@@ -133,6 +133,11 @@ class SessionContextDecoder:
             ),
         }
 
+    def supports(
+        self, packet_format: PacketFormat, packet_id: PacketId, packet_version: int
+    ) -> bool:
+        return (packet_format, packet_id, packet_version) in self._parsers
+
     def decode(self, packet: DecodedPacket) -> SessionContextDecodeResult:
         if packet.packet_kind is not PacketId.SESSION:
             return SessionContextDecodeResult()

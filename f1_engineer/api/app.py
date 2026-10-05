@@ -342,6 +342,22 @@ class LiveCarSetupRecord(BaseModel):
     validation_flags: list[str] = Field(default_factory=list, max_length=16)
 
 
+class LiveSessionConditionsRecord(BaseModel):
+    status: Literal["waiting", "fresh", "stale", "unsupported", "unavailable"]
+    reason: str | None
+    age_ms: int | None
+    observation_count: int = Field(ge=0, le=2_147_483_647)
+    session_uid: str | None = None
+    frame_identifier: int | None = None
+    packet_format: int | None = None
+    session_time_s: Annotated[float, Field(strict=True, allow_inf_nan=False)] | None = None
+    weather_id: Annotated[int, Field(strict=True, ge=0, le=255)] | None = None
+    weather_name: str | None = Field(default=None, max_length=32)
+    air_temperature_c: Annotated[int, Field(strict=True, ge=-128, le=127)] | None = None
+    track_temperature_c: Annotated[int, Field(strict=True, ge=-128, le=127)] | None = None
+    validation_flags: list[str] = Field(default_factory=list, max_length=4)
+
+
 class RecordingProgressRecord(BaseModel):
     state: str
     elapsed_ms: int
@@ -356,6 +372,7 @@ class RecordingProgressRecord(BaseModel):
     live_lap_timing: LiveLapTimingRecord | None = None
     live_car_damage: LiveCarDamageRecord | None = None
     live_car_setup: LiveCarSetupRecord | None = None
+    live_session_conditions: LiveSessionConditionsRecord | None = None
 
 
 class RecordingJobRecord(BaseModel):
@@ -412,6 +429,7 @@ class ReplayRecord(BaseModel):
     failure_reason: str | None
     live_car_damage: LiveCarDamageRecord | None = None
     live_car_setup: LiveCarSetupRecord | None = None
+    live_session_conditions: LiveSessionConditionsRecord | None = None
 
 
 class LapRecord(BaseModel):

@@ -16,6 +16,7 @@ httpx = pytest.importorskip("httpx")
 from f1_engineer.api.app import (
     LiveCarDamageRecord,
     LiveCarSetupRecord,
+    LiveSessionConditionsRecord,
     LiveTelemetryRecord,
     create_app,
 )
@@ -278,6 +279,72 @@ def _session_packet_for_mode(
         session_uid=SESSION_UID,
         frame=1,
         body=bytes(body),
+    )
+
+
+def _session_conditions_packet(
+    *,
+    frame: int = 100,
+    sequence: int = 10,
+    session_uid: int = SESSION_UID,
+    packet_format: int = 2025,
+    packet_version: int = 1,
+    player_car_index: int = 255,
+    session_time_s: float = 12.5,
+    weather_id: int = 0,
+    track_temperature_c: int = 0,
+    air_temperature_c: int = 0,
+    body: bytes | None = None,
+):
+    session_body = bytearray(_session_packet().payload[29:] if body is None else body)
+    session_body[0] = weather_id
+    session_body[1] = track_temperature_c & 0xFF
+    session_body[2] = air_temperature_c & 0xFF
+    if packet_format == 2026 and len(session_body) == 724:
+        session_body.extend(bytes(897 - len(session_body)))
+    return make_datagram(
+        packet_format=packet_format,
+        packet_id=1,
+        packet_version=packet_version,
+        session_uid=session_uid,
+        frame=frame,
+        session_time=session_time_s,
+        player_car_index=player_car_index,
+        body=bytes(session_body),
+        sequence=sequence,
+    )
+
+
+def _publish_live_session_conditions(
+    observer: _AcquisitionObserver,
+    *,
+    frame: int = 100,
+    sequence: int = 10,
+    session_uid: int = SESSION_UID,
+    packet_format: int = 2025,
+    player_car_index: int = 255,
+    **kwargs,
+) -> None:
+    _process(
+        observer,
+        _session_conditions_packet(
+            frame=frame,
+            sequence=sequence,
+            session_uid=session_uid,
+            packet_format=packet_format,
+            player_car_index=player_car_index,
+            **kwargs,
+        ),
+    )
+    _process(
+        observer,
+        _advance(
+            frame + 1,
+            sequence + 1,
+            session_uid=session_uid,
+            player_car_index=player_car_index,
+            packet_format=packet_format,
+        ),
     )
 
 
@@ -1523,7 +1590,15 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                         byte_values=tuple(damage_bytes),
                     ).payload,
                     _car_setup_packet(frame=100, sequence=14).payload,
-                    _advance(103, 15).payload,
+                    _session_conditions_packet(
+                        frame=100,
+                        sequence=15,
+                        player_car_index=0,
+                        weather_id=2,
+                        track_temperature_c=35,
+                        air_temperature_c=21,
+                    ).payload,
+                    _advance(103, 16).payload,
                 ]
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
                     for payload in payloads:
@@ -1576,6 +1651,15 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                 assert setup["fuel_load"] == 30.5
                 assert setup["next_front_wing_value"] == 45.5
                 assert "_observed_monotonic_ns" not in setup
+                conditions = current["progress"]["live_session_conditions"]
+                assert conditions["status"] == "fresh"
+                assert conditions["frame_identifier"] == 100
+                assert conditions["observation_count"] == 1
+                assert conditions["weather_id"] == 2
+                assert conditions["weather_name"] == "overcast"
+                assert conditions["track_temperature_c"] == 35
+                assert conditions["air_temperature_c"] == 21
+                assert "_observed_monotonic_ns" not in conditions
 
                 await asyncio.sleep(0.55)
                 stale = (
@@ -1603,6 +1687,11 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
                 ).json()["data"]["progress"]["live_car_setup"]
                 assert stale_setup["status"] == "stale"
                 assert stale_setup["age_ms"] > 500
+                stale_conditions = (
+                    await client.get("/api/v1/recordings/current")
+                ).json()["data"]["progress"]["live_session_conditions"]
+                assert stale_conditions["status"] == "stale"
+                assert stale_conditions["age_ms"] > 500
 
                 stopped = await client.post(
                     f"/api/v1/recordings/{recording_id}/stop",
@@ -2212,4 +2301,198 @@ def test_live_setup_api_record_bounds_wire_values_and_zeroes():
             age_ms=0,
             observation_count=1,
             front_camber=float("nan"),
+        )
+
+
+@pytest.mark.parametrize("packet_format", (2025, 2026))
+def test_live_session_conditions_use_session_only_frames_and_keep_signed_unknown_values(
+    packet_format: int,
+):
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_session_conditions(
+        observer,
+        packet_format=packet_format,
+        weather_id=254,
+        track_temperature_c=0,
+        air_temperature_c=-12,
+    )
+
+    conditions = observer.live_session_conditions_snapshot()
+    assert conditions["status"] == "fresh"
+    assert conditions["session_uid"] == str(SESSION_UID)
+    assert conditions["packet_format"] == packet_format
+    assert conditions["frame_identifier"] == 100
+    assert conditions["weather_id"] == 254
+    assert conditions["weather_name"] is None
+    assert conditions["track_temperature_c"] == 0
+    assert conditions["air_temperature_c"] == -12
+    assert conditions["observation_count"] == 1
+    assert observer.live_telemetry_snapshot()["status"] == "waiting"
+    assert observer.live_lap_timing_snapshot()["status"] == "waiting"
+
+
+def test_live_session_conditions_require_frame_agreement_and_use_oldest_receive_time():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    base_ns = 5_000_000_000
+    first = _session_conditions_packet(
+        frame=100, sequence=10, session_time_s=12.5, weather_id=1
+    )
+    agreeing = _session_conditions_packet(
+        frame=100, sequence=11, session_time_s=12.6, weather_id=1
+    )
+    observer.process(replace(first, monotonic_ns=base_ns))
+    observer.process(replace(agreeing, monotonic_ns=base_ns + 200_000_000))
+    observer.process(replace(_advance(101, 12), monotonic_ns=base_ns + 300_000_000))
+
+    conditions = observer.live_session_conditions_snapshot(base_ns + 400_000_000)
+    assert conditions["status"] == "fresh"
+    assert conditions["_observed_monotonic_ns"] == base_ns
+    assert conditions["age_ms"] == 400
+    assert conditions["observation_count"] == 1
+    assert conditions["session_time_s"] == 12.5
+
+    # A late copy and unrelated later frame cannot refresh the sparse observation.
+    observer.process(replace(first, monotonic_ns=base_ns + 450_000_000))
+    observer.process(
+        replace(_advance(102, 13), monotonic_ns=base_ns + 500_000_000)
+    )
+    unchanged = observer.live_session_conditions_snapshot(base_ns + 501_000_000)
+    assert unchanged["observation_count"] == 1
+    assert unchanged["_observed_monotonic_ns"] == base_ns
+    assert unchanged["age_ms"] == 501
+    assert unchanged["status"] == "stale"
+
+
+def test_live_session_conditions_reject_conflict_malformed_unsupported_and_missing_provenance():
+    conflicting = _AcquisitionObserver(reorder_window_frames=1)
+    _process(conflicting, _session_conditions_packet(frame=100, sequence=10, weather_id=0))
+    _process(conflicting, _session_conditions_packet(frame=100, sequence=11, weather_id=3))
+    _process(conflicting, _advance(101, 12))
+    rejected = conflicting.live_session_conditions_snapshot()
+    assert rejected["status"] == "unavailable"
+    assert rejected["reason"] == "conflicting_session_context_packets"
+    assert rejected["observation_count"] == 0
+
+    malformed = _AcquisitionObserver(reorder_window_frames=1)
+    _process(
+        malformed,
+        make_datagram(
+            packet_id=1,
+            session_uid=SESSION_UID,
+            frame=100,
+            body=_session_packet().payload[29:-1],
+            sequence=10,
+        ),
+    )
+    _process(malformed, _advance(101, 11))
+    assert malformed.live_session_conditions_snapshot()["reason"] == (
+        "session_context_decode_failed"
+    )
+
+    unsupported = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_session_conditions(unsupported, packet_version=2)
+    unsupported_result = unsupported.live_session_conditions_snapshot()
+    assert unsupported_result["status"] == "unsupported"
+    assert unsupported_result["reason"] == "session_context_adapter_unsupported"
+    assert unsupported_result["observation_count"] == 0
+
+    no_provenance = _AcquisitionObserver(reorder_window_frames=1)
+    no_provenance._max_receive_time_entries = 0
+    _publish_live_session_conditions(no_provenance)
+    missing = no_provenance.live_session_conditions_snapshot()
+    assert missing["status"] == "unavailable"
+    assert missing["reason"] == "receive_provenance_unavailable"
+    assert missing["observation_count"] == 0
+
+
+def test_live_session_conditions_cache_eviction_cannot_create_a_fresh_observation():
+    observer = _AcquisitionObserver(reorder_window_frames=3)
+    observer._max_receive_time_entries = 1
+    _process(
+        observer,
+        _session_conditions_packet(frame=100, sequence=10, player_car_index=0),
+    )
+    for frame, sequence in ((101, 11), (102, 12), (103, 13)):
+        _process(
+            observer,
+            _car_status_packet(
+                frame=frame, sequence=sequence, player_car_index=0
+            ),
+        )
+    _process(observer, _advance(104, 14, player_car_index=0))
+
+    conditions = observer.live_session_conditions_snapshot()
+    assert conditions["status"] == "unavailable"
+    assert conditions["reason"] == "receive_provenance_unavailable"
+    assert conditions["observation_count"] == 0
+
+
+def test_live_session_conditions_survive_player_changes_and_reset_on_boundaries():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_session_conditions(observer, player_car_index=0)
+    observed = observer.live_session_conditions_snapshot()
+    _process(observer, _advance(102, 20, player_car_index=1))
+    changed_player = observer.live_session_conditions_snapshot()
+    assert changed_player["status"] == "fresh"
+    assert changed_player["observation_count"] == 1
+    assert changed_player["_observed_monotonic_ns"] == observed[
+        "_observed_monotonic_ns"
+    ]
+
+    _publish_live_session_conditions(observer, frame=103, sequence=21, player_car_index=1)
+    _process(
+        observer,
+        _flashback_packet(frame=105, sequence=30, session_time=14.0, target_time=12.0),
+    )
+    _process(observer, _advance(106, 31, player_car_index=1))
+    rewound = observer.live_session_conditions_snapshot()
+    assert rewound["status"] == "waiting"
+    assert rewound["observation_count"] == 0
+
+    next_session = SESSION_UID + 100
+    _publish_live_session_conditions(
+        observer, frame=1, sequence=40, session_uid=next_session, player_car_index=1
+    )
+    new_session = observer.live_session_conditions_snapshot()
+    assert new_session["session_uid"] == str(next_session)
+    assert new_session["observation_count"] == 1
+
+    _publish_live_session_conditions(
+        observer,
+        frame=200,
+        sequence=50,
+        session_uid=next_session,
+        packet_format=2026,
+        player_car_index=23,
+    )
+    new_format = observer.live_session_conditions_snapshot()
+    assert new_format["packet_format"] == 2026
+    assert new_format["frame_identifier"] == 200
+    assert new_format["observation_count"] == 1
+
+
+def test_live_session_conditions_wrap_frames_and_api_preserves_signed_values():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_session_conditions(observer, frame=0xFFFFFFFE, sequence=10)
+    _publish_live_session_conditions(observer, frame=0, sequence=20)
+    wrapped = observer.live_session_conditions_snapshot()
+    assert wrapped["frame_identifier"] == 0
+    assert wrapped["observation_count"] == 2
+
+    conditions = LiveSessionConditionsRecord(
+        status="fresh",
+        reason=None,
+        age_ms=0,
+        observation_count=1,
+        weather_id=254,
+        air_temperature_c=-12,
+        track_temperature_c=0,
+    )
+    assert conditions.weather_id == 254
+    assert conditions.air_temperature_c == -12
+    assert conditions.track_temperature_c == 0
+    with pytest.raises(ValidationError):
+        LiveSessionConditionsRecord(
+            status="fresh", reason=None, age_ms=0, observation_count=1,
+            air_temperature_c=-129,
         )

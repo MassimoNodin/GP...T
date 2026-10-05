@@ -8,10 +8,15 @@ import type {
   LiveCarSetupRecord,
   LiveCarStatusRecord,
   LiveLapTimingRecord,
+  LiveSessionConditionsRecord,
   LiveTelemetryRecord,
   RecordingJobRecord,
 } from "@/lib/api";
-import { readCarDamageMonitor, readCarSetupMonitor } from "@/lib/live";
+import {
+  readCarDamageMonitor,
+  readCarSetupMonitor,
+  readSessionConditionsMonitor,
+} from "@/lib/live";
 import { appScreenHref, isSelectionTransferBlocked } from "@/lib/navigation";
 
 const activeStatuses = new Set(["starting", "recording", "stopping"]);
@@ -220,6 +225,9 @@ export default function RecordingControls({
           ) : null}
           {progress.live_car_setup ? (
             <LiveCarSetupPanel telemetry={progress.live_car_setup} />
+          ) : null}
+          {progress.live_session_conditions ? (
+            <LiveSessionConditionsPanel telemetry={progress.live_session_conditions} />
           ) : null}
         </>
       )}
@@ -832,6 +840,107 @@ export function LiveCarSetupPanel({
       )}
     </section>
   );
+}
+
+export function LiveSessionConditionsPanel({
+  telemetry: inputTelemetry,
+  sourceKind = "recording",
+}: {
+  telemetry: LiveSessionConditionsRecord;
+  sourceKind?: "recording" | "replay";
+}) {
+  const telemetry = readSessionConditionsMonitor(inputTelemetry) ?? {
+    status: "unavailable" as const,
+    reason: "malformed_optional_fields",
+    age_ms: null,
+    validation_flags: [],
+  };
+  const statusCopy: Record<LiveSessionConditionsRecord["status"], string> = {
+    waiting: "Waiting for an admitted Session packet.",
+    fresh: "Recent game-reported session conditions; values update when a Session packet arrives.",
+    stale: `Last Session packet was ${formatAge(telemetry.age_ms)} ago; conditions may have changed since.`,
+    unsupported:
+      sourceKind === "replay"
+        ? "Replay continues. This Session packet version is unsupported."
+        : "Recording continues. This Session packet version is unsupported.",
+    unavailable: liveSessionConditionsUnavailableReason(telemetry.reason),
+  };
+  const observationCount =
+    Number.isInteger(telemetry.observation_count) &&
+    (telemetry.observation_count ?? -1) >= 0
+      ? telemetry.observation_count!.toLocaleString()
+      : "—";
+  const weather =
+    telemetry.weather_name ??
+    (telemetry.weather_id == null
+      ? "—"
+      : `Unknown weather (ID ${telemetry.weather_id})`);
+  const invalidFields = (telemetry.validation_flags ?? []).map((flag) =>
+    flag.replaceAll("_", " "),
+  );
+
+  return (
+    <section
+      className="live-telemetry live-session-conditions"
+      data-state={telemetry.status}
+      aria-label="Live reported session conditions"
+    >
+      <div className="live-telemetry-heading">
+        <div>
+          <div className="eyebrow">
+            {sourceKind === "replay" ? "REPLAYED SESSION CONDITIONS" : "LIVE SESSION CONDITIONS"}
+          </div>
+          <p>{statusCopy[telemetry.status]}</p>
+        </div>
+        <span className={`live-telemetry-state state-${telemetry.status}`}>
+          {telemetry.status.toUpperCase()}
+        </span>
+      </div>
+      {telemetry.status !== "waiting" && (
+        <>
+          <div className="live-car-damage-meta">
+            <span>{observationCount} admitted observations</span>
+            <span>Session {safeText(telemetry.session_uid)}</span>
+            <span>Format {safeInteger(telemetry.packet_format)}</span>
+            <span>Frame {safeInteger(telemetry.frame_identifier)}</span>
+            <span>Source time {finiteNumber(telemetry.session_time_s)?.toFixed(2) ?? "—"} s</span>
+          </div>
+          <div className="live-telemetry-grid">
+            <LiveMetric label="REPORTED WEATHER" value={weather.replaceAll("_", " ")} />
+            <LiveMetric label="AIR TEMPERATURE" value={setupTemperature(telemetry.air_temperature_c)} />
+            <LiveMetric label="TRACK TEMPERATURE" value={setupTemperature(telemetry.track_temperature_c)} />
+          </div>
+          <p className="live-car-status-note">
+            These are session-wide values reported by the game. Age describes time since the last admitted Session observation.
+          </p>
+          {invalidFields.length ? (
+            <p className="live-car-status-invalid" role="status">
+              Unavailable fields: {invalidFields.join(", ")}.
+            </p>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
+}
+
+function liveSessionConditionsUnavailableReason(reason: string | null) {
+  const reasons: Record<string, string> = {
+    session_context_adapter_unsupported: "The game continues. This Session packet version is unsupported.",
+    session_context_decode_failed: "Session conditions are hidden because this packet could not be decoded safely.",
+    conflicting_session_context_packets: "Session conditions are hidden because this frame contains conflicting Session packets.",
+    receive_provenance_unavailable: "Session conditions are hidden because receive-time evidence is incomplete.",
+  };
+  const message = reason && Object.hasOwn(reasons, reason) ? reasons[reason] : null;
+  return typeof message === "string"
+    ? message
+    : "Session conditions are currently unavailable.";
+}
+
+function setupTemperature(value: unknown) {
+  return typeof value === "number" && Number.isInteger(value) && value >= -128 && value <= 127
+    ? `${value} °C`
+    : "—";
 }
 
 function percentArrayValue(

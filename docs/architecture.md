@@ -1063,6 +1063,24 @@ Do not add setup editing, history, change trends, performance inference, optimal
 
 **Rationale:** the existing decoder and D0059 stored-evidence contract already preserve source-reported setup values, but live inspection omits them. A separate sparse observation group makes this evidence visible without joining it to Lap Data or presenting settings as continuous condition, analysis, or advice.
 
+## Decision 0070: expose independently aged live session conditions
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Add one optional `live_session_conditions` group to recording, replay and pinned `/live`. Reuse the supported F1 25 and 2026 Session context decoder. Expose source-reported weather ID/name and signed air/track temperatures in Celsius, plus session UID, wire format, overall frame, source session time, independent age and bounded observation count. Unknown weather IDs preserve the source ID and remain unnamed.
+
+Build the group from admitted Session frames. It is session-wide and does not require Lap Data or a valid selected player. Apply active session, wire-format, frame-admission and rewind quarantine. Same-frame decoded canonical Session contexts must agree; malformed or unsupported candidates, conflicting contexts or missing receive/delivery provenance make only this group unavailable. For agreeing candidates use the oldest supporting timestamp. Duplicates, late packets and unrelated packet families never refresh it. Player-slot changes alone do not invalidate session conditions.
+
+Use the existing 500 ms recency threshold and label values as recent or stale session-packet observations, not continuous weather. Count admitted, decoded, nonconflicting observations with receive/delivery provenance within the current session/format epoch. Session/format/rewind boundaries reset the group; terminal operations hide it. Keep one fixed-size snapshot and the existing bounded receive-time cache. Older API responses or malformed optional fields leave other monitors usable. Preserve existing canonical context history and `latest_context` behavior.
+
+Do not add forecasts, rain probability, grip inference, strategy, session countdowns, charts, storage/import changes or coaching.
+
+**Acceptance:** synthetic F1 25/2026 Session-only frames work without player or Lap Data, including unknown weather IDs and signed, zero temperatures; agreeing/conflicting same-frame contexts, malformed/unsupported packets, missing provenance, duplicates/late packets, wrap and cache eviction are covered; freshness ages independently during paused replay; session/format/rewind/terminal boundaries clear values while player changes retain them; older API responses and malformed optional web data do not affect other monitors; and Melbourne plus recovered Shanghai projections match admitted raw Session records, including Shanghai context transitions, with existing capture qualifications retained.
+
+**Rationale:** canonical Session context already decodes weather and signed air/track temperatures, but the live view presents context without packet-age evidence. A dedicated session-wide observation group establishes provenance and recency without inheriting player identity or Lap Data requirements.
+
 ## Data flow
 
 ```text

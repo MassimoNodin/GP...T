@@ -6,6 +6,7 @@ import type {
   LiveCarSetupRecord,
   LiveCarStatusRecord,
   LiveLapTimingRecord,
+  LiveSessionConditionsRecord,
   LiveTelemetryRecord,
 } from "@/lib/api";
 import {
@@ -16,6 +17,7 @@ import {
 import {
   LiveCarDamagePanel,
   LiveCarSetupPanel,
+  LiveSessionConditionsPanel,
   LiveCarStatusPanel,
   LiveLapTimingPanel,
   LiveTelemetryPanel,
@@ -27,7 +29,8 @@ type MonitorRecord =
   | LiveCarStatusRecord
   | LiveLapTimingRecord
   | LiveCarDamageRecord
-  | LiveCarSetupRecord;
+  | LiveCarSetupRecord
+  | LiveSessionConditionsRecord;
 
 const activeRecordingStates = new Set(["starting", "recording", "stopping"]);
 const activeReplayStates = new Set([
@@ -260,6 +263,18 @@ export default function LiveTelemetryView({
                   />
                 ) : null}
               </MonitorGroup>
+              <MonitorGroup
+                title="Session-wide conditions"
+                telemetry={snapshot.live_session_conditions}
+                sourceKind={snapshot.source}
+              >
+                {snapshot.live_session_conditions ? (
+                  <LiveSessionConditionsPanel
+                    telemetry={snapshot.live_session_conditions}
+                    sourceKind={snapshot.source}
+                  />
+                ) : null}
+              </MonitorGroup>
             </div>
           )}
         </>
@@ -286,7 +301,9 @@ function MonitorGroup({
         {telemetry ? (
           <div>
             <span>SESSION {telemetry.session_uid ?? "—"}</span>
-            <span>PLAYER {telemetry.player_car_index ?? "—"}</span>
+            {"player_car_index" in telemetry ? (
+              <span>PLAYER {telemetry.player_car_index ?? "—"}</span>
+            ) : null}
             <span>FORMAT {telemetry.packet_format ?? "—"}</span>
             <span>FRAME {telemetry.frame_identifier ?? "—"}</span>
             <span>AGE {formatAge(telemetry.age_ms, sourceKind)}</span>
