@@ -1113,6 +1113,20 @@ Render speed in km/h and throttle/brake in percent as separate observed dots wit
 
 **Rationale:** source telemetry is already bounded and freshness-checked, but the live screen has no trend view. A small browser-only sample window avoids another acquisition history while an opaque continuity epoch prevents the display from silently crossing resets it may not observe directly.
 
+## Decision 0073: measure managed storage usage as a bounded read-only observation
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Add `GET /api/v1/storage/usage` and a Settings panel with an initial read and explicit Refresh. The API uses only the server-configured database path and recordings root; clients cannot select filesystem paths. Return measurement start/completion times and these independent scopes: the database plus existing SQLite `-wal`, `-shm`, and `-journal` sidecars; top-level finalized `.f1ecap` files; top-level recorder staging files matching `.f1e-recording-<32 lowercase hex>.part`; and regular files in `<database filename>.traces`, including player traces, observation chunks, and regular temporary files. Also return total and free filesystem bytes for the configured database and recordings locations when supported.
+
+Scope values are logical file sizes and regular-file counts, with bounded excluded-entry counts and explicit per-scope availability/reason. Missing sidecars contribute zero; a missing trace namespace is a valid zero; an unreadable or missing required database/recordings location is unavailable. Do not report a scanned prefix as complete: cap the recordings-root scan at 10,000 inspected entries and trace traversal at 100,000 inspected entries and four nested directory levels. If a cap is exceeded, a file disappears, access fails, or the inspected path is outside its configured root, mark the affected scope unavailable. Do not follow symlinks, Windows junctions, or other reparse points.
+
+Inspect filesystem metadata only. Do not open the database, captures, Parquet files, or file contents; do not checksum, parse, list the recording catalog, mutate catalog records, or change reservations, cleanup, retention, or operations. Refresh is safe during capture, import, and replay. Measurements are not atomic and may change while being collected. Report no combined app total because configured scopes can overlap; clearly state that figures must not be added. Logical size is not physical allocation, reclaimable space, imported-record count, or integrity evidence. Volume free space is filesystem capacity rather than an app quota. A malformed response or request failure replaces prior values with unavailable UI and leaves local voice preferences independent.
+
+**Rationale:** Settings has an explicit managed-storage usage requirement. A metadata-only API with hard traversal bounds makes the configured local footprint visible without coupling inspection to recording/import controllers or implying cleanup safety. Keeping scopes independent avoids false totals when data locations overlap.
+
 ## Data flow
 
 ```text

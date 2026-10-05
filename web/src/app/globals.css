@@ -765,6 +765,89 @@ h1 span {
 .settings-planned-section .settings-copy {
   margin-top: 9px;
 }
+.settings-storage-intro {
+  margin-top: 9px;
+  max-width: 760px;
+}
+.settings-storage-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 13px;
+}
+.settings-storage-actions > span {
+  color: #75827e;
+  font: 8px var(--font-mono);
+}
+.settings-storage-actions button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.settings-storage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 14px;
+}
+.settings-storage-card {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #222b2b;
+  background: #0c1011;
+}
+.settings-storage-card .eyebrow {
+  color: #788580;
+  font-size: 8px;
+  line-height: 1.5;
+}
+.settings-storage-card strong {
+  color: #e0e9e3;
+  font: 500 20px var(--font-display);
+}
+.settings-storage-card > span:not(.eyebrow) {
+  color: #9aa8a1;
+  font-size: 9px;
+}
+.settings-storage-card small {
+  color: #697772;
+  font-size: 8px;
+}
+.settings-storage-card .settings-storage-card-unavailable {
+  color: #d4a688;
+}
+.settings-storage-volumes {
+  display: grid;
+  gap: 9px;
+  margin-top: 17px;
+  padding-top: 13px;
+  border-top: 1px solid #202829;
+}
+.settings-storage-volume {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #889690;
+  font-size: 9px;
+}
+.settings-storage-volume b {
+  color: #c2cdc6;
+  font: 8px var(--font-mono);
+  text-align: right;
+}
+.settings-storage-note {
+  margin-top: 13px;
+  color: #74817c;
+}
+.settings-storage-error {
+  margin: 13px 0 0;
+  color: #d4a688;
+  font-size: 10px;
+  line-height: 1.6;
+}
 .track-selection-panel,
 .track-attempt-summary,
 .track-model-panel {
@@ -4297,6 +4380,17 @@ h1 span {
   }
   .settings-voice-grid {
     grid-template-columns: 1fr;
+  }
+  .settings-storage-grid {
+    grid-template-columns: 1fr;
+  }
+  .settings-storage-volume {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .settings-storage-volume b {
+    text-align: left;
   }
   .settings-voice-actions {
     align-items: stretch;

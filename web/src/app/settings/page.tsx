@@ -2,6 +2,7 @@ import type { AppSearchParams } from "@/lib/navigation";
 import { preservedAppStateQuery } from "@/lib/navigation";
 import AppHeader from "../AppHeader";
 import SettingsVoicePreferences from "../SettingsVoicePreferences";
+import SettingsStorageUsage from "../SettingsStorageUsage";
 
 const sections = [
   { id: "general", label: "General" },
@@ -57,7 +58,7 @@ export default async function SettingsPage({
               <li><span className="settings-availability-dot" />Telemetry <b>Planned</b></li>
               <li><span className="settings-availability-dot" />Devices <b>Planned</b></li>
               <li><span className="settings-availability-dot" />HUD <b>Planned</b></li>
-              <li><span className="settings-availability-dot" />Storage <b>Planned</b></li>
+              <li><span className="settings-availability-dot is-ready" />Storage <b>Measured</b></li>
             </ul>
           </aside>
 
@@ -100,19 +101,13 @@ export default async function SettingsPage({
               </div>
               <p className="settings-copy">The app has no always-on-top or in-game overlay. A browser HUD surface is planned.</p>
             </section>
-            <section className="settings-section settings-planned-section panel" id="storage">
-              <div className="settings-section-heading">
-                <div><span className="eyebrow">STORAGE</span><h2>Managed data</h2></div>
-                <span className="settings-state">PLANNED</span>
-              </div>
-              <p className="settings-copy">Storage usage and retention controls are not available yet. Database and recording locations stay configured by the local service.</p>
-            </section>
+            <SettingsStorageUsage />
           </div>
         </div>
       </main>
       <footer className="footer-bar">
         <span>GP...T <b>·</b> LOCAL FIRST</span>
-        <span>Browser speech preferences · No service configuration</span>
+        <span>Browser speech preferences · Read-only storage measurement</span>
       </footer>
     </div>
   );

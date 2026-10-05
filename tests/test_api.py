@@ -1328,3 +1328,27 @@ def test_sessions_api_returns_503_without_creating_a_database(tmp_path) -> None:
     assert response.status_code == 503
     assert response.json()["reason"] == "configured_database_unavailable"
     assert not database_path.exists()
+
+
+def test_storage_usage_api_measures_only_configured_locations(tmp_path) -> None:
+    database = tmp_path / "managed" / "engineer.sqlite3"
+    recordings = tmp_path / "managed-recordings"
+    database.parent.mkdir()
+    database.write_bytes(b"database")
+    recordings.mkdir()
+    (recordings / "session.f1ecap").write_bytes(b"capture-data")
+    app = create_app(database, recordings_root=recordings)
+
+    response = _get(
+        app,
+        "/api/v1/storage/usage",
+        params={"database_path": str(tmp_path / "attacker.sqlite3"), "root": str(tmp_path)},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["api_version"] == "v1"
+    assert body["status"] == "ok"
+    assert body["data"]["scopes"]["database"]["logical_bytes"] == len(b"database")
+    assert body["data"]["scopes"]["finalized_captures"]["logical_bytes"] == len(b"capture-data")
+    assert str(tmp_path) not in response.text

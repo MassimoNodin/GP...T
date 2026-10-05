@@ -66,6 +66,7 @@ from ..storage.run_summaries import (
     list_processing_run_summaries,
     list_processing_run_lifecycle_events,
 )
+from ..storage.usage import measure_storage_usage
 from ..storage.database import DatabaseSchemaError
 from ..tracks.model import TrackModel
 from ..tracks.registry import (
@@ -139,6 +140,41 @@ class RecordingSourceRecord(BaseModel):
     latest_job_status: str | None
     latest_job_run_id: str | None
     available: bool
+
+
+class StorageScopeRecord(BaseModel):
+    status: Literal["available", "unavailable"]
+    logical_bytes: int | None
+    regular_file_count: int | None
+    excluded_entry_count: int | None
+    reason: str | None
+
+
+class StorageVolumeRecord(BaseModel):
+    status: Literal["available", "unavailable"]
+    total_bytes: int | None
+    free_bytes: int | None
+    reason: str | None
+
+
+class StorageScopesRecord(BaseModel):
+    database: StorageScopeRecord
+    finalized_captures: StorageScopeRecord
+    recorder_staging: StorageScopeRecord
+    imported_traces: StorageScopeRecord
+
+
+class StorageVolumesRecord(BaseModel):
+    database_location: StorageVolumeRecord
+    recordings_location: StorageVolumeRecord
+
+
+class StorageUsageRecord(BaseModel):
+    measurement_started_at_utc: str
+    measurement_completed_at_utc: str
+    measurement_note: str
+    scopes: StorageScopesRecord
+    volumes: StorageVolumesRecord
 
 
 class ImportProgressRecord(BaseModel):
@@ -1173,6 +1209,17 @@ def create_app(
     def recording_sources() -> APIResponse[list[RecordingSourceRecord]]:
         return APIResponse[list[RecordingSourceRecord]](
             data=list_recording_sources(
+                configured_database_path, configured_recordings_root
+            )
+        )
+
+    @app.get(
+        "/api/v1/storage/usage",
+        response_model=APIResponse[StorageUsageRecord],
+    )
+    def storage_usage() -> APIResponse[StorageUsageRecord]:
+        return APIResponse[StorageUsageRecord](
+            data=measure_storage_usage(
                 configured_database_path, configured_recordings_root
             )
         )

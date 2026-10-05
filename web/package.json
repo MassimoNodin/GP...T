@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start --hostname 127.0.0.1",
     "test:live-chart": "node --test scripts/live-chart.test.mjs",
+    "test:storage-usage": "node --test scripts/storage-usage.test.mjs",
     "test:speech": "node scripts/recorded-speech-check.mjs",
     "test:comparison-window": "node scripts/comparison-window-brief-check.mjs",
     "test:comparison-report-match": "node scripts/comparison-report-match-check.mjs",
