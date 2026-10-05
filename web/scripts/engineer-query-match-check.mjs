@@ -161,12 +161,16 @@ const model = {
   track_length_m: 5278,
   content_sha256: "d".repeat(64),
   model_content_sha256: "f".repeat(64),
+  bundle_content_sha256: "d".repeat(64),
+  source_kind: "review_bundle",
   origin: "reviewed",
 };
 
 function pairedReport() {
   return {
     schema_version: 1,
+    analysis_version: "paired-distance-region-observations-v1",
+    region_analysis_version: "distance-regions-v2",
     artifact_kind: "paired_distance_region_observations",
     status: "available",
     comparison_policy: "time_trial",
@@ -208,6 +212,11 @@ for (const change of [
   (report) => { report.attempts.target.trace_sha256 = "e".repeat(64); },
   (report) => { report.attempts.reference.attempt_key = targetKey; },
   (report) => { report.model.revision += 1; },
+  (report) => { report.model.content_sha256 = "e".repeat(64); },
+  (report) => { report.model.model_content_sha256 = "e".repeat(64); },
+  (report) => { report.model.bundle_content_sha256 = "e".repeat(64); },
+  (report) => { report.model.source_kind = "package_artifact"; },
+  (report) => { report.analysis_version = "unexpected-version"; },
   (report) => { report.track.track_id += 1; },
   (report) => { report.regions[0].identifier = ""; },
   (report) => { report.regions[0].coaching_eligible = true; },

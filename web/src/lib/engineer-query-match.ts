@@ -144,6 +144,8 @@ export function pairedRegionReportMatchesSelection(
   const regions = report?.regions;
   return Boolean(
     report?.schema_version === 1 &&
+      report.analysis_version === "paired-distance-region-observations-v1" &&
+      report.region_analysis_version === "distance-regions-v2" &&
       report.artifact_kind === "paired_distance_region_observations" &&
       report.status === "available" &&
       report.comparison_policy === selection.comparisonPolicy &&
@@ -170,11 +172,7 @@ export function pairedRegionReportMatchesSelection(
       model.track_name === selection.model.track_name &&
       model.layout_id === selection.model.layout_id &&
       model.track_length_m === selection.model.track_length_m &&
-      (selection.model.content_sha256 == null ||
-        model.content_sha256 === selection.model.content_sha256) &&
-      (selection.model.model_content_sha256 == null ||
-        model.model_content_sha256 === selection.model.model_content_sha256) &&
-      (selection.model.origin == null || model.origin === selection.model.origin) &&
+      trackModelMetadataMatches(model, selection.model) &&
       report.track?.packet_format === selection.model.packet_format &&
       report.track.track_id === selection.model.track_id &&
       report.track.track_name === selection.model.track_name &&
@@ -182,6 +180,44 @@ export function pairedRegionReportMatchesSelection(
       Array.isArray(regions) &&
       regions.length <= 64 &&
       safeRegionRows(regions),
+  );
+}
+
+function trackModelMetadataMatches(
+  returned: TrackModelRecord,
+  selected: TrackModelRecord,
+) {
+  const origin = selected.origin;
+  const expectedSourceKind =
+    origin === "packaged"
+      ? "package_artifact"
+      : origin === "local_draft"
+        ? "diagnostic_draft"
+        : origin === "reviewed"
+          ? "review_bundle"
+          : null;
+  if (
+    !expectedSourceKind ||
+    selected.source_kind !== expectedSourceKind ||
+    !isSha256(selected.content_sha256) ||
+    !isSha256(selected.model_content_sha256) ||
+    returned.origin !== origin ||
+    returned.source_kind !== expectedSourceKind ||
+    returned.content_sha256 !== selected.content_sha256 ||
+    returned.model_content_sha256 !== selected.model_content_sha256
+  ) {
+    return false;
+  }
+  if (origin === "reviewed") {
+    return (
+      isSha256(selected.bundle_content_sha256) &&
+      returned.bundle_content_sha256 === selected.bundle_content_sha256 &&
+      returned.bundle_content_sha256 === returned.content_sha256
+    );
+  }
+  return (
+    selected.bundle_content_sha256 == null &&
+    returned.bundle_content_sha256 == null
   );
 }
 
