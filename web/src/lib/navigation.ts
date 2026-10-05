@@ -27,6 +27,8 @@ const retainedKeys = [
   "run_offset",
   "session_offset",
   "attempt_offset",
+  "lap_order_session_uid",
+  "assess_lap_order",
   "lifecycle_event_offset",
   "observation_session_uid",
   "observation_car_index",

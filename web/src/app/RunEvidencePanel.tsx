@@ -9,12 +9,14 @@ import type {
   ProcessingRunSession,
   ProcessingRunSummary,
 } from "@/lib/api";
+import type { LapOrderAssessmentState } from "@/lib/session-best-assessment";
 import {
   appScreenHref,
   appScreenPath,
   isSelectionTransferBlocked,
   type AppScreen,
 } from "@/lib/navigation";
+import SessionBestOverviewPanel from "./SessionBestOverviewPanel";
 
 type ObservationRequestFailure = {
   kind: "request_failed" | "unavailable";
@@ -47,6 +49,7 @@ export default function RunEvidencePanel({
   runUnavailable,
   screen,
   preservedQuery,
+  lapOrderAssessment,
 }: {
   runsPage: ProcessingRunPage<ProcessingRunSummary> | null;
   detail: ProcessingRunDetail | null;
@@ -67,6 +70,7 @@ export default function RunEvidencePanel({
   runUnavailable: boolean;
   screen: AppScreen;
   preservedQuery: string;
+  lapOrderAssessment: LapOrderAssessmentState;
 }) {
   return (
     <section className="run-evidence panel" aria-labelledby="run-evidence-title">
@@ -169,6 +173,7 @@ export default function RunEvidencePanel({
           lifecycleEventOffset={lifecycleEventOffset}
           screen={screen}
           preservedQuery={preservedQuery}
+          lapOrderAssessment={lapOrderAssessment}
         />
       ) : null}
     </section>
@@ -193,6 +198,7 @@ function RunDetail({
   lifecycleEventOffset,
   screen,
   preservedQuery,
+  lapOrderAssessment,
 }: {
   detail: ProcessingRunDetail;
   observationInventory: CarObservationInventory | null;
@@ -211,6 +217,7 @@ function RunDetail({
   lifecycleEventOffset: number;
   screen: AppScreen;
   preservedQuery: string;
+  lapOrderAssessment: LapOrderAssessmentState;
 }) {
   const { summary, sessions, attempts, lifecycle_events: lifecycleEvents } = detail;
   const { capture, processing, totals } = summary;
@@ -219,6 +226,8 @@ function RunDetail({
   const imported = processing.import_counters;
   const replay = processing.replay_counters;
   const lifecycle = processing.lifecycle_evidence;
+  const canAssessLapOrder =
+    screen === "sessions" && !isSelectionTransferBlocked(preservedQuery);
 
   return (
     <div className="run-detail">
@@ -235,9 +244,12 @@ function RunDetail({
           className="run-evidence-link"
           href={screenHref(screen, preservedQuery, {}, [
             "run_id",
+            "target_attempt_key",
             "session_offset",
             "attempt_offset",
             "lifecycle_event_offset",
+            "lap_order_session_uid",
+            "assess_lap_order",
             "observation_session_uid",
             "observation_car_index",
             "observation_offset",
@@ -374,6 +386,15 @@ function RunDetail({
         ) : null}
       </div>
 
+      {screen === "sessions" &&
+      (lapOrderAssessment.requested || lapOrderAssessment.anchorAttempt) ? (
+        <SessionBestOverviewPanel
+          report={lapOrderAssessment.report}
+          anchorSelected={Boolean(lapOrderAssessment.anchorAttempt)}
+          unavailableReason={lapOrderAssessment.unavailableReason}
+        />
+      ) : null}
+
       <div className="run-evidence-pages">
         <section className="run-page-group" aria-labelledby="run-sessions-title">
           <div className="run-page-heading">
@@ -456,6 +477,20 @@ function RunDetail({
                 <AttemptRow
                   key={attempt.attempt_key}
                   attempt={attempt}
+                  assessLapOrderHref={
+                    canAssessLapOrder
+                      ? screenHref("sessions", preservedQuery, {
+                          run_id: summary.run_id,
+                          target_attempt_key: attempt.attempt_key,
+                          lap_order_session_uid: attempt.session_uid,
+                          assess_lap_order: "1",
+                          run_offset: String(runOffset),
+                          session_offset: String(sessionOffset),
+                          attempt_offset: String(attempts.offset),
+                          lifecycle_event_offset: String(lifecycleEventOffset),
+                        })
+                      : null
+                  }
                   summaryHref={screenHref("engineer", preservedQuery, {
                     session_key: attempt.session_key,
                     target_attempt_key: attempt.attempt_key,
@@ -882,11 +917,13 @@ function SessionRow({
 
 function AttemptRow({
   attempt,
+  assessLapOrderHref,
   href,
   summaryHref,
   trackHref,
 }: {
   attempt: ProcessingRunAttempt;
+  assessLapOrderHref: string | null;
   href: string | null;
   summaryHref: string | null;
   trackHref: string | null;
@@ -919,6 +956,9 @@ function AttemptRow({
         </small>
       </div>
       <div className="run-link-actions">
+        {assessLapOrderHref ? (
+          <a href={assessLapOrderHref}>Assess lap order ↗</a>
+        ) : null}
         {summaryHref ? <a href={summaryHref}>Summarize attempt ↗</a> : null}
         {trackHref ? <a href={trackHref}>Inspect track ↗</a> : null}
         <a href={href ?? undefined}>Open attempt ↗</a>

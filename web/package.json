@@ -10,6 +10,7 @@
     "test:comparison-window": "node scripts/comparison-window-brief-check.mjs",
     "test:comparison-report-match": "node scripts/comparison-report-match-check.mjs",
     "test:comparison-context-validation": "node scripts/comparison-context-validation-check.mjs",
+    "test:session-best-assessment": "node scripts/session-best-assessment-check.mjs",
     "test:draft-track-model": "node scripts/draft-track-model-check.mjs",
     "test:engineer-query-match": "node scripts/engineer-query-match-check.mjs"
   },
