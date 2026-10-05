@@ -717,7 +717,7 @@ export default async function Home({
           <span className="brand-name">
             GP<span className="brand-dots">...</span>T
           </span>
-          <span className="brand-descriptor">RACE ENGINEER</span>
+          <span className="brand-descriptor">PERSONAL AI RACE ENGINEER</span>
         </a>
         <div className="topbar-right">
           <span className="local-indicator">
@@ -730,15 +730,16 @@ export default async function Home({
       <div className="page-content">
         <section className="intro-row">
           <div>
-            <div className="eyebrow">DRIVER ANALYSIS / SESSION REVIEW</div>
+            <div className="eyebrow">PERSONAL AI RACE ENGINEER / SESSION REVIEW</div>
             <h1>
               Know the lap.
               <br />
               <span>Find the time.</span>
             </h1>
             <p className="intro-copy">
-              Compare recorded laps by distance. Every gap stays visible, and
-              every conclusion carries its source and quality with it.
+              GP...T is a personal nod to the GP race-engineer call on Max
+              Verstappen’s radio, with T completing the GPT wordplay. Today it
+              compares recorded laps and shows the evidence behind each finding.
             </p>
           </div>
           <div className="lap-stamp">

@@ -2,7 +2,7 @@
 
 A local-first race engineer for F1 25 and its 2026 Season Pack. The system is being built in layers: raw telemetry capture, deterministic analysis, coaching decisions, and finally natural-language and voice features.
 
-The name pairs the race-engineer call sign “GP” with a final “T” as a wink to GPT. The app has its own voice and visual identity: precise, evidence-led, and local-first.
+**The name:** GP...T is a personal nod to the GP race-engineer call on Max Verstappen's radio, with the added T completing the GPT wordplay. The app has its own voice and visual identity: precise, evidence-led, and local-first.
 
 ## Current slice
 
