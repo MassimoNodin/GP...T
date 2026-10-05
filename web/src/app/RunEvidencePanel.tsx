@@ -9,6 +9,12 @@ import type {
   ProcessingRunSession,
   ProcessingRunSummary,
 } from "@/lib/api";
+import {
+  appScreenHref,
+  appScreenPath,
+  isSelectionTransferBlocked,
+  type AppScreen,
+} from "@/lib/navigation";
 
 type ObservationRequestFailure = {
   kind: "request_failed" | "unavailable";
@@ -38,6 +44,9 @@ export default function RunEvidencePanel({
   sessionOffset,
   attemptOffset,
   lifecycleEventOffset,
+  runUnavailable,
+  screen,
+  preservedQuery,
 }: {
   runsPage: ProcessingRunPage<ProcessingRunSummary> | null;
   detail: ProcessingRunDetail | null;
@@ -55,6 +64,9 @@ export default function RunEvidencePanel({
   sessionOffset: number;
   attemptOffset: number;
   lifecycleEventOffset: number;
+  runUnavailable: boolean;
+  screen: AppScreen;
+  preservedQuery: string;
 }) {
   return (
     <section className="run-evidence panel" aria-labelledby="run-evidence-title">
@@ -96,7 +108,7 @@ export default function RunEvidencePanel({
                   </span>
                   <a
                     className="run-evidence-link"
-                    href={runUrl(run.run_id, runsPage.offset, 0, 0)}
+                    href={runUrl(screen, preservedQuery, run.run_id, runsPage.offset, 0, 0) ?? undefined}
                   >
                     Inspect evidence ↗
                   </a>
@@ -111,20 +123,28 @@ export default function RunEvidencePanel({
             total={runsPage.total}
             hrefForOffset={(offset) =>
               runId
-                ? runUrl(runId, offset, sessionOffset, attemptOffset, lifecycleEventOffset, {
+                ? runUrl(screen, preservedQuery, runId, offset, sessionOffset, attemptOffset, lifecycleEventOffset, {
                     sessionUid: observationSessionUid,
                     carIndexParam: observationCarIndexParam,
                     offsetParam: observationOffsetParam,
                   })
-                : `/?run_offset=${offset}`
+                : runUrl(screen, preservedQuery, null, offset, 0, 0)
             }
           />
         </>
       )}
 
+      {runUnavailable ? (
+        <p className="run-evidence-error" role="status">
+          The requested processing-run identity is malformed. No run was
+          selected; choose an available run from the archive.
+        </p>
+      ) : null}
+
       {runId && !detail ? (
         <p className="run-evidence-empty">
-          The selected processing run is unavailable in this local archive.
+          The selected processing run is unavailable in this local archive. No
+          replacement run was selected.
         </p>
       ) : detail ? (
         <RunDetail
@@ -147,6 +167,8 @@ export default function RunEvidencePanel({
           sessionOffset={sessionOffset}
           attemptOffset={attemptOffset}
           lifecycleEventOffset={lifecycleEventOffset}
+          screen={screen}
+          preservedQuery={preservedQuery}
         />
       ) : null}
     </section>
@@ -169,6 +191,8 @@ function RunDetail({
   sessionOffset,
   attemptOffset,
   lifecycleEventOffset,
+  screen,
+  preservedQuery,
 }: {
   detail: ProcessingRunDetail;
   observationInventory: CarObservationInventory | null;
@@ -185,6 +209,8 @@ function RunDetail({
   sessionOffset: number;
   attemptOffset: number;
   lifecycleEventOffset: number;
+  screen: AppScreen;
+  preservedQuery: string;
 }) {
   const { summary, sessions, attempts, lifecycle_events: lifecycleEvents } = detail;
   const { capture, processing, totals } = summary;
@@ -205,7 +231,20 @@ function RunDetail({
             capture size: {formatBytes(capture.byte_size)} · SHA-256 {capture.sha256}
           </p>
         </div>
-        <a className="run-evidence-link" href="/">Close details</a>
+        <a
+          className="run-evidence-link"
+          href={screenHref(screen, preservedQuery, {}, [
+            "run_id",
+            "session_offset",
+            "attempt_offset",
+            "lifecycle_event_offset",
+            "observation_session_uid",
+            "observation_car_index",
+            "observation_offset",
+          ]) ?? undefined}
+        >
+          Close details
+        </a>
       </div>
 
       {processing.error ? (
@@ -303,6 +342,8 @@ function RunDetail({
         sessionOffset={sessionOffset}
         attemptOffset={attemptOffset}
         lifecycleEventOffset={lifecycleEventOffset}
+        screen={screen}
+        preservedQuery={preservedQuery}
       />
 
       <p className="run-evidence-note">
@@ -346,9 +387,46 @@ function RunDetail({
             <p className="run-evidence-empty">No session rows were stored for this run.</p>
           ) : (
             <ul className="run-link-list">
-              {sessions.items.map((session) => (
-                <SessionRow key={session.session_key} session={session} />
-              ))}
+              {sessions.items.map((session) => {
+                const currentSessionKey = new URLSearchParams(
+                  isSelectionTransferBlocked(preservedQuery) ? "" : preservedQuery,
+                ).get("session_key");
+                const changingSession = currentSessionKey !== session.session_key;
+                return (
+                  <SessionRow
+                    key={session.session_key}
+                    session={session}
+                    href={screenHref(
+                      "dashboard",
+                      preservedQuery,
+                      { session_key: session.session_key },
+                      [
+                        "run_id",
+                        "session_offset",
+                        "attempt_offset",
+                        "lifecycle_event_offset",
+                        "observation_session_uid",
+                        "observation_car_index",
+                        "observation_offset",
+                        ...(changingSession
+                          ? [
+                              "target_attempt_key",
+                              "reference_choice",
+                              "comparison_policy",
+                              "window_start_m",
+                              "window_end_m",
+                              "observation_attempt_key",
+                              "track_model_key",
+                              "position_probe_m",
+                              "engineer_intent",
+                              "engineer_region_identifier",
+                            ]
+                          : []),
+                      ],
+                    )}
+                  />
+                );
+              })}
             </ul>
           )}
           <PageNavigation
@@ -357,7 +435,7 @@ function RunDetail({
             limit={sessions.limit}
             total={sessions.total}
             hrefForOffset={(offset) =>
-              runUrl(summary.run_id, runOffset, offset, attemptOffset, lifecycleEventOffset, observationUrlState)
+              runUrl(screen, preservedQuery, summary.run_id, runOffset, offset, attemptOffset, lifecycleEventOffset, observationUrlState)
             }
           />
         </section>
@@ -375,7 +453,32 @@ function RunDetail({
           ) : (
             <ul className="run-link-list">
               {attempts.items.map((attempt) => (
-                <AttemptRow key={attempt.attempt_key} attempt={attempt} />
+                <AttemptRow
+                  key={attempt.attempt_key}
+                  attempt={attempt}
+                  href={screenHref(
+                    "dashboard",
+                    preservedQuery,
+                    {
+                      session_key: attempt.session_key,
+                      target_attempt_key: attempt.attempt_key,
+                    },
+                    [
+                      "run_id",
+                      "reference_choice",
+                      "window_start_m",
+                      "window_end_m",
+                      "session_offset",
+                      "attempt_offset",
+                      "lifecycle_event_offset",
+                      "observation_session_uid",
+                      "observation_car_index",
+                      "observation_offset",
+                      "engineer_intent",
+                      "engineer_region_identifier",
+                    ],
+                  )}
+                />
               ))}
             </ul>
           )}
@@ -385,7 +488,7 @@ function RunDetail({
             limit={attempts.limit}
             total={attempts.total}
             hrefForOffset={(offset) =>
-              runUrl(summary.run_id, runOffset, sessionOffset, offset, lifecycleEventOffset, observationUrlState)
+              runUrl(screen, preservedQuery, summary.run_id, runOffset, sessionOffset, offset, lifecycleEventOffset, observationUrlState)
             }
           />
         </section>
@@ -413,7 +516,7 @@ function RunDetail({
             limit={lifecycleEvents.limit}
             total={lifecycleEvents.total}
             hrefForOffset={(offset) =>
-              runUrl(summary.run_id, runOffset, sessionOffset, attemptOffset, offset, observationUrlState)
+              runUrl(screen, preservedQuery, summary.run_id, runOffset, sessionOffset, attemptOffset, offset, observationUrlState)
             }
           />
         </section>
@@ -438,6 +541,8 @@ function CarObservationArchive({
   sessionOffset,
   attemptOffset,
   lifecycleEventOffset,
+  screen,
+  preservedQuery,
 }: {
   inventory: CarObservationInventory | null;
   preview: CarObservationPreview | null;
@@ -454,7 +559,24 @@ function CarObservationArchive({
   sessionOffset: number;
   attemptOffset: number;
   lifecycleEventOffset: number;
+  screen: AppScreen;
+  preservedQuery: string;
 }) {
+  const formHref = runUrl(
+    screen,
+    preservedQuery,
+    runId,
+    runOffset,
+    sessionOffset,
+    attemptOffset,
+    lifecycleEventOffset,
+  );
+  const formHiddenEntries = queryEntriesFromHref(formHref, [
+    "observation_session_uid",
+    "observation_car_index",
+    "observation_offset",
+  ]);
+
   return (
     <section className="run-page-group" aria-labelledby="car-observations-title">
       <div className="run-page-heading">
@@ -466,50 +588,56 @@ function CarObservationArchive({
         </div>
       </div>
       {sessions.length > 0 ? (
-        <form className="run-observation-controls" action="/" method="get">
-          <input type="hidden" name="run_id" value={runId} />
-          <input type="hidden" name="run_offset" value={runOffset} />
-          <input type="hidden" name="session_offset" value={sessionOffset} />
-          <input type="hidden" name="attempt_offset" value={attemptOffset} />
-          <input type="hidden" name="lifecycle_event_offset" value={lifecycleEventOffset} />
-          <label htmlFor="observation-session">Session</label>
-          <select
-            id="observation-session"
-            name="observation_session_uid"
-            defaultValue={selectedSessionUid ?? inventory?.session_uid ?? sessions[0].session_uid}
-          >
-            {selectedSessionUid && !sessions.some((session) => session.session_uid === selectedSessionUid) ? (
-              <option value={selectedSessionUid}>Requested session {selectedSessionUid} · outside this page</option>
-            ) : null}
-            {sessions.map((session) => (
-              <option key={session.session_key} value={session.session_uid}>
-                {session.session_uid} · {contextLabel(session.latest_context_snapshot, "Context")}
-              </option>
+        formHref ? (
+          <form className="run-observation-controls" action={appScreenPath(screen)} method="get">
+            {formHiddenEntries.map(([key, value], index) => (
+              <input key={`${key}:${index}`} type="hidden" name={key} value={value} />
             ))}
-          </select>
-          <label htmlFor="observation-car-index">Car slot</label>
-          <select
-            id="observation-car-index"
-            name="observation_car_index"
-            defaultValue={selectedCarIndexParam ?? ""}
-          >
-            <option value="">Choose a slot</option>
-            {selectedCarIndexParam !== null &&
-            !inventory?.slots.items.some(
-              (slot) => String(slot.car_index) === selectedCarIndexParam,
-            ) ? (
-              <option value={selectedCarIndexParam}>
-                Requested slot {selectedCarIndexParam} · unavailable
-              </option>
-            ) : null}
-            {inventory?.slots.items.map((slot) => (
-              <option key={slot.car_index} value={slot.car_index}>
-                Slot {slot.car_index} · {slot.observation_count.toLocaleString()} observations · {slot.nonzero_speed_count.toLocaleString()} nonzero-speed samples
-              </option>
-            ))}
-          </select>
-          <button className="run-observation-submit" type="submit">Load selection</button>
-        </form>
+            <label htmlFor="observation-session">Session</label>
+            <select
+              id="observation-session"
+              name="observation_session_uid"
+              defaultValue={selectedSessionUid ?? ""}
+            >
+              <option value="">Choose a session</option>
+              {selectedSessionUid && !sessions.some((session) => session.session_uid === selectedSessionUid) ? (
+                <option value={selectedSessionUid}>Requested session {selectedSessionUid} · outside this page</option>
+              ) : null}
+              {sessions.map((session) => (
+                <option key={session.session_key} value={session.session_uid}>
+                  {session.session_uid} · {contextLabel(session.latest_context_snapshot, "Context")}
+                </option>
+              ))}
+            </select>
+            <label htmlFor="observation-car-index">Car slot</label>
+            <select
+              id="observation-car-index"
+              name="observation_car_index"
+              defaultValue={selectedCarIndexParam ?? ""}
+            >
+              <option value="">Choose a slot</option>
+              {selectedCarIndexParam !== null &&
+              !inventory?.slots.items.some(
+                (slot) => String(slot.car_index) === selectedCarIndexParam,
+              ) ? (
+                <option value={selectedCarIndexParam}>
+                  Requested slot {selectedCarIndexParam} · unavailable
+                </option>
+              ) : null}
+              {inventory?.slots.items.map((slot) => (
+                <option key={slot.car_index} value={slot.car_index}>
+                  Slot {slot.car_index} · {slot.observation_count.toLocaleString()} observations · {slot.nonzero_speed_count.toLocaleString()} nonzero-speed samples
+                </option>
+              ))}
+            </select>
+            <button className="run-observation-submit" type="submit">Load selection</button>
+          </form>
+        ) : (
+          <p className="run-evidence-error" role="status">
+            The current selections are too large to carry safely into the observation browser.
+            Shorten the selection before loading another page.
+          </p>
+        )
       ) : null}
       {!inventory ? (
         <p className="run-evidence-empty">
@@ -517,7 +645,9 @@ function CarObservationArchive({
             ? `Session ${selectedSessionUid} is not present on this run detail page, so its observation inventory was not loaded.`
             : inventoryFailure
               ? observationRequestFailureText("inventory", inventoryFailure)
-              : "Car observation inventory is unavailable for the selected session."}
+              : selectedSessionUid
+                ? "Car observation inventory is unavailable for the selected session."
+                : "Choose a session above to load its car observation inventory."}
         </p>
       ) : (
         <>
@@ -586,7 +716,7 @@ function CarObservationArchive({
           {inventory.archive_status === "available" && selectedCarIndex !== null && selectedCarIndexParam !== null && inventory.slots.items.some((slot) => slot.car_index === selectedCarIndex) && offset === null ? (
             <p className="run-evidence-error" role="status">
               Observation offset “{offsetParam}” is invalid or exceeds the 100,000-row request bound. The selected session and slot are preserved.
-              <a href={observationPageUrl(runId, runOffset, sessionOffset, attemptOffset, lifecycleEventOffset, inventory.session_uid, selectedCarIndex, 0)}>Open the first page</a>.
+              <a href={observationPageUrl(screen, preservedQuery, runId, runOffset, sessionOffset, attemptOffset, lifecycleEventOffset, inventory.session_uid, selectedCarIndex, 0)}>Open the first page</a>.
             </p>
           ) : null}
           {inventory.archive_status === "available" && selectedCarIndex !== null && previewFailure ? (
@@ -613,6 +743,8 @@ function CarObservationArchive({
                 <div>
                   {preview.observations.offset > 0 ? (
                     <a href={observationPageUrl(
+                      screen,
+                      preservedQuery,
                       runId,
                       runOffset,
                       sessionOffset,
@@ -626,6 +758,8 @@ function CarObservationArchive({
                   {preview.observations.offset + preview.observations.limit <= 100_000 &&
                   preview.observations.offset + preview.observations.returned < preview.observations.total ? (
                     <a href={observationPageUrl(
+                      screen,
+                      preservedQuery,
                       runId,
                       runOffset,
                       sessionOffset,
@@ -698,7 +832,13 @@ function CarObservationArchive({
   );
 }
 
-function SessionRow({ session }: { session: ProcessingRunSession }) {
+function SessionRow({
+  session,
+  href,
+}: {
+  session: ProcessingRunSession;
+  href: string | null;
+}) {
   return (
     <li className="run-link-item">
       <div>
@@ -710,12 +850,18 @@ function SessionRow({ session }: { session: ProcessingRunSession }) {
           {session.context_update_count.toLocaleString()} context updates · {session.context_invalidation_count.toLocaleString()} invalidations · {session.attempt_count.toLocaleString()} attempts
         </small>
       </div>
-      <a href={`/?session_key=${encodeURIComponent(session.session_key)}`}>Open session ↗</a>
+      <a href={href ?? undefined}>Open session ↗</a>
     </li>
   );
 }
 
-function AttemptRow({ attempt }: { attempt: ProcessingRunAttempt }) {
+function AttemptRow({
+  attempt,
+  href,
+}: {
+  attempt: ProcessingRunAttempt;
+  href: string | null;
+}) {
   const timing = attempt.timing_evidence;
   const lifecycleStatus = !attempt.lifecycle_assessed || attempt.superseded === null
     ? "lifecycle unassessed"
@@ -743,9 +889,7 @@ function AttemptRow({ attempt }: { attempt: ProcessingRunAttempt }) {
               : ""}
         </small>
       </div>
-      <a
-        href={`/?session_key=${encodeURIComponent(attempt.session_key)}&target_attempt_key=${encodeURIComponent(attempt.attempt_key)}`}
-      >
+      <a href={href ?? undefined}>
         Open attempt ↗
       </a>
     </li>
@@ -808,50 +952,54 @@ function PageNavigation({
   offset: number;
   limit: number;
   total: number;
-  hrefForOffset: (offset: number) => string;
+  hrefForOffset: (offset: number) => string | null;
 }) {
   if (total <= limit) return null;
   const start = offset + 1;
   const end = Math.min(offset + limit, total);
+  const previousHref = hrefForOffset(Math.max(0, offset - limit));
+  const nextHref = hrefForOffset(offset + limit);
   return (
     <nav className="run-page-navigation" aria-label={`${label} pages`}>
       <span>{start}–{end} of {total.toLocaleString()}</span>
       <div>
-        {offset > 0 ? <a href={hrefForOffset(Math.max(0, offset - limit))}>Previous</a> : null}
-        {offset + limit < total ? <a href={hrefForOffset(offset + limit)}>Next</a> : null}
+        {offset > 0 && previousHref ? <a href={previousHref}>Previous</a> : null}
+        {offset + limit < total && nextHref ? <a href={nextHref}>Next</a> : null}
       </div>
     </nav>
   );
 }
 
 function runUrl(
-  runId: string,
+  screen: AppScreen,
+  preservedQuery: string,
+  runId: string | null,
   runOffset: number,
   sessionOffset: number,
   attemptOffset: number,
   lifecycleEventOffset = 0,
   observationState?: ObservationUrlState,
 ) {
-  const params = new URLSearchParams({
-    run_id: runId,
-    run_offset: String(runOffset),
-    session_offset: String(sessionOffset),
-    attempt_offset: String(attemptOffset),
-    lifecycle_event_offset: String(lifecycleEventOffset),
-  });
-  if (observationState?.sessionUid !== null && observationState?.sessionUid !== undefined) {
-    params.set("observation_session_uid", observationState.sessionUid);
-  }
-  if (observationState?.carIndexParam !== null && observationState?.carIndexParam !== undefined) {
-    params.set("observation_car_index", observationState.carIndexParam);
-  }
-  if (observationState?.offsetParam !== null && observationState?.offsetParam !== undefined) {
-    params.set("observation_offset", observationState.offsetParam);
-  }
-  return `/?${params.toString()}`;
+  return screenHref(
+    screen,
+    preservedQuery,
+    {
+      ...(runId ? { run_id: runId } : {}),
+      run_offset: String(runOffset),
+      session_offset: String(sessionOffset),
+      attempt_offset: String(attemptOffset),
+      lifecycle_event_offset: String(lifecycleEventOffset),
+      observation_session_uid: observationState?.sessionUid ?? "",
+      observation_car_index: observationState?.carIndexParam ?? "",
+      observation_offset: observationState?.offsetParam ?? (observationState ? "0" : ""),
+    },
+    runId ? [] : ["run_id"],
+  );
 }
 
 function observationPageUrl(
+  screen: AppScreen,
+  preservedQuery: string,
   runId: string,
   runOffset: number,
   sessionOffset: number,
@@ -861,17 +1009,45 @@ function observationPageUrl(
   carIndex: number,
   observationOffset: number,
 ) {
-  const params = new URLSearchParams({
-    run_id: runId,
-    run_offset: String(runOffset),
-    session_offset: String(sessionOffset),
-    attempt_offset: String(attemptOffset),
-    lifecycle_event_offset: String(lifecycleEventOffset),
-    observation_session_uid: sessionUid,
-    observation_car_index: String(carIndex),
-    observation_offset: String(observationOffset),
-  });
-  return `/?${params.toString()}`;
+  return runUrl(
+    screen,
+    preservedQuery,
+    runId,
+    runOffset,
+    sessionOffset,
+    attemptOffset,
+    lifecycleEventOffset,
+    {
+      sessionUid,
+      carIndexParam: String(carIndex),
+      offsetParam: String(observationOffset),
+    },
+  ) ?? undefined;
+}
+
+function screenHref(
+  screen: AppScreen,
+  preservedQuery: string,
+  overrides: Record<string, string>,
+  removeKeys: string[] = [],
+) {
+  const state = new URLSearchParams(
+    isSelectionTransferBlocked(preservedQuery) ? "" : preservedQuery,
+  );
+  for (const key of removeKeys) state.delete(key);
+  return appScreenHref(screen, state.toString(), overrides);
+}
+
+function queryEntriesFromHref(
+  href: string | null,
+  excluded: string[],
+) {
+  if (!href) return [];
+  const excludedKeys = new Set(excluded);
+  const query = href.includes("?") ? href.slice(href.indexOf("?") + 1) : "";
+  return Array.from(new URLSearchParams(query).entries()).filter(
+    ([key]) => !excludedKeys.has(key),
+  );
 }
 
 function previousObservationOffset(offset: number, total: number, limit: number) {

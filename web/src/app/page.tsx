@@ -12,16 +12,12 @@ import {
   AttemptQualityReport,
   AttemptTraceChartReport,
   CarDamageObservationSummary,
-  CarObservationInventory,
-  CarObservationPreview,
   LapRecord,
   ObservationSetReport,
   ObservedConditionAnchor,
   ObservedConditionSummary,
   ObservedTrajectoryComparisonPreview,
   PairedRegionReport,
-  ProcessingRunDetail,
-  ProcessingRunPage,
   ProcessingRunSummary,
   RegionEvent,
   ReferenceSelection,
@@ -39,7 +35,7 @@ import SessionBestOverviewPanel from "./SessionBestOverviewPanel";
 import DiagnosticEvidencePanels from "./DiagnosticEvidencePanels";
 import AttemptTraceCharts from "./AttemptTraceCharts";
 import DraftTrackModelPanel from "./DraftTrackModelPanel";
-import RunEvidencePanel from "./RunEvidencePanel";
+import SessionsRunEvidence from "./SessionsRunEvidence";
 import TrajectoryComparisonPanel from "./TrajectoryComparisonPanel";
 import LinkedComparisonCharts from "./LinkedComparisonCharts";
 import DrivingPatternAssessmentPanel from "./DrivingPatternAssessmentPanel";
@@ -50,6 +46,7 @@ import EngineerQueryPanel from "./EngineerQueryPanel";
 import RecordedEvidenceSpeech from "./RecordedEvidenceSpeech";
 import { buildRecordedSpeechPlan } from "@/lib/recorded-speech-plan";
 import {
+  appScreenHref,
   isSelectionTransferBlocked,
   preservedAppStateQuery,
   type AppSearchParams,
@@ -73,6 +70,16 @@ export default async function Home({
   const preservedQuery = preservedAppStateQuery(rawParams);
   const selectionTransferBlocked =
     isSelectionTransferBlocked(preservedQuery);
+  const legacyRunEvidenceRequested = [
+    "run_id",
+    "run_offset",
+    "session_offset",
+    "attempt_offset",
+    "lifecycle_event_offset",
+    "observation_session_uid",
+    "observation_car_index",
+    "observation_offset",
+  ].some((key) => rawParams[key] !== undefined);
   const params = {
     session_key: firstParam(rawParams.session_key),
     target_attempt_key: firstParam(rawParams.target_attempt_key),
@@ -84,122 +91,20 @@ export default async function Home({
     track_model_key: firstParam(rawParams.track_model_key),
     position_probe_m: firstParam(rawParams.position_probe_m),
     run_id: firstParam(rawParams.run_id),
-    run_offset: firstParam(rawParams.run_offset),
-    session_offset: firstParam(rawParams.session_offset),
-    attempt_offset: firstParam(rawParams.attempt_offset),
-    lifecycle_event_offset: firstParam(rawParams.lifecycle_event_offset),
-    observation_session_uid: firstParam(rawParams.observation_session_uid),
-    observation_car_index: firstParam(rawParams.observation_car_index),
-    observation_offset: firstParam(rawParams.observation_offset),
     engineer_intent: firstParam(rawParams.engineer_intent),
     engineer_region_identifier: firstParam(rawParams.engineer_region_identifier),
   };
-  const runOffset = pageOffset(params.run_offset);
-  const sessionOffset = pageOffset(params.session_offset);
-  const attemptOffset = pageOffset(params.attempt_offset);
-  const lifecycleEventOffset = pageOffset(params.lifecycle_event_offset);
   const selectedRunId = !selectionTransferBlocked && /^[a-f0-9]{64}$/.test(params.run_id ?? "")
     ? params.run_id!
     : null;
-  const runDetailQuery = new URLSearchParams({
-    session_limit: "20",
-    session_offset: String(sessionOffset),
-    attempt_limit: "20",
-    attempt_offset: String(attemptOffset),
-    lifecycle_event_limit: "50",
-    lifecycle_event_offset: String(lifecycleEventOffset),
-  });
-  const [
-    sessionResponse,
-    trackModelsResponse,
-    processingRunsResponse,
-    processingRunDetailResponse,
-  ] = await Promise.all([
+  const [sessionResponse, trackModelsResponse] = await Promise.all([
     selectionTransferBlocked
       ? Promise.resolve(null)
       : requestApi<SessionRecord[]>("/api/v1/sessions"),
     selectionTransferBlocked
       ? Promise.resolve(null)
       : requestApi<TrackModelRecord[]>("/api/v1/track-models"),
-    requestApi<ProcessingRunPage<ProcessingRunSummary>>(
-      `/api/v1/processing-runs?limit=10&offset=${runOffset}`,
-    ),
-    selectedRunId
-      ? requestApi<ProcessingRunDetail>(
-          `/api/v1/processing-runs/${encodeURIComponent(selectedRunId)}?${runDetailQuery}`,
-        )
-      : Promise.resolve(null),
   ]);
-  const selectedRunDetail =
-    processingRunDetailResponse?.status === "ok"
-      ? processingRunDetailResponse.data
-      : null;
-  const observationSession = params.observation_session_uid !== undefined
-    ? selectedRunDetail?.sessions.items.find(
-        (item) => item.session_uid === params.observation_session_uid,
-      ) ?? null
-    : selectedRunDetail?.sessions.items[0] ?? null;
-  const observationSessionUid =
-    params.observation_session_uid ?? observationSession?.session_uid ?? null;
-  const observationInventoryPromise = selectedRunId && observationSession
-    ? requestApi<CarObservationInventory>(
-        `/api/v1/processing-runs/${encodeURIComponent(selectedRunId)}/sessions/${encodeURIComponent(observationSession.session_uid)}/cars?limit=24&offset=0`,
-      )
-    : Promise.resolve(null);
-  const observationInventoryResponse = await observationInventoryPromise;
-  const observationInventory =
-    observationInventoryResponse?.status === "ok"
-      ? observationInventoryResponse.data
-      : null;
-  const observationCarIndexParam = params.observation_car_index?.trim()
-    ? params.observation_car_index
-    : null;
-  const requestedObservationCarIndex = parseObservationCarIndex(
-    observationCarIndexParam,
-  );
-  const observationOffsetParam = params.observation_offset;
-  const observationOffset = parseObservationOffset(observationOffsetParam);
-  const selectedObservationSlot = requestedObservationCarIndex === null
-    ? null
-    : observationInventory?.slots.items.find(
-        (slot) => slot.car_index === requestedObservationCarIndex,
-      ) ?? null;
-  const observationInventoryFailure = selectedRunId && observationSession
-    ? observationInventoryResponse === null
-      ? { kind: "request_failed" as const, reason: null }
-      : observationInventoryResponse.status !== "ok" || !observationInventoryResponse.data
-        ? {
-            kind: "unavailable" as const,
-            reason: observationInventoryResponse.reason,
-          }
-        : null
-    : null;
-  const shouldLoadObservationPreview = Boolean(
-    selectedRunId &&
-    observationSession &&
-    selectedObservationSlot &&
-    observationInventory?.archive_status === "available" &&
-    observationOffset !== null,
-  );
-  const observationPreviewResponse = shouldLoadObservationPreview && selectedRunId && observationSession && selectedObservationSlot
-    ? await requestApi<CarObservationPreview>(
-        `/api/v1/processing-runs/${encodeURIComponent(selectedRunId)}/sessions/${encodeURIComponent(observationSession.session_uid)}/cars/${selectedObservationSlot.car_index}/observations?limit=50&offset=${observationOffset}`,
-      )
-    : null;
-  const observationPreview =
-    observationPreviewResponse?.status === "ok"
-      ? observationPreviewResponse.data
-      : null;
-  const observationPreviewFailure = shouldLoadObservationPreview
-    ? observationPreviewResponse === null
-      ? { kind: "request_failed" as const, reason: null }
-      : observationPreviewResponse.status !== "ok" || !observationPreviewResponse.data
-        ? {
-            kind: "unavailable" as const,
-            reason: observationPreviewResponse.reason,
-          }
-        : null
-    : null;
   const trackModels = trackModelsResponse?.data ?? [];
   const selectedModel =
     trackModels.find((item) => modelKey(item) === params.track_model_key) ??
@@ -728,24 +633,12 @@ export default async function Home({
           </div>
         </section>
 
-        <RunEvidencePanel
-          runsPage={processingRunsResponse?.status === "ok" ? processingRunsResponse.data : null}
-          detail={processingRunDetailResponse?.status === "ok" ? processingRunDetailResponse.data : null}
-          observationInventory={observationInventory}
-          observationPreview={observationPreview}
-          observationSessionUid={observationSessionUid}
-          observationCarIndexParam={observationCarIndexParam}
-          observationCarIndex={requestedObservationCarIndex}
-          observationOffset={observationOffset}
-          observationOffsetParam={observationOffsetParam ?? null}
-          observationInventoryFailure={observationInventoryFailure}
-          observationPreviewFailure={observationPreviewFailure}
-          runId={selectedRunId}
-          runOffset={runOffset}
-          sessionOffset={sessionOffset}
-          attemptOffset={attemptOffset}
-          lifecycleEventOffset={lifecycleEventOffset}
-        />
+        {legacyRunEvidenceRequested && !selectionTransferBlocked ? (
+          <SessionsRunEvidence
+            searchParams={Promise.resolve(rawParams)}
+            screen="dashboard"
+          />
+        ) : null}
 
         {selectionTransferBlocked ? (
           <section className="connection-state panel" role="status">
@@ -882,7 +775,10 @@ export default async function Home({
                         </a>
                         <a
                           className="recording-evidence-link"
-                          href={`/?run_id=${encodeURIComponent(item.run_id)}&session_key=${encodeURIComponent(item.session_key)}`}
+                          href={appScreenHref("sessions", preservedQuery, {
+                            run_id: item.run_id,
+                            session_key: item.session_key,
+                          }) ?? undefined}
                           aria-label={`Open run evidence for ${item.context?.track_name ?? "unknown circuit"}`}
                         >
                           Evidence
@@ -1491,13 +1387,8 @@ export default async function Home({
                       target={comparison.processing_run_evidence?.target ?? null}
                       reference={comparison.processing_run_evidence?.reference ?? null}
                       hrefForRun={(runId) =>
-                        urlFor({
+                        appScreenHref("sessions", preservedQuery, {
                           run_id: runId,
-                          session_key: session?.session_key ?? "",
-                          target_attempt_key: target?.attempt_key ?? "",
-                          reference_choice: referenceChoice,
-                          window_start_m: params.window_start_m ?? "",
-                          window_end_m: params.window_end_m ?? "",
                         })
                       }
                     />
@@ -1845,10 +1736,10 @@ export default async function Home({
                     navigation={{
                       sessionKey: session?.session_key ?? null,
                       runId: selectedRunId,
-                      runOffset: params.run_offset ?? null,
-                      sessionOffset: params.session_offset ?? null,
-                      attemptOffset: params.attempt_offset ?? null,
-                      lifecycleEventOffset: params.lifecycle_event_offset ?? null,
+                      runOffset: firstParam(rawParams.run_offset) ?? null,
+                      sessionOffset: firstParam(rawParams.session_offset) ?? null,
+                      attemptOffset: firstParam(rawParams.attempt_offset) ?? null,
+                      lifecycleEventOffset: firstParam(rawParams.lifecycle_event_offset) ?? null,
                       observationAttemptKeys: params.observation_attempt_keys,
                       positionProbeM: params.position_probe_m ?? null,
                     }}
@@ -1900,7 +1791,7 @@ function ComparisonRunEvidence({
 }: {
   target: ProcessingRunSummary | null;
   reference: ProcessingRunSummary | null;
-  hrefForRun: (runId: string) => string;
+  hrefForRun: (runId: string) => string | null;
 }) {
   const entries =
     target && reference && target.run_id === reference.run_id
@@ -1937,7 +1828,7 @@ function ComparisonRunEvidence({
           <div className="quality-title">
             <span className="eyebrow">{sourceLabel} · CAPTURE EVIDENCE</span>
             <strong>Run {summary.run_id.slice(0, 8)}</strong>
-            <a className="capture-evidence-link" href={hrefForRun(summary.run_id)}>
+            <a className="capture-evidence-link" href={hrefForRun(summary.run_id) ?? undefined}>
               Open run summary ↗
             </a>
           </div>
@@ -3251,21 +3142,6 @@ const firstParam = (value: string | string[] | undefined) =>
   Array.isArray(value) ? value[0] : value;
 const allParams = (value: string | string[] | undefined) =>
   Array.isArray(value) ? value : value === undefined ? [] : [value];
-const pageOffset = (value: string | undefined) => {
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed >= 0 ? Math.min(parsed, 1_000_000) : 0;
-};
-const parseObservationCarIndex = (value: string | null) => {
-  if (value === null || !/^(?:0|[1-9]\d*)$/.test(value)) return null;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed <= 23 ? parsed : null;
-};
-const parseObservationOffset = (value: string | undefined) => {
-  if (value === undefined) return 0;
-  if (!/^(?:0|[1-9]\d*)$/.test(value)) return null;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed <= 100_000 ? parsed : null;
-};
 const modelKey = (model: TrackModelRecord) =>
   `${model.model_id}@${model.revision}`;
 function distanceWindow(start?: string, end?: string): [number, number] | null {

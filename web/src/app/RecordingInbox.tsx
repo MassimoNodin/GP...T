@@ -7,7 +7,11 @@ import type {
 import ImportJobStatus from "./ImportJobStatus";
 import ReplayControls from "./ReplayControls";
 import RecordingControls from "./RecordingControls";
-import { appScreenHref, type AppScreen } from "@/lib/navigation";
+import {
+  appScreenHref,
+  isSelectionTransferBlocked,
+  type ImportReturnScreen,
+} from "@/lib/navigation";
 
 const importErrorText: Record<string, string> = {
   busy: "Another recording is importing. Wait for it to finish, then try again.",
@@ -31,7 +35,7 @@ export default function RecordingInbox({
   recordingResponse: ApiResponse<RecordingJobRecord> | null;
   jobResponse: ApiResponse<ImportJobRecord> | null;
   importError?: string;
-  returnTo?: AppScreen;
+  returnTo?: ImportReturnScreen;
   preservedQuery?: string;
 }) {
   const sources = sourcesResponse?.data ?? [];
@@ -113,9 +117,13 @@ export default function RecordingInbox({
                   <a
                     className="import-button secondary-import-button"
                     href={
-                      appScreenHref("dashboard", "", {
-                        run_id: source.latest_job_run_id,
-                      }) ?? undefined
+                      appScreenHref(
+                        "sessions",
+                        isSelectionTransferBlocked(preservedQuery)
+                          ? ""
+                          : preservedQuery,
+                        { run_id: source.latest_job_run_id },
+                      ) ?? undefined
                     }
                   >
                     Run evidence ↗

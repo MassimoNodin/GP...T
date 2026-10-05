@@ -11,12 +11,18 @@ export default function AppHeader({
   active: AppScreen;
   preservedQuery: string;
 }) {
-  const dashboardHref = appScreenHref("dashboard", preservedQuery);
-  const recordingsHref = appScreenHref("recordings", preservedQuery);
+  const links = [
+    { screen: "dashboard" as const, label: "Dashboard" },
+    { screen: "recordings" as const, label: "Recordings" },
+    { screen: "sessions" as const, label: "Sessions" },
+  ].map((item) => ({
+    ...item,
+    href: appScreenHref(item.screen, preservedQuery),
+  }));
+  const dashboardHref = links.find((item) => item.screen === "dashboard")?.href;
   const transferBlocked =
     isSelectionTransferBlocked(preservedQuery) ||
-    dashboardHref === null ||
-    recordingsHref === null;
+    links.some((item) => item.href === null);
   const brand = (
     <>
       <svg className="brand-mark" viewBox="0 0 64 64" aria-hidden="true">
@@ -60,37 +66,29 @@ export default function AppHeader({
         >
           {transferBlocked ? (
             <>
-              <span
-                className={`app-nav-disabled ${active === "dashboard" ? "is-current" : ""}`}
-                aria-disabled="true"
-              >
-                Dashboard
-              </span>
-              <span
-                className={`app-nav-disabled ${active === "recordings" ? "is-current" : ""}`}
-                aria-disabled="true"
-              >
-                Recordings
-              </span>
+              {links.map((item) => (
+                <span
+                  className={`app-nav-disabled ${active === item.screen ? "is-current" : ""}`}
+                  aria-disabled="true"
+                  key={item.screen}
+                >
+                  {item.label}
+                </span>
+              ))}
               <span className="app-nav-status" role="status">
                 Selection too large to carry safely; navigation is paused.
               </span>
             </>
           ) : (
-            <>
+            links.map((item) => (
               <a
-                href={dashboardHref!}
-                aria-current={active === "dashboard" ? "page" : undefined}
+                href={item.href!}
+                aria-current={active === item.screen ? "page" : undefined}
+                key={item.screen}
               >
-                Dashboard
+                {item.label}
               </a>
-              <a
-                href={recordingsHref!}
-                aria-current={active === "recordings" ? "page" : undefined}
-              >
-                Recordings
-              </a>
-            </>
+            ))
           )}
         </nav>
         <div className="topbar-right">

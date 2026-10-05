@@ -238,20 +238,24 @@ h1 span {
   font-size: 14px;
   line-height: 1.8;
 }
-.recordings-page-intro {
+.recordings-page-intro,
+.sessions-page-intro {
   max-width: 780px;
   padding: 0 2px 32px;
 }
-.recordings-page-intro h1 {
+.recordings-page-intro h1,
+.sessions-page-intro h1 {
   margin: 18px 0 15px;
   font-size: clamp(38px, 5vw, 60px);
   line-height: 1;
   letter-spacing: -0.055em;
 }
-.recordings-page-intro h1 span {
+.recordings-page-intro h1 span,
+.sessions-page-intro h1 span {
   color: var(--mint);
 }
-.recordings-page-intro p {
+.recordings-page-intro p,
+.sessions-page-intro p {
   max-width: 610px;
   margin: 0;
   color: #a6b0ac;
@@ -3465,7 +3469,8 @@ h1 span {
   .intro-copy {
     font-size: 12px;
   }
-  .recordings-page-intro {
+  .recordings-page-intro,
+  .sessions-page-intro {
     padding-bottom: 24px;
   }
   .session-strip {

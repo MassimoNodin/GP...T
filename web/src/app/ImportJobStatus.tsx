@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ApiResponse, ImportJobRecord } from "@/lib/api";
-import type { AppScreen } from "@/lib/navigation";
+import type { ImportReturnScreen } from "@/lib/navigation";
 
 export default function ImportJobStatus({
   initialJob,
@@ -13,7 +13,7 @@ export default function ImportJobStatus({
 }: {
   initialJob: ImportJobRecord | null;
   retryAvailable: boolean | null;
-  returnTo?: AppScreen;
+  returnTo?: ImportReturnScreen;
   preservedQuery?: string;
 }) {
   const [job, setJob] = useState(initialJob);
