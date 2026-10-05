@@ -12,6 +12,7 @@ from .sessions.lap_tracker import (
 )
 from .sessions.lifecycle import LifecycleEvent
 from .sessions.session_history import SessionHistoryObservation
+from .sessions.participant_context import PlayerParticipantObservation
 from .sessions.context import SessionContext
 from .sessions.manager import ContextHistoryChange, SessionTracker
 from .analysis.continuity import float32_ulp, session_time_discontinuity
@@ -37,11 +38,14 @@ from .udp.models import (
 )
 from .udp.lap_data import LapDataDecoder
 from .udp.motion import CarMotionData, MotionDecoder
-from .udp.participants import ParticipantsDecoder, ParticipantsPacket
+from .udp.participants import ParticipantData, ParticipantsDecoder, ParticipantsPacket
 from .udp.session_history import (
     SESSION_HISTORY_BODY_SIZE,
     SessionHistoryDecoder,
 )
+
+
+MAX_PLAYER_PARTICIPANT_TRUNCATION_FENCE_SESSIONS = 256
 from .udp.session_context import SessionContextDecoder
 
 
@@ -63,6 +67,7 @@ class PipelineResult:
     lifecycle_events: tuple[LifecycleEvent, ...] = ()
     session_history: tuple[SessionHistoryObservation, ...] = ()
     session_history_decode_errors: tuple[str, ...] = ()
+    player_participant_observations: tuple[PlayerParticipantObservation, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +81,7 @@ class PipelineFlushResult:
     lifecycle_events: tuple[LifecycleEvent, ...] = ()
     session_history: tuple[SessionHistoryObservation, ...] = ()
     session_history_decode_errors: tuple[str, ...] = ()
+    player_participant_observations: tuple[PlayerParticipantObservation, ...] = ()
 
 
 class TelemetryPipeline:
@@ -123,6 +129,13 @@ class TelemetryPipeline:
         self.session_history_player_index_mismatches = 0
         self.session_history_decode_errors: list[str] = []
         self.session_history_packets_dropped = 0
+        self._player_participant_observations: list[
+            PlayerParticipantObservation
+        ] = []
+        self.max_buffered_player_participant_observations = 4096
+        self.player_participant_observations_dropped = 0
+        self.player_participant_observation_truncated_session_uids: set[int] = set()
+        self.player_participant_observation_truncation_marker_overflowed = False
         self.session_history_truncated_session_uids: set[int] = set()
         self.lap_data_packets_decoded = 0
         self.lap_data_decode_errors: list[str] = []
@@ -175,6 +188,13 @@ class TelemetryPipeline:
                 frame, frame_ordinal
             )
             attempts.extend(lifecycle_attempts)
+            self._process_player_participants(
+                frame,
+                frame_ordinal,
+                association_epoch=association_epoch,
+                association_scope_assessable=association_scope_assessable,
+                lifecycle_boundary=lifecycle_boundary,
+            )
             if not lifecycle_boundary:
                 self._process_session_history(
                     frame,
@@ -819,6 +839,214 @@ class TelemetryPipeline:
         self.session_history_decode_errors.clear()
         return errors
 
+    def drain_player_participant_observations(
+        self,
+    ) -> tuple[PlayerParticipantObservation, ...]:
+        observations = tuple(self._player_participant_observations)
+        self._player_participant_observations.clear()
+        return observations
+
+    def _process_player_participants(
+        self,
+        frame: PacketFrame,
+        frame_ordinal: int,
+        *,
+        association_epoch: int,
+        association_scope_assessable: bool,
+        lifecycle_boundary: bool,
+    ) -> None:
+        if frame.session_uid == 0:
+            return
+        packets = [
+            packet
+            for packet in frame.packets
+            if packet.packet_kind is PacketId.PARTICIPANTS
+        ]
+        if not packets:
+            return
+
+        formats = {int(packet.packet_format) for packet in frame.packets}
+        player_slots = {packet.header.player_car_index for packet in frame.packets}
+        packet_format = next(iter(formats)) if len(formats) == 1 else None
+        player_car_index = next(iter(player_slots)) if len(player_slots) == 1 else None
+        source = packets[0]
+
+        def observation_base(provenance_packet: DecodedPacket | None = None):
+            provenance = provenance_packet or source
+            return {
+                "session_uid": frame.session_uid,
+                "frame_ordinal": frame_ordinal,
+                "frame_identifier": provenance.header.frame_identifier,
+                "overall_frame_identifier": frame.overall_frame_identifier,
+                "packet_format": packet_format,
+                "association_epoch": association_epoch,
+                "association_scope_assessable": association_scope_assessable,
+                "player_car_index": player_car_index,
+                "session_time_s": provenance.header.session_time,
+            }
+
+        def record(
+            *,
+            status: str,
+            reason: str | None,
+            provenance_packet: DecodedPacket | None = None,
+            active_car_count: int | None = None,
+            participant: ParticipantData | None = None,
+            source_packet_count: int = 0,
+        ) -> None:
+            observation = PlayerParticipantObservation(
+                **observation_base(provenance_packet),
+                status=status,  # type: ignore[arg-type]
+                reason=reason,
+                active_car_count=active_car_count,
+                participant=participant,
+                source_packet_count=source_packet_count,
+            )
+            if len(self._player_participant_observations) < (
+                self.max_buffered_player_participant_observations
+            ):
+                self._player_participant_observations.append(observation)
+                return
+            self.player_participant_observations_dropped += 1
+            if frame.session_uid in self.player_participant_observation_truncated_session_uids:
+                return
+            if len(self.player_participant_observation_truncated_session_uids) >= (
+                MAX_PLAYER_PARTICIPANT_TRUNCATION_FENCE_SESSIONS
+            ):
+                self.player_participant_observation_truncation_marker_overflowed = True
+                return
+            self.player_participant_observation_truncated_session_uids.add(
+                frame.session_uid
+            )
+            self._player_participant_observations.append(
+                PlayerParticipantObservation(
+                    **observation_base(provenance_packet),
+                    status="truncated",
+                    reason="pipeline_observation_buffer_limit",
+                    active_car_count=None,
+                    participant=None,
+                    source_packet_count=0,
+                )
+            )
+
+        if packet_format is None or player_car_index is None:
+            record(status="unavailable", reason="frame_player_scope_conflict")
+            return
+
+        if lifecycle_boundary:
+            record(status="unavailable", reason="lifecycle_boundary")
+            return
+
+        decoded = []
+        errors = []
+        for packet in packets:
+            result = self.participants_decoder.decode(packet)
+            if result.error is not None:
+                errors.append(result.error)
+            elif result.participants is not None:
+                decoded.append((packet, result.participants))
+        if not decoded:
+            record(
+                status="unavailable",
+                reason="participant_packet_unavailable"
+                if errors
+                else "participant_packet_not_decoded",
+            )
+            return
+
+        selected: list[tuple[DecodedPacket, ParticipantData, int]] = []
+        inactive = False
+        out_of_range = False
+        for packet, participants in decoded:
+            if int(packet.packet_format) != packet_format:
+                continue
+            if packet.header.player_car_index != player_car_index:
+                continue
+            if player_car_index >= len(participants.cars):
+                out_of_range = True
+                continue
+            if player_car_index >= participants.active_car_count:
+                inactive = True
+                continue
+            selected.append(
+                (
+                    packet,
+                    participants.cars[player_car_index],
+                    participants.active_car_count,
+                )
+            )
+
+        if not selected:
+            reason = (
+                "player_slot_inactive"
+                if inactive
+                else "player_slot_out_of_range"
+                if out_of_range
+                else "participant_player_slot_mismatch"
+            )
+            record(status="unavailable", reason=reason)
+            return
+
+        if inactive or out_of_range:
+            record(
+                status="unavailable",
+                reason="conflicting_player_participant_evidence",
+            )
+            return
+
+        def signature(participant: ParticipantData) -> tuple[object, ...]:
+            return tuple(
+                getattr(participant, field)
+                for field in (
+                    "ai_controlled",
+                    "driver_id",
+                    "network_id",
+                    "team_id",
+                    "my_team",
+                    "race_number",
+                    "nationality_id",
+                    "name",
+                    "your_telemetry",
+                    "tech_level",
+                    "platform_id",
+                )
+            )
+
+        signatures = {signature(participant) for _, participant, _ in selected}
+        if len(signatures) != 1:
+            record(
+                status="unavailable",
+                reason="conflicting_player_participant_evidence",
+                provenance_packet=min(
+                    selected, key=lambda item: item[0].wire_fingerprint
+                )[0],
+                source_packet_count=len(selected),
+            )
+            return
+
+        ordered_selected = sorted(selected, key=lambda item: item[0].wire_fingerprint)
+        provenance_keys = {
+            (packet.header.frame_identifier, packet.header.session_time)
+            for packet, _, _ in ordered_selected
+        }
+        if len(provenance_keys) != 1:
+            record(
+                status="unavailable",
+                reason="conflicting_player_participant_provenance",
+                provenance_packet=ordered_selected[0][0],
+                source_packet_count=len(ordered_selected),
+            )
+            return
+
+        record(
+            status="observed",
+            reason=None,
+            provenance_packet=ordered_selected[0][0],
+            active_car_count=ordered_selected[0][2],
+            participant=ordered_selected[0][1],
+            source_packet_count=len(ordered_selected),
+        )
+
     def _record_lifecycle_event(
         self,
         packet: DecodedPacket,
@@ -1013,6 +1241,7 @@ class TelemetryPipeline:
             lifecycle_events=self.drain_lifecycle_events(),
             session_history=self.drain_session_history(),
             session_history_decode_errors=self.drain_session_history_decode_errors(),
+            player_participant_observations=self.drain_player_participant_observations(),
         )
 
     def finish(self) -> tuple[PacketFrame, ...]:
@@ -1034,6 +1263,7 @@ class TelemetryPipeline:
             lifecycle_events=self.drain_lifecycle_events(),
             session_history=self.drain_session_history(),
             session_history_decode_errors=self.drain_session_history_decode_errors(),
+            player_participant_observations=self.drain_player_participant_observations(),
         )
 
 

@@ -2104,6 +2104,82 @@ h1 span {
   margin: 7px 0 0;
   font-size: 17px;
 }
+.participant-context {
+  padding: 16px;
+}
+.participant-context-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+.participant-context-grid.single {
+  grid-template-columns: 1fr;
+}
+.participant-context-column {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #252e2f;
+  background: rgba(9, 12, 13, 0.45);
+}
+.participant-context-column-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.participant-context-column-heading span,
+.participant-context-column-heading strong {
+  color: #85918e;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.06em;
+}
+.participant-context-column-heading strong {
+  color: var(--gold);
+}
+.participant-context-name {
+  overflow-wrap: anywhere;
+  color: #e1e8e4;
+  font-size: 13px;
+}
+.participant-context-fields {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.7fr) minmax(0, 1fr);
+  gap: 6px 10px;
+}
+.participant-context-fields span,
+.participant-context-fields strong {
+  overflow-wrap: anywhere;
+  color: #84918d;
+  font: 8px/1.5 var(--font-mono);
+}
+.participant-context-fields strong {
+  color: #cbd4d0;
+}
+.participant-context-source,
+.participant-context-change,
+.participant-context-warning {
+  color: #85918e;
+  font: 8px/1.6 var(--font-mono);
+}
+.participant-context-unknown {
+  margin: 0;
+  color: #a8b2ae;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.participant-context-change {
+  color: var(--gold);
+}
+.participant-context-warning {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid #252d2e;
+}
 .quality-status-evidence {
   margin-top: 18px;
   padding-top: 14px;
@@ -3387,7 +3463,8 @@ h1 span {
     grid-column: span 2;
   }
   .quality-summary-grid,
-  .quality-evidence-grid {
+  .quality-evidence-grid,
+  .participant-context-grid {
     grid-template-columns: 1fr 1fr;
   }
   .attempt-quality {

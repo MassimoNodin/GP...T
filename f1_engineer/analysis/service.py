@@ -767,6 +767,11 @@ def _attempt_summary(attempt: StoredAttemptTrace) -> dict[str, object]:
         "reported_timing_evidence": _timing_evidence_summary(
             attempt.timing_evidence
         ),
+        "player_participant_context": (
+            dict(attempt.player_participant_context)
+            if attempt.player_participant_context is not None
+            else None
+        ),
     }
 
 

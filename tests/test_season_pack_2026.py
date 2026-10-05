@@ -773,9 +773,17 @@ def test_2026_import_persists_motion_and_wide_participant_snapshot(tmp_path) -> 
     assert imported.player_motion_samples == 2
     assert imported.missing_player_motion_samples == 0
     sessions = list_sessions(database_path)
-    assert sessions[0]["pipeline_version"] == "player-traces-v15-car-observations"
+    assert sessions[0]["pipeline_version"] == "player-traces-v16-player-participant-context"
     attempts = list_laps(database_path)
     complete = next(attempt for attempt in attempts if attempt["disposition"] == "completed")
+    participant_context = complete["player_participant_context"]
+    assert participant_context["status"] == "observed"
+    assert participant_context["continuity_claim"] is False
+    assert participant_context["at_start"]["source"]["age_frames"] > 0
+    assert participant_context["at_start"]["participant"]["driver_id"] == 513
+    assert participant_context["at_start"]["participant"]["network_id"] == 1025
+    assert participant_context["at_start"]["participant"]["team_id"] == 65535
+    assert participant_context["at_start"]["participant"]["name"] == "Écurie 🚗"
     stored = load_attempt_trace(
         database_path,
         complete["attempt_key"],
@@ -915,7 +923,7 @@ def test_2026_capture_import_query_and_reimport_are_stable(tmp_path) -> None:
     session = list_sessions(database_path)[0]
     assert session["packet_format"] == 2026
     assert session["context"]["track_name"] == "Madrid"
-    assert session["pipeline_version"] == "player-traces-v15-car-observations"
+    assert session["pipeline_version"] == "player-traces-v16-player-participant-context"
     attempts = list_laps(database_path)
     complete = next(
         attempt for attempt in attempts if attempt["disposition"] == "completed"

@@ -842,6 +842,22 @@ Include negative acceptance for game invalidity, incomplete capture, rewind/life
 
 **Rationale:** Positive unit tests currently construct stored attempts or comparison reports and cannot expose drift between capture parsing, import, persisted evidence, automatic reference selection, region ranking, and final reports. A compact reproducible raw capture closes that integration gap before any future confidence or action work, without treating synthetic evidence as real validation. Clean eligible Time Trial game data and independently reviewed real regions remain prerequisites for coaching admission.
 
+## Decision 0057: bind admitted player participant evidence to lap attempts
+
+**Status:** accepted
+
+**Date:** 2026-10-05
+
+Add an ordered, bounded player Participant evidence timeline from assembled, admitted frames. Persist session/run identity, monotonic frame ordinal, game frame identifiers, packet format, lifecycle association epoch, selected player slot, source session time, active-car count, the reported player Participant fields, and explicit observed or unavailable state. Decode this evidence in the frame path; the existing raw-decoded `driver_snapshots` remain available for all-car historical inspection and do not supply the admitted timeline.
+
+Bind attempt context only to observations at or before the attempt start within the same session, format, player slot, and association epoch. Preserve source age and observed changes during the attempt. Do not backfill a snapshot first received mid-attempt. Conflicting selected-player records, an inactive or mismatched player slot, malformed-only evidence, lifecycle/format/player boundaries, or truncated observation history produce explicit unknown or incomplete context until a later usable snapshot. Identical selected-player evidence in one frame collapses; differences for other cars, active-car counts that keep the selected slot active, or cosmetic display fields do not conflict. Never select the last packet from a conflict. Provenance comes from a supported selected-player packet; conflicting source provenance produces an unavailable fence. Accepted reordered frames follow the assembler's order; rejected late packets cannot roll the timeline backward. Flush old frames before closing their scope, and treat Participants on a lifecycle-boundary frame as unavailable.
+
+Bound both observation rows and per-session truncation fences. If a run exceeds the fence bound, persist a run-level truncation flag and mark attempt context incomplete because the omitted sessions cannot be identified safely. SQLite context reads cap source JSON byte lengths before parsing, validate the reported wire-field types/ranges, and retain the existing summary byte limit.
+
+Keep the report evidence-only. Participant IDs, names, team IDs, `My Team`, and technical level are reported game fields; they do not establish a person's identity across sessions or certify matching car setup/performance. Matching team IDs do not grant reference, ranking, or coaching authority. Use an additive SQLite migration and importer identity bump; do not change Parquet trace schemas or automatic reference policy. Add bounded standalone attempt and target/reference summaries to the existing CLI, API, and dashboard. Older imports and captures without Participants remain explicitly unknown.
+
+**Rationale:** The current `driver_snapshots` are keyed by overall-frame identifier and are decoded before assembled-frame admission. They cannot safely describe which reported participant fields applied at a lap boundary across 32-bit frame wrap, reordered/late packets, player/format changes, or lifecycle epochs. A separate admitted timeline supports honest diagnostics and prepares later cross-session comparison without claiming more identity or vehicle compatibility than the game reports.
+
 ## Data flow
 
 ```text

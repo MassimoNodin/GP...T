@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -11,6 +11,7 @@ from ..errors import ProtocolError
 from ..pipeline import TelemetryPipeline
 from ..recording.capture import CaptureReader
 from ..sessions.lifecycle import LifecycleEvent, reconcile_attempt_lifecycle
+from ..sessions.participant_context import PlayerParticipantObservation
 from ..sessions.session_history import (
     AttemptTimingEvidence,
     SessionHistoryAccumulator,
@@ -19,6 +20,7 @@ from ..udp.models import PacketId
 from ..telemetry.canonical import CarObservation, CarSample
 from .database import Database
 from .lock import ImportRunLock
+from .participant_context import load_attempt_player_participant_context
 from .parquet import (
     MAX_OBSERVATION_CHUNK_ROWS,
     OBSERVATION_SCHEMA_VERSION,
@@ -29,8 +31,11 @@ from .parquet import (
 )
 
 
-PIPELINE_VERSION = "player-traces-v15-car-observations"
+PIPELINE_VERSION = "player-traces-v16-player-participant-context"
 MAX_STORED_LIFECYCLE_EVENTS = 100_000
+MAX_STORED_PLAYER_PARTICIPANT_OBSERVATIONS = 100_000
+MAX_STORED_PLAYER_PARTICIPANT_TRUNCATION_FENCES = 256
+PLAYER_PARTICIPANT_OBSERVATION_WRITE_BATCH = 256
 DEFAULT_DATABASE = Path("data") / "f1-engineer.sqlite3"
 IMPORT_CONFIG = {"max_open_frames": 256, "reorder_window_frames": 3}
 MAX_OPEN_OBSERVATION_WRITERS = 4
@@ -92,6 +97,10 @@ class ImportSummary:
     session_history_unavailable_attempts: int = 0
     session_history_truncated_attempts: int = 0
     session_history_truncated_sessions: int = 0
+    player_participant_observations: int = 0
+    player_participant_observations_dropped: int = 0
+    player_participant_observation_truncated_sessions: int = 0
+    player_participant_observation_run_truncated: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -317,6 +326,83 @@ class _ObservationWriterManager:
         self.stream_keys.clear()
 
 
+class _PlayerParticipantObservationWriter:
+    def __init__(self, connection, run_id: str) -> None:
+        self.connection = connection
+        self.run_id = run_id
+        self.buffer: list[PlayerParticipantObservation] = []
+        self.stored_count = 0
+        self.dropped_count = 0
+        self.truncated_session_uids: set[int] = set()
+        self.truncation_marker_overflowed = False
+
+    def consume(
+        self, observations: tuple[PlayerParticipantObservation, ...]
+    ) -> None:
+        for observation in observations:
+            if self.stored_count < MAX_STORED_PLAYER_PARTICIPANT_OBSERVATIONS:
+                self.buffer.append(observation)
+                self.stored_count += 1
+            else:
+                self.dropped_count += 1
+                if (
+                    observation.session_uid not in self.truncated_session_uids
+                    and len(self.truncated_session_uids)
+                    < MAX_STORED_PLAYER_PARTICIPANT_TRUNCATION_FENCES
+                ):
+                    self.truncated_session_uids.add(observation.session_uid)
+                    self.buffer.append(
+                        replace(
+                            observation,
+                            status="truncated",
+                            reason="import_observation_limit_exceeded",
+                            active_car_count=None,
+                            participant=None,
+                            source_packet_count=0,
+                        )
+                    )
+                elif observation.session_uid not in self.truncated_session_uids:
+                    self.truncation_marker_overflowed = True
+            if len(self.buffer) >= PLAYER_PARTICIPANT_OBSERVATION_WRITE_BATCH:
+                self.flush()
+
+    def flush(self) -> None:
+        if not self.buffer:
+            return
+        rows = [
+            (
+                self.run_id,
+                str(item.session_uid),
+                item.frame_ordinal,
+                item.frame_identifier,
+                item.overall_frame_identifier,
+                item.packet_format,
+                item.association_epoch,
+                int(item.association_scope_assessable),
+                item.player_car_index,
+                item.session_time_s,
+                item.status,
+                item.reason,
+                item.active_car_count,
+                _json(asdict(item.participant)) if item.participant is not None else None,
+                item.source_packet_count,
+            )
+            for item in self.buffer
+        ]
+        with self.connection:
+            self.connection.executemany(
+                """INSERT INTO player_participant_observations(
+                           run_id,session_uid,frame_ordinal,frame_identifier,
+                           overall_frame_identifier,packet_format,association_epoch,
+                           association_scope_assessable,player_car_index,session_time_s,
+                           status,reason,active_car_count,participant_json,
+                           source_packet_count)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                rows,
+            )
+        self.buffer.clear()
+
+
 def _ensure_capture_and_run(
     db: Database,
     *,
@@ -374,6 +460,20 @@ def _ensure_capture_and_run(
             )
         )
         outputs_valid = outputs_valid and observations_valid
+        expected_player_observations = int(
+            metrics.get("capture_quality", {}).get(
+                "player_participant_observation_count", 0
+            )
+        )
+        stored_player_observations = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM player_participant_observations WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()[0]
+        )
+        outputs_valid = outputs_valid and (
+            stored_player_observations == expected_player_observations
+        )
         if outputs_valid:
             return True
     connection.execute(
@@ -391,6 +491,9 @@ def _ensure_capture_and_run(
              ON CONFLICT(run_id) DO UPDATE SET status='processing',
                started_at_utc=CURRENT_TIMESTAMP, finished_at_utc=NULL, error=NULL""",
         (run_id, capture_hash, PIPELINE_VERSION, config_json),
+    )
+    connection.execute(
+        "DELETE FROM player_participant_observations WHERE run_id = ?", (run_id,)
     )
     connection.execute("DELETE FROM sessions WHERE run_id = ?", (run_id,))
     return False
@@ -476,6 +579,9 @@ def import_capture(
             observation_manager = _ObservationWriterManager(
                 database_path, run_id, trace_namespace
             )
+            player_participant_observation_writer = _PlayerParticipantObservationWriter(
+                db.connection, run_id
+            )
             pipeline = TelemetryPipeline(**IMPORT_CONFIG)
             session_history = SessionHistoryAccumulator()
             sessions: dict[int, int] = {}
@@ -519,6 +625,9 @@ def import_capture(
                     except ProtocolError:
                         malformed_packets += 1
                         continue
+                    player_participant_observation_writer.consume(
+                        result.player_participant_observations
+                    )
                     if result.packet.packet_kind is PacketId.CAR_DAMAGE:
                         raw_car_damage_packet_count += 1
                     attempts.extend(result.lap_attempts)
@@ -603,6 +712,10 @@ def import_capture(
                                 asdict(participant),
                             )
                 flushed = pipeline.finish_with_outputs()
+                player_participant_observation_writer.consume(
+                    flushed.player_participant_observations
+                )
+                player_participant_observation_writer.flush()
                 attempts.extend(flushed.lap_attempts)
                 trace_manager.consume(flushed.car_samples, flushed.lap_attempts)
                 observation_manager.consume(flushed.car_observations)
@@ -745,6 +858,22 @@ def import_capture(
                 "session_history_association_work": session_history.work,
                 "session_history_timing_status_counts": dict(sorted(timing_status_counts.items())),
                 "session_history_truncated_session_count": len(timing_truncated_sessions),
+                "player_participant_observation_count": (
+                    player_participant_observation_writer.stored_count
+                    + len(player_participant_observation_writer.truncated_session_uids)
+                ),
+                "player_participant_observations_dropped": (
+                    player_participant_observation_writer.dropped_count
+                    + pipeline.player_participant_observations_dropped
+                ),
+                "player_participant_observation_truncated_session_count": len(
+                    player_participant_observation_writer.truncated_session_uids
+                    | pipeline.player_participant_observation_truncated_session_uids
+                ),
+                "player_participant_observation_run_truncated": bool(
+                    player_participant_observation_writer.truncation_marker_overflowed
+                    or pipeline.player_participant_observation_truncation_marker_overflowed
+                ),
             }
 
             import_summary = ImportSummary(
@@ -801,6 +930,22 @@ def import_capture(
                 session_history_unavailable_attempts=timing_status_counts.get("unavailable", 0),
                 session_history_truncated_attempts=timing_status_counts.get("truncated", 0),
                 session_history_truncated_sessions=len(timing_truncated_sessions),
+                player_participant_observations=(
+                    player_participant_observation_writer.stored_count
+                    + len(player_participant_observation_writer.truncated_session_uids)
+                ),
+                player_participant_observations_dropped=(
+                    player_participant_observation_writer.dropped_count
+                    + pipeline.player_participant_observations_dropped
+                ),
+                player_participant_observation_truncated_sessions=len(
+                    player_participant_observation_writer.truncated_session_uids
+                    | pipeline.player_participant_observation_truncated_session_uids
+                ),
+                player_participant_observation_run_truncated=bool(
+                    player_participant_observation_writer.truncation_marker_overflowed
+                    or pipeline.player_participant_observation_truncation_marker_overflowed
+                ),
             )
             metrics_json = _json(
                 {"capture_quality": capture_quality, "summary": import_summary.to_dict()}
@@ -1187,6 +1332,9 @@ def list_laps(
                         "reasons": ["not_available_for_legacy_import"],
                     }
                 ),
+                "player_participant_context": load_attempt_player_participant_context(
+                    db.connection, str(row["attempt_key"])
+                ),
             }
             for row in rows
         ]
@@ -1221,6 +1369,9 @@ def get_lap(database_path: str | Path, attempt_key: str) -> dict[str, object] | 
         metadata, table = read_trace(
             path, expected_schema_version=row["schema_version"]
         )
+        player_participant_context = load_attempt_player_participant_context(
+            db.connection, attempt_key
+        )
         return {
             "attempt": json.loads(row["attempt_json"]),
             "attempt_key": row["attempt_key"],
@@ -1239,6 +1390,7 @@ def get_lap(database_path: str | Path, attempt_key: str) -> dict[str, object] | 
                     "reasons": ["not_available_for_legacy_import"],
                 }
             ),
+            "player_participant_context": player_participant_context,
             "first_sample": table.slice(0, min(1, table.num_rows)).to_pylist(),
             "last_sample": table.slice(max(0, table.num_rows - 1), min(1, table.num_rows)).to_pylist(),
         }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import struct
 import sys
 from dataclasses import asdict
@@ -22,7 +23,7 @@ from f1_engineer.analysis.resampling import ResamplingConfig
 from f1_engineer.analysis.service import ComparisonPolicy, compare_attempts
 from f1_engineer.api.app import create_app
 from f1_engineer.recording.capture import CaptureWriter
-from f1_engineer.storage.importer import import_capture, list_laps
+from f1_engineer.storage.importer import get_lap, import_capture, list_laps
 from f1_engineer.tracks import registry
 from f1_engineer.tracks.loader import load_track_model
 from f1_engineer.tracks.model import CornerDefinition, TrackModel
@@ -349,6 +350,17 @@ def test_synthetic_capture_reaches_positive_phase_e_api_cli_and_idempotent_impor
     assert imported.attempts == 4
     assert [lap["lap_time_ms"] for lap in completed] == [15_000, 16_000, 17_000]
     assert all(lap["reference_eligible"] for lap in completed)
+    assert all(
+        lap["player_participant_context"]["status"] == "unknown"
+        and lap["player_participant_context"]["at_start"]["status"] == "unknown"
+        for lap in completed
+    )
+    standalone_attempt = get_lap(
+        database,
+        next(lap["attempt_key"] for lap in completed if lap["attempt_number"] == 3),
+    )
+    assert standalone_attempt is not None
+    assert standalone_attempt["player_participant_context"]["status"] == "unknown"
 
     target_key = next(
         lap["attempt_key"] for lap in completed if lap["attempt_number"] == 3
@@ -434,6 +446,8 @@ def test_synthetic_capture_reaches_positive_phase_e_api_cli_and_idempotent_impor
         item["code"] for item in result["lap_debrief"]["limitations"]
     }
     assert result["lap_debrief"]["coaching_eligible"] is False
+    assert result["target"]["player_participant_context"]["status"] == "unknown"
+    assert result["reference"]["player_participant_context"]["status"] == "unknown"
     target_checksum = result["target"]["trace_sha256"]
     reference_checksum = result["reference"]["trace_sha256"]
     assert result["driving_pattern_assessment"]["source"]["target"][
@@ -464,6 +478,8 @@ def test_synthetic_capture_reaches_positive_phase_e_api_cli_and_idempotent_impor
     api_response = asyncio.run(request_api())
     assert api_response.status_code == 200
     api_result = api_response.json()["data"]
+    assert api_result["target"]["player_participant_context"]["status"] == "unknown"
+    assert api_result["reference"]["player_participant_context"]["status"] == "unknown"
 
     monkeypatch.setattr(
         sys,
@@ -500,11 +516,265 @@ def test_synthetic_capture_reaches_positive_phase_e_api_cli_and_idempotent_impor
             "api_gate_reasons": api_result[field].get("gate_reasons"),
             "cli_gate_reasons": cli_result[field].get("gate_reasons"),
         }
+    assert cli_result["target"]["player_participant_context"]["status"] == "unknown"
 
     repeated = import_capture(capture, database)
     assert repeated.run_id == imported.run_id
     assert repeated.already_imported is True
     assert repeated.attempts == imported.attempts
+
+
+def test_participant_snapshot_first_seen_mid_attempt_does_not_backfill_start(
+    tmp_path,
+) -> None:
+    capture = tmp_path / "mid-attempt-participant.f1ecap"
+    database = tmp_path / "mid-attempt.sqlite3"
+    _write_synthetic_capture(capture)
+    imported = import_capture(capture, database)
+    target = next(
+        lap for lap in list_laps(database, run_id=imported.run_id)
+        if lap["attempt_number"] == 3 and lap["disposition"] == "completed"
+    )
+    assert target["player_participant_context"]["status"] == "unknown"
+    was_reference_eligible = target["reference_eligible"]
+
+    with sqlite3.connect(database) as connection:
+        connection.row_factory = sqlite3.Row
+        attempt = connection.execute(
+            """SELECT l.start_frame_ordinal,l.end_frame_ordinal,l.car_index,
+                      l.attempt_json,s.run_id,s.session_uid
+                 FROM lap_attempts l JOIN sessions s USING(session_key)
+                WHERE l.attempt_key = ?""",
+            (target["attempt_key"],),
+        ).fetchone()
+        assert attempt is not None
+        assert attempt["start_frame_ordinal"] is not None
+        assert attempt["end_frame_ordinal"] is not None
+        ordinal = int(attempt["start_frame_ordinal"]) + 1
+        assert ordinal <= int(attempt["end_frame_ordinal"])
+        scope = json.loads(attempt["attempt_json"])
+        participant = {
+            "ai_controlled": False,
+            "driver_id": 123,
+            "network_id": 456,
+            "team_id": 7,
+            "my_team": True,
+            "race_number": 1,
+            "nationality_id": 8,
+            "name": "Mid-lap only",
+            "your_telemetry": 1,
+            "tech_level": 99,
+            "platform_id": 0,
+        }
+        connection.execute(
+            """INSERT INTO player_participant_observations(
+                       run_id,session_uid,frame_ordinal,frame_identifier,
+                       overall_frame_identifier,packet_format,association_epoch,
+                       association_scope_assessable,player_car_index,session_time_s,
+                       status,reason,active_car_count,participant_json,
+                       source_packet_count)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                attempt["run_id"],
+                attempt["session_uid"],
+                ordinal,
+                999,
+                999,
+                scope["start_association_packet_format"],
+                scope["start_association_epoch"],
+                1,
+                attempt["car_index"],
+                1.0,
+                "observed",
+                None,
+                22,
+                json.dumps(participant),
+                1,
+            ),
+        )
+
+    after = next(
+        lap for lap in list_laps(database, run_id=imported.run_id)
+        if lap["attempt_key"] == target["attempt_key"]
+    )
+    context = after["player_participant_context"]
+    assert context["status"] == "unknown"
+    assert context["at_start"]["status"] == "unknown"
+    assert context["at_start"]["reason"] == "participant_not_reported"
+    assert context["observations"][0]["status"] == "reported"
+    assert context["observations"][0]["participant"]["name"] == "Mid-lap only"
+    assert after["reference_eligible"] is was_reference_eligible
+
+
+def test_player_participant_context_validates_bounded_sqlite_json_inputs(
+    tmp_path,
+) -> None:
+    capture = tmp_path / "bounded-participant-json.f1ecap"
+    database = tmp_path / "bounded-participant-json.sqlite3"
+    _write_synthetic_capture(capture)
+    imported = import_capture(capture, database)
+    target = next(
+        lap for lap in list_laps(database, run_id=imported.run_id)
+        if lap["attempt_number"] == 3 and lap["disposition"] == "completed"
+    )
+
+    with sqlite3.connect(database) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            """SELECT l.attempt_json,l.start_frame_ordinal,l.car_index,
+                      s.run_id,s.session_uid,r.metrics_json
+                 FROM lap_attempts l JOIN sessions s USING(session_key)
+                 JOIN processing_runs r USING(run_id)
+                WHERE l.attempt_key = ?""",
+            (target["attempt_key"],),
+        ).fetchone()
+        assert row is not None
+        original_attempt_json = row["attempt_json"]
+        original_metrics_json = row["metrics_json"]
+
+        connection.execute(
+            "UPDATE lap_attempts SET attempt_json = ? WHERE attempt_key = ?",
+            ("{" + " " * 32_800, target["attempt_key"]),
+        )
+    oversized_attempt = next(
+        lap for lap in list_laps(database, run_id=imported.run_id)
+        if lap["attempt_key"] == target["attempt_key"]
+    )["player_participant_context"]
+    assert oversized_attempt["status"] == "unknown"
+    assert oversized_attempt["reason"] == "attempt_scope_exceeds_byte_limit"
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE lap_attempts SET attempt_json = ? WHERE attempt_key = ?",
+            ("{", target["attempt_key"]),
+        )
+    malformed_attempt = next(
+        lap for lap in list_laps(database, run_id=imported.run_id)
+        if lap["attempt_key"] == target["attempt_key"]
+    )["player_participant_context"]
+    assert malformed_attempt["status"] == "unknown"
+    assert malformed_attempt["reason"] == "attempt_scope_json_invalid"
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE lap_attempts SET attempt_json = ? WHERE attempt_key = ?",
+            (original_attempt_json, target["attempt_key"]),
+        )
+        connection.execute(
+            "UPDATE processing_runs SET metrics_json = ? WHERE run_id = ?",
+            (" " * 70_000, row["run_id"]),
+        )
+    oversized_metrics = next(
+        lap for lap in list_laps(database, run_id=imported.run_id)
+        if lap["attempt_key"] == target["attempt_key"]
+    )["player_participant_context"]
+    assert oversized_metrics["status"] == "incomplete"
+    assert "processing_metrics_unavailable" in oversized_metrics["reasons"]
+
+    with sqlite3.connect(database) as connection:
+        run_metrics = json.loads(original_metrics_json)
+        run_metrics["capture_quality"][
+            "player_participant_observation_run_truncated"
+        ] = True
+        connection.execute(
+            "UPDATE processing_runs SET metrics_json = ? WHERE run_id = ?",
+            (json.dumps(run_metrics), row["run_id"]),
+        )
+    run_truncated = next(
+        lap for lap in list_laps(database, run_id=imported.run_id)
+        if lap["attempt_key"] == target["attempt_key"]
+    )["player_participant_context"]
+    assert run_truncated["status"] == "incomplete"
+    assert "run_participant_observation_history_truncated" in run_truncated[
+        "reasons"
+    ]
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE processing_runs SET metrics_json = ? WHERE run_id = ?",
+            (original_metrics_json, row["run_id"]),
+        )
+        attempt_scope = json.loads(original_attempt_json)
+        malformed_participant = json.dumps(
+            {
+                "ai_controlled": False,
+                "driver_id": 123,
+                "network_id": 456,
+                "team_id": 7,
+                "my_team": "false",
+                "race_number": 1,
+                "nationality_id": 8,
+                "name": {"unexpected": "object"},
+                "your_telemetry": 1,
+                "tech_level": 99,
+                "platform_id": 0,
+            }
+        )
+        connection.execute(
+            """INSERT INTO player_participant_observations(
+                       run_id,session_uid,frame_ordinal,frame_identifier,
+                       overall_frame_identifier,packet_format,association_epoch,
+                       association_scope_assessable,player_car_index,session_time_s,
+                       status,reason,active_car_count,participant_json,
+                       source_packet_count)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                row["run_id"],
+                row["session_uid"],
+                row["start_frame_ordinal"],
+                100,
+                100,
+                attempt_scope["start_association_packet_format"],
+                attempt_scope["start_association_epoch"],
+                1,
+                row["car_index"],
+                1.0,
+                "observed",
+                None,
+                22,
+                malformed_participant,
+                1,
+            ),
+        )
+    invalid_participant = next(
+        lap for lap in list_laps(database, run_id=imported.run_id)
+        if lap["attempt_key"] == target["attempt_key"]
+    )["player_participant_context"]
+    assert invalid_participant["status"] == "incomplete"
+    assert invalid_participant["at_start"]["status"] == "unknown"
+    assert invalid_participant["at_start"]["reason"] == "participant_payload_unavailable"
+
+    nested_json = '{"name":' + "[" * 2_000 + "0" + "]" * 2_000 + "}"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """UPDATE player_participant_observations SET participant_json = ?
+                WHERE run_id = ? AND session_uid = ? AND frame_ordinal = ?""",
+            (nested_json, row["run_id"], row["session_uid"], row["start_frame_ordinal"]),
+        )
+    nested_participant = next(
+        lap for lap in list_laps(database, run_id=imported.run_id)
+        if lap["attempt_key"] == target["attempt_key"]
+    )["player_participant_context"]
+    assert nested_participant["at_start"]["reason"] == "participant_payload_unavailable"
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """UPDATE player_participant_observations SET participant_json = ?
+                WHERE run_id = ? AND session_uid = ? AND frame_ordinal = ?""",
+            (
+                json.dumps({"name": "x" * 5_000}),
+                row["run_id"],
+                row["session_uid"],
+                row["start_frame_ordinal"],
+            ),
+        )
+    oversized_participant = next(
+        lap for lap in list_laps(database, run_id=imported.run_id)
+        if lap["attempt_key"] == target["attempt_key"]
+    )["player_participant_context"]
+    assert oversized_participant["status"] == "incomplete"
+    assert oversized_participant["at_start"]["status"] == "unknown"
+    assert oversized_participant["at_start"]["reason"] == "participant_payload_exceeds_byte_limit"
 
 
 @pytest.mark.parametrize(

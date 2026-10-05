@@ -176,6 +176,40 @@ def _attempt_summary(
         )
     )
 
+    participant_context = _mapping(source.get("player_participant_context")) or {}
+    participant_start = _mapping(participant_context.get("at_start")) or {}
+    reported_participant = _mapping(participant_start.get("participant")) or {}
+    participant_name = reported_participant.get("name")
+    team_id = reported_participant.get("team_id")
+    driver_id = reported_participant.get("driver_id")
+    participant_bits: list[str] = []
+    if isinstance(participant_name, str) and participant_name:
+        participant_bits.append(f"name {participant_name}")
+    if isinstance(team_id, int) and not isinstance(team_id, bool):
+        participant_bits.append(f"team ID {team_id}")
+    if isinstance(driver_id, int) and not isinstance(driver_id, bool):
+        participant_bits.append(f"driver ID {driver_id}")
+    if participant_bits and participant_start.get("status") == "reported":
+        participant_text = (
+            "At attempt start, the game reported player context: "
+            + ", ".join(participant_bits)
+            + ". This is session-scoped game evidence, not proof of persistent identity or matching car setup."
+        )
+    else:
+        participant_text = (
+            "A safe game-reported player participant snapshot was not available at attempt start."
+        )
+    facts.append(
+        _fact(
+            "player_participant_context",
+            participant_text,
+            [
+                "player_participant_observations.frame_ordinal",
+                "player_participant_observations.participant_json",
+            ],
+        )
+    )
+
     game_valid = attempt.get("game_valid")
     validity_text = (
         "The game marked this lap valid."
@@ -211,6 +245,14 @@ def _attempt_summary(
     warnings: list[dict[str, object]] = []
     _add_attempt_warnings(warnings, attempt, source, capture, processing, completion)
     warnings.extend(timing_warnings)
+    if participant_context.get("status") in {"unknown", "incomplete"}:
+        warnings.append(
+            _warning(
+                "player_participant_context_unavailable",
+                "Reported player participant context is unknown or incomplete for this attempt.",
+                ["player_participant_observations"],
+            )
+        )
     if context_segment_count is None:
         warnings.append(_warning("session_context_unknown", "Session context is unavailable.", ["lap_context_segments.ordinal=0"]))
     elif context_segment_count > 1:

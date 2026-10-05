@@ -33,6 +33,7 @@ import {
 } from "@/lib/api";
 import RecordingInbox from "./RecordingInbox";
 import AttemptQualityPanel from "./AttemptQualityPanel";
+import PlayerParticipantContextPanel from "./PlayerParticipantContextPanel";
 import DiagnosticEvidencePanels from "./DiagnosticEvidencePanels";
 import AttemptTraceCharts from "./AttemptTraceCharts";
 import RunEvidencePanel from "./RunEvidencePanel";
@@ -963,6 +964,11 @@ export default async function Home({
                     }
                   />
                 ) : null}
+                {target && !comparison ? (
+                  <PlayerParticipantContextPanel
+                    target={target.player_participant_context}
+                  />
+                ) : null}
                 {target ? (
                   <AttemptTraceCharts
                     report={traceChartResponse?.status === "ok" ? traceChartResponse.data : null}
@@ -1494,6 +1500,10 @@ export default async function Home({
                     <ComparisonConditionsPanel
                       target={comparison.observed_conditions.target}
                       reference={comparison.observed_conditions.reference}
+                    />
+                    <PlayerParticipantContextPanel
+                      target={comparison.target.player_participant_context}
+                      reference={comparison.reference.player_participant_context}
                     />
                     {comparison.comparison_window ? (
                       <ComparisonWindowPanel

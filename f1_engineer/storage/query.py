@@ -12,6 +12,10 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from .database import Database
+from .participant_context import (
+    MAX_PLAYER_PARTICIPANT_CONTEXT_BYTES,
+    load_attempt_player_participant_context,
+)
 from .parquet import (
     MAX_OBSERVATION_CHUNK_ROWS,
     ROW_GROUP_SIZE,
@@ -77,6 +81,7 @@ ENGINEER_ATTEMPT_METADATA_LIMITS = {
     "timing_evidence_bytes": 32_768,
     "capture_completion_bytes": 8_192,
     "processing_metrics_bytes": 65_536,
+    "player_participant_context_bytes": MAX_PLAYER_PARTICIPANT_CONTEXT_BYTES,
 }
 
 
@@ -103,6 +108,7 @@ class StoredAttemptTrace:
     lifecycle_assessed: bool = False
     timing_evidence: Mapping[str, object] | None = None
     source_sample_count: int | None = None
+    player_participant_context: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,6 +245,9 @@ def load_attempt_trace(
                  FROM lap_context_segments WHERE attempt_key = ? ORDER BY ordinal""",
             (attempt_key,),
         ).fetchall()
+        player_participant_context = load_attempt_player_participant_context(
+            db.connection, attempt_key
+        )
 
     relative_path = Path(row["relative_path"])
     if relative_path.is_absolute() or ".." in relative_path.parts:
@@ -315,6 +324,7 @@ def load_attempt_trace(
             }
         ),
         source_sample_count=int(row["row_count"]),
+        player_participant_context=player_participant_context,
     )
 
 
@@ -637,6 +647,13 @@ def load_attempt_engineer_summary_metadata(
                 attempt_key,
             ),
         ).fetchone()
+        player_participant_context = (
+            load_attempt_player_participant_context(
+                db.connection, attempt_key
+            )
+            if row is not None
+            else None
+        )
     if row is None:
         return None
 
@@ -710,6 +727,7 @@ def load_attempt_engineer_summary_metadata(
             "checksum_verified": False,
         },
         "timing_evidence": timing,
+        "player_participant_context": player_participant_context,
         "metadata_limits": {
             "attempt_reasons_truncated": row["exclusion_reasons_bytes"] is not None
             and int(row["exclusion_reasons_bytes"]) > limits["attempt_reasons_bytes"],
@@ -723,6 +741,12 @@ def load_attempt_engineer_summary_metadata(
             and int(row["completion_bytes"]) > limits["capture_completion_bytes"],
             "processing_metrics_truncated": row["processing_metrics_bytes"] is not None
             and int(row["processing_metrics_bytes"]) > limits["processing_metrics_bytes"],
+            "player_participant_context_truncated": bool(
+                player_participant_context
+                and player_participant_context.get("status") == "incomplete"
+                and "participant_observation_history_truncated"
+                in player_participant_context.get("reasons", [])
+            ),
         },
     }
 

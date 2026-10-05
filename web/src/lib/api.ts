@@ -231,6 +231,41 @@ export interface TrackModelRecord {
   source_filename?: string | null;
 }
 
+export interface PlayerParticipantSnapshot {
+  ai_controlled: boolean;
+  driver_id: number;
+  network_id: number;
+  team_id: number;
+  my_team: boolean;
+  race_number: number;
+  nationality_id: number;
+  name: string;
+  your_telemetry: number;
+  tech_level: number;
+  platform_id: number;
+}
+
+export interface PlayerParticipantContext {
+  schema_version: 1;
+  status: "observed" | "observed_unchanged" | "observed_changed" | "unknown" | "incomplete";
+  continuity_claim: false;
+  reason?: string;
+  reasons?: string[];
+  scope: Record<string, unknown>;
+  at_start: {
+    status: "reported" | "unknown";
+    participant?: PlayerParticipantSnapshot | null;
+    source?: Record<string, unknown> | null;
+    reason?: string;
+  };
+  observations: Array<Record<string, unknown>>;
+  observation_count: number;
+  observed_change_count: number;
+  unknown_event_count: number;
+  observations_omitted_count: number;
+  limits?: Record<string, number>;
+}
+
 export interface LapRecord {
   attempt_key: string;
   run_id: string;
@@ -257,6 +292,7 @@ export interface LapRecord {
   quality: Record<string, unknown>;
   exclusion_reasons: string[];
   timing_evidence: AttemptTimingEvidence;
+  player_participant_context?: PlayerParticipantContext | null;
 }
 
 export interface AttemptTimingEvidence {
@@ -1595,6 +1631,7 @@ export interface Comparison {
     attempt_key: string;
     lap_time_ms: number | null;
     game_valid: boolean | null;
+    player_participant_context?: PlayerParticipantContext | null;
     reference_eligible?: boolean;
     superseded?: boolean | null;
     lifecycle_assessed?: boolean;
@@ -1606,6 +1643,7 @@ export interface Comparison {
     attempt_key: string;
     lap_time_ms: number | null;
     game_valid: boolean | null;
+    player_participant_context?: PlayerParticipantContext | null;
     reference_eligible?: boolean;
     superseded?: boolean | null;
     lifecycle_assessed?: boolean;
