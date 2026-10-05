@@ -772,6 +772,11 @@ def _attempt_summary(attempt: StoredAttemptTrace) -> dict[str, object]:
             if attempt.player_participant_context is not None
             else None
         ),
+        "player_car_setup_context": (
+            dict(attempt.player_car_setup_context)
+            if attempt.player_car_setup_context is not None
+            else None
+        ),
     }
 
 

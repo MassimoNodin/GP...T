@@ -267,6 +267,92 @@ def test_attempt_summary_supports_race_and_keeps_capture_footer_warning(tmp_path
     }
 
 
+def test_attempt_summary_retains_compact_reported_setup_fact(tmp_path) -> None:
+    database_path = tmp_path / "setup-fact.sqlite3"
+    _seed_attempt_database(
+        database_path,
+        attempt_key="setup-fact",
+        disposition="completed",
+        lap_time_ms=91_234,
+        game_valid=True,
+    )
+    attempt_scope = {
+        "start_association_packet_format": 2025,
+        "association_packet_format": 2025,
+        "start_association_epoch": 0,
+        "association_epoch": 0,
+        "association_scope_assessable": True,
+    }
+    setup = {
+        "front_wing": 45,
+        "rear_wing": 38,
+        "on_throttle_differential": 55,
+        "off_throttle_differential": 30,
+        "front_camber": -3.5,
+        "rear_camber": -2.5,
+        "front_toe": 0.1,
+        "rear_toe": 0.2,
+        "front_suspension": 4,
+        "rear_suspension": 5,
+        "front_anti_roll_bar": 6,
+        "rear_anti_roll_bar": 7,
+        "front_suspension_height": 8,
+        "rear_suspension_height": 9,
+        "brake_pressure_percent": 97,
+        "brake_bias_percent": 58,
+        "engine_braking_percent": 10,
+        "rear_left_tyre_pressure_psi": 22.0,
+        "rear_right_tyre_pressure_psi": 23.0,
+        "front_left_tyre_pressure_psi": 24.0,
+        "front_right_tyre_pressure_psi": 25.0,
+        "ballast": 50,
+        "fuel_load": 25.5,
+        "invalid_fields": [],
+    }
+    with Database(database_path) as db, db.connection:
+        db.connection.execute(
+            """UPDATE lap_attempts SET start_frame_ordinal=100,end_frame_ordinal=200,
+                       attempt_json=? WHERE attempt_key='setup-fact'""",
+            (json.dumps(attempt_scope),),
+        )
+        db.connection.execute(
+            """INSERT INTO player_car_setup_observations(
+                       run_id,session_uid,frame_ordinal,frame_identifier,
+                       overall_frame_identifier,packet_format,association_epoch,
+                       association_scope_assessable,player_car_index,session_time_s,
+                       status,reason,setup_json,next_front_wing_value,source_packet_count)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "b" * 64,
+                "42",
+                90,
+                90,
+                90,
+                2025,
+                0,
+                1,
+                0,
+                1.5,
+                "observed",
+                None,
+                json.dumps(setup),
+                12.5,
+                1,
+            ),
+        )
+
+    report = query_engineer_evidence(
+        database_path,
+        {"intent": "attempt_summary", "target_attempt_key": "setup-fact"},
+    )
+    fact = next(item for item in report["facts"] if item["kind"] == "player_car_setup_context")
+
+    assert len(fact["text"]) <= engineer_query.ENGINEER_QUERY_MAX_TEXT_LENGTH
+    assert "wings 45/38" in fact["text"]
+    assert "setup fuel load 25.5" in fact["text"]
+    assert "next-pit wing game value 12.5 (separate)" in fact["text"]
+
+
 def test_attempt_summary_shows_latest_snapshot_when_context_changed(tmp_path) -> None:
     database_path = tmp_path / "changed-context.sqlite3"
     _seed_attempt_database(database_path, attempt_key="context-shift")

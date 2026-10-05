@@ -16,6 +16,10 @@ from .participant_context import (
     MAX_PLAYER_PARTICIPANT_CONTEXT_BYTES,
     load_attempt_player_participant_context,
 )
+from .car_setup_context import (
+    MAX_PLAYER_CAR_SETUP_CONTEXT_BYTES,
+    load_attempt_player_car_setup_context,
+)
 from .parquet import (
     MAX_OBSERVATION_CHUNK_ROWS,
     ROW_GROUP_SIZE,
@@ -82,6 +86,7 @@ ENGINEER_ATTEMPT_METADATA_LIMITS = {
     "capture_completion_bytes": 8_192,
     "processing_metrics_bytes": 65_536,
     "player_participant_context_bytes": MAX_PLAYER_PARTICIPANT_CONTEXT_BYTES,
+    "player_car_setup_context_bytes": MAX_PLAYER_CAR_SETUP_CONTEXT_BYTES,
 }
 
 
@@ -109,6 +114,7 @@ class StoredAttemptTrace:
     timing_evidence: Mapping[str, object] | None = None
     source_sample_count: int | None = None
     player_participant_context: Mapping[str, object] | None = None
+    player_car_setup_context: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +254,9 @@ def load_attempt_trace(
         player_participant_context = load_attempt_player_participant_context(
             db.connection, attempt_key
         )
+        player_car_setup_context = load_attempt_player_car_setup_context(
+            db.connection, attempt_key
+        )
 
     relative_path = Path(row["relative_path"])
     if relative_path.is_absolute() or ".." in relative_path.parts:
@@ -325,6 +334,7 @@ def load_attempt_trace(
         ),
         source_sample_count=int(row["row_count"]),
         player_participant_context=player_participant_context,
+        player_car_setup_context=player_car_setup_context,
     )
 
 
@@ -654,6 +664,11 @@ def load_attempt_engineer_summary_metadata(
             if row is not None
             else None
         )
+        player_car_setup_context = (
+            load_attempt_player_car_setup_context(db.connection, attempt_key)
+            if row is not None
+            else None
+        )
     if row is None:
         return None
 
@@ -728,6 +743,7 @@ def load_attempt_engineer_summary_metadata(
         },
         "timing_evidence": timing,
         "player_participant_context": player_participant_context,
+        "player_car_setup_context": player_car_setup_context,
         "metadata_limits": {
             "attempt_reasons_truncated": row["exclusion_reasons_bytes"] is not None
             and int(row["exclusion_reasons_bytes"]) > limits["attempt_reasons_bytes"],
@@ -746,6 +762,17 @@ def load_attempt_engineer_summary_metadata(
                 and player_participant_context.get("status") == "incomplete"
                 and "participant_observation_history_truncated"
                 in player_participant_context.get("reasons", [])
+            ),
+            "player_car_setup_context_truncated": bool(
+                player_car_setup_context
+                and player_car_setup_context.get("status") == "incomplete"
+                and any(
+                    reason in player_car_setup_context.get("reasons", [])
+                    for reason in (
+                        "setup_observation_history_truncated",
+                        "run_setup_observation_history_truncated",
+                    )
+                )
             ),
         },
     }

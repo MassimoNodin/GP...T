@@ -12,6 +12,7 @@ from ..pipeline import TelemetryPipeline
 from ..recording.capture import CaptureReader
 from ..sessions.lifecycle import LifecycleEvent, reconcile_attempt_lifecycle
 from ..sessions.participant_context import PlayerParticipantObservation
+from ..sessions.setup_context import PlayerCarSetupObservation
 from ..sessions.session_history import (
     AttemptTimingEvidence,
     SessionHistoryAccumulator,
@@ -21,6 +22,7 @@ from ..telemetry.canonical import CarObservation, CarSample
 from .database import Database
 from .lock import ImportRunLock
 from .participant_context import load_attempt_player_participant_context
+from .car_setup_context import load_attempt_player_car_setup_context
 from .parquet import (
     MAX_OBSERVATION_CHUNK_ROWS,
     OBSERVATION_SCHEMA_VERSION,
@@ -31,11 +33,14 @@ from .parquet import (
 )
 
 
-PIPELINE_VERSION = "player-traces-v16-player-participant-context"
+PIPELINE_VERSION = "player-traces-v17-player-car-setups"
 MAX_STORED_LIFECYCLE_EVENTS = 100_000
 MAX_STORED_PLAYER_PARTICIPANT_OBSERVATIONS = 100_000
 MAX_STORED_PLAYER_PARTICIPANT_TRUNCATION_FENCES = 256
 PLAYER_PARTICIPANT_OBSERVATION_WRITE_BATCH = 256
+MAX_STORED_PLAYER_CAR_SETUP_OBSERVATIONS = 100_000
+MAX_STORED_PLAYER_CAR_SETUP_TRUNCATION_FENCES = 256
+PLAYER_CAR_SETUP_OBSERVATION_WRITE_BATCH = 256
 DEFAULT_DATABASE = Path("data") / "f1-engineer.sqlite3"
 IMPORT_CONFIG = {"max_open_frames": 256, "reorder_window_frames": 3}
 MAX_OPEN_OBSERVATION_WRITERS = 4
@@ -53,6 +58,13 @@ class ImportSummary:
     malformed_packet_count: int = 0
     session_count: int = 0
     participant_packets: int = 0
+    car_setup_packets_raw: int = 0
+    car_setup_packets_decoded: int = 0
+    car_setup_decode_errors: int = 0
+    player_car_setup_observations: int = 0
+    player_car_setup_observations_dropped: int = 0
+    player_car_setup_observation_truncated_sessions: int = 0
+    player_car_setup_observation_run_truncated: bool = False
     attempts: int = 0
     samples: int = 0
     car_observations: int = 0
@@ -403,6 +415,83 @@ class _PlayerParticipantObservationWriter:
         self.buffer.clear()
 
 
+class _PlayerCarSetupObservationWriter:
+    def __init__(self, connection, run_id: str) -> None:
+        self.connection = connection
+        self.run_id = run_id
+        self.buffer: list[PlayerCarSetupObservation] = []
+        self.stored_count = 0
+        self.dropped_count = 0
+        self.truncated_session_uids: set[int] = set()
+        self.truncation_marker_overflowed = False
+
+    def consume(
+        self, observations: tuple[PlayerCarSetupObservation, ...]
+    ) -> None:
+        for observation in observations:
+            if self.stored_count < MAX_STORED_PLAYER_CAR_SETUP_OBSERVATIONS:
+                self.buffer.append(observation)
+                self.stored_count += 1
+            else:
+                self.dropped_count += 1
+                if (
+                    observation.session_uid not in self.truncated_session_uids
+                    and len(self.truncated_session_uids)
+                    < MAX_STORED_PLAYER_CAR_SETUP_TRUNCATION_FENCES
+                ):
+                    self.truncated_session_uids.add(observation.session_uid)
+                    self.buffer.append(
+                        replace(
+                            observation,
+                            status="truncated",
+                            reason="import_observation_limit_exceeded",
+                            setup=None,
+                            next_front_wing_value=None,
+                            source_packet_count=0,
+                        )
+                    )
+                elif observation.session_uid not in self.truncated_session_uids:
+                    self.truncation_marker_overflowed = True
+            if len(self.buffer) >= PLAYER_CAR_SETUP_OBSERVATION_WRITE_BATCH:
+                self.flush()
+
+    def flush(self) -> None:
+        if not self.buffer:
+            return
+        rows = [
+            (
+                self.run_id,
+                str(item.session_uid),
+                item.frame_ordinal,
+                item.frame_identifier,
+                item.overall_frame_identifier,
+                item.packet_format,
+                item.association_epoch,
+                int(item.association_scope_assessable),
+                item.player_car_index,
+                item.session_time_s,
+                item.status,
+                item.reason,
+                _json(asdict(item.setup)) if item.setup is not None else None,
+                item.next_front_wing_value,
+                item.source_packet_count,
+            )
+            for item in self.buffer
+        ]
+        with self.connection:
+            self.connection.executemany(
+                """INSERT INTO player_car_setup_observations(
+                           run_id,session_uid,frame_ordinal,frame_identifier,
+                           overall_frame_identifier,packet_format,association_epoch,
+                           association_scope_assessable,player_car_index,session_time_s,
+                           status,reason,setup_json,next_front_wing_value,
+                           source_packet_count)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                rows,
+            )
+        self.buffer.clear()
+
+
 def _ensure_capture_and_run(
     db: Database,
     *,
@@ -474,6 +563,20 @@ def _ensure_capture_and_run(
         outputs_valid = outputs_valid and (
             stored_player_observations == expected_player_observations
         )
+        expected_player_setup_observations = int(
+            metrics.get("capture_quality", {}).get(
+                "player_car_setup_observation_count", 0
+            )
+        )
+        stored_player_setup_observations = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM player_car_setup_observations WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()[0]
+        )
+        outputs_valid = outputs_valid and (
+            stored_player_setup_observations == expected_player_setup_observations
+        )
         if outputs_valid:
             return True
     connection.execute(
@@ -494,6 +597,9 @@ def _ensure_capture_and_run(
     )
     connection.execute(
         "DELETE FROM player_participant_observations WHERE run_id = ?", (run_id,)
+    )
+    connection.execute(
+        "DELETE FROM player_car_setup_observations WHERE run_id = ?", (run_id,)
     )
     connection.execute("DELETE FROM sessions WHERE run_id = ?", (run_id,))
     return False
@@ -582,6 +688,9 @@ def import_capture(
             player_participant_observation_writer = _PlayerParticipantObservationWriter(
                 db.connection, run_id
             )
+            player_car_setup_observation_writer = _PlayerCarSetupObservationWriter(
+                db.connection, run_id
+            )
             pipeline = TelemetryPipeline(**IMPORT_CONFIG)
             session_history = SessionHistoryAccumulator()
             sessions: dict[int, int] = {}
@@ -602,6 +711,8 @@ def import_capture(
             car_status_error_count = 0
             car_damage_error_count = 0
             raw_car_damage_packet_count = 0
+            raw_car_setup_packet_count = 0
+            car_setup_decode_error_count = 0
             session_history_decode_error_count = 0
             capture_metadata: dict[str, object]
             capture_completion: dict[str, object] | None = None
@@ -628,8 +739,13 @@ def import_capture(
                     player_participant_observation_writer.consume(
                         result.player_participant_observations
                     )
+                    player_car_setup_observation_writer.consume(
+                        result.player_car_setup_observations
+                    )
                     if result.packet.packet_kind is PacketId.CAR_DAMAGE:
                         raw_car_damage_packet_count += 1
+                    if result.packet.packet_kind is PacketId.CAR_SETUPS:
+                        raw_car_setup_packet_count += 1
                     attempts.extend(result.lap_attempts)
                     trace_manager.consume(result.car_samples, result.lap_attempts)
                     observation_manager.consume(result.car_observations)
@@ -639,6 +755,9 @@ def import_capture(
                         session_history.observe(observation)
                     session_history_decode_error_count += len(
                         result.session_history_decode_errors
+                    )
+                    car_setup_decode_error_count += len(
+                        result.car_setup_decode_errors
                     )
                     for lifecycle_event in result.lifecycle_events:
                         if len(lifecycle_events) < MAX_STORED_LIFECYCLE_EVENTS:
@@ -716,6 +835,10 @@ def import_capture(
                     flushed.player_participant_observations
                 )
                 player_participant_observation_writer.flush()
+                player_car_setup_observation_writer.consume(
+                    flushed.player_car_setup_observations
+                )
+                player_car_setup_observation_writer.flush()
                 attempts.extend(flushed.lap_attempts)
                 trace_manager.consume(flushed.car_samples, flushed.lap_attempts)
                 observation_manager.consume(flushed.car_observations)
@@ -726,6 +849,7 @@ def import_capture(
                 session_history_decode_error_count += len(
                     flushed.session_history_decode_errors
                 )
+                car_setup_decode_error_count += len(flushed.car_setup_decode_errors)
                 for lifecycle_event in flushed.lifecycle_events:
                     if len(lifecycle_events) < MAX_STORED_LIFECYCLE_EVENTS:
                         lifecycle_events.append(lifecycle_event)
@@ -874,6 +998,25 @@ def import_capture(
                     player_participant_observation_writer.truncation_marker_overflowed
                     or pipeline.player_participant_observation_truncation_marker_overflowed
                 ),
+                "car_setup_packets_raw": raw_car_setup_packet_count,
+                "car_setup_packets_decoded": pipeline.car_setups_packets_decoded,
+                "car_setup_decode_errors": car_setup_decode_error_count,
+                "player_car_setup_observation_count": (
+                    player_car_setup_observation_writer.stored_count
+                    + len(player_car_setup_observation_writer.truncated_session_uids)
+                ),
+                "player_car_setup_observations_dropped": (
+                    player_car_setup_observation_writer.dropped_count
+                    + pipeline.player_car_setup_observations_dropped
+                ),
+                "player_car_setup_observation_truncated_session_count": len(
+                    player_car_setup_observation_writer.truncated_session_uids
+                    | pipeline.player_car_setup_observation_truncated_session_uids
+                ),
+                "player_car_setup_observation_run_truncated": bool(
+                    player_car_setup_observation_writer.truncation_marker_overflowed
+                    or pipeline.player_car_setup_observation_truncation_marker_overflowed
+                ),
             }
 
             import_summary = ImportSummary(
@@ -945,6 +1088,25 @@ def import_capture(
                 player_participant_observation_run_truncated=bool(
                     player_participant_observation_writer.truncation_marker_overflowed
                     or pipeline.player_participant_observation_truncation_marker_overflowed
+                ),
+                car_setup_packets_raw=raw_car_setup_packet_count,
+                car_setup_packets_decoded=pipeline.car_setups_packets_decoded,
+                car_setup_decode_errors=car_setup_decode_error_count,
+                player_car_setup_observations=(
+                    player_car_setup_observation_writer.stored_count
+                    + len(player_car_setup_observation_writer.truncated_session_uids)
+                ),
+                player_car_setup_observations_dropped=(
+                    player_car_setup_observation_writer.dropped_count
+                    + pipeline.player_car_setup_observations_dropped
+                ),
+                player_car_setup_observation_truncated_sessions=len(
+                    player_car_setup_observation_writer.truncated_session_uids
+                    | pipeline.player_car_setup_observation_truncated_session_uids
+                ),
+                player_car_setup_observation_run_truncated=bool(
+                    player_car_setup_observation_writer.truncation_marker_overflowed
+                    or pipeline.player_car_setup_observation_truncation_marker_overflowed
                 ),
             )
             metrics_json = _json(
@@ -1335,6 +1497,9 @@ def list_laps(
                 "player_participant_context": load_attempt_player_participant_context(
                     db.connection, str(row["attempt_key"])
                 ),
+                "player_car_setup_context": load_attempt_player_car_setup_context(
+                    db.connection, str(row["attempt_key"])
+                ),
             }
             for row in rows
         ]
@@ -1372,6 +1537,9 @@ def get_lap(database_path: str | Path, attempt_key: str) -> dict[str, object] | 
         player_participant_context = load_attempt_player_participant_context(
             db.connection, attempt_key
         )
+        player_car_setup_context = load_attempt_player_car_setup_context(
+            db.connection, attempt_key
+        )
         return {
             "attempt": json.loads(row["attempt_json"]),
             "attempt_key": row["attempt_key"],
@@ -1391,6 +1559,7 @@ def get_lap(database_path: str | Path, attempt_key: str) -> dict[str, object] | 
                 }
             ),
             "player_participant_context": player_participant_context,
+            "player_car_setup_context": player_car_setup_context,
             "first_sample": table.slice(0, min(1, table.num_rows)).to_pylist(),
             "last_sample": table.slice(max(0, table.num_rows - 1), min(1, table.num_rows)).to_pylist(),
         }

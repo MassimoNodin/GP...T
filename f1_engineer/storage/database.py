@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 class DatabaseSchemaError(ValueError):
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS schema_info (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     version INTEGER NOT NULL
 );
-INSERT OR IGNORE INTO schema_info(singleton, version) VALUES (1, 11);
+INSERT OR IGNORE INTO schema_info(singleton, version) VALUES (1, 12);
 
 CREATE TABLE IF NOT EXISTS captures (
     capture_sha256 TEXT PRIMARY KEY,
@@ -114,6 +114,26 @@ CREATE TABLE IF NOT EXISTS player_participant_observations (
     reason TEXT,
     active_car_count INTEGER,
     participant_json TEXT,
+    source_packet_count INTEGER NOT NULL,
+    PRIMARY KEY(run_id, session_uid, frame_ordinal)
+);
+
+CREATE TABLE IF NOT EXISTS player_car_setup_observations (
+    run_id TEXT NOT NULL REFERENCES processing_runs(run_id) ON DELETE CASCADE,
+    session_uid TEXT NOT NULL,
+    frame_ordinal INTEGER NOT NULL,
+    frame_identifier INTEGER NOT NULL,
+    overall_frame_identifier INTEGER NOT NULL,
+    packet_format INTEGER,
+    association_epoch INTEGER NOT NULL,
+    association_scope_assessable INTEGER NOT NULL CHECK
+        (association_scope_assessable IN (0, 1)),
+    player_car_index INTEGER,
+    session_time_s REAL,
+    status TEXT NOT NULL CHECK (status IN ('observed', 'unavailable', 'truncated')),
+    reason TEXT,
+    setup_json TEXT,
+    next_front_wing_value REAL,
     source_packet_count INTEGER NOT NULL,
     PRIMARY KEY(run_id, session_uid, frame_ordinal)
 );
@@ -266,6 +286,10 @@ CREATE INDEX IF NOT EXISTS idx_car_observation_slots_session
     ON car_observation_slots(session_key, car_index);
 CREATE INDEX IF NOT EXISTS idx_player_participant_observations_scope
     ON player_participant_observations(
+        run_id, session_uid, packet_format, association_epoch, frame_ordinal
+    );
+CREATE INDEX IF NOT EXISTS idx_player_car_setup_observations_scope
+    ON player_car_setup_observations(
         run_id, session_uid, packet_format, association_epoch, frame_ordinal
     );
 """
@@ -489,6 +513,39 @@ class Database:
             )
             self.connection.commit()
             version = 11
+        if version == 11:
+            self.connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS player_car_setup_observations (
+                    run_id TEXT NOT NULL REFERENCES processing_runs(run_id) ON DELETE CASCADE,
+                    session_uid TEXT NOT NULL,
+                    frame_ordinal INTEGER NOT NULL,
+                    frame_identifier INTEGER NOT NULL,
+                    overall_frame_identifier INTEGER NOT NULL,
+                    packet_format INTEGER,
+                    association_epoch INTEGER NOT NULL,
+                    association_scope_assessable INTEGER NOT NULL CHECK
+                        (association_scope_assessable IN (0, 1)),
+                    player_car_index INTEGER,
+                    session_time_s REAL,
+                    status TEXT NOT NULL CHECK
+                        (status IN ('observed', 'unavailable', 'truncated')),
+                    reason TEXT,
+                    setup_json TEXT,
+                    next_front_wing_value REAL,
+                    source_packet_count INTEGER NOT NULL,
+                    PRIMARY KEY(run_id, session_uid, frame_ordinal)
+                );
+                CREATE INDEX IF NOT EXISTS idx_player_car_setup_observations_scope
+                    ON player_car_setup_observations(
+                        run_id, session_uid, packet_format,
+                        association_epoch, frame_ordinal
+                    );
+                UPDATE schema_info SET version = 12 WHERE singleton = 1;
+                """
+            )
+            self.connection.commit()
+            version = 12
         if version != SCHEMA_VERSION:
             self.connection.close()
             raise ValueError(f"database schema {version} is not supported")

@@ -210,6 +210,57 @@ def _attempt_summary(
         )
     )
 
+    setup_context = _mapping(source.get("player_car_setup_context")) or {}
+    setup_start = _mapping(setup_context.get("at_start")) or {}
+    setup_values = _mapping(setup_start.get("setup")) or {}
+    def setup_value(field: str) -> str | None:
+        value = setup_values.get(field)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return str(value) if isinstance(value, int) else format(value, ".4g")
+
+    front_wing = setup_value("front_wing")
+    rear_wing = setup_value("rear_wing")
+    setup_parts = (
+        [f"wings {front_wing}/{rear_wing}"]
+        if front_wing is not None and rear_wing is not None
+        else []
+    )
+    for field, label in (
+        ("brake_bias_percent", "bias"),
+        ("brake_pressure_percent", "pressure"),
+        ("fuel_load", "setup fuel load"),
+    ):
+        value = setup_value(field)
+        if value is not None:
+            suffix = "%" if field.endswith("_percent") else ""
+            setup_parts.append(f"{label} {value}{suffix}")
+    next_front_wing = setup_start.get("next_front_wing_value")
+    if (
+        isinstance(next_front_wing, (int, float))
+        and not isinstance(next_front_wing, bool)
+    ):
+        setup_parts.append(
+            "next-pit wing game value "
+            f"{format(next_front_wing, '.4g')} (separate)"
+        )
+    setup_source = [
+        "player_car_setup_observations.frame_ordinal",
+        "player_car_setup_observations.setup_json",
+        "player_car_setup_observations.next_front_wing_value",
+    ]
+    if setup_start.get("status") == "reported" and setup_parts:
+        setup_text = (
+            "Latest pre-start setup (game-reported): "
+            + ", ".join(setup_parts)
+            + ". Other setup fields omitted."
+        )
+    else:
+        setup_text = (
+            "A safe game-reported car setup snapshot was not available at attempt start."
+        )
+    facts.append(_fact("player_car_setup_context", setup_text, setup_source))
+
     game_valid = attempt.get("game_valid")
     validity_text = (
         "The game marked this lap valid."
@@ -253,6 +304,14 @@ def _attempt_summary(
                 ["player_participant_observations"],
             )
         )
+    if setup_context.get("status") in {"unknown", "incomplete"}:
+        warnings.append(
+            _warning(
+                "player_car_setup_context_unavailable",
+                "Reported player car setup context is unknown or incomplete for this attempt.",
+                ["player_car_setup_observations"],
+            )
+        )
     if context_segment_count is None:
         warnings.append(_warning("session_context_unknown", "Session context is unavailable.", ["lap_context_segments.ordinal=0"]))
     elif context_segment_count > 1:
@@ -266,6 +325,7 @@ def _attempt_summary(
         ("timing_evidence_truncated", "Reported timing evidence exceeded its read limit."),
         ("capture_completion_truncated", "Capture completion metadata exceeded its read limit."),
         ("processing_metrics_truncated", "Processing metrics exceeded their read limit."),
+        ("player_car_setup_context_truncated", "Reported player car setup history exceeded its read limit."),
     ):
         if metadata_limits.get(limit_key) is True:
             code = "timing_evidence_truncated" if limit_key == "timing_evidence_truncated" else "metadata_read_limit"

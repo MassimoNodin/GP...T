@@ -2180,6 +2180,41 @@ h1 span {
   padding-top: 10px;
   border-top: 1px solid #252d2e;
 }
+.setup-context-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+.setup-context-field,
+.setup-next-wing {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid #222b2b;
+  background: rgba(13, 18, 18, 0.5);
+}
+.setup-context-field span,
+.setup-context-field strong,
+.setup-next-wing span,
+.setup-next-wing strong {
+  overflow-wrap: anywhere;
+  color: #84918d;
+  font: 8px/1.5 var(--font-mono);
+}
+.setup-context-field strong,
+.setup-next-wing strong {
+  flex: 0 0 auto;
+  color: #cbd4d0;
+}
+.setup-next-wing {
+  border-color: rgba(113, 199, 181, 0.25);
+}
+.setup-next-wing strong {
+  color: var(--mint);
+}
 .quality-status-evidence {
   margin-top: 18px;
   padding-top: 14px;

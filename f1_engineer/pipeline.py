@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from .sessions.lap_tracker import (
     LapAttempt,
@@ -13,6 +13,7 @@ from .sessions.lap_tracker import (
 from .sessions.lifecycle import LifecycleEvent
 from .sessions.session_history import SessionHistoryObservation
 from .sessions.participant_context import PlayerParticipantObservation
+from .sessions.setup_context import PlayerCarSetupObservation
 from .sessions.context import SessionContext
 from .sessions.manager import ContextHistoryChange, SessionTracker
 from .analysis.continuity import float32_ulp, session_time_discontinuity
@@ -24,6 +25,7 @@ from .telemetry.canonical import (
 )
 from .telemetry.frames import FrameAssembler
 from .udp.car_telemetry import CarTelemetryDecoder
+from .udp.car_setups import CarSetupData, CarSetupsDecoder, CarSetupsPacket
 from .udp.car_status import CarStatusDecoder, CarStatusData, CarStatusPacket
 from .udp.car_damage import CarDamageData, CarDamageDecoder, CarDamagePacket
 from .udp.decoder import PacketDecoder
@@ -46,6 +48,7 @@ from .udp.session_history import (
 
 
 MAX_PLAYER_PARTICIPANT_TRUNCATION_FENCE_SESSIONS = 256
+MAX_PLAYER_CAR_SETUP_TRUNCATION_FENCE_SESSIONS = 256
 from .udp.session_context import SessionContextDecoder
 
 
@@ -68,6 +71,8 @@ class PipelineResult:
     session_history: tuple[SessionHistoryObservation, ...] = ()
     session_history_decode_errors: tuple[str, ...] = ()
     player_participant_observations: tuple[PlayerParticipantObservation, ...] = ()
+    player_car_setup_observations: tuple[PlayerCarSetupObservation, ...] = ()
+    car_setup_decode_errors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +87,8 @@ class PipelineFlushResult:
     session_history: tuple[SessionHistoryObservation, ...] = ()
     session_history_decode_errors: tuple[str, ...] = ()
     player_participant_observations: tuple[PlayerParticipantObservation, ...] = ()
+    player_car_setup_observations: tuple[PlayerCarSetupObservation, ...] = ()
+    car_setup_decode_errors: tuple[str, ...] = ()
 
 
 class TelemetryPipeline:
@@ -103,6 +110,7 @@ class TelemetryPipeline:
         self.car_status_decoder = CarStatusDecoder()
         self.car_damage_decoder = CarDamageDecoder()
         self.participants_decoder = ParticipantsDecoder()
+        self.car_setups_decoder = CarSetupsDecoder()
         self.event_decoder = EventDecoder()
         self.session_history_decoder = SessionHistoryDecoder()
         self.laps = LapTracker()
@@ -136,6 +144,13 @@ class TelemetryPipeline:
         self.player_participant_observations_dropped = 0
         self.player_participant_observation_truncated_session_uids: set[int] = set()
         self.player_participant_observation_truncation_marker_overflowed = False
+        self._player_car_setup_observations: list[PlayerCarSetupObservation] = []
+        self.max_buffered_player_car_setup_observations = 4096
+        self.player_car_setup_observations_dropped = 0
+        self.player_car_setup_observation_truncated_session_uids: set[int] = set()
+        self.player_car_setup_observation_truncation_marker_overflowed = False
+        self.car_setups_packets_decoded = 0
+        self.car_setups_decode_errors: list[str] = []
         self.session_history_truncated_session_uids: set[int] = set()
         self.lap_data_packets_decoded = 0
         self.lap_data_decode_errors: list[str] = []
@@ -189,6 +204,13 @@ class TelemetryPipeline:
             )
             attempts.extend(lifecycle_attempts)
             self._process_player_participants(
+                frame,
+                frame_ordinal,
+                association_epoch=association_epoch,
+                association_scope_assessable=association_scope_assessable,
+                lifecycle_boundary=lifecycle_boundary,
+            )
+            self._process_player_car_setups(
                 frame,
                 frame_ordinal,
                 association_epoch=association_epoch,
@@ -846,6 +868,194 @@ class TelemetryPipeline:
         self._player_participant_observations.clear()
         return observations
 
+    def drain_player_car_setup_observations(
+        self,
+    ) -> tuple[PlayerCarSetupObservation, ...]:
+        observations = tuple(self._player_car_setup_observations)
+        self._player_car_setup_observations.clear()
+        return observations
+
+    def drain_car_setups_decode_errors(self) -> tuple[str, ...]:
+        errors = tuple(self.car_setups_decode_errors)
+        self.car_setups_decode_errors.clear()
+        return errors
+
+    def _process_player_car_setups(
+        self,
+        frame: PacketFrame,
+        frame_ordinal: int,
+        *,
+        association_epoch: int,
+        association_scope_assessable: bool,
+        lifecycle_boundary: bool,
+    ) -> None:
+        if frame.session_uid == 0:
+            return
+        packets = [
+            packet
+            for packet in frame.packets
+            if packet.packet_kind is PacketId.CAR_SETUPS
+        ]
+        if not packets:
+            return
+
+        formats = {int(packet.packet_format) for packet in frame.packets}
+        player_slots = {packet.header.player_car_index for packet in frame.packets}
+        packet_format = next(iter(formats)) if len(formats) == 1 else None
+        player_car_index = next(iter(player_slots)) if len(player_slots) == 1 else None
+        source = packets[0]
+
+        def observation_base(provenance_packet: DecodedPacket | None = None):
+            provenance = provenance_packet or source
+            return {
+                "session_uid": frame.session_uid,
+                "frame_ordinal": frame_ordinal,
+                "frame_identifier": provenance.header.frame_identifier,
+                "overall_frame_identifier": frame.overall_frame_identifier,
+                "packet_format": packet_format,
+                "association_epoch": association_epoch,
+                "association_scope_assessable": association_scope_assessable,
+                "player_car_index": player_car_index,
+                "session_time_s": provenance.header.session_time,
+            }
+
+        def record(
+            *,
+            status: str,
+            reason: str | None,
+            provenance_packet: DecodedPacket | None = None,
+            setup: CarSetupData | None = None,
+            next_front_wing_value: float | None = None,
+            source_packet_count: int = 0,
+        ) -> None:
+            observation = PlayerCarSetupObservation(
+                **observation_base(provenance_packet),
+                status=status,  # type: ignore[arg-type]
+                reason=reason,
+                setup=setup,
+                next_front_wing_value=next_front_wing_value,
+                source_packet_count=source_packet_count,
+            )
+            if len(self._player_car_setup_observations) < (
+                self.max_buffered_player_car_setup_observations
+            ):
+                self._player_car_setup_observations.append(observation)
+                return
+            self.player_car_setup_observations_dropped += 1
+            if frame.session_uid in self.player_car_setup_observation_truncated_session_uids:
+                return
+            if len(self.player_car_setup_observation_truncated_session_uids) >= (
+                MAX_PLAYER_CAR_SETUP_TRUNCATION_FENCE_SESSIONS
+            ):
+                self.player_car_setup_observation_truncation_marker_overflowed = True
+                return
+            self.player_car_setup_observation_truncated_session_uids.add(
+                frame.session_uid
+            )
+            self._player_car_setup_observations.append(
+                PlayerCarSetupObservation(
+                    **observation_base(provenance_packet),
+                    status="truncated",
+                    reason="pipeline_observation_buffer_limit",
+                    setup=None,
+                    next_front_wing_value=None,
+                    source_packet_count=0,
+                )
+            )
+
+        if packet_format is None or player_car_index is None:
+            record(status="unavailable", reason="frame_player_scope_conflict")
+            return
+        if lifecycle_boundary:
+            record(status="unavailable", reason="lifecycle_boundary")
+            return
+
+        decoded: list[tuple[DecodedPacket, CarSetupsPacket]] = []
+        errors: list[str] = []
+        for packet in packets:
+            result = self.car_setups_decoder.decode(packet)
+            if result.error is not None:
+                errors.append(result.error)
+                self.car_setups_decode_errors.append(result.error)
+            elif result.setups is not None:
+                self.car_setups_packets_decoded += 1
+                decoded.append((packet, result.setups))
+        if not decoded:
+            record(
+                status="unavailable",
+                reason="car_setup_packet_unavailable"
+                if errors
+                else "car_setup_packet_not_decoded",
+            )
+            return
+
+        selected: list[tuple[DecodedPacket, CarSetupData, float | None]] = []
+        out_of_range = False
+        for packet, setups in decoded:
+            if int(packet.packet_format) != packet_format:
+                continue
+            if packet.header.player_car_index != player_car_index:
+                continue
+            if player_car_index >= len(setups.cars):
+                out_of_range = True
+                continue
+            selected.append(
+                (
+                    packet,
+                    setups.cars[player_car_index],
+                    setups.next_front_wing_value,
+                )
+            )
+        if not selected:
+            record(
+                status="unavailable",
+                reason="player_slot_out_of_range"
+                if out_of_range
+                else "car_setup_player_slot_mismatch",
+            )
+            return
+        if out_of_range:
+            record(
+                status="unavailable",
+                reason="conflicting_player_car_setup_evidence",
+            )
+            return
+
+        def signature(setup: CarSetupData, next_value: float | None) -> tuple[object, ...]:
+            return (*asdict(setup).values(), next_value)
+
+        signatures = {signature(setup, next_value) for _, setup, next_value in selected}
+        ordered_selected = sorted(selected, key=lambda item: item[0].wire_fingerprint)
+        if len(signatures) != 1:
+            record(
+                status="unavailable",
+                reason="conflicting_player_car_setup_evidence",
+                provenance_packet=ordered_selected[0][0],
+                source_packet_count=len(ordered_selected),
+            )
+            return
+        provenance_keys = {
+            (packet.header.frame_identifier, packet.header.session_time)
+            for packet, _, _ in ordered_selected
+        }
+        if len(provenance_keys) != 1:
+            record(
+                status="unavailable",
+                reason="conflicting_player_car_setup_provenance",
+                provenance_packet=ordered_selected[0][0],
+                source_packet_count=len(ordered_selected),
+            )
+            return
+
+        record(
+            status="observed",
+            reason=None,
+            provenance_packet=ordered_selected[0][0],
+            setup=ordered_selected[0][1],
+            next_front_wing_value=ordered_selected[0][2],
+            source_packet_count=len(ordered_selected),
+        )
+
     def _process_player_participants(
         self,
         frame: PacketFrame,
@@ -1242,6 +1452,8 @@ class TelemetryPipeline:
             session_history=self.drain_session_history(),
             session_history_decode_errors=self.drain_session_history_decode_errors(),
             player_participant_observations=self.drain_player_participant_observations(),
+            player_car_setup_observations=self.drain_player_car_setup_observations(),
+            car_setup_decode_errors=self.drain_car_setups_decode_errors(),
         )
 
     def finish(self) -> tuple[PacketFrame, ...]:
@@ -1264,6 +1476,8 @@ class TelemetryPipeline:
             session_history=self.drain_session_history(),
             session_history_decode_errors=self.drain_session_history_decode_errors(),
             player_participant_observations=self.drain_player_participant_observations(),
+            player_car_setup_observations=self.drain_player_car_setup_observations(),
+            car_setup_decode_errors=self.drain_car_setups_decode_errors(),
         )
 
 

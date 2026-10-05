@@ -57,6 +57,63 @@ def test_sessions_api_is_versioned_and_keeps_session_uid_as_text(monkeypatch, tm
     assert response.json()["data"][0]["capture_sha256"] == "a" * 64
 
 
+def test_lap_api_exposes_bounded_player_contexts(monkeypatch, tmp_path) -> None:
+    setup_context = {
+        "schema_version": 1,
+        "status": "observed_unchanged",
+        "continuity_claim": False,
+        "scope": {"player_car_index": 0},
+        "at_start": {"status": "reported", "setup": {"front_wing": 45}},
+        "observations": [],
+        "observation_count": 1,
+        "observed_change_count": 0,
+        "unknown_event_count": 0,
+        "observations_omitted_count": 0,
+    }
+    participant_context = {"schema_version": 1, "status": "unknown"}
+    monkeypatch.setattr(
+        api_module,
+        "list_laps",
+        lambda *_args, **_kwargs: [
+            {
+                "attempt_key": "attempt",
+                "run_id": "a" * 64,
+                "session_uid": "42",
+                "car_index": 0,
+                "attempt_number": 1,
+                "lap_number": 1,
+                "disposition": "completed",
+                "lap_time_ms": 90_000,
+                "game_valid": True,
+                "reference_eligible": False,
+                "start_frame_ordinal": 10,
+                "end_frame_ordinal": 20,
+                "superseded": None,
+                "lifecycle_assessed": False,
+                "start_observed": True,
+                "pit_encountered": False,
+                "sample_count": 10,
+                "trace_row_count": 10,
+                "trace_schema_version": 4,
+                "trace_sha256": "b" * 64,
+                "context": None,
+                "quality": {},
+                "exclusion_reasons": [],
+                "timing_evidence": {},
+                "player_participant_context": participant_context,
+                "player_car_setup_context": setup_context,
+            }
+        ],
+    )
+
+    response = _get(create_app(tmp_path / "unused.sqlite3"), "/api/v1/laps")
+
+    assert response.status_code == 200
+    attempt = response.json()["data"][0]
+    assert attempt["player_participant_context"] == participant_context
+    assert attempt["player_car_setup_context"] == setup_context
+
+
 def test_attempt_timing_api_is_standalone_and_stringifies_source_session_uid(
     monkeypatch, tmp_path
 ) -> None:

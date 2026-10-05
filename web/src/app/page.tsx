@@ -34,6 +34,7 @@ import {
 import RecordingInbox from "./RecordingInbox";
 import AttemptQualityPanel from "./AttemptQualityPanel";
 import PlayerParticipantContextPanel from "./PlayerParticipantContextPanel";
+import PlayerCarSetupContextPanel from "./PlayerCarSetupContextPanel";
 import DiagnosticEvidencePanels from "./DiagnosticEvidencePanels";
 import AttemptTraceCharts from "./AttemptTraceCharts";
 import RunEvidencePanel from "./RunEvidencePanel";
@@ -970,6 +971,11 @@ export default async function Home({
                     target={target.player_participant_context}
                   />
                 ) : null}
+                {target && !comparison ? (
+                  <PlayerCarSetupContextPanel
+                    target={target.player_car_setup_context}
+                  />
+                ) : null}
                 {target ? (
                   <AttemptTraceCharts
                     report={traceChartResponse?.status === "ok" ? traceChartResponse.data : null}
@@ -1505,6 +1511,10 @@ export default async function Home({
                     <PlayerParticipantContextPanel
                       target={comparison.target.player_participant_context}
                       reference={comparison.reference.player_participant_context}
+                    />
+                    <PlayerCarSetupContextPanel
+                      target={comparison.target.player_car_setup_context}
+                      reference={comparison.reference.player_car_setup_context}
                     />
                     {comparison.comparison_window ? (
                       <ComparisonWindowPanel

@@ -321,6 +321,8 @@ class LapRecord(BaseModel):
     quality: dict[str, Any]
     exclusion_reasons: list[str]
     timing_evidence: dict[str, Any]
+    player_participant_context: dict[str, Any] | None = None
+    player_car_setup_context: dict[str, Any] | None = None
 
 
 class ReferenceCandidate(BaseModel):

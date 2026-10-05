@@ -270,6 +270,55 @@ export interface PlayerParticipantContext {
   limits?: Record<string, number>;
 }
 
+export interface PlayerCarSetupSnapshot {
+  front_wing: number;
+  rear_wing: number;
+  on_throttle_differential: number;
+  off_throttle_differential: number;
+  front_camber: number | null;
+  rear_camber: number | null;
+  front_toe: number | null;
+  rear_toe: number | null;
+  front_suspension: number;
+  rear_suspension: number;
+  front_anti_roll_bar: number;
+  rear_anti_roll_bar: number;
+  front_suspension_height: number;
+  rear_suspension_height: number;
+  brake_pressure_percent: number;
+  brake_bias_percent: number;
+  engine_braking_percent: number;
+  rear_left_tyre_pressure_psi: number | null;
+  rear_right_tyre_pressure_psi: number | null;
+  front_left_tyre_pressure_psi: number | null;
+  front_right_tyre_pressure_psi: number | null;
+  ballast: number;
+  fuel_load: number | null;
+  invalid_fields: string[];
+}
+
+export interface PlayerCarSetupContext {
+  schema_version: 1;
+  status: "observed" | "observed_unchanged" | "observed_changed" | "unknown" | "incomplete";
+  continuity_claim: false;
+  reason?: string;
+  reasons?: string[];
+  scope: Record<string, unknown>;
+  at_start: {
+    status: "reported" | "unknown";
+    setup?: PlayerCarSetupSnapshot | null;
+    next_front_wing_value?: number | null;
+    source?: Record<string, unknown> | null;
+    reason?: string;
+  };
+  observations: Array<Record<string, unknown>>;
+  observation_count: number;
+  observed_change_count: number;
+  unknown_event_count: number;
+  observations_omitted_count: number;
+  limits?: Record<string, number>;
+}
+
 export interface LapRecord {
   attempt_key: string;
   run_id: string;
@@ -297,6 +346,7 @@ export interface LapRecord {
   exclusion_reasons: string[];
   timing_evidence: AttemptTimingEvidence;
   player_participant_context?: PlayerParticipantContext | null;
+  player_car_setup_context?: PlayerCarSetupContext | null;
 }
 
 export interface AttemptTimingEvidence {
@@ -1636,6 +1686,7 @@ export interface Comparison {
     lap_time_ms: number | null;
     game_valid: boolean | null;
     player_participant_context?: PlayerParticipantContext | null;
+    player_car_setup_context?: PlayerCarSetupContext | null;
     reference_eligible?: boolean;
     superseded?: boolean | null;
     lifecycle_assessed?: boolean;
@@ -1648,6 +1699,7 @@ export interface Comparison {
     lap_time_ms: number | null;
     game_valid: boolean | null;
     player_participant_context?: PlayerParticipantContext | null;
+    player_car_setup_context?: PlayerCarSetupContext | null;
     reference_eligible?: boolean;
     superseded?: boolean | null;
     lifecycle_assessed?: boolean;
