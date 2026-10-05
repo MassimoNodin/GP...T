@@ -1,11 +1,13 @@
 import type {
   AttemptRegionReport,
+  AttemptTraceChartReport,
   AttemptTrajectoryPreview,
   LapAttemptPage,
   LapRecord,
   TrackModelRecord,
 } from "@/lib/api";
 import { requestApi } from "@/lib/api";
+import { attemptTraceChartReportMatchesSelection } from "@/lib/attempt-trace-chart-match";
 import {
   ATTEMPT_INVENTORY_PAGE_SIZE,
   attemptInventoryUrl,
@@ -15,6 +17,7 @@ import {
 import AppHeader from "../AppHeader";
 import TrackDiagnosticEvidencePanels from "../TrackDiagnosticEvidencePanels";
 import DraftTrackModelPanel from "../DraftTrackModelPanel";
+import AttemptTraceCharts from "../AttemptTraceCharts";
 import {
   appScreenHref,
   isSelectionTransferBlocked,
@@ -114,6 +117,11 @@ export default async function TrackPage({
   ) ?? [];
   const staleModel = Boolean(raw.modelKey && models && !selectedModel && !duplicateModelIdentity);
   const modelCatalogUnavailable = modelsResponse?.status !== "ok" || !models;
+  const traceChartRequest = attempt
+    ? requestApi<AttemptTraceChartReport>(
+        `/api/v1/attempts/${encodeURIComponent(attempt.attempt_key)}/traces`,
+      )
+    : Promise.resolve(null);
   const trajectoryRequest = attempt
     ? requestApi<AttemptTrajectoryPreview>(
         `/api/v1/attempts/${encodeURIComponent(attempt.attempt_key)}/trajectory`,
@@ -127,10 +135,25 @@ export default async function TrackPage({
         })}`,
       )
     : Promise.resolve(null);
-  const [trajectoryResponse, regionResponse] = await Promise.all([
+  const [traceChartResponse, trajectoryResponse, regionResponse] = await Promise.all([
+    traceChartRequest,
     trajectoryRequest,
     regionsRequest,
   ]);
+
+  const traceChartCandidate = traceChartResponse?.status === "ok"
+    ? traceChartResponse.data
+    : null;
+  const traceChartIdentityMismatch = Boolean(
+    traceChartCandidate && attempt &&
+      !attemptTraceChartReportMatchesSelection(traceChartCandidate, attempt),
+  );
+  const traceChartReport = traceChartCandidate && !traceChartIdentityMismatch
+    ? traceChartCandidate
+    : null;
+  const traceChartUnavailableReason = traceChartIdentityMismatch
+    ? "trace_chart_attempt_provenance_or_shape_mismatch"
+    : traceChartResponse?.reason ?? (traceChartResponse ? "trace_chart_unavailable" : "local_api_request_failed");
 
   const trajectoryCandidate = trajectoryResponse?.status === "ok"
     ? trajectoryResponse.data
@@ -230,6 +253,13 @@ export default async function TrackPage({
           <TrackStatePanel
             title="Trajectory provenance does not match"
             text="The returned path did not match the selected attempt, run, session, player, trace checksum, and schema. It was not displayed."
+            alert
+          />
+        ) : null}
+        {attempt && traceChartIdentityMismatch ? (
+          <TrackStatePanel
+            title="Trace chart provenance or shape does not match"
+            text="The returned channels did not match this attempt's identity, verified checksum, units, and bounded chart structure. They were not displayed; the other diagnostic panels remain available."
             alert
           />
         ) : null}
@@ -379,6 +409,11 @@ export default async function TrackPage({
               {raw.modelKey && modelCatalogUnavailable ? <p className="track-selection-warning" role="status">The model catalog is unavailable, so the requested revision cannot be verified.</p> : null}
               {!raw.modelKey && modelCatalogUnavailable ? <p className="track-selection-warning" role="status">The local model catalog could not be loaded.</p> : null}
             </section>
+
+            <AttemptTraceCharts
+              report={traceChartReport}
+              unavailableReason={traceChartUnavailableReason}
+            />
 
             {selectedModel && !regionIdentityMismatch && regionReport?.model ? (
               <TrackDiagnosticEvidencePanels

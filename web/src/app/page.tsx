@@ -48,6 +48,7 @@ import { buildComparisonCharts } from "./comparison-charts";
 import ComparisonWindowPanel from "./ComparisonWindowPanel";
 import ComparisonConditionsPanel from "./ComparisonConditionsPanel";
 import { comparisonReportMatchesAttempts } from "@/lib/comparison-report-match";
+import { attemptTraceChartReportMatchesSelection } from "@/lib/attempt-trace-chart-match";
 import { buildRecordedSpeechPlan } from "@/lib/recorded-speech-plan";
 import {
   appScreenHref,
@@ -336,6 +337,20 @@ export default async function Home({
   ]);
   const attemptQuality =
     qualityResponse?.status === "ok" ? qualityResponse.data : null;
+  const traceChartCandidate =
+    traceChartResponse?.status === "ok" ? traceChartResponse.data : null;
+  const traceChartIdentityMismatch = Boolean(
+    traceChartCandidate && target &&
+      !attemptTraceChartReportMatchesSelection(traceChartCandidate, target),
+  );
+  const traceChartReport = traceChartCandidate && target && !traceChartIdentityMismatch
+    ? traceChartCandidate
+    : null;
+  const traceChartUnavailableReason = traceChartIdentityMismatch
+    ? "trace_chart_attempt_provenance_or_shape_mismatch"
+    : traceChartResponse?.status === "unavailable"
+      ? traceChartResponse.reason
+      : null;
   const trajectoryPreview =
     trajectoryResponse?.status === "ok" ? trajectoryResponse.data : null;
   const selection = selectionResponse?.data ?? null;
@@ -963,12 +978,8 @@ export default async function Home({
                 ) : null}
                 {target ? (
                   <AttemptTraceCharts
-                    report={traceChartResponse?.status === "ok" ? traceChartResponse.data : null}
-                    unavailableReason={
-                      traceChartResponse?.status === "unavailable"
-                        ? traceChartResponse.reason
-                        : null
-                    }
+                    report={traceChartReport}
+                    unavailableReason={traceChartUnavailableReason}
                   />
                 ) : null}
                 {target ? (
