@@ -7,6 +7,7 @@ import type {
 import ImportJobStatus from "./ImportJobStatus";
 import ReplayControls from "./ReplayControls";
 import RecordingControls from "./RecordingControls";
+import { appScreenHref, type AppScreen } from "@/lib/navigation";
 
 const importErrorText: Record<string, string> = {
   busy: "Another recording is importing. Wait for it to finish, then try again.",
@@ -23,11 +24,15 @@ export default function RecordingInbox({
   recordingResponse,
   jobResponse,
   importError,
+  returnTo = "dashboard",
+  preservedQuery = "",
 }: {
   sourcesResponse: ApiResponse<RecordingSourceRecord[]> | null;
   recordingResponse: ApiResponse<RecordingJobRecord> | null;
   jobResponse: ApiResponse<ImportJobRecord> | null;
   importError?: string;
+  returnTo?: AppScreen;
+  preservedQuery?: string;
 }) {
   const sources = sourcesResponse?.data ?? [];
   const available = sourcesResponse?.status === "ok";
@@ -91,7 +96,11 @@ export default function RecordingInbox({
                 {source.latest_job_id && (
                   <a
                     className="import-button secondary-import-button"
-                    href={`/?import_job_id=${encodeURIComponent(source.latest_job_id)}`}
+                    href={
+                      appScreenHref(returnTo, preservedQuery, {
+                        import_job_id: source.latest_job_id,
+                      }) ?? undefined
+                    }
                   >
                     {source.latest_job_status === "queued" ||
                     source.latest_job_status === "running"
@@ -103,7 +112,11 @@ export default function RecordingInbox({
                 source.latest_job_run_id ? (
                   <a
                     className="import-button secondary-import-button"
-                    href={`/?run_id=${encodeURIComponent(source.latest_job_run_id)}`}
+                    href={
+                      appScreenHref("dashboard", "", {
+                        run_id: source.latest_job_run_id,
+                      }) ?? undefined
+                    }
                   >
                     Run evidence ↗
                   </a>
@@ -116,6 +129,12 @@ export default function RecordingInbox({
                     action={`/api/import-jobs/${source.latest_job_id}/retry`}
                     method="post"
                   >
+                    <input type="hidden" name="return_to" value={returnTo} />
+                    <input
+                      type="hidden"
+                      name="preserved_query"
+                      value={preservedQuery}
+                    />
                     <button className="import-button" type="submit">
                       Retry import
                     </button>
@@ -128,6 +147,12 @@ export default function RecordingInbox({
                       type="hidden"
                       name="capture_id"
                       value={source.capture_id}
+                    />
+                    <input type="hidden" name="return_to" value={returnTo} />
+                    <input
+                      type="hidden"
+                      name="preserved_query"
+                      value={preservedQuery}
                     />
                     <button className="import-button" type="submit">
                       {source.latest_job_status === "complete"
@@ -150,6 +175,8 @@ export default function RecordingInbox({
       )}
       <ImportJobStatus
         initialJob={job}
+        returnTo={returnTo}
+        preservedQuery={preservedQuery}
         retryAvailable={
           job
             ? sourcesResponse?.status === "ok"

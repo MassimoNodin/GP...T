@@ -26,13 +26,12 @@ import {
   RegionEvent,
   ReferenceSelection,
   SessionBestOverview,
-  RecordingJobRecord,
   SessionRecord,
   TrackModelRecord,
   requestApi,
   requestApiPost,
 } from "@/lib/api";
-import RecordingInbox from "./RecordingInbox";
+import AppHeader from "./AppHeader";
 import AttemptQualityPanel from "./AttemptQualityPanel";
 import PlayerParticipantContextPanel from "./PlayerParticipantContextPanel";
 import PlayerCarSetupContextPanel from "./PlayerCarSetupContextPanel";
@@ -50,32 +49,13 @@ import PairedRegionPanel from "./PairedRegionPanel";
 import EngineerQueryPanel from "./EngineerQueryPanel";
 import RecordedEvidenceSpeech from "./RecordedEvidenceSpeech";
 import { buildRecordedSpeechPlan } from "@/lib/recorded-speech-plan";
+import {
+  isSelectionTransferBlocked,
+  preservedAppStateQuery,
+  type AppSearchParams,
+} from "@/lib/navigation";
 import type { ChartSpec } from "./LinkedComparisonCharts";
-import type { ImportJobRecord, RecordingSourceRecord } from "@/lib/api";
-
-type SearchParams = {
-  session_key?: string | string[];
-  target_attempt_key?: string | string[];
-  reference_choice?: string | string[];
-  comparison_policy?: string | string[];
-  window_start_m?: string | string[];
-  window_end_m?: string | string[];
-  observation_attempt_key?: string | string[];
-  track_model_key?: string | string[];
-  position_probe_m?: string | string[];
-  import_job_id?: string | string[];
-  import_error?: string | string[];
-  run_id?: string | string[];
-  run_offset?: string | string[];
-  session_offset?: string | string[];
-  attempt_offset?: string | string[];
-  lifecycle_event_offset?: string | string[];
-  observation_session_uid?: string | string[];
-  observation_car_index?: string | string[];
-  observation_offset?: string | string[];
-  engineer_intent?: string | string[];
-  engineer_region_identifier?: string | string[];
-};
+type SearchParams = AppSearchParams;
 
 type Series = {
   label: string;
@@ -90,6 +70,9 @@ export default async function Home({
   searchParams: Promise<SearchParams>;
 }) {
   const rawParams = await searchParams;
+  const preservedQuery = preservedAppStateQuery(rawParams);
+  const selectionTransferBlocked =
+    isSelectionTransferBlocked(preservedQuery);
   const params = {
     session_key: firstParam(rawParams.session_key),
     target_attempt_key: firstParam(rawParams.target_attempt_key),
@@ -100,8 +83,6 @@ export default async function Home({
     observation_attempt_keys: allParams(rawParams.observation_attempt_key),
     track_model_key: firstParam(rawParams.track_model_key),
     position_probe_m: firstParam(rawParams.position_probe_m),
-    import_job_id: firstParam(rawParams.import_job_id),
-    import_error: firstParam(rawParams.import_error),
     run_id: firstParam(rawParams.run_id),
     run_offset: firstParam(rawParams.run_offset),
     session_offset: firstParam(rawParams.session_offset),
@@ -117,7 +98,7 @@ export default async function Home({
   const sessionOffset = pageOffset(params.session_offset);
   const attemptOffset = pageOffset(params.attempt_offset);
   const lifecycleEventOffset = pageOffset(params.lifecycle_event_offset);
-  const selectedRunId = /^[a-f0-9]{64}$/.test(params.run_id ?? "")
+  const selectedRunId = !selectionTransferBlocked && /^[a-f0-9]{64}$/.test(params.run_id ?? "")
     ? params.run_id!
     : null;
   const runDetailQuery = new URLSearchParams({
@@ -131,15 +112,15 @@ export default async function Home({
   const [
     sessionResponse,
     trackModelsResponse,
-    recordingSourcesResponse,
-    recordingResponse,
     processingRunsResponse,
     processingRunDetailResponse,
   ] = await Promise.all([
-    requestApi<SessionRecord[]>("/api/v1/sessions"),
-    requestApi<TrackModelRecord[]>("/api/v1/track-models"),
-    requestApi<RecordingSourceRecord[]>("/api/v1/recording-sources"),
-    requestApi<RecordingJobRecord>("/api/v1/recordings/current"),
+    selectionTransferBlocked
+      ? Promise.resolve(null)
+      : requestApi<SessionRecord[]>("/api/v1/sessions"),
+    selectionTransferBlocked
+      ? Promise.resolve(null)
+      : requestApi<TrackModelRecord[]>("/api/v1/track-models"),
     requestApi<ProcessingRunPage<ProcessingRunSummary>>(
       `/api/v1/processing-runs?limit=10&offset=${runOffset}`,
     ),
@@ -165,16 +146,7 @@ export default async function Home({
         `/api/v1/processing-runs/${encodeURIComponent(selectedRunId)}/sessions/${encodeURIComponent(observationSession.session_uid)}/cars?limit=24&offset=0`,
       )
     : Promise.resolve(null);
-  const jobResponsePromise =
-    params.import_job_id && /^[a-f0-9]{32}$/.test(params.import_job_id)
-      ? requestApi<ImportJobRecord>(
-          `/api/v1/import-jobs/${params.import_job_id}`,
-        )
-      : Promise.resolve(null);
-  const [observationInventoryResponse, jobResponse] = await Promise.all([
-    observationInventoryPromise,
-    jobResponsePromise,
-  ]);
+  const observationInventoryResponse = await observationInventoryPromise;
   const observationInventory =
     observationInventoryResponse?.status === "ok"
       ? observationInventoryResponse.data
@@ -261,13 +233,17 @@ export default async function Home({
     );
   });
   const requestedSession =
-    params.session_key === undefined
+    selectionTransferBlocked || params.session_key === undefined
       ? null
       : importedSessions.find((item) => item.session_key === params.session_key) ?? null;
   const sessionUnavailable =
-    params.session_key !== undefined && requestedSession === null;
+    !selectionTransferBlocked &&
+    params.session_key !== undefined &&
+    requestedSession === null;
   const session =
-    params.session_key === undefined
+    selectionTransferBlocked
+      ? null
+      : params.session_key === undefined
       ? sessions.at(-1) ?? null
       : requestedSession;
   const selectableSessions =
@@ -315,6 +291,7 @@ export default async function Home({
     observationSetQuery.set("window_end_m", params.window_end_m);
   }
   const observationSetRequest =
+    !selectionTransferBlocked &&
     params.observation_attempt_keys.length >= 2 &&
     params.observation_attempt_keys.length <= 8 &&
     Boolean(params.window_start_m?.trim() && params.window_end_m?.trim())
@@ -720,29 +697,9 @@ export default async function Home({
   }));
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <a className="brand" href="/" aria-label="GP...T home">
-          <svg className="brand-mark" viewBox="0 0 64 64" aria-hidden="true">
-            <path d="M12 44h11V31h10v7h10V19h9" />
-            <circle cx="23" cy="31" r="3" />
-            <circle cx="33" cy="38" r="3" />
-            <circle cx="43" cy="19" r="3" />
-          </svg>
-          <span className="brand-name">
-            GP<span className="brand-dots">...</span>T
-          </span>
-          <span className="brand-descriptor">PERSONAL AI RACE ENGINEER</span>
-        </a>
-        <div className="topbar-right">
-          <span className="local-indicator">
-            <i /> LOCAL TELEMETRY
-          </span>
-          <span className="topbar-version">HISTORICAL ANALYSIS · V1</span>
-        </div>
-      </header>
-
-      <div className="page-content">
+    <div className="app-shell">
+      <AppHeader active="dashboard" preservedQuery={preservedQuery} />
+      <main className="page-content" id="main-content" tabIndex={-1}>
         <section className="intro-row">
           <div>
             <div className="eyebrow">PERSONAL AI RACE ENGINEER / SESSION REVIEW</div>
@@ -771,13 +728,6 @@ export default async function Home({
           </div>
         </section>
 
-        <RecordingInbox
-          sourcesResponse={recordingSourcesResponse}
-          recordingResponse={recordingResponse}
-          jobResponse={jobResponse}
-          importError={params.import_error}
-        />
-
         <RunEvidencePanel
           runsPage={processingRunsResponse?.status === "ok" ? processingRunsResponse.data : null}
           detail={processingRunDetailResponse?.status === "ok" ? processingRunDetailResponse.data : null}
@@ -797,7 +747,22 @@ export default async function Home({
           lifecycleEventOffset={lifecycleEventOffset}
         />
 
-        {apiUnavailable ? (
+        {selectionTransferBlocked ? (
+          <section className="connection-state panel" role="status">
+            <span className="state-icon">!</span>
+            <div>
+              <h2>Selection transfer is paused</h2>
+              <p>
+                This selection was too large to carry safely between screens.
+                GP...T has not selected a recording or attempt automatically.
+                Return to the previous screen or choose a recording explicitly.
+              </p>
+              <a className="recording-evidence-link" href="/recordings">
+                Open recordings
+              </a>
+            </div>
+          </section>
+        ) : apiUnavailable ? (
           <section className="connection-state panel">
             <span className="state-icon">!</span>
             <div>
@@ -1893,7 +1858,7 @@ export default async function Home({
             </div>
           </>
         )}
-      </div>
+      </main>
       <EngineerQueryPanel
         report={engineerQueryReport}
         requestState={engineerQueryRequestState}
@@ -1924,7 +1889,7 @@ export default async function Home({
         </span>
         <span>Recorded telemetry only · No generated coaching</span>
       </footer>
-    </main>
+    </div>
   );
 }
 

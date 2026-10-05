@@ -4,6 +4,11 @@ This plan turns the eight UI references in `mock-images/` into a feature-backed 
 
 The accepted architectural boundary is recorded in [architecture decision 0061](architecture.md#decision-0061-deliver-the-mock-product-through-evidence-backed-web-capabilities). Preserve the existing Python telemetry/storage/analysis services, protected local API, and Next.js web app. Build the workflows first, then migrate the main interface to the reference layouts. Keep the current diagnostic application usable during the transition.
 
+## Delivered slices
+
+- **Draft region authoring:** an explicitly selected Time Trial or Practice/Qualifying attempt can produce a bounded, loader-compatible draft model. The model remains diagnostic, is not installed, and carries its source and quality warnings. See [decision 0062](architecture.md#decision-0062-author-draft-distance-region-models-from-a-selected-attempt).
+- **Stage 1, first increment:** `/` remains the diagnostic dashboard and `/recordings` now hosts the existing recording, replay, capture catalog, import and job-status workflow. Shared navigation preserves allowlisted run/session/attempt/reference/model/window state, including repeated observation selections. Import and retry forms return to their originating screen through the `dashboard`/`recordings` enum; a posted URL is never treated as a redirect destination. The recordings route loads only the catalog, current recording and explicitly requested import job. Navigation does not stop local recording or replay, and their pollers clean up when the route unmounts. Query length and repetition are bounded while values are copied; if selected state cannot be carried intact, an explicit blocked-transfer marker disables screen navigation instead of allowing a latest-record fallback. Successful job navigation clears an old import error. Only Dashboard and Recordings are live navigation destinations; other screen mockups remain planned.
+
 ## Delivery stages
 
 Stages may overlap when they do not depend on one another. UI parity is the final acceptance stage; an attractive mock state does not count as a delivered capability.

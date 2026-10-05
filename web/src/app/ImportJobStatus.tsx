@@ -3,13 +3,18 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ApiResponse, ImportJobRecord } from "@/lib/api";
+import type { AppScreen } from "@/lib/navigation";
 
 export default function ImportJobStatus({
   initialJob,
   retryAvailable,
+  returnTo = "dashboard",
+  preservedQuery = "",
 }: {
   initialJob: ImportJobRecord | null;
   retryAvailable: boolean | null;
+  returnTo?: AppScreen;
+  preservedQuery?: string;
 }) {
   const [job, setJob] = useState(initialJob);
   const [unavailable, setUnavailable] = useState(false);
@@ -127,6 +132,12 @@ export default function ImportJobStatus({
           </p>
           {retryAvailable ? (
             <form action={`/api/import-jobs/${job.job_id}/retry`} method="post">
+              <input type="hidden" name="return_to" value={returnTo} />
+              <input
+                type="hidden"
+                name="preserved_query"
+                value={preservedQuery}
+              />
               <button className="import-button retry-button" type="submit">
                 Retry import
               </button>
