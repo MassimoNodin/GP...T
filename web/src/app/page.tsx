@@ -840,7 +840,11 @@ export default async function Home({
                   }
                 />
                 <DraftTrackModelPanel
-                  key={target?.attempt_key ?? "no-selected-attempt"}
+                  key={
+                    target
+                      ? `${target.run_id}:${target.session_uid}:${target.attempt_key}:${target.trace_sha256}:${target.trace_schema_version}`
+                      : "no-selected-attempt"
+                  }
                   attempt={target}
                   explicitlySelected={Boolean(
                     target &&

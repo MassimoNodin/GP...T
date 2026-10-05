@@ -14,6 +14,7 @@ import {
 } from "@/lib/attempt-inventory";
 import AppHeader from "../AppHeader";
 import TrackDiagnosticEvidencePanels from "../TrackDiagnosticEvidencePanels";
+import DraftTrackModelPanel from "../DraftTrackModelPanel";
 import {
   appScreenHref,
   isSelectionTransferBlocked,
@@ -402,6 +403,15 @@ export default async function TrackPage({
                 preservedQuery={preservedQuery}
               />
             )}
+            <DraftTrackModelPanel
+              key={
+                `${attempt.run_id}:${attempt.session_uid}:${attempt.attempt_key}:${attempt.trace_sha256}:${attempt.trace_schema_version}`
+              }
+              attempt={attempt}
+              explicitlySelected={Boolean(
+                raw.attemptKey && raw.attemptKey === attempt.attempt_key,
+              )}
+            />
           </>
         ) : null}
       </main>

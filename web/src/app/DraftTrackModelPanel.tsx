@@ -10,6 +10,7 @@ import type {
   LapRecord,
   SessionContext,
 } from "@/lib/api";
+import { draftTrackModelResultMatches } from "@/lib/draft-track-model";
 
 type RegionFields = {
   identifier: string;
@@ -216,15 +217,21 @@ export default function DraftTrackModelPanel({
       return;
     }
     setSubmitting(true);
+    const requestIdentity = {
+      modelId: modelId.trim(),
+      revision: Number(revision),
+      layoutId: layoutId.trim(),
+      regions: parsedRegions,
+    };
     try {
       const response = await fetch("/api/track-models/draft", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           source_attempt_key: attempt.attempt_key,
-          model_id: modelId.trim(),
-          revision: Number(revision),
-          layout_id: layoutId.trim(),
+          model_id: requestIdentity.modelId,
+          revision: requestIdentity.revision,
+          layout_id: requestIdentity.layoutId,
           regions: parsedRegions,
         }),
       });
@@ -233,6 +240,13 @@ export default function DraftTrackModelPanel({
       if (!response.ok || payload.status !== "ok" || !payload.data) {
         throw new Error(
           (payload.reason ?? "draft_model_unavailable").replaceAll("_", " "),
+        );
+      }
+      if (
+        !draftTrackModelResultMatches(payload.data, attempt, requestIdentity)
+      ) {
+        throw new Error(
+          "The returned draft did not match the selected attempt and requested model. It was discarded.",
         );
       }
       setResult(payload.data);
