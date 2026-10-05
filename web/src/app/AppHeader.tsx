@@ -15,6 +15,7 @@ export default function AppHeader({
     { screen: "dashboard" as const, label: "Dashboard" },
     { screen: "recordings" as const, label: "Recordings" },
     { screen: "sessions" as const, label: "Sessions" },
+    { screen: "engineer" as const, label: "Engineer" },
   ].map((item) => ({
     ...item,
     href: appScreenHref(item.screen, preservedQuery),

@@ -1773,6 +1773,15 @@ export default async function Home({
         referenceHref={engineerSourceHref(manualReference?.attempt_key ?? null)}
         comparisonHref={engineerComparisonHref}
         requestReason={engineerQueryRequestReason}
+        summaryScreenHref={
+          target && session && params.target_attempt_key === target.attempt_key
+            ? appScreenHref("engineer", preservedQuery, {
+                session_key: session.session_key,
+                target_attempt_key: target.attempt_key,
+                engineer_intent: "attempt_summary",
+              })
+            : null
+        }
       />
       <footer className="footer-bar">
         <span>

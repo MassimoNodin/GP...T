@@ -1,4 +1,4 @@
-export type AppScreen = "dashboard" | "recordings" | "sessions";
+export type AppScreen = "dashboard" | "recordings" | "sessions" | "engineer";
 export type ImportReturnScreen = "dashboard" | "recordings";
 
 export type AppSearchParams = Record<string, string | string[] | undefined>;
@@ -79,6 +79,7 @@ export function isSelectionTransferBlocked(value: string): boolean {
 export function appScreenPath(screen: AppScreen): string {
   if (screen === "recordings") return "/recordings";
   if (screen === "sessions") return "/sessions";
+  if (screen === "engineer") return "/engineer";
   return "/";
 }
 

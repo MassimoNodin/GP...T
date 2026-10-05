@@ -456,6 +456,11 @@ function RunDetail({
                 <AttemptRow
                   key={attempt.attempt_key}
                   attempt={attempt}
+                  summaryHref={screenHref("engineer", preservedQuery, {
+                    session_key: attempt.session_key,
+                    target_attempt_key: attempt.attempt_key,
+                    engineer_intent: "attempt_summary",
+                  })}
                   href={screenHref(
                     "dashboard",
                     preservedQuery,
@@ -858,9 +863,11 @@ function SessionRow({
 function AttemptRow({
   attempt,
   href,
+  summaryHref,
 }: {
   attempt: ProcessingRunAttempt;
   href: string | null;
+  summaryHref: string | null;
 }) {
   const timing = attempt.timing_evidence;
   const lifecycleStatus = !attempt.lifecycle_assessed || attempt.superseded === null
@@ -889,9 +896,10 @@ function AttemptRow({
               : ""}
         </small>
       </div>
-      <a href={href ?? undefined}>
-        Open attempt ↗
-      </a>
+      <div className="run-link-actions">
+        {summaryHref ? <a href={summaryHref}>Summarize attempt ↗</a> : null}
+        <a href={href ?? undefined}>Open attempt ↗</a>
+      </div>
     </li>
   );
 }
