@@ -386,6 +386,8 @@ function EngineerQueryProvenance({ report }: { report: EngineerQueryReport }) {
         ],
         ["Model content SHA-256", stringValue(model?.content_sha256)],
         ["Model origin", stringValue(model?.origin)],
+        ["Canonical model SHA-256", stringValue(model?.model_content_sha256)],
+        ["Review ID", stringValue(record(model?.review)?.review_id)],
       ].filter((entry): entry is [string, string] => entry[1] !== null),
     );
   }

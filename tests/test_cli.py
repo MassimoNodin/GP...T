@@ -323,7 +323,7 @@ def test_compare_regions_cli_forwards_explicit_pair_and_catalog_model(monkeypatc
     monkeypatch.setattr(
         cli,
         "load_track_model_catalog",
-        lambda root: calls.update(root=root)
+        lambda root, reviewed_root: calls.update(root=root, reviewed_root=reviewed_root)
         or type("Catalog", (), {
             "resolve_entry": lambda _self, model_id, revision: type(
                 "Entry", (), {"model": model, "metadata": lambda _self: metadata}
@@ -385,6 +385,7 @@ def test_compare_regions_cli_forwards_explicit_pair_and_catalog_model(monkeypatc
         "policy": cli.ComparisonPolicy.PRACTICE_QUALIFYING,
     }
     assert calls["root"] == "models"
+    assert calls["reviewed_root"] is None
     assert json.loads(capsys.readouterr().out) == document
 
 

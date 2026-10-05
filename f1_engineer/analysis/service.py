@@ -39,7 +39,8 @@ from ..storage.query import (
 from ..storage.run_summaries import get_processing_run_summary
 from ..tracks.loader import load_track_model
 from ..tracks.model import MAX_TRACK_MODEL_REGIONS, TrackModel
-from ..tracks.registry import corner_candidate_ranking_approval
+from ..tracks.fingerprint import track_model_fingerprint
+from ..tracks.registry import TrackModelCatalog, corner_candidate_ranking_approval
 from .source_limits import (
     ANALYSIS_SOURCE_CONTEXT_BYTE_LIMIT,
     ANALYSIS_SOURCE_CONTEXT_SEGMENT_LIMIT,
@@ -109,6 +110,7 @@ def compare_attempts(
     *,
     config: ResamplingConfig = ResamplingConfig(),
     track_model: TrackModel | str | Path | None = None,
+    track_model_catalog: TrackModelCatalog | None = None,
     policy: ComparisonPolicy | str = ComparisonPolicy.TIME_TRIAL,
     distance_window: DistanceWindow | None = None,
 ) -> dict[str, object]:
@@ -366,9 +368,11 @@ def compare_attempts(
         else:
             target_context_supported = True
 
-    model_summary = _corner_candidate_model_summary(model)
+    model_summary = _corner_candidate_model_summary(model, track_model_catalog)
     model_approval = (
-        corner_candidate_ranking_approval(model) if model is not None else None
+        corner_candidate_ranking_approval(model, track_model_catalog)
+        if model is not None
+        else None
     )
     reference_selection: dict[str, object] | None = None
     reference_selection_error: str | None = None
@@ -445,14 +449,31 @@ def _corner_candidate_attempt_evidence(
 
 def _corner_candidate_model_summary(
     model: TrackModel | None,
+    catalog: TrackModelCatalog | None = None,
 ) -> dict[str, object] | None:
     if model is None:
         return None
-    return {
+    result: dict[str, object] = {
         "model_id": model.model_id,
         "revision": model.revision,
         "validation_status": model.validation_status,
+        "model_content_sha256": track_model_fingerprint(model),
     }
+    if catalog is not None:
+        entry = catalog.entries.get((model.model_id, model.revision))
+        if entry is not None and entry.model == model:
+            metadata = entry.metadata()
+            result.update(
+                {
+                    "origin": metadata["origin"],
+                    "source_kind": metadata["source_kind"],
+                    "content_sha256": metadata["content_sha256"],
+                    "bundle_content_sha256": metadata["bundle_content_sha256"],
+                    "source_filename": metadata["source_filename"],
+                    "review": metadata["review"],
+                }
+            )
+    return result
 
 
 def _load_bounded_attempt_trace(

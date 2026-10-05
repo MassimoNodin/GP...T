@@ -219,7 +219,11 @@ export default function PairedRegionPanel({
   }
 
   const sideWarnings = (side: "target" | "reference") => report.warnings[side] ?? [];
-  const modelOrigin = report.model.origin === "local_draft" ? "local draft" : "packaged model";
+  const modelOrigin = report.model.origin === "local_draft"
+    ? "local draft"
+    : report.model.origin === "reviewed"
+      ? "reviewed model"
+      : "packaged model";
 
   return (
     <section className="panel paired-region-panel">

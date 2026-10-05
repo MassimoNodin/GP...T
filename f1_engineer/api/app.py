@@ -72,7 +72,6 @@ from ..tracks.registry import (
     TrackModelCatalog,
     load_track_model_catalog,
     list_track_models as list_registered_track_models,
-    resolve_track_model,
 )
 from .import_controller import ImportController
 from .replay_controller import ReplayController
@@ -121,9 +120,14 @@ class TrackModelRecord(BaseModel):
     validation_status: str
     provenance: str
     region_count: int
-    origin: Literal["packaged", "local_draft"]
+    origin: Literal["packaged", "local_draft", "reviewed"]
     content_sha256: str
     source_filename: str
+    source_kind: Literal["package_artifact", "diagnostic_draft", "review_bundle"]
+    model_content_sha256: str
+    bundle_content_sha256: str | None
+    approved_for_candidate_ranking: bool
+    review: dict[str, Any] | None
 
 
 class RecordingSourceRecord(BaseModel):
@@ -498,6 +502,7 @@ def create_app(
     recording_port: int = 20777,
     recording_queue_size: int = 8192,
     track_models_root: str | Path | None = None,
+    reviewed_track_models_root: str | Path | None = None,
 ) -> FastAPI:
     """Create a local API bound to operator-configured storage and recording roots."""
     configured_database_path = Path(database_path).expanduser().resolve()
@@ -507,8 +512,13 @@ def create_app(
         if track_models_root is not None
         else os.environ.get("F1_ENGINEER_TRACK_MODELS_ROOT") or None
     )
+    selected_reviewed_track_models_root = (
+        reviewed_track_models_root
+        if reviewed_track_models_root is not None
+        else os.environ.get("F1_ENGINEER_REVIEWED_TRACK_MODELS_ROOT") or None
+    )
     track_model_catalog: TrackModelCatalog = load_track_model_catalog(
-        selected_track_models_root
+        selected_track_models_root, selected_reviewed_track_models_root
     )
     import_controller = ImportController(
         configured_database_path, configured_recordings_root
@@ -1332,17 +1342,21 @@ def create_app(
                 reason="track_model_id_and_revision_must_be_selected_together",
             )
         try:
-            track_model: TrackModel | None = (
-                resolve_track_model(track_model_id, track_model_revision)
+            model_entry = (
+                track_model_catalog.resolve_entry(track_model_id, track_model_revision)
                 if track_model_id is not None and track_model_revision is not None
                 else None
             )
+            if model_entry is not None and model_entry.origin == "local_draft":
+                raise ValueError("local_draft_track_model_not_available_for_comparison")
+            track_model: TrackModel | None = model_entry.model if model_entry else None
             distance_window = optional_distance_window(window_start_m, window_end_m)
             result = compare_attempts(
                 configured_database_path,
                 target_attempt_key,
                 reference_attempt_key,
                 track_model=track_model,
+                track_model_catalog=track_model_catalog,
                 policy=comparison_policy,
                 distance_window=distance_window,
             )

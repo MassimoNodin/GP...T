@@ -1,21 +1,28 @@
 from __future__ import annotations
 
-import hashlib
-import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, Mapping
 
 from .loader import load_track_model_with_checksum
+from .fingerprint import (
+    TRACK_MODEL_FINGERPRINT_VERSION,
+    track_model_fingerprint,
+)
 from .model import TrackModel
+from .reviewed_bundle import (
+    REVIEWED_TRACK_MODEL_SCOPE,
+    ReviewProvenance,
+    load_reviewed_track_models,
+)
 
 
 _MODEL_FILES = ("melbourne_f1_25_tt_draft_v1.json",)
 MAX_LOCAL_TRACK_MODELS = 16
 MAX_LOCAL_TRACK_MODEL_DIRECTORY_ENTRIES = 128
 
-ModelOrigin = Literal["packaged", "local_draft"]
+ModelOrigin = Literal["packaged", "local_draft", "reviewed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,19 +31,54 @@ class TrackModelEntry:
     origin: ModelOrigin
     content_sha256: str
     source_filename: str
+    model_content_sha256: str
+    review: ReviewProvenance | None = None
 
     def metadata(self) -> dict[str, object]:
+        reviewed_approved = (
+            self.origin == "reviewed"
+            and self.model.validation_status == "validated"
+            and self.review is not None
+            and self.review.scope == REVIEWED_TRACK_MODEL_SCOPE
+            and self.review.model_fingerprint_version == "track-model-canonical-v1"
+            and self.model_content_sha256 == track_model_fingerprint(self.model)
+        )
+        packaged_approval = CORNER_CANDIDATE_RANKING_APPROVALS.get(
+            (self.model.model_id, self.model.revision)
+        ) if self.origin == "packaged" else None
+        packaged_provenance = (
+            packaged_approval.get("approval_provenance")
+            if packaged_approval is not None
+            else None
+        )
+        approved = reviewed_approved or (
+            self.origin == "packaged"
+            and self.model.validation_status == "validated"
+            and packaged_approval is not None
+            and packaged_approval.get("model_content_sha256") == self.model_content_sha256
+            and isinstance(packaged_provenance, Mapping)
+            and bool(packaged_provenance)
+        )
         return {
             **_metadata(self.model),
             "origin": self.origin,
             "content_sha256": self.content_sha256,
             "source_filename": self.source_filename,
+            "source_kind": {
+                "packaged": "package_artifact",
+                "local_draft": "diagnostic_draft",
+                "reviewed": "review_bundle",
+            }[self.origin],
+            "model_content_sha256": self.model_content_sha256,
+            "bundle_content_sha256": self.content_sha256 if self.origin == "reviewed" else None,
+            "approved_for_candidate_ranking": approved,
+            "review": self.review.metadata() if self.review is not None else None,
         }
 
 
 @dataclass(frozen=True, slots=True)
 class TrackModelCatalog:
-    """Immutable startup snapshot of packaged and explicitly configured models."""
+    """Immutable startup snapshot of packaged, draft, and reviewed models."""
 
     entries: Mapping[tuple[str, int], TrackModelEntry]
 
@@ -73,6 +115,7 @@ def _load_packaged_entries() -> Mapping[tuple[str, int], TrackModelEntry]:
             origin="packaged",
             content_sha256=content_sha256,
             source_filename=filename,
+            model_content_sha256=track_model_fingerprint(model),
         )
     return MappingProxyType(entries)
 
@@ -92,21 +135,43 @@ CORNER_CANDIDATE_RANKING_APPROVALS: Mapping[
 
 def load_track_model_catalog(
     local_root: str | Path | None = None,
+    reviewed_root: str | Path | None = None,
 ) -> TrackModelCatalog:
-    """Build an immutable catalog, optionally adding local draft JSON models.
+    """Build an immutable catalog, optionally adding drafts and review bundles.
 
-    The configured directory is flat and server-selected. Request parameters
-    can choose only an opaque model ID and revision, never a file path.
+    Both configured directories are flat and operator-selected. Request
+    parameters can choose only an opaque model ID and revision, never a path.
     """
-    if local_root is None:
+    if local_root is None and reviewed_root is None:
         return PACKAGED_TRACK_MODEL_CATALOG
+    entries = dict(_PACKAGED_ENTRIES)
+    packaged_ids = {model_id for model_id, _revision in entries}
+    if local_root is not None:
+        for entry in _load_local_draft_entries(local_root):
+            if entry.model.model_id in packaged_ids:
+                raise ValueError("local_track_model_shadows_packaged_model")
+            _admit_unique(entries, entry)
+    if reviewed_root is not None:
+        for reviewed in load_reviewed_track_models(reviewed_root):
+            entry = TrackModelEntry(
+                model=reviewed.model,
+                origin="reviewed",
+                content_sha256=reviewed.bundle_content_sha256,
+                source_filename=reviewed.source_filename,
+                model_content_sha256=reviewed.model_content_sha256,
+                review=reviewed.review,
+            )
+            _admit_unique(entries, entry)
+    return TrackModelCatalog(MappingProxyType(entries))
+
+
+def _load_local_draft_entries(root_path: str | Path) -> tuple[TrackModelEntry, ...]:
     try:
-        root = Path(local_root).expanduser().resolve(strict=True)
+        root = Path(root_path).expanduser().resolve(strict=True)
     except OSError as exc:
         raise ValueError("local_track_model_root_unavailable") from exc
     if not root.is_dir():
         raise ValueError("local_track_model_root_must_be_a_directory")
-
     candidates: list[Path] = []
     try:
         for count, candidate in enumerate(root.iterdir(), start=1):
@@ -119,9 +184,7 @@ def load_track_model_catalog(
     if len(candidates) > MAX_LOCAL_TRACK_MODELS:
         raise ValueError("local_track_model_count_limit_exceeded")
 
-    entries = dict(_PACKAGED_ENTRIES)
-    packaged_ids = {model_id for model_id, _revision in entries}
-    local_keys: set[tuple[str, int]] = set()
+    loaded: list[TrackModelEntry] = []
     for candidate in sorted(candidates, key=lambda path: path.name.casefold()):
         try:
             resolved = candidate.resolve(strict=True)
@@ -134,19 +197,25 @@ def load_track_model_catalog(
         model, content_sha256 = load_track_model_with_checksum(resolved)
         if model.validation_status != "draft":
             raise ValueError("local_track_model_must_remain_draft")
-        if model.model_id in packaged_ids:
-            raise ValueError("local_track_model_shadows_packaged_model")
-        key = (model.model_id, model.revision)
-        if key in entries or key in local_keys:
-            raise ValueError("duplicate_track_model_id_and_revision")
-        local_keys.add(key)
-        entries[key] = TrackModelEntry(
-            model=model,
-            origin="local_draft",
-            content_sha256=content_sha256,
-            source_filename=candidate.name,
+        loaded.append(
+            TrackModelEntry(
+                model=model,
+                origin="local_draft",
+                content_sha256=content_sha256,
+                source_filename=candidate.name,
+                model_content_sha256=track_model_fingerprint(model),
+            )
         )
-    return TrackModelCatalog(MappingProxyType(entries))
+    return tuple(loaded)
+
+
+def _admit_unique(
+    entries: dict[tuple[str, int], TrackModelEntry], entry: TrackModelEntry
+) -> None:
+    key = (entry.model.model_id, entry.model.revision)
+    if key in entries:
+        raise ValueError("duplicate_track_model_id_and_revision")
+    entries[key] = entry
 
 
 def list_track_models(
@@ -161,22 +230,51 @@ def resolve_track_model(model_id: str, revision: int) -> TrackModel:
     return entry.model
 
 
-def corner_candidate_ranking_approval(model: TrackModel) -> dict[str, object]:
-    """Return explicit approval evidence for this exact packaged revision."""
+def corner_candidate_ranking_approval(
+    model: TrackModel, catalog: TrackModelCatalog | None = None
+) -> dict[str, object]:
+    """Return review evidence for this exact model in the supplied snapshot."""
     key = (model.model_id, model.revision)
-    registered_model = TRACK_MODEL_REGISTRY.get(key)
-    fingerprint = _model_fingerprint(model)
-    registered = registered_model is not None and registered_model == model
-    raw_approval = CORNER_CANDIDATE_RANKING_APPROVALS.get(key)
-    provenance = raw_approval.get("approval_provenance") if raw_approval else None
-    approved = (
-        registered
-        and model.validation_status == "validated"
-        and raw_approval is not None
-        and raw_approval.get("model_content_sha256") == fingerprint
-        and isinstance(provenance, Mapping)
-        and bool(provenance)
-    )
+    fingerprint = track_model_fingerprint(model)
+    entry = catalog.entries.get(key) if catalog is not None else None
+    if catalog is None:
+        registered_model = TRACK_MODEL_REGISTRY.get(key)
+        registered = registered_model is not None and registered_model == model
+        entry = _PACKAGED_ENTRIES.get(key) if registered else None
+        raw_approval = CORNER_CANDIDATE_RANKING_APPROVALS.get(key)
+        provenance = raw_approval.get("approval_provenance") if raw_approval else None
+        approved = (
+            registered
+            and model.validation_status == "validated"
+            and raw_approval is not None
+            and raw_approval.get("model_content_sha256") == fingerprint
+            and isinstance(provenance, Mapping)
+            and bool(provenance)
+        )
+    else:
+        registered = entry is not None and entry.model == model
+        if registered and entry is not None and entry.origin == "reviewed":
+            provenance = entry.review.metadata() if entry.review is not None else None
+            approved = (
+                model.validation_status == "validated"
+                and entry.model_content_sha256 == fingerprint
+                and entry.review is not None
+                and entry.review.scope == REVIEWED_TRACK_MODEL_SCOPE
+                and entry.review.model_fingerprint_version == TRACK_MODEL_FINGERPRINT_VERSION
+            )
+        elif registered and entry is not None and entry.origin == "packaged":
+            raw_approval = CORNER_CANDIDATE_RANKING_APPROVALS.get(key)
+            provenance = raw_approval.get("approval_provenance") if raw_approval else None
+            approved = (
+                model.validation_status == "validated"
+                and raw_approval is not None
+                and raw_approval.get("model_content_sha256") == fingerprint
+                and isinstance(provenance, Mapping)
+                and bool(provenance)
+            )
+        else:
+            provenance = None
+            approved = False
     reason = (
         None
         if approved
@@ -190,6 +288,19 @@ def corner_candidate_ranking_approval(model: TrackModel) -> dict[str, object]:
         "model_id": model.model_id,
         "revision": model.revision,
         "registered": registered,
+        "origin": entry.origin if entry is not None and registered else None,
+        "source_kind": (
+            entry.metadata()["source_kind"] if entry is not None and registered else None
+        ),
+        "content_sha256": entry.content_sha256 if entry is not None and registered else None,
+        "bundle_content_sha256": (
+            entry.content_sha256
+            if entry is not None and registered and entry.origin == "reviewed"
+            else None
+        ),
+        "review": entry.review.metadata()
+        if entry is not None and registered and entry.review is not None
+        else None,
         "approved_for_candidate_ranking": approved,
         "validation_status": model.validation_status,
         "model_content_sha256": fingerprint,
@@ -199,10 +310,8 @@ def corner_candidate_ranking_approval(model: TrackModel) -> dict[str, object]:
 
 
 def _model_fingerprint(model: TrackModel) -> str:
-    payload = json.dumps(
-        asdict(model), sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+    """Backward-compatible name for the canonical model fingerprint."""
+    return track_model_fingerprint(model)
 
 
 def _metadata(model: TrackModel) -> dict[str, object]:

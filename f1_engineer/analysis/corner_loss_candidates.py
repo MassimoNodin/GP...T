@@ -530,6 +530,13 @@ def _model_identity(
         "revision": model.get("revision"),
         "validation_status": model.get("validation_status"),
         "registered": approval.get("registered") if approval is not None else False,
+        "origin": approval.get("origin") if approval is not None else None,
+        "source_kind": approval.get("source_kind") if approval is not None else None,
+        "content_sha256": approval.get("content_sha256") if approval is not None else None,
+        "bundle_content_sha256": (
+            approval.get("bundle_content_sha256") if approval is not None else None
+        ),
+        "review": approval.get("review") if approval is not None else None,
         "approved_for_candidate_ranking": (
             approval.get("approved_for_candidate_ranking")
             if approval is not None

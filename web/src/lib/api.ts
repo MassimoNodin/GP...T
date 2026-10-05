@@ -233,9 +233,22 @@ export interface TrackModelRecord {
   validation_status: "draft" | "validated";
   provenance: string;
   region_count?: number;
-  origin?: "packaged" | "local_draft" | "unattributed";
+  origin?: "packaged" | "local_draft" | "reviewed" | "unattributed";
   content_sha256?: string | null;
   source_filename?: string | null;
+  source_kind?: "package_artifact" | "diagnostic_draft" | "review_bundle";
+  model_content_sha256?: string | null;
+  bundle_content_sha256?: string | null;
+  approved_for_candidate_ranking?: boolean;
+  review?: {
+    review_id: string;
+    reviewer: string;
+    reviewed_at_utc: string;
+    scope: string;
+    model_fingerprint_version: string;
+    evidence: Array<{ reference: string; sha256: string | null }>;
+    notes: string;
+  } | null;
 }
 
 export interface DraftRegionInput {
@@ -1531,6 +1544,11 @@ export interface CornerLossCandidates {
       revision: number;
       validation_status: string;
       registered: boolean;
+      origin: "packaged" | "reviewed" | null;
+      source_kind: "package_artifact" | "review_bundle" | null;
+      content_sha256: string | null;
+      bundle_content_sha256: string | null;
+      review: Record<string, unknown> | null;
       approved_for_candidate_ranking: boolean;
       model_content_sha256: string | null;
       approval_provenance: Record<string, unknown> | null;

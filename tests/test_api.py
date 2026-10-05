@@ -11,6 +11,7 @@ httpx = pytest.importorskip("httpx")
 import f1_engineer.api.app as api_module
 from f1_engineer.analysis.comparison_window import DistanceWindow
 from f1_engineer.api.app import create_app
+from f1_engineer.tracks import registry
 
 
 def _get(
@@ -1039,18 +1040,15 @@ def test_paired_regions_api_requires_model_identity_and_keeps_abstention_reason(
 
 
 def test_compare_api_resolves_explicit_model_id_and_revision(monkeypatch, tmp_path) -> None:
-    resolved_model = object()
+    model_id, revision = next(iter(registry.TRACK_MODEL_REGISTRY))
+    resolved_model = registry.TRACK_MODEL_REGISTRY[(model_id, revision)]
     calls: dict[str, object] = {}
 
-    def resolve(model_id: str, revision: int):
-        calls["resolved"] = (model_id, revision)
-        return resolved_model
-
-    def compare(*_args, track_model=None, **_kwargs):
+    def compare(*_args, track_model=None, track_model_catalog=None, **_kwargs):
         calls["model"] = track_model
+        calls["catalog"] = track_model_catalog
         return {"corner_analysis": {"diagnostic_only": True, "regions": []}}
 
-    monkeypatch.setattr(api_module, "resolve_track_model", resolve)
     monkeypatch.setattr(api_module, "compare_attempts", compare)
     response = _get(
         create_app(tmp_path / "unused.sqlite3"),
@@ -1058,14 +1056,14 @@ def test_compare_api_resolves_explicit_model_id_and_revision(monkeypatch, tmp_pa
         params={
             "target_attempt_key": "run:42:0:2",
             "reference_attempt_key": "run:42:0:1",
-            "track_model_id": "melbourne-f1-25-time-trial-draft-v1",
-            "track_model_revision": "1",
+            "track_model_id": model_id,
+            "track_model_revision": str(revision),
         },
     )
 
     assert response.status_code == 200
-    assert calls["resolved"] == ("melbourne-f1-25-time-trial-draft-v1", 1)
     assert calls["model"] is resolved_model
+    assert calls["catalog"].resolve_entry(model_id, revision).model is resolved_model
     assert response.json()["data"]["corner_analysis"]["diagnostic_only"] is True
 
 
@@ -1294,10 +1292,6 @@ def test_observation_set_api_caps_repeated_attempt_keys(tmp_path) -> None:
 def test_compare_api_rejects_unknown_or_incomplete_track_model_identity(
     monkeypatch, tmp_path
 ) -> None:
-    def unknown(_model_id: str, _revision: int):
-        raise ValueError("unknown_track_model_revision")
-
-    monkeypatch.setattr(api_module, "resolve_track_model", unknown)
     app = create_app(tmp_path / "unused.sqlite3")
     common = {
         "target_attempt_key": "run:42:0:2",
@@ -1315,7 +1309,7 @@ def test_compare_api_rejects_unknown_or_incomplete_track_model_identity(
     incomplete_response = _get(
         app,
         "/api/v1/compare/laps",
-        params={**common, "track_model_id": "melbourne-f1-25-time-trial-draft-v1"},
+        params={**common, "track_model_id": next(iter(registry.TRACK_MODEL_REGISTRY))[0]},
     )
 
     assert unknown_response.json()["status"] == "unavailable"

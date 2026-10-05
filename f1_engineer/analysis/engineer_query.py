@@ -764,12 +764,26 @@ def _trace_provenance(value: Mapping[str, object]) -> dict[str, object]:
 
 
 def _model_provenance(value: Mapping[str, object]) -> dict[str, object]:
-    return {
+    result: dict[str, object] = {
         "model_id": _bounded_string(value, "model_id"),
         "revision": _integer(value.get("revision")),
         "content_sha256": _bounded_string(value, "content_sha256"),
         "origin": _bounded_string(value, "origin"),
     }
+    for key in ("source_kind", "model_content_sha256", "bundle_content_sha256"):
+        item = value.get(key)
+        if item is None or isinstance(item, str) and len(item) <= 128:
+            result[key] = item
+    review = value.get("review")
+    if isinstance(review, Mapping):
+        result["review"] = {
+            key: item
+            for key, item in review.items()
+            if key in {"review_id", "reviewer", "reviewed_at_utc", "scope"}
+            and isinstance(item, str)
+            and len(item) <= 256
+        }
+    return result
 
 
 def _report(

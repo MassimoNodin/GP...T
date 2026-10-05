@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import sqlite3
 import struct
@@ -307,6 +308,29 @@ def _register_test_approval(monkeypatch, model: TrackModel) -> None:
     )
 
 
+def _write_reviewed_bundle(root: Path, model: TrackModel) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    model_document = {"schema_version": 1, **asdict(model)}
+    bundle = {
+        "schema_version": 1,
+        "bundle_version": "reviewed-distance-regions-v1",
+        "model": model_document,
+        "review": {
+            "review_id": "synthetic-acceptance-review",
+            "reviewer": "test-suite",
+            "reviewed_at_utc": "2026-10-05T00:00:00Z",
+            "scope": "distance_region_measurements",
+            "model_fingerprint_version": "track-model-canonical-v1",
+            "model_content_sha256": registry._model_fingerprint(model),
+            "evidence": [{"reference": "test-fixture-only", "sha256": None}],
+            "notes": "Synthetic test fixture; not a real circuit review.",
+        },
+    }
+    destination = root / "synthetic.reviewed.json"
+    destination.write_text(json.dumps(bundle), encoding="utf-8")
+    return destination
+
+
 def _attempt_keys(database: Path, run_id: str) -> tuple[str, str]:
     attempts = [
         lap
@@ -343,6 +367,9 @@ def test_synthetic_capture_reaches_positive_phase_e_api_cli_and_idempotent_impor
         json.dumps({"schema_version": 1, **asdict(model)}), encoding="utf-8"
     )
     model = load_track_model(model_path)
+    reviewed_root = tmp_path / "reviewed-models"
+    reviewed_bundle_path = _write_reviewed_bundle(reviewed_root, model)
+    reviewed_catalog = registry.load_track_model_catalog(reviewed_root=reviewed_root)
     _write_synthetic_capture(capture)
 
     imported = import_capture(capture, database)
@@ -378,18 +405,25 @@ def test_synthetic_capture_reaches_positive_phase_e_api_cli_and_idempotent_impor
     assert selected.selected_reference is not None
     assert selected.selected_reference["attempt_key"] == reference_key
 
-    _register_test_approval(monkeypatch, model)
     result = compare_attempts(
         database,
         target_key,
         reference_key,
         config=ResamplingConfig(),
         track_model=model,
+        track_model_catalog=reviewed_catalog,
         policy=ComparisonPolicy.TIME_TRIAL,
     )
     assert result["official_lap_time_difference_s"] == pytest.approx(2.0, abs=0.001)
     assert result["corner_loss_candidates"]["status"] == "ranked"
     assert result["corner_loss_candidates"]["coaching_eligible"] is False
+    reviewed_identity = result["corner_loss_candidates"]["source"]["model"]
+    assert reviewed_identity["origin"] == "reviewed"
+    assert reviewed_identity["model_content_sha256"] == registry._model_fingerprint(model)
+    assert reviewed_identity["bundle_content_sha256"] == hashlib.sha256(
+        reviewed_bundle_path.read_bytes()
+    ).hexdigest()
+    assert reviewed_identity["review"]["review_id"] == "synthetic-acceptance-review"
     candidate = result["corner_loss_candidates"]["ranked_candidates"][0]
     assert candidate["recorded_time_difference_s"] == pytest.approx(0.620, abs=0.005)
     assert result["corner_loss_candidates"]["source"]["reference_selection"][
@@ -459,8 +493,7 @@ def test_synthetic_capture_reaches_positive_phase_e_api_cli_and_idempotent_impor
         "trace_sha256"
     ] == reference_checksum
 
-    monkeypatch.setattr(api_module, "resolve_track_model", lambda *_: model)
-    app = create_app(database)
+    app = create_app(database, reviewed_track_models_root=reviewed_root)
 
     async def request_api() -> httpx.Response:
         transport = httpx.ASGITransport(app=app)
@@ -477,8 +510,26 @@ def test_synthetic_capture_reaches_positive_phase_e_api_cli_and_idempotent_impor
                 },
             )
 
+    async def request_model_catalog() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            return await client.get("/api/v1/track-models")
+
     api_response = asyncio.run(request_api())
+    model_catalog_response = asyncio.run(request_model_catalog())
     assert api_response.status_code == 200
+    assert model_catalog_response.status_code == 200
+    catalog_model = next(
+        item
+        for item in model_catalog_response.json()["data"]
+        if item["model_id"] == model.model_id
+    )
+    assert catalog_model["origin"] == "reviewed"
+    assert catalog_model["model_content_sha256"] == registry._model_fingerprint(model)
+    assert catalog_model["bundle_content_sha256"] == reviewed_identity["bundle_content_sha256"]
+    assert catalog_model["review"]["review_id"] == "synthetic-acceptance-review"
     api_result = api_response.json()["data"]
     assert api_result["target"]["player_participant_context"]["status"] == "unknown"
     assert api_result["reference"]["player_participant_context"]["status"] == "unknown"
@@ -493,8 +544,12 @@ def test_synthetic_capture_reaches_positive_phase_e_api_cli_and_idempotent_impor
             reference_key,
             "--database",
             str(database),
-            "--track-model",
-            str(model_path),
+            "--reviewed-track-models-root",
+            str(reviewed_root),
+            "--track-model-id",
+            model.model_id,
+            "--track-model-revision",
+            str(model.revision),
         ],
     )
     try:

@@ -9,6 +9,7 @@ import sys
 import tempfile
 from collections import Counter
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from . import __version__
@@ -55,7 +56,8 @@ from .tracks.draft_authoring import (
     build_draft_track_model,
 )
 from .tracks.geometry_loader import load_geometry_model
-from .tracks.registry import load_track_model_catalog
+from .tracks.registry import TrackModelCatalog, load_track_model_catalog
+from .tracks.reviewed_bundle import validate_reviewed_track_model_bundle
 
 
 def _json_line(value: dict[str, Any]) -> None:
@@ -387,6 +389,27 @@ def _quality(args: argparse.Namespace) -> int:
 
 
 def _compare(args: argparse.Namespace) -> int:
+    model_id = getattr(args, "track_model_id", None)
+    model_revision = getattr(args, "track_model_revision", None)
+    if (model_id is None) != (model_revision is None):
+        raise ValueError("track_model_id_and_revision_must_be_selected_together")
+    if args.track_model is not None and model_id is not None:
+        raise ValueError("track_model_path_and_catalog_identity_are_mutually_exclusive")
+    catalog = load_track_model_catalog(
+        getattr(args, "track_models_root", None),
+        getattr(args, "reviewed_track_models_root", None),
+    )
+    model = args.track_model
+    approval_catalog = None
+    if model_id is not None and model_revision is not None:
+        entry = catalog.resolve_entry(model_id, model_revision)
+        if entry.origin == "local_draft":
+            raise ValueError("local_draft_track_model_not_available_for_comparison")
+        model = entry.model
+        approval_catalog = catalog
+    elif model is not None:
+        # A caller-supplied file is diagnostic input, never a review claim.
+        approval_catalog = TrackModelCatalog(MappingProxyType({}))
     config = ResamplingConfig(
         grid_step_m=args.grid_step_m,
         max_bracket_time_s=args.max_gap_s,
@@ -398,7 +421,8 @@ def _compare(args: argparse.Namespace) -> int:
             args.target_attempt_key,
             args.reference_attempt_key,
             config=config,
-            track_model=args.track_model,
+            track_model=model,
+            track_model_catalog=approval_catalog,
             policy=ComparisonPolicy(args.comparison_policy),
             distance_window=optional_distance_window(
                 args.window_start_m, args.window_end_m
@@ -498,6 +522,11 @@ def _draft_track_model(args: argparse.Namespace) -> int:
     return 0
 
 
+def _validate_reviewed_track_model(args: argparse.Namespace) -> int:
+    _json_line(validate_reviewed_track_model_bundle(args.bundle))
+    return 0
+
+
 def _api(args: argparse.Namespace) -> int:
     try:
         import uvicorn
@@ -517,6 +546,7 @@ def _api(args: argparse.Namespace) -> int:
             recording_port=args.udp_port,
             recording_queue_size=args.udp_queue_size,
             track_models_root=args.track_models_root,
+            reviewed_track_models_root=args.reviewed_track_models_root,
         ),
         host="127.0.0.1",
         port=args.port,
@@ -643,7 +673,9 @@ def _traces(args: argparse.Namespace) -> int:
 
 
 def _regions(args: argparse.Namespace) -> int:
-    model_entry = load_track_model_catalog(args.track_models_root).resolve_entry(
+    model_entry = load_track_model_catalog(
+        args.track_models_root, args.reviewed_track_models_root
+    ).resolve_entry(
         args.track_model_id, args.track_model_revision
     )
     document = load_attempt_region_report(
@@ -660,7 +692,9 @@ def _regions(args: argparse.Namespace) -> int:
 
 
 def _compare_regions(args: argparse.Namespace) -> int:
-    model_entry = load_track_model_catalog(args.track_models_root).resolve_entry(
+    model_entry = load_track_model_catalog(
+        args.track_models_root, args.reviewed_track_models_root
+    ).resolve_entry(
         args.track_model_id, args.track_model_revision
     )
     document = compare_attempt_regions(
@@ -691,7 +725,9 @@ def _engineer_attempt_summary(args: argparse.Namespace) -> int:
 
 
 def _engineer_region_comparison(args: argparse.Namespace) -> int:
-    catalog = load_track_model_catalog(args.track_models_root)
+    catalog = load_track_model_catalog(
+        args.track_models_root, args.reviewed_track_models_root
+    )
     report = query_engineer_evidence(
         args.database,
         {
@@ -879,6 +915,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--track-model",
         help="versioned JSON track model; adds diagnostic corner-region analysis",
     )
+    compare.add_argument(
+        "--track-model-id",
+        help="registered packaged or reviewed distance-region model ID",
+    )
+    compare.add_argument(
+        "--track-model-revision",
+        type=int,
+        help="registered model revision; requires --track-model-id",
+    )
+    compare.add_argument(
+        "--track-models-root",
+        default=os.environ.get("F1_ENGINEER_TRACK_MODELS_ROOT") or None,
+        help="diagnostic draft catalog root",
+    )
+    compare.add_argument(
+        "--reviewed-track-models-root",
+        default=os.environ.get("F1_ENGINEER_REVIEWED_TRACK_MODELS_ROOT") or None,
+        help="operator-configured reviewed model bundle root",
+    )
     compare.set_defaults(handler=_compare)
 
     observation_set = commands.add_parser(
@@ -934,6 +989,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--track-models-root",
         default=os.environ.get("F1_ENGINEER_TRACK_MODELS_ROOT") or None,
         help="server-configured folder of local draft distance-region JSON models",
+    )
+    api.add_argument(
+        "--reviewed-track-models-root",
+        default=os.environ.get("F1_ENGINEER_REVIEWED_TRACK_MODELS_ROOT") or None,
+        help="server-configured folder of independently reviewed distance-region bundles",
     )
     api.add_argument(
         "--control-token-file",
@@ -1068,6 +1128,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("F1_ENGINEER_TRACK_MODELS_ROOT") or None,
         help="folder of local draft models; defaults to F1_ENGINEER_TRACK_MODELS_ROOT",
     )
+    regions.add_argument(
+        "--reviewed-track-models-root",
+        default=os.environ.get("F1_ENGINEER_REVIEWED_TRACK_MODELS_ROOT") or None,
+        help="folder of operator-reviewed bundles; defaults to F1_ENGINEER_REVIEWED_TRACK_MODELS_ROOT",
+    )
     regions.set_defaults(handler=_regions)
 
     compare_regions = commands.add_parser(
@@ -1099,6 +1164,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--track-models-root",
         default=os.environ.get("F1_ENGINEER_TRACK_MODELS_ROOT") or None,
         help="folder of local draft models; defaults to F1_ENGINEER_TRACK_MODELS_ROOT",
+    )
+    compare_regions.add_argument(
+        "--reviewed-track-models-root",
+        default=os.environ.get("F1_ENGINEER_REVIEWED_TRACK_MODELS_ROOT") or None,
+        help="folder of operator-reviewed bundles; defaults to F1_ENGINEER_REVIEWED_TRACK_MODELS_ROOT",
     )
     compare_regions.set_defaults(handler=_compare_regions)
 
@@ -1141,6 +1211,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("F1_ENGINEER_TRACK_MODELS_ROOT") or None,
         help="folder of local draft models; defaults to F1_ENGINEER_TRACK_MODELS_ROOT",
     )
+    engineer_region.add_argument(
+        "--reviewed-track-models-root",
+        default=os.environ.get("F1_ENGINEER_REVIEWED_TRACK_MODELS_ROOT") or None,
+        help="folder of operator-reviewed bundles; defaults to F1_ENGINEER_REVIEWED_TRACK_MODELS_ROOT",
+    )
     engineer_region.set_defaults(handler=_engineer_region_comparison)
 
     geometry_validate = commands.add_parser(
@@ -1149,6 +1224,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     geometry_validate.add_argument("model", help="local versioned geometry JSON artifact")
     geometry_validate.set_defaults(handler=_geometry_validate)
+
+    reviewed_validate = commands.add_parser(
+        "validate-reviewed-track-model",
+        help="validate bundle structure and fingerprint binding without verifying geometry",
+    )
+    reviewed_validate.add_argument("bundle", help="reviewed model bundle JSON path")
+    reviewed_validate.set_defaults(handler=_validate_reviewed_track_model)
     return parser
 
 

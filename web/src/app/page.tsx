@@ -113,7 +113,9 @@ export default async function Home({
     trackModels.find((item) => modelKey(item) === params.track_model_key) ??
     null;
   const selectedComparisonModel =
-    selectedModel?.origin === "packaged" ? selectedModel : null;
+    selectedModel?.origin === "packaged" || selectedModel?.origin === "reviewed"
+      ? selectedModel
+      : null;
   const staleModelChoice = Boolean(params.track_model_key) && !selectedModel;
   const allSessions = sessionResponse?.data ?? [];
   const importedSessions = allSessions.filter(
@@ -1101,6 +1103,8 @@ export default async function Home({
                             {model.track_name} ·{" "}
                             {model.origin === "local_draft"
                               ? "local draft · diagnostic"
+                              : model.origin === "reviewed"
+                                ? "reviewed distance regions"
                               : model.validation_status}{" "}
                             · rev{" "}
                             {model.revision} · {model.region_count ?? 0} regions
@@ -1154,11 +1158,13 @@ export default async function Home({
                     <p className="model-note">
                       {selectedModel.origin === "local_draft"
                         ? "Local draft selected for diagnostic inspection on this attempt and in the explicitly selected pair. Results do not authorize ranking or coaching."
-                        : "Explicit revision selected. Draft windows remain diagnostic and do not represent validated circuit corners."}
+                        : selectedModel.origin === "reviewed"
+                          ? "Reviewed distance regions may support recorded measurements and ranking when every independent reference, capture, lifecycle, and telemetry gate passes. Review does not verify physical geometry or authorize coaching."
+                          : "Explicit revision selected. Draft windows remain diagnostic and do not represent validated circuit corners."}
                     </p>
                   ) : (
                     <p className="model-note">
-                      Select a packaged or configured local draft revision to
+                      Select a packaged, reviewed, or configured local draft revision to
                       inspect this attempt's distance regions.
                     </p>
                   )}

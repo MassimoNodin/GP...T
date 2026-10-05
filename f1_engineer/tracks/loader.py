@@ -28,16 +28,40 @@ def load_track_model_with_checksum(path: str | Path) -> tuple[TrackModel, str]:
         value = json.loads(content.decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"could not load track model {source}: {exc}") from exc
+    return track_model_from_value(value), hashlib.sha256(content).hexdigest()
+
+
+def track_model_from_value(value: Any, *, strict_fields: bool = False) -> TrackModel:
+    """Build a model from a decoded object, optionally rejecting unknown fields."""
     if not isinstance(value, dict):
         raise ValueError("track model root must be an object")
-    if value.get("schema_version") != 1:
+    if strict_fields:
+        _require_exact_or_known_fields(
+            value,
+            {
+                "schema_version",
+                "model_id",
+                "revision",
+                "packet_format",
+                "track_id",
+                "track_name",
+                "layout_id",
+                "track_length_m",
+                "distance_origin_m",
+                "provenance",
+                "validation_status",
+                "corners",
+            },
+            "track model",
+        )
+    if type(value.get("schema_version")) is not int or value.get("schema_version") != 1:
         raise ValueError(f"unsupported track model schema version {value.get('schema_version')!r}")
     corners_value = value.get("corners")
     if not isinstance(corners_value, list):
         raise ValueError("track model corners must be an array")
     if len(corners_value) > MAX_TRACK_MODEL_REGIONS:
         raise ValueError("region_count_limit_exceeded")
-    corners = tuple(_corner(item) for item in corners_value)
+    corners = tuple(_corner(item, strict_fields=strict_fields) for item in corners_value)
     try:
         model = TrackModel(
             model_id=_string(value, "model_id"),
@@ -53,13 +77,31 @@ def load_track_model_with_checksum(path: str | Path) -> tuple[TrackModel, str]:
             corners=corners,
         )
     except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(f"invalid track model {source}: {exc}") from exc
-    return model, hashlib.sha256(content).hexdigest()
+        raise ValueError(f"invalid track model: {exc}") from exc
+    return model
 
 
-def _corner(value: Any) -> CornerDefinition:
+def _corner(value: Any, *, strict_fields: bool = False) -> CornerDefinition:
     if not isinstance(value, dict):
         raise ValueError("each track corner must be an object")
+    if strict_fields:
+        _require_exact_or_known_fields(
+            value,
+            {
+                "identifier",
+                "label",
+                "start_distance_m",
+                "end_distance_m",
+                "braking_search_window_m",
+                "turn_in_search_window_m",
+                "throttle_pickup_window_m",
+                "nominal_apex_m",
+                "exit_distance_m",
+                "direction",
+                "complex_id",
+            },
+            "track corner",
+        )
     start = _number(value, "start_distance_m")
     end = _number(value, "end_distance_m")
     return CornerDefinition(
@@ -117,3 +159,11 @@ def _string(value: dict[str, Any], name: str) -> str:
     if not isinstance(result, str):
         raise ValueError(f"{name} must be a string")
     return result
+
+
+def _require_exact_or_known_fields(
+    value: dict[str, Any], allowed: set[str], label: str
+) -> None:
+    unexpected = set(value) - allowed
+    if unexpected:
+        raise ValueError(f"{label} contains unexpected fields")

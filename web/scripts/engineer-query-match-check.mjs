@@ -80,7 +80,12 @@ function regionEngineerReport() {
           trace_schema_version: 3,
         },
       },
-      model: { model_id: "melbourne-r3", revision: 3 },
+      model: {
+        model_id: "melbourne-r3",
+        revision: 3,
+        model_content_sha256: "f".repeat(64),
+        origin: "reviewed",
+      },
     },
     diagnostic_only: true,
     coaching_eligible: false,
@@ -155,6 +160,8 @@ const model = {
   layout_id: "grand-prix",
   track_length_m: 5278,
   content_sha256: "d".repeat(64),
+  model_content_sha256: "f".repeat(64),
+  origin: "reviewed",
 };
 
 function pairedReport() {
@@ -215,6 +222,15 @@ assert.deepEqual(parseTrackModelKey("model@with-at@7"), {
   revision: 7,
 });
 assert.equal(parseTrackModelKey("model@0"), null);
+assert.deepEqual(parseTrackModelKey("model@1000000000000000"), {
+  modelId: "model",
+  revision: 1000000000000000,
+});
+assert.deepEqual(parseTrackModelKey(`${"🟠".repeat(128)}@9007199254740991`), {
+  modelId: "🟠".repeat(128),
+  revision: 9007199254740991,
+});
+assert.equal(parseTrackModelKey(`${"🟠".repeat(129)}@1`), null);
 assert.equal(parseTrackModelKey("model@9007199254740992"), null);
 
 console.log("Engineer query identity and paired-region provenance checks passed.");

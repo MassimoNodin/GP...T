@@ -53,7 +53,7 @@ export function parseTrackModelKey(value: string | undefined) {
   if (separator <= 0) return null;
   const modelId = value.slice(0, separator);
   const revisionText = value.slice(separator + 1);
-  if (!modelId || modelId.length > 256 || !/^[1-9]\d{0,14}$/.test(revisionText)) {
+  if (!modelId || modelId.length > 256 || !/^[1-9]\d{0,15}$/.test(revisionText)) {
     return null;
   }
   const revision = Number(revisionText);
@@ -123,7 +123,9 @@ export function engineerQueryReportMatchesRequest(
       positiveInteger(sourceTarget?.trace_schema_version) &&
       positiveInteger(sourceReference?.trace_schema_version) &&
       model?.model_id === request.trackModelId &&
-      model.revision === request.trackModelRevision,
+      model.revision === request.trackModelRevision &&
+      isSha256(model.model_content_sha256) &&
+      (model.origin === "packaged" || model.origin === "reviewed" || model.origin === "local_draft"),
   );
 }
 
@@ -170,6 +172,9 @@ export function pairedRegionReportMatchesSelection(
       model.track_length_m === selection.model.track_length_m &&
       (selection.model.content_sha256 == null ||
         model.content_sha256 === selection.model.content_sha256) &&
+      (selection.model.model_content_sha256 == null ||
+        model.model_content_sha256 === selection.model.model_content_sha256) &&
+      (selection.model.origin == null || model.origin === selection.model.origin) &&
       report.track?.packet_format === selection.model.packet_format &&
       report.track.track_id === selection.model.track_id &&
       report.track.track_name === selection.model.track_name &&
