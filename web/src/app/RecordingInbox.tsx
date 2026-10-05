@@ -59,8 +59,9 @@ export default function RecordingInbox({
       <RecordingControls
         initialRecording={recordingResponse?.data ?? null}
         initialError={!recordingResponse || recordingResponse.status !== "ok"}
+        preservedQuery={preservedQuery}
       />
-      <ReplayControls sources={sources} />
+      <ReplayControls sources={sources} preservedQuery={preservedQuery} />
 
       {importError && (
         <p className="import-alert" role="alert">

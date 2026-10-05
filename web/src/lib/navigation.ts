@@ -1,4 +1,9 @@
-export type AppScreen = "dashboard" | "recordings" | "sessions" | "engineer";
+export type AppScreen =
+  | "dashboard"
+  | "recordings"
+  | "sessions"
+  | "engineer"
+  | "live";
 export type ImportReturnScreen = "dashboard" | "recordings";
 
 export type AppSearchParams = Record<string, string | string[] | undefined>;
@@ -25,6 +30,8 @@ const retainedKeys = [
   "observation_offset",
   "engineer_intent",
   "engineer_region_identifier",
+  "live_source",
+  "live_operation_id",
 ] as const;
 
 const retainedKeySet = new Set<string>(retainedKeys);
@@ -80,6 +87,7 @@ export function appScreenPath(screen: AppScreen): string {
   if (screen === "recordings") return "/recordings";
   if (screen === "sessions") return "/sessions";
   if (screen === "engineer") return "/engineer";
+  if (screen === "live") return "/live";
   return "/";
 }
 

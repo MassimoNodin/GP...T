@@ -11,6 +11,7 @@ import {
   LiveLapTimingPanel,
   LiveTelemetryPanel,
 } from "./RecordingControls";
+import { appScreenHref, isSelectionTransferBlocked } from "@/lib/navigation";
 
 const activeStates = new Set([
   "starting",
@@ -25,8 +26,10 @@ const replaySpeeds = [0.5, 1, 2, 4];
 
 export default function ReplayControls({
   sources,
+  preservedQuery = "",
 }: {
   sources: RecordingSourceRecord[];
+  preservedQuery?: string;
 }) {
   const availableSources = sources.filter((source) => source.available);
   const [captureId, setCaptureId] = useState(
@@ -38,6 +41,13 @@ export default function ReplayControls({
   const [error, setError] = useState<string | null>(null);
 
   const active = playback ? activeStates.has(playback.state) : false;
+  const liveHref =
+    active && playback && !isSelectionTransferBlocked(preservedQuery)
+      ? appScreenHref("live", preservedQuery, {
+          live_source: "replay",
+          live_operation_id: playback.playback_id,
+        })
+      : null;
 
   useEffect(() => {
     let mounted = true;
@@ -277,6 +287,12 @@ export default function ReplayControls({
           </button>
         )}
       </div>
+
+      {liveHref && (
+        <a className="live-open-link" href={liveHref}>
+          Open replay telemetry <span aria-hidden="true">↗</span>
+        </a>
+      )}
 
       {availableSources.length === 0 && (
         <p className="recording-control-alert" role="status">

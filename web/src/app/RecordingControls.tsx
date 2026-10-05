@@ -9,21 +9,31 @@ import type {
   LiveTelemetryRecord,
   RecordingJobRecord,
 } from "@/lib/api";
+import { appScreenHref, isSelectionTransferBlocked } from "@/lib/navigation";
 
 const activeStatuses = new Set(["starting", "recording", "stopping"]);
 
 export default function RecordingControls({
   initialRecording,
   initialError,
+  preservedQuery = "",
 }: {
   initialRecording: RecordingJobRecord | null;
   initialError: boolean;
+  preservedQuery?: string;
 }) {
   const [recording, setRecording] = useState(initialRecording);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   const active = recording ? activeStatuses.has(recording.status) : false;
+  const liveHref =
+    active && recording && !isSelectionTransferBlocked(preservedQuery)
+      ? appScreenHref("live", preservedQuery, {
+          live_source: "recording",
+          live_operation_id: recording.recording_id,
+        })
+      : null;
 
   useEffect(() => {
     if (!active) return;
@@ -204,6 +214,11 @@ export default function RecordingControls({
           ) : null}
         </>
       )}
+      {liveHref && (
+        <a className="live-open-link" href={liveHref}>
+          Open live telemetry <span aria-hidden="true">↗</span>
+        </a>
+      )}
     </div>
   );
 }
@@ -226,7 +241,9 @@ export function LiveTelemetryPanel({
         ? `Last playback-delivered player frame was ${formatAge(telemetry.age_ms)} ago.`
         : `Last player frame was ${formatAge(telemetry.age_ms)} ago.`,
     unsupported:
-      "Recording continues. The live view does not support this packet format yet.",
+      sourceKind === "replay"
+        ? "Replay continues. The live view does not support this packet format yet."
+        : "Recording continues. The live view does not support this packet format yet.",
     unavailable: liveUnavailableReason(telemetry.reason),
   };
 
@@ -324,7 +341,9 @@ export function LiveCarStatusPanel({
         ? `Last playback-delivered Car Status frame was ${formatAge(telemetry.age_ms)} ago.`
         : `Last matched Car Status frame was ${formatAge(telemetry.age_ms)} ago.`,
     unsupported:
-      "Recording continues. This Car Status packet version is unsupported.",
+      sourceKind === "replay"
+        ? "Replay continues. This Car Status packet version is unsupported."
+        : "Recording continues. This Car Status packet version is unsupported.",
     unavailable: liveCarStatusUnavailableReason(telemetry.reason),
   };
   const invalidFields = (telemetry.validation_flags ?? []).map((flag) =>
@@ -419,7 +438,9 @@ export function LiveLapTimingPanel({
         ? `Last playback-delivered Lap Data update was ${formatAge(telemetry.age_ms)} ago.`
         : `Last Lap Data timing update was ${formatAge(telemetry.age_ms)} ago.`,
     unsupported:
-      "Recording continues. This Lap Data packet version is unsupported.",
+      sourceKind === "replay"
+        ? "Replay continues. This Lap Data packet version is unsupported."
+        : "Recording continues. This Lap Data packet version is unsupported.",
     unavailable: liveLapTimingUnavailableReason(telemetry.reason),
   };
   const invalidFields = (telemetry.validation_flags ?? []).map((flag) =>
