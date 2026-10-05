@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 
+import f1_engineer.storage.run_summaries as run_summaries_module
 from f1_engineer.storage.database import Database
 from f1_engineer.storage.run_summaries import (
+    ArchiveFilterLimitExceeded,
     MAX_PAGE_OFFSET,
     MAX_RUN_PAGE_SIZE,
+    RunArchiveFilters,
     get_processing_run_detail,
     get_processing_run_summary,
     list_processing_run_summaries,
@@ -421,3 +425,366 @@ def test_run_pages_are_bounded_and_ordered(tmp_path) -> None:
         list_processing_run_summaries(database_path, limit=MAX_RUN_PAGE_SIZE + 1)
     with pytest.raises(ValueError, match="page offset"):
         list_processing_run_summaries(database_path, offset=MAX_PAGE_OFFSET + 1)
+
+
+def test_filtered_run_archive_requires_context_and_search_to_match_one_session(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "filtered-archive.sqlite3"
+    split_run = "abc" + "1" * 61
+    matching_run = "def" + "2" * 61
+    second_matching_run = "ghi" + "3" * 61
+    with Database(database_path) as db:
+        with db.connection:
+            _add_run(db.connection, split_run)
+            _add_run(db.connection, matching_run)
+            _add_run(db.connection, second_matching_run)
+            _add_session(
+                db.connection,
+                split_run,
+                "12345",
+                latest_context={
+                    "packet_format": 2025,
+                    "track_id": 10,
+                    "session_type": "practice_1",
+                },
+            )
+            _add_session(
+                db.connection,
+                split_run,
+                "98765",
+                latest_context={
+                    "packet_format": 2025,
+                    "track_id": 11,
+                    "session_type": "race",
+                },
+            )
+            _add_session(
+                db.connection,
+                matching_run,
+                "54321",
+                latest_context={
+                    "packet_format": 2025,
+                    "track_id": 10,
+                    "session_type": "race_2",
+                },
+            )
+            _add_session(
+                db.connection,
+                second_matching_run,
+                "65432",
+                latest_context={
+                    "packet_format": 2025,
+                    "track_id": 10,
+                    "session_type": "race_3",
+                },
+            )
+
+    same_row = list_processing_run_summaries(
+        database_path,
+        filters=RunArchiveFilters(
+            packet_format=2025, track_id=10, session_category="race"
+        ),
+    )
+    session_uid_match = list_processing_run_summaries(
+        database_path,
+        filters=RunArchiveFilters(
+            q="987", session_category="race", packet_format=2025, track_id=11
+        ),
+    )
+    mismatched_session_uid = list_processing_run_summaries(
+        database_path,
+        filters=RunArchiveFilters(
+            q="987", session_category="race", packet_format=2025, track_id=10
+        ),
+    )
+    run_id_search = list_processing_run_summaries(
+        database_path,
+        filters=RunArchiveFilters(
+            q="abc", session_category="practice", packet_format=2025, track_id=10
+        ),
+    )
+    filtered_page = list_processing_run_summaries(
+        database_path,
+        limit=1,
+        offset=1,
+        filters=RunArchiveFilters(
+            packet_format=2025, track_id=10, session_category="race"
+        ),
+    )
+
+    assert {item["run_id"] for item in same_row["items"]} == {
+        matching_run,
+        second_matching_run,
+    }
+    assert same_row["total"] == 2
+    assert [item["run_id"] for item in filtered_page["items"]] == [matching_run]
+    assert filtered_page["total"] == 2
+    assert filtered_page["offset"] == 1
+    assert [item["run_id"] for item in session_uid_match["items"]] == [split_run]
+    assert mismatched_session_uid["items"] == []
+    assert [item["run_id"] for item in run_id_search["items"]] == [split_run]
+    assert same_row["filters"] == {
+        "q": None,
+        "packet_format": 2025,
+        "track_id": 10,
+        "session_category": "race",
+        "started_from": None,
+        "started_through": None,
+    }
+
+
+def test_filtered_run_archive_unknown_category_and_utc_processing_dates(tmp_path) -> None:
+    database_path = tmp_path / "archive-dates.sqlite3"
+    boundary_run = "a" * 64
+    before_run = "b" * 64
+    missing_context_run = "c" * 64
+    malformed_context_run = "d" * 64
+    unrecognized_context_run = "e" * 64
+    deeply_nested_context_run = "f" * 64
+    oversized_integer_context_run = "1" * 64
+    with Database(database_path) as db:
+        with db.connection:
+            for run_id in (
+                boundary_run,
+                before_run,
+                missing_context_run,
+                malformed_context_run,
+                unrecognized_context_run,
+                deeply_nested_context_run,
+                oversized_integer_context_run,
+            ):
+                _add_run(db.connection, run_id)
+            db.connection.execute(
+                "UPDATE processing_runs SET started_at_utc=? WHERE run_id=?",
+                ("2026-10-04T23:30:00-01:00", boundary_run),
+            )
+            db.connection.execute(
+                "UPDATE processing_runs SET started_at_utc=? WHERE run_id=?",
+                ("2026-10-04T23:59:59+00:00", before_run),
+            )
+            for run_id in (
+                missing_context_run,
+                malformed_context_run,
+                unrecognized_context_run,
+                deeply_nested_context_run,
+                oversized_integer_context_run,
+            ):
+                db.connection.execute(
+                    "UPDATE processing_runs SET started_at_utc=? WHERE run_id=?",
+                    ("2026-10-06T12:00:00+00:00", run_id),
+                )
+            _add_session(db.connection, missing_context_run, "101", latest_context=None)
+            _add_session(db.connection, malformed_context_run, "102", latest_context=None)
+            _add_session(
+                db.connection,
+                unrecognized_context_run,
+                "103",
+                latest_context={"packet_format": 2025, "track_id": 4, "session_type": "future_session"},
+            )
+            db.connection.execute(
+                "UPDATE sessions SET context_json=? WHERE run_id=?",
+                ("{malformed", malformed_context_run),
+            )
+            _add_session(
+                db.connection,
+                deeply_nested_context_run,
+                "104",
+                latest_context=None,
+            )
+            db.connection.execute(
+                "UPDATE sessions SET context_json=? WHERE run_id=?",
+                ("[" * 1100 + "0" + "]" * 1100, deeply_nested_context_run),
+            )
+            _add_session(
+                db.connection,
+                oversized_integer_context_run,
+                "105",
+                latest_context=None,
+            )
+            db.connection.execute(
+                "UPDATE sessions SET context_json=? WHERE run_id=?",
+                ("{" + '"value":' + "1" * 5000 + "}", oversized_integer_context_run),
+            )
+
+    date_page = list_processing_run_summaries(
+        database_path,
+        filters=RunArchiveFilters(
+            started_from="2026-10-05", started_through="2026-10-05"
+        ),
+    )
+    unknown_page = list_processing_run_summaries(
+        database_path, filters=RunArchiveFilters(session_category="unknown")
+    )
+
+    assert [item["run_id"] for item in date_page["items"]] == [boundary_run]
+    assert set(item["run_id"] for item in unknown_page["items"]) == {
+        missing_context_run,
+        malformed_context_run,
+        unrecognized_context_run,
+        deeply_nested_context_run,
+        oversized_integer_context_run,
+    }
+
+
+def test_filtered_run_archive_abstains_at_candidate_session_context_and_vm_bounds(
+    monkeypatch, tmp_path
+) -> None:
+    run_limit_db = tmp_path / "run-limit.sqlite3"
+    first_run = "abc" + "1" * 61
+    second_run = "abc" + "2" * 61
+    with Database(run_limit_db) as db:
+        with db.connection:
+            _add_run(db.connection, first_run)
+            _add_run(db.connection, second_run)
+    monkeypatch.setattr("f1_engineer.storage.run_summaries.MAX_ARCHIVE_RUN_CANDIDATES", 1)
+    with pytest.raises(ArchiveFilterLimitExceeded, match="archive_filter_limit_exceeded"):
+        list_processing_run_summaries(
+            run_limit_db, filters=RunArchiveFilters(q="abc")
+        )
+
+    session_limit_db = tmp_path / "session-limit.sqlite3"
+    session_limit_run = "f" * 64
+    with Database(session_limit_db) as db:
+        with db.connection:
+            _add_run(db.connection, session_limit_run)
+            for uid in ("101", "102"):
+                _add_session(
+                    db.connection,
+                    session_limit_run,
+                    uid,
+                    latest_context={"packet_format": 2025, "track_id": 1, "session_type": "race"},
+                )
+    monkeypatch.setattr("f1_engineer.storage.run_summaries.MAX_ARCHIVE_SESSION_ROWS", 1)
+    with pytest.raises(ArchiveFilterLimitExceeded, match="archive_filter_limit_exceeded"):
+        list_processing_run_summaries(
+            session_limit_db, filters=RunArchiveFilters(session_category="race")
+        )
+    with pytest.raises(ArchiveFilterLimitExceeded, match="archive_filter_limit_exceeded"):
+        list_processing_run_summaries(
+            session_limit_db, filters=RunArchiveFilters(q="999")
+        )
+    with pytest.raises(ArchiveFilterLimitExceeded, match="archive_filter_limit_exceeded"):
+        list_processing_run_summaries(
+            session_limit_db,
+            filters=RunArchiveFilters(q="999", session_category="race"),
+        )
+
+    context_limit_db = tmp_path / "context-limit.sqlite3"
+    context_limit_run = "9" * 64
+    with Database(context_limit_db) as db:
+        with db.connection:
+            _add_run(db.connection, context_limit_run)
+            _add_session(
+                db.connection,
+                context_limit_run,
+                "109",
+                latest_context={
+                    "packet_format": 2025,
+                    "track_id": 1,
+                    "session_type": "race",
+                    "description": "too large for the test budget",
+                },
+            )
+    monkeypatch.setattr(
+        "f1_engineer.storage.run_summaries.MAX_ARCHIVE_CONTEXT_BYTES_PER_ROW", 16
+    )
+    with pytest.raises(ArchiveFilterLimitExceeded, match="archive_filter_limit_exceeded"):
+        list_processing_run_summaries(
+            context_limit_db, filters=RunArchiveFilters(session_category="race")
+        )
+
+    aggregate_context_db = tmp_path / "aggregate-context-limit.sqlite3"
+    aggregate_context_run = "8" * 64
+    with Database(aggregate_context_db) as db:
+        with db.connection:
+            _add_run(db.connection, aggregate_context_run)
+            for uid in ("108", "110"):
+                _add_session(
+                    db.connection,
+                    aggregate_context_run,
+                    uid,
+                    latest_context={
+                        "packet_format": 2025,
+                        "track_id": 1,
+                        "session_type": "race",
+                        "note": "small context row",
+                    },
+                )
+    monkeypatch.setattr(
+        "f1_engineer.storage.run_summaries.MAX_ARCHIVE_CONTEXT_BYTES_PER_ROW",
+        64 * 1024,
+    )
+    monkeypatch.setattr(
+        "f1_engineer.storage.run_summaries.MAX_ARCHIVE_CONTEXT_BYTES", 100
+    )
+    with pytest.raises(ArchiveFilterLimitExceeded, match="archive_filter_limit_exceeded"):
+        list_processing_run_summaries(
+            aggregate_context_db,
+            filters=RunArchiveFilters(session_category="race"),
+        )
+
+    progress_db = tmp_path / "progress-limit.sqlite3"
+    with Database(progress_db) as db:
+        with db.connection:
+            _add_run(db.connection, "7" * 64)
+    monkeypatch.setattr(
+        "f1_engineer.storage.run_summaries.ARCHIVE_SQL_PROGRESS_INTERVAL", 1
+    )
+    monkeypatch.setattr(
+        "f1_engineer.storage.run_summaries.MAX_ARCHIVE_SQL_PROGRESS_CALLBACKS", 0
+    )
+    with pytest.raises(ArchiveFilterLimitExceeded, match="archive_filter_limit_exceeded"):
+        list_processing_run_summaries(
+            progress_db, filters=RunArchiveFilters(q="777")
+        )
+
+
+def test_filtered_run_archive_count_and_page_share_one_read_snapshot(
+    monkeypatch, tmp_path
+) -> None:
+    database_path = tmp_path / "archive-snapshot.sqlite3"
+    first_run = "aaa" + "1" * 61
+    concurrent_run = "aaa" + "2" * 61
+    with Database(database_path) as db:
+        with db.connection:
+            _add_run(db.connection, first_run)
+
+    original_builder = run_summaries_module._build_run_summary
+    inserted = False
+
+    def insert_concurrent_run(connection, row):
+        nonlocal inserted
+        if not inserted:
+            writer = sqlite3.connect(database_path)
+            try:
+                capture_hash = "b" * 64
+                writer.execute(
+                    """INSERT INTO captures(capture_sha256,source_path,byte_size,complete,
+                              metadata_json) VALUES (?,?,?,?,?)""",
+                    (capture_hash, "concurrent.f1ecap", 10, 1, "{}"),
+                )
+                writer.execute(
+                    """INSERT INTO processing_runs(run_id,capture_sha256,pipeline_version,
+                              config_json,status) VALUES (?,?,?,?,?)""",
+                    (concurrent_run, capture_hash, "test", "{}", "complete"),
+                )
+                writer.commit()
+                inserted = True
+            finally:
+                writer.close()
+        return original_builder(connection, row)
+
+    monkeypatch.setattr(
+        "f1_engineer.storage.run_summaries._build_run_summary",
+        insert_concurrent_run,
+    )
+    page = list_processing_run_summaries(
+        database_path, filters=RunArchiveFilters(q="aaa")
+    )
+
+    assert page["total"] == 1
+    assert [item["run_id"] for item in page["items"]] == [first_run]
+    assert list_processing_run_summaries(
+        database_path, filters=RunArchiveFilters(q="aaa")
+    )["total"] == 2

@@ -5,6 +5,8 @@ import {
   ProcessingRunDetail,
   ProcessingRunPage,
   ProcessingRunSummary,
+  RunArchiveFilterValues,
+  RunArchiveFilters,
   SessionBestOverview,
   requestApi,
 } from "@/lib/api";
@@ -45,6 +47,12 @@ export default async function SessionsRunEvidence({
   const lifecycleEventOffset = pageOffset(
     firstParam(params.lifecycle_event_offset),
   );
+  const archiveFilterRequest =
+    screen === "sessions"
+      ? inspectArchiveFilterRequest(params, runOffset)
+      : null;
+  const archiveFilterValues =
+    archiveFilterRequest?.values ?? emptyArchiveFilterValues();
   const detailQuery = new URLSearchParams({
     session_limit: "20",
     session_offset: String(sessionOffset),
@@ -53,10 +61,23 @@ export default async function SessionsRunEvidence({
     lifecycle_event_limit: "50",
     lifecycle_event_offset: String(lifecycleEventOffset),
   });
+  const runListQuery = new URLSearchParams({
+    limit: "10",
+    offset: String(runOffset),
+  });
+  if (
+    screen === "sessions" &&
+    archiveFilterRequest &&
+    !archiveFilterRequest.failure
+  ) {
+    appendArchiveFilterParams(runListQuery, archiveFilterRequest.entries);
+  }
   const [runsResponse, detailResponse] = await Promise.all([
-    requestApi<ProcessingRunPage<ProcessingRunSummary>>(
-      `/api/v1/processing-runs?limit=10&offset=${runOffset}`,
-    ),
+    archiveFilterRequest?.failure
+      ? Promise.resolve(null)
+      : requestApi<ProcessingRunPage<ProcessingRunSummary>>(
+          `/api/v1/processing-runs?${runListQuery}`,
+        ),
     runId
       ? requestApi<ProcessingRunDetail>(
           `/api/v1/processing-runs/${encodeURIComponent(runId)}?${detailQuery}`,
@@ -141,6 +162,30 @@ export default async function SessionsRunEvidence({
         ? { kind: "unavailable" as const, reason: previewResponse.reason }
         : null
     : null;
+  const archivePageMatchesRequest =
+    screen !== "sessions" ||
+    (runsResponse?.status === "ok" &&
+      archiveFilterRequest?.expected !== null &&
+      archiveFilterRequest?.expected !== undefined &&
+      isMatchingArchiveRunPage(
+        runsResponse.data,
+        archiveFilterRequest.expected,
+        runOffset,
+      ));
+  const runsPage =
+    runsResponse?.status === "ok" &&
+    (screen !== "sessions" || archivePageMatchesRequest)
+      ? runsResponse.data
+      : null;
+  const runsFailure = archiveFilterRequest?.failure
+    ? "archive_filter_request_invalid"
+    : runsResponse === null
+      ? "request_failed"
+      : runsResponse.status === "unavailable"
+        ? runsResponse.reason
+        : screen === "sessions" && !archivePageMatchesRequest
+          ? "archive_filter_response_mismatch"
+          : null;
 
   return (
     <>
@@ -157,7 +202,9 @@ export default async function SessionsRunEvidence({
         </section>
       ) : null}
       <RunEvidencePanel
-        runsPage={runsResponse?.status === "ok" ? runsResponse.data : null}
+        runsPage={runsPage}
+        runsFailure={runsFailure}
+        archiveFilterValues={archiveFilterValues}
         detail={detail}
         observationInventory={inventory}
         observationPreview={preview}
@@ -180,6 +227,203 @@ export default async function SessionsRunEvidence({
       />
     </>
   );
+}
+
+const archiveFilterKeys = [
+  "q",
+  "packet_format",
+  "track_id",
+  "session_category",
+  "started_from",
+  "started_through",
+] as const;
+
+const archiveCategories = [
+  "time_trial",
+  "practice",
+  "qualifying",
+  "race",
+  "unknown",
+] as const;
+const maximumArchiveFilterValueLength = 512;
+const maximumArchiveFilterQueryLength = 4096;
+const maximumArchiveFilterValuesPerKey = 8;
+
+type ArchiveFilterRequest = {
+  entries: Array<[string, string]>;
+  expected: RunArchiveFilters | null;
+  failure: boolean;
+  values: RunArchiveFilterValues;
+};
+
+function emptyArchiveFilterValues(): RunArchiveFilterValues {
+  return {
+    q: "",
+    packet_format: "",
+    track_id: "",
+    session_category: "",
+    started_from: "",
+    started_through: "",
+  };
+}
+
+function inspectArchiveFilterRequest(
+  params: AppSearchParams,
+  runOffset: number,
+): ArchiveFilterRequest {
+  const values = emptyArchiveFilterValues();
+  const entries: Array<[string, string]> = [];
+  for (const key of archiveFilterKeys) {
+    const value = params[key];
+    const incoming =
+      value === undefined ? [] : Array.isArray(value) ? value : [value];
+    if (
+      incoming.length > maximumArchiveFilterValuesPerKey ||
+      incoming.length > 1 ||
+      incoming.some((item) => item.length > maximumArchiveFilterValueLength)
+    ) {
+      return {
+        entries: [],
+        expected: null,
+        failure: true,
+        values: emptyArchiveFilterValues(),
+      };
+    }
+    const item = incoming[0] ?? "";
+    values[key] = item;
+    if (item.trim()) entries.push([key, item]);
+  }
+
+  const boundedQuery = new URLSearchParams({
+    limit: "10",
+    offset: String(runOffset),
+  });
+  for (const [key, value] of entries) boundedQuery.append(key, value);
+  if (boundedQuery.toString().length > maximumArchiveFilterQueryLength) {
+    return {
+      entries: [],
+      expected: null,
+      failure: true,
+      values: emptyArchiveFilterValues(),
+    };
+  }
+
+  return {
+    entries,
+    expected: normalizeArchiveFilterValues(values),
+    failure: false,
+    values,
+  };
+}
+
+function appendArchiveFilterParams(
+  query: URLSearchParams,
+  entries: Array<[string, string]>,
+) {
+  for (const [key, value] of entries) query.append(key, value);
+}
+
+function normalizeArchiveFilterValues(
+  values: RunArchiveFilterValues,
+): RunArchiveFilters | null {
+  const q = values.q.trim();
+  if (q && !/^[a-f\d]{3,64}$/i.test(q)) return null;
+
+  const packetFormat = values.packet_format.trim();
+  const trackIdValue = values.track_id.trim();
+  if (Boolean(packetFormat) !== Boolean(trackIdValue)) return null;
+  if (packetFormat && !["2025", "2026"].includes(packetFormat)) return null;
+  if (trackIdValue && !/^(?:0|[1-9]\d{0,2})$/.test(trackIdValue)) return null;
+  const trackId = trackIdValue ? Number(trackIdValue) : null;
+  if (trackId !== null && trackId > 127) return null;
+
+  const sessionCategory = values.session_category.trim().toLowerCase();
+  if (
+    sessionCategory &&
+    !archiveCategories.includes(sessionCategory as (typeof archiveCategories)[number])
+  ) {
+    return null;
+  }
+
+  const startedFrom = values.started_from.trim();
+  const startedThrough = values.started_through.trim();
+  if (
+    (startedFrom && !isCalendarDate(startedFrom)) ||
+    (startedThrough && !isCalendarDate(startedThrough)) ||
+    (startedFrom && startedThrough && startedFrom > startedThrough)
+  ) {
+    return null;
+  }
+
+  return {
+    q: q ? q.toLowerCase() : null,
+    packet_format: packetFormat ? Number(packetFormat) : null,
+    track_id: trackId,
+    session_category: sessionCategory
+      ? (sessionCategory as RunArchiveFilters["session_category"])
+      : null,
+    started_from: startedFrom || null,
+    started_through: startedThrough || null,
+  };
+}
+
+function isCalendarDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000")) {
+    return false;
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function isMatchingArchiveRunPage(
+  value: unknown,
+  expectedFilters: RunArchiveFilters,
+  expectedOffset: number,
+): value is ProcessingRunPage<ProcessingRunSummary> {
+  if (!value || typeof value !== "object") return false;
+  const page = value as Partial<ProcessingRunPage<ProcessingRunSummary>>;
+  if (
+    !Array.isArray(page.items) ||
+    page.items.length > 10 ||
+    !Number.isSafeInteger(page.total) ||
+    (page.total as number) < 0 ||
+    page.limit !== 10 ||
+    page.offset !== expectedOffset ||
+    (page.total as number) < page.items.length ||
+    !isRunArchiveFilterEcho(page.filters)
+  ) {
+    return false;
+  }
+  return archiveFiltersEqual(page.filters, expectedFilters);
+}
+
+function isRunArchiveFilterEcho(value: unknown): value is RunArchiveFilters {
+  if (!value || typeof value !== "object") return false;
+  const filters = value as Partial<RunArchiveFilters>;
+  return (
+    (filters.q === null || typeof filters.q === "string") &&
+    (filters.packet_format === null ||
+      (Number.isSafeInteger(filters.packet_format) &&
+        typeof filters.packet_format === "number")) &&
+    (filters.track_id === null ||
+      (Number.isSafeInteger(filters.track_id) &&
+        typeof filters.track_id === "number")) &&
+    (filters.session_category === null ||
+      (typeof filters.session_category === "string" &&
+        archiveCategories.includes(
+          filters.session_category as (typeof archiveCategories)[number],
+        ))) &&
+    (filters.started_from === null || typeof filters.started_from === "string") &&
+    (filters.started_through === null ||
+      typeof filters.started_through === "string")
+  );
+}
+
+function archiveFiltersEqual(
+  actual: RunArchiveFilters,
+  expected: RunArchiveFilters,
+) {
+  return archiveFilterKeys.every((key) => actual[key] === expected[key]);
 }
 
 function firstParam(value: string | string[] | undefined) {

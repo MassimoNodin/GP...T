@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,78 @@ DEFAULT_LIFECYCLE_EVENT_PAGE_SIZE = 50
 MAX_RUN_PAGE_SIZE = 50
 MAX_CHILD_PAGE_SIZE = 100
 MAX_PAGE_OFFSET = (1 << 63) - 1
+MAX_ARCHIVE_RUN_CANDIDATES = 10_000
+MAX_ARCHIVE_SESSION_ROWS = 25_000
+MAX_ARCHIVE_CONTEXT_BYTES = 32 * 1024 * 1024
+MAX_ARCHIVE_CONTEXT_BYTES_PER_ROW = 64 * 1024
+ARCHIVE_SQL_PROGRESS_INTERVAL = 1_000
+MAX_ARCHIVE_SQL_PROGRESS_CALLBACKS = 5_000
+_ARCHIVE_SESSION_CATEGORIES = {
+    "time_trial": frozenset({"time_trial"}),
+    "practice": frozenset(
+        {"practice_1", "practice_2", "practice_3", "short_practice"}
+    ),
+    "qualifying": frozenset(
+        {
+            "qualifying_1",
+            "qualifying_2",
+            "qualifying_3",
+            "short_qualifying",
+            "one_shot_qualifying",
+            "sprint_shootout_1",
+            "sprint_shootout_2",
+            "sprint_shootout_3",
+            "short_sprint_shootout",
+            "one_shot_sprint_shootout",
+        }
+    ),
+    "race": frozenset({"race", "race_2", "race_3"}),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class RunArchiveFilters:
+    q: str | None = None
+    packet_format: int | None = None
+    track_id: int | None = None
+    session_category: str | None = None
+    started_from: str | None = None
+    started_through: str | None = None
+
+    @property
+    def has_session_filters(self) -> bool:
+        return (
+            self.packet_format is not None
+            or self.session_category is not None
+        )
+
+    @property
+    def has_filters(self) -> bool:
+        return any(
+            value is not None
+            for value in (
+                self.q,
+                self.packet_format,
+                self.track_id,
+                self.session_category,
+                self.started_from,
+                self.started_through,
+            )
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "q": self.q,
+            "packet_format": self.packet_format,
+            "track_id": self.track_id,
+            "session_category": self.session_category,
+            "started_from": self.started_from,
+            "started_through": self.started_through,
+        }
+
+
+class ArchiveFilterLimitExceeded(ValueError):
+    """A filtered archive query hit a declared evaluation bound."""
 _RECORDING_COUNTERS = (
     "received",
     "recorded",
@@ -84,26 +157,258 @@ def list_processing_run_summaries(
     *,
     limit: int = DEFAULT_RUN_PAGE_SIZE,
     offset: int = 0,
+    filters: RunArchiveFilters | None = None,
 ) -> dict[str, object]:
     """Return one bounded page of run-level capture and persisted attempt evidence."""
     _validate_page(limit, offset, maximum=MAX_RUN_PAGE_SIZE)
+    selected_filters = filters or RunArchiveFilters()
     with Database(database_path, read_only=True) as db:
-        total = int(
-            db.connection.execute("SELECT COUNT(*) FROM processing_runs").fetchone()[0]
-        )
-        rows = db.connection.execute(
-            """SELECT r.run_id, r.capture_sha256, r.pipeline_version, r.config_json,
-                      r.status, r.started_at_utc, r.finished_at_utc, r.error,
-                      r.metrics_json, c.byte_size, c.complete, c.completion_json
-                 FROM processing_runs r
-                 LEFT JOIN captures c USING(capture_sha256)
-                 ORDER BY COALESCE(r.finished_at_utc, r.started_at_utc) DESC,
-                          r.run_id DESC
-                 LIMIT ? OFFSET ?""",
-            (limit, offset),
-        ).fetchall()
+        connection = db.connection
+        connection.execute("BEGIN")
+        if selected_filters.has_filters:
+            progress_state = {"callbacks": 0, "exceeded": False}
+
+            def progress_handler() -> int:
+                progress_state["callbacks"] += 1
+                if (
+                    progress_state["callbacks"]
+                    > MAX_ARCHIVE_SQL_PROGRESS_CALLBACKS
+                ):
+                    progress_state["exceeded"] = True
+                    return 1
+                return 0
+
+            connection.set_progress_handler(
+                progress_handler, ARCHIVE_SQL_PROGRESS_INTERVAL
+            )
+            try:
+                candidates = _filtered_archive_candidates(
+                    connection, selected_filters
+                )
+                total = len(candidates)
+                page_candidates = candidates[offset : offset + limit]
+                rows = _run_rows_for_ids(
+                    connection, [str(row["run_id"]) for row in page_candidates]
+                )
+                row_by_id = {str(row["run_id"]): row for row in rows}
+                ordered_rows = [
+                    row_by_id[str(candidate["run_id"])]
+                    for candidate in page_candidates
+                    if str(candidate["run_id"]) in row_by_id
+                ]
+            except sqlite3.OperationalError as exc:
+                if progress_state["exceeded"]:
+                    raise ArchiveFilterLimitExceeded(
+                        "archive_filter_limit_exceeded"
+                    ) from exc
+                raise
+            finally:
+                connection.set_progress_handler(None, 0)
+            rows = ordered_rows
+        else:
+            total = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM processing_runs"
+                ).fetchone()[0]
+            )
+            rows = connection.execute(
+                """SELECT r.run_id, r.capture_sha256, r.pipeline_version, r.config_json,
+                          r.status, r.started_at_utc, r.finished_at_utc, r.error,
+                          r.metrics_json, c.byte_size, c.complete, c.completion_json
+                     FROM processing_runs r
+                     LEFT JOIN captures c USING(capture_sha256)
+                     ORDER BY COALESCE(r.finished_at_utc, r.started_at_utc) DESC,
+                              r.run_id DESC
+                     LIMIT ? OFFSET ?""",
+                (limit, offset),
+            ).fetchall()
         items = [_build_run_summary(db.connection, row) for row in rows]
-    return {"items": items, "total": total, "limit": limit, "offset": offset}
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "filters": selected_filters.to_dict(),
+    }
+
+
+def _filtered_archive_candidates(
+    connection: sqlite3.Connection,
+    filters: RunArchiveFilters,
+) -> list[sqlite3.Row]:
+    query = filters.q
+    if query is not None:
+        _bound_session_uid_search(connection, filters)
+    rows = connection.execute(
+        """SELECT r.run_id, r.capture_sha256
+             FROM processing_runs r
+             JOIN captures c USING(capture_sha256)
+            WHERE (? IS NULL OR date(r.started_at_utc) >= ?)
+              AND (? IS NULL OR date(r.started_at_utc) <= ?)
+              AND (
+                    ? IS NULL
+                    OR instr(lower(r.run_id), ?) > 0
+                    OR instr(lower(c.capture_sha256), ?) > 0
+                    OR EXISTS (
+                        SELECT 1 FROM sessions s
+                         WHERE s.run_id = r.run_id
+                           AND instr(lower(s.session_uid), ?) > 0
+                    )
+              )
+            ORDER BY COALESCE(r.finished_at_utc, r.started_at_utc) DESC,
+                     r.run_id DESC
+            LIMIT ?""",
+        (
+            filters.started_from,
+            filters.started_from,
+            filters.started_through,
+            filters.started_through,
+            query,
+            query,
+            query,
+            query,
+            MAX_ARCHIVE_RUN_CANDIDATES + 1,
+        ),
+    ).fetchall()
+    if len(rows) > MAX_ARCHIVE_RUN_CANDIDATES:
+        raise ArchiveFilterLimitExceeded("archive_filter_limit_exceeded")
+    if not filters.has_session_filters:
+        return rows
+
+    query_matched_by_run: set[str] = set()
+    if query is not None:
+        query_matched_by_run = {
+            str(row["run_id"])
+            for row in rows
+            if query in str(row["run_id"]).lower()
+            or query in str(row["capture_sha256"]).lower()
+        }
+
+    matching_run_ids: set[str] = set()
+    scanned_sessions = 0
+    context_json_bytes = 0
+    candidate_ids = [str(row["run_id"]) for row in rows]
+    # Keep parameter counts well below SQLite builds with a reduced variable cap.
+    for start in range(0, len(candidate_ids), 500):
+        chunk_ids = candidate_ids[start : start + 500]
+        placeholders = ",".join("?" for _ in chunk_ids)
+        cursor = connection.execute(
+            f"""SELECT s.run_id, s.session_uid,
+                       length(CAST(s.context_json AS BLOB)) AS context_bytes,
+                       CASE WHEN length(CAST(s.context_json AS BLOB)) <= ?
+                            THEN s.context_json ELSE NULL END AS context_json
+                  FROM sessions s
+                 WHERE s.run_id IN ({placeholders})
+                 ORDER BY s.run_id, s.session_uid""",
+            (MAX_ARCHIVE_CONTEXT_BYTES_PER_ROW, *chunk_ids),
+        )
+        while True:
+            session_rows = cursor.fetchmany(256)
+            if not session_rows:
+                break
+            for session in session_rows:
+                scanned_sessions += 1
+                if scanned_sessions > MAX_ARCHIVE_SESSION_ROWS:
+                    raise ArchiveFilterLimitExceeded(
+                        "archive_filter_limit_exceeded"
+                    )
+                context_bytes = session["context_bytes"]
+                if context_bytes is not None:
+                    context_bytes = int(context_bytes)
+                    if context_bytes > MAX_ARCHIVE_CONTEXT_BYTES_PER_ROW:
+                        raise ArchiveFilterLimitExceeded(
+                            "archive_filter_limit_exceeded"
+                        )
+                    context_json_bytes += context_bytes
+                    if context_json_bytes > MAX_ARCHIVE_CONTEXT_BYTES:
+                        raise ArchiveFilterLimitExceeded(
+                            "archive_filter_limit_exceeded"
+                        )
+
+                run_id = str(session["run_id"])
+                if query is not None and run_id not in query_matched_by_run:
+                    if query not in str(session["session_uid"]).lower():
+                        continue
+
+                context = _json_object(session["context_json"])
+                if filters.packet_format is not None:
+                    if _context_integer(context, "packet_format") != filters.packet_format:
+                        continue
+                    if _context_integer(context, "track_id") != filters.track_id:
+                        continue
+                if filters.session_category is not None:
+                    if _archive_session_category(context) != filters.session_category:
+                        continue
+                matching_run_ids.add(run_id)
+
+    return [row for row in rows if str(row["run_id"]) in matching_run_ids]
+
+
+def _bound_session_uid_search(
+    connection: sqlite3.Connection,
+    filters: RunArchiveFilters,
+) -> None:
+    """Bound the session rows an unfiltered UID substring search can inspect."""
+    cursor = connection.execute(
+        """SELECT 1
+             FROM sessions s
+             JOIN processing_runs r USING(run_id)
+             JOIN captures c USING(capture_sha256)
+            WHERE (? IS NULL OR date(r.started_at_utc) >= ?)
+              AND (? IS NULL OR date(r.started_at_utc) <= ?)
+            LIMIT ?""",
+        (
+            filters.started_from,
+            filters.started_from,
+            filters.started_through,
+            filters.started_through,
+            MAX_ARCHIVE_SESSION_ROWS + 1,
+        ),
+    )
+    scanned = 0
+    while batch := cursor.fetchmany(256):
+        scanned += len(batch)
+        if scanned > MAX_ARCHIVE_SESSION_ROWS:
+            raise ArchiveFilterLimitExceeded("archive_filter_limit_exceeded")
+
+
+def _run_rows_for_ids(
+    connection: sqlite3.Connection, run_ids: list[str]
+) -> list[sqlite3.Row]:
+    if not run_ids:
+        return []
+    placeholders = ",".join("?" for _ in run_ids)
+    return connection.execute(
+        f"""SELECT r.run_id, r.capture_sha256, r.pipeline_version, r.config_json,
+                  r.status, r.started_at_utc, r.finished_at_utc, r.error,
+                  r.metrics_json, c.byte_size, c.complete, c.completion_json
+             FROM processing_runs r
+             LEFT JOIN captures c USING(capture_sha256)
+            WHERE r.run_id IN ({placeholders})""",
+        run_ids,
+    ).fetchall()
+
+
+def _context_integer(context: dict[str, Any] | None, field: str) -> int | None:
+    if context is None:
+        return None
+    value = context.get(field)
+    if not isinstance(value, int) or isinstance(value, bool):
+        return None
+    return value
+
+
+def _archive_session_category(context: dict[str, Any] | None) -> str:
+    if context is None:
+        return "unknown"
+    session_type = context.get("session_type")
+    if not isinstance(session_type, str):
+        return "unknown"
+    normalized = session_type.strip().lower()
+    for category, session_types in _ARCHIVE_SESSION_CATEGORIES.items():
+        if normalized in session_types:
+            return category
+    return "unknown"
 
 
 def get_processing_run_detail(
@@ -565,7 +870,7 @@ def _json_value(value: object) -> Any:
         return None
     try:
         return json.loads(value)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError, ValueError):
         return None
 
 

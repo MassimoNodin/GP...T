@@ -961,6 +961,20 @@ This decision changes presentation only. It does not add automatic speech, micro
 
 **Rationale:** Browser speech rate and volume belong to the presentation surface, not to telemetry-service configuration. A small browser-only preference group can improve an existing, user-triggered local speech capability without creating service mutations or changing evidence policy.
 
+## Decision 0064: filter the run archive from bounded latest-session snapshots
+
+**Status:** accepted
+
+**Date:** 2026-10-05
+
+Extend the read-only processing-run archive with literal hexadecimal identity search, paired packet-format/track filters, canonical session categories, and inclusive UTC processing-start dates. Classify categories from the latest persisted session `context_json` snapshot only; map absent, malformed, null, or unrecognized session types to `unknown`. Track/category and session-UID search predicates must match the same session row. Run ID and capture SHA matches remain run-level identities. Preserve each processing run as a separate result and the current stable ordering.
+
+Validate optional filter values strictly, treat blank values as absent, reject repeated or incomplete filters, and echo normalized values. Apply count and page selection from one explicit SQLite read transaction. Bound filtered evaluation to 10,000 processing runs, 25,000 session rows, 32 MiB of context JSON in total, 64 KiB per context, and an initial five-million SQLite VM-instruction budget. Exceeding any bound returns `archive_filter_limit_exceeded` without partial counts or results. Use parameterized queries and guarded JSON decoding. Do not read capture files or Parquet traces and do not change session, lap, reference, or coaching eligibility.
+
+Keep the selected run and its attempt/assessment state independent of archive filters. Filter submission resets only archive pagination; a selected run that does not appear in the filtered archive remains inspectable and is identified as independently selected. Do not select a replacement implicitly.
+
+**Rationale:** The Sessions mock calls for practical archive discovery, while latest stored session context and processing timestamps provide bounded, locally available facts. Explicit UTC date and snapshot semantics avoid inferring game dates or silently searching historical context; hard evaluation limits ensure an unusually large archive abstains instead of returning misleading partial results.
+
 ## Data flow
 
 ```text

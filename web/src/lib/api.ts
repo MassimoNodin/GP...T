@@ -792,6 +792,25 @@ export interface ProcessingRunPage<T> {
   total: number;
   limit: number;
   offset: number;
+  filters?: RunArchiveFilters;
+}
+
+export interface RunArchiveFilters {
+  q: string | null;
+  packet_format: number | null;
+  track_id: number | null;
+  session_category: "time_trial" | "practice" | "qualifying" | "race" | "unknown" | null;
+  started_from: string | null;
+  started_through: string | null;
+}
+
+export interface RunArchiveFilterValues {
+  q: string;
+  packet_format: string;
+  track_id: string;
+  session_category: string;
+  started_from: string;
+  started_through: string;
 }
 
 export interface ProcessingRunSession {

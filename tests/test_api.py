@@ -207,8 +207,16 @@ def test_processing_run_api_bounds_pages_and_preserves_unsigned_session_uids(
     monkeypatch.setattr(
         api_module,
         "list_processing_run_summaries",
-        lambda _database, *, limit, offset: calls.update(limit=limit, offset=offset)
-        or {"items": [], "total": 12, "limit": limit, "offset": offset},
+        lambda _database, *, limit, offset, filters: calls.update(
+            limit=limit, offset=offset, filters=filters.to_dict()
+        )
+        or {
+            "items": [],
+            "total": 12,
+            "limit": limit,
+            "offset": offset,
+            "filters": filters.to_dict(),
+        },
     )
     run_id = "a" * 64
     monkeypatch.setattr(
@@ -266,7 +274,18 @@ def test_processing_run_api_bounds_pages_and_preserves_unsigned_session_uids(
     )
 
     assert page_response.status_code == 200
-    assert calls == {"limit": 3, "offset": 6}
+    assert calls == {
+        "limit": 3,
+        "offset": 6,
+        "filters": {
+            "q": None,
+            "packet_format": None,
+            "track_id": None,
+            "session_category": None,
+            "started_from": None,
+            "started_through": None,
+        },
+    }
     assert page_response.json()["data"]["total"] == 12
     assert detail_response.status_code == 200
     assert detail_response.json()["data"]["sessions"]["items"][0]["session_uid"] == "18446744073709550001"
@@ -275,6 +294,100 @@ def test_processing_run_api_bounds_pages_and_preserves_unsigned_session_uids(
     assert oversized_run_offset_response.status_code == 422
     assert oversized_session_offset_response.status_code == 422
     assert oversized_attempt_offset_response.status_code == 422
+
+
+def test_processing_run_api_normalizes_and_rejects_archive_filters(
+    monkeypatch, tmp_path
+) -> None:
+    calls = []
+
+    def list_page(_database, *, limit, offset, filters):
+        calls.append(filters)
+        return {
+            "items": [],
+            "total": 0,
+            "limit": limit,
+            "offset": offset,
+            "filters": filters.to_dict(),
+        }
+
+    monkeypatch.setattr(api_module, "list_processing_run_summaries", list_page)
+    app = create_app(tmp_path / "unused.sqlite3")
+    normalized = _get(
+        app,
+        "/api/v1/processing-runs",
+        params=[
+            ("q", " ABC "),
+            ("packet_format", "2026"),
+            ("track_id", "17"),
+            ("session_category", "PRACTICE"),
+            ("started_from", "2026-10-01"),
+            ("started_through", "2026-10-05"),
+        ],
+    )
+    repeated = _get(
+        app,
+        "/api/v1/processing-runs",
+        params=[("q", "abc"), ("q", "def")],
+    )
+    incomplete_track = _get(
+        app,
+        "/api/v1/processing-runs",
+        params={"packet_format": "2025"},
+    )
+    invalid_literal_search = _get(
+        app, "/api/v1/processing-runs", params={"q": "abc%"}
+    )
+    reversed_dates = _get(
+        app,
+        "/api/v1/processing-runs",
+        params={"started_from": "2026-10-06", "started_through": "2026-10-05"},
+    )
+
+    assert normalized.status_code == 200
+    assert normalized.json()["data"]["filters"] == {
+        "q": "abc",
+        "packet_format": 2026,
+        "track_id": 17,
+        "session_category": "practice",
+        "started_from": "2026-10-01",
+        "started_through": "2026-10-05",
+    }
+    assert len(calls) == 1
+    for response, reason in (
+        (repeated, "invalid_archive_filter_q"),
+        (incomplete_track, "invalid_archive_filter_track_context"),
+        (invalid_literal_search, "invalid_archive_filter_q"),
+        (reversed_dates, "invalid_archive_filter_date_range"),
+    ):
+        assert response.status_code == 422
+        assert response.json()["reason"] == reason
+
+
+def test_processing_run_api_reports_archive_filter_budget_abstention(
+    monkeypatch, tmp_path
+) -> None:
+    def limit_exceeded(_database, *, limit, offset, filters):
+        raise api_module.ArchiveFilterLimitExceeded("archive_filter_limit_exceeded")
+
+    monkeypatch.setattr(
+        api_module, "list_processing_run_summaries", limit_exceeded
+    )
+    app = create_app(tmp_path / "unused.sqlite3")
+
+    response = _get(
+        app,
+        "/api/v1/processing-runs",
+        params={"session_category": "race"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "api_version": "v1",
+        "status": "unavailable",
+        "data": None,
+        "reason": "archive_filter_limit_exceeded",
+    }
 
 
 def test_car_observation_api_exposes_bounded_inventory_and_preview(

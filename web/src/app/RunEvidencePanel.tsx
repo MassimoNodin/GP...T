@@ -8,6 +8,8 @@ import type {
   ProcessingRunLifecycleEvent,
   ProcessingRunSession,
   ProcessingRunSummary,
+  RunArchiveFilterValues,
+  RunArchiveFilters,
 } from "@/lib/api";
 import type { LapOrderAssessmentState } from "@/lib/session-best-assessment";
 import {
@@ -31,6 +33,8 @@ type ObservationUrlState = {
 
 export default function RunEvidencePanel({
   runsPage,
+  runsFailure,
+  archiveFilterValues,
   detail,
   observationInventory,
   observationPreview,
@@ -52,6 +56,8 @@ export default function RunEvidencePanel({
   lapOrderAssessment,
 }: {
   runsPage: ProcessingRunPage<ProcessingRunSummary> | null;
+  runsFailure: string | null;
+  archiveFilterValues: RunArchiveFilterValues;
   detail: ProcessingRunDetail | null;
   observationInventory: CarObservationInventory | null;
   observationPreview: CarObservationPreview | null;
@@ -72,6 +78,20 @@ export default function RunEvidencePanel({
   preservedQuery: string;
   lapOrderAssessment: LapOrderAssessmentState;
 }) {
+  const normalizedFilterValues = archiveFormValues(
+    runsPage?.filters,
+    archiveFilterValues,
+  );
+  const hasArchiveFilters = Object.values(normalizedFilterValues).some(
+    (value) => value.trim().length > 0,
+  );
+  const resetFiltersHref = screenHref(
+    screen,
+    preservedQuery,
+    {},
+    [...archiveFilterKeys, "run_offset"],
+  );
+
   return (
     <section className="run-evidence panel" aria-labelledby="run-evidence-title">
       <div className="run-evidence-heading">
@@ -87,13 +107,31 @@ export default function RunEvidencePanel({
         <span className="run-evidence-badge">READ ONLY</span>
       </div>
 
+      {screen === "sessions" ? (
+        <RunArchiveFiltersForm
+          values={normalizedFilterValues}
+          preservedQuery={preservedQuery}
+          resetHref={resetFiltersHref}
+        />
+      ) : null}
+
+      {runId && hasArchiveFilters && screen === "sessions" ? (
+        <p className="run-archive-selection-note" role="status">
+          The selected run stays open independently of these archive filters, so
+          its evidence remains available even when it does not appear in the
+          filtered results.
+        </p>
+      ) : null}
+
       {!runsPage ? (
-        <p className="run-evidence-empty">
-          Run summaries are unavailable from the local API.
+        <p className="run-evidence-empty" role="status">
+          {archiveFailureMessage(runsFailure)}
         </p>
       ) : runsPage.items.length === 0 ? (
         <p className="run-evidence-empty">
-          No imported captures are in the archive yet.
+          {hasArchiveFilters
+            ? "No processing runs match these filters."
+            : "No imported captures are in the archive yet."}
         </p>
       ) : (
         <>
@@ -1107,6 +1145,167 @@ function screenHref(
   );
   for (const key of removeKeys) state.delete(key);
   return appScreenHref(screen, state.toString(), overrides);
+}
+
+const archiveFilterKeys = [
+  "q",
+  "packet_format",
+  "track_id",
+  "session_category",
+  "started_from",
+  "started_through",
+] as const;
+
+function archiveFormValues(
+  filters: RunArchiveFilters | undefined,
+  fallback: RunArchiveFilterValues,
+): RunArchiveFilterValues {
+  if (!isNormalizedArchiveFilterEcho(filters)) return fallback;
+  return {
+    q: filters.q ?? "",
+    packet_format:
+      filters.packet_format === null ? "" : String(filters.packet_format),
+    track_id: filters.track_id === null ? "" : String(filters.track_id),
+    session_category: filters.session_category ?? "",
+    started_from: filters.started_from ?? "",
+    started_through: filters.started_through ?? "",
+  };
+}
+
+function isNormalizedArchiveFilterEcho(
+  value: RunArchiveFilters | undefined,
+): value is RunArchiveFilters {
+  if (!value) return false;
+  return (
+    (value.q === null || typeof value.q === "string") &&
+    (value.packet_format === null ||
+      (typeof value.packet_format === "number" &&
+        Number.isSafeInteger(value.packet_format))) &&
+    (value.track_id === null ||
+      (typeof value.track_id === "number" && Number.isSafeInteger(value.track_id))) &&
+    (value.session_category === null ||
+      ["time_trial", "practice", "qualifying", "race", "unknown"].includes(
+        value.session_category,
+      )) &&
+    (value.started_from === null || typeof value.started_from === "string") &&
+    (value.started_through === null ||
+      typeof value.started_through === "string")
+  );
+}
+
+function RunArchiveFiltersForm({
+  values,
+  preservedQuery,
+  resetHref,
+}: {
+  values: RunArchiveFilterValues;
+  preservedQuery: string;
+  resetHref: string | null;
+}) {
+  const preservedState = new URLSearchParams(preservedQuery);
+  for (const key of archiveFilterKeys) preservedState.delete(key);
+  preservedState.delete("run_offset");
+
+  return (
+    <form className="run-archive-filters" action="/sessions" method="get">
+      {Array.from(preservedState.entries()).map(([key, value], index) => (
+        <input key={`${key}:${index}`} type="hidden" name={key} value={value} />
+      ))}
+      <div className="run-archive-filter-grid">
+        <label className="run-archive-filter-search">
+          <span>Search run ID, capture SHA-256, or session UID</span>
+          <input
+            name="q"
+            type="search"
+            inputMode="text"
+            autoComplete="off"
+            maxLength={64}
+            pattern="[A-Fa-f0-9]{3,64}"
+            title="Enter 3–64 hexadecimal characters."
+            defaultValue={values.q}
+          />
+        </label>
+        <label>
+          <span>Game version</span>
+          <select name="packet_format" defaultValue={values.packet_format}>
+            <option value="">Any</option>
+            <option value="2025">F1 25</option>
+            <option value="2026">2026 Season Pack</option>
+          </select>
+        </label>
+        <label>
+          <span>Track ID</span>
+          <input
+            name="track_id"
+            type="number"
+            min={0}
+            max={127}
+            step={1}
+            defaultValue={values.track_id}
+          />
+        </label>
+        <label>
+          <span>Session</span>
+          <select name="session_category" defaultValue={values.session_category}>
+            <option value="">Any</option>
+            <option value="time_trial">Time Trial</option>
+            <option value="practice">Practice</option>
+            <option value="qualifying">Qualifying</option>
+            <option value="race">Race</option>
+            <option value="unknown">Unknown</option>
+          </select>
+        </label>
+        <label>
+          <span>Processing started from (UTC)</span>
+          <input
+            name="started_from"
+            type="date"
+            defaultValue={values.started_from}
+          />
+        </label>
+        <label>
+          <span>Through (UTC, inclusive)</span>
+          <input
+            name="started_through"
+            type="date"
+            defaultValue={values.started_through}
+          />
+        </label>
+      </div>
+      <div className="run-archive-filter-actions">
+        <span>Search accepts 3–64 hexadecimal characters.</span>
+        <div>
+          <button className="run-archive-apply" type="submit">
+            Apply filters
+          </button>
+          {resetHref ? (
+            <a className="run-archive-reset" href={resetHref}>
+              Reset
+            </a>
+          ) : null}
+        </div>
+      </div>
+    </form>
+  );
+}
+
+function archiveFailureMessage(reason: string | null) {
+  if (reason === "archive_filter_request_invalid") {
+    return "These archive filters exceed the safe request limits. Shorten the values and remove repeated filters, then try again.";
+  }
+  if (reason === "archive_filter_response_mismatch") {
+    return "The archive response did not confirm these filters and page settings. Run summaries are hidden until the local API returns a matching result.";
+  }
+  if (reason === "archive_filter_limit_exceeded") {
+    return "This filter needs to inspect more archived evidence than the bounded search allows. Narrow the date or session filters and try again.";
+  }
+  if (reason?.startsWith("invalid_archive_filter_")) {
+    return "One or more archive filters are invalid or repeated. Check the values and try again.";
+  }
+  if (reason === "request_failed") {
+    return "Run summaries are unavailable because the local API request failed.";
+  }
+  return "Run summaries are unavailable from the local API.";
 }
 
 function queryEntriesFromHref(

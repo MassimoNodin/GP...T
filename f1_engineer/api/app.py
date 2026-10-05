@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hmac
 import os
+import re
 import sqlite3
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 from typing import Annotated, Any, Generic, Literal, TypeVar
 
@@ -51,6 +53,7 @@ from ..storage.query import (
     load_car_observation_preview,
 )
 from ..storage.run_summaries import (
+    ArchiveFilterLimitExceeded,
     DEFAULT_ATTEMPT_PAGE_SIZE,
     DEFAULT_LIFECYCLE_EVENT_PAGE_SIZE,
     DEFAULT_RUN_PAGE_SIZE,
@@ -58,6 +61,7 @@ from ..storage.run_summaries import (
     MAX_CHILD_PAGE_SIZE,
     MAX_PAGE_OFFSET,
     MAX_RUN_PAGE_SIZE,
+    RunArchiveFilters,
     get_processing_run_detail,
     list_processing_run_summaries,
     list_processing_run_lifecycle_events,
@@ -405,6 +409,86 @@ def _draft_track_model_request_schema() -> dict[str, Any]:
     return schema
 
 
+class RunArchiveFilterValidationError(ValueError):
+    def __init__(self, field: str) -> None:
+        super().__init__(field)
+        self.reason = f"invalid_archive_filter_{field}"
+
+
+def _run_archive_filters(request: Request) -> RunArchiveFilters:
+    fields = (
+        "q",
+        "packet_format",
+        "track_id",
+        "session_category",
+        "started_from",
+        "started_through",
+    )
+    values: dict[str, str | None] = {}
+    for field in fields:
+        entries = request.query_params.getlist(field)
+        if len(entries) > 1:
+            raise RunArchiveFilterValidationError(field)
+        value = entries[0].strip() if entries else ""
+        values[field] = value or None
+
+    query = values["q"]
+    if query is not None:
+        if re.fullmatch(r"[0-9a-fA-F]{3,64}", query) is None:
+            raise RunArchiveFilterValidationError("q")
+        query = query.lower()
+
+    packet_format_value = values["packet_format"]
+    track_id_value = values["track_id"]
+    if (packet_format_value is None) != (track_id_value is None):
+        raise RunArchiveFilterValidationError("track_context")
+    packet_format: int | None = None
+    track_id: int | None = None
+    if packet_format_value is not None and track_id_value is not None:
+        if packet_format_value not in {"2025", "2026"}:
+            raise RunArchiveFilterValidationError("packet_format")
+        if re.fullmatch(r"(?:0|[1-9][0-9]{0,2})", track_id_value) is None:
+            raise RunArchiveFilterValidationError("track_id")
+        parsed_track_id = int(track_id_value)
+        if parsed_track_id > 127:
+            raise RunArchiveFilterValidationError("track_id")
+        packet_format = int(packet_format_value)
+        track_id = parsed_track_id
+
+    category_value = values["session_category"]
+    categories = {"time_trial", "practice", "qualifying", "race", "unknown"}
+    category = category_value.lower() if category_value is not None else None
+    if category is not None and category not in categories:
+        raise RunArchiveFilterValidationError("session_category")
+
+    dates: dict[str, str | None] = {}
+    for field in ("started_from", "started_through"):
+        value = values[field]
+        if value is not None:
+            if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value) is None:
+                raise RunArchiveFilterValidationError(field)
+            try:
+                date.fromisoformat(value)
+            except ValueError as exc:
+                raise RunArchiveFilterValidationError(field) from exc
+        dates[field] = value
+    if (
+        dates["started_from"] is not None
+        and dates["started_through"] is not None
+        and dates["started_from"] > dates["started_through"]
+    ):
+        raise RunArchiveFilterValidationError("date_range")
+
+    return RunArchiveFilters(
+        q=query,
+        packet_format=packet_format,
+        track_id=track_id,
+        session_category=category,
+        started_from=dates["started_from"],
+        started_through=dates["started_through"],
+    )
+
+
 def create_app(
     database_path: str | Path = DEFAULT_DATABASE,
     *,
@@ -487,15 +571,35 @@ def create_app(
 
     @app.get("/api/v1/processing-runs", response_model=APIResponse[dict[str, Any]])
     def processing_runs(
+        request: Request,
         limit: int = Query(default=DEFAULT_RUN_PAGE_SIZE, ge=1, le=MAX_RUN_PAGE_SIZE),
         offset: int = Query(default=0, ge=0, le=MAX_PAGE_OFFSET),
-    ) -> APIResponse[dict[str, Any]]:
-        return APIResponse[dict[str, Any]](
-            data=_stringify_session_uids(
-                list_processing_run_summaries(
-                    configured_database_path, limit=limit, offset=offset
-                )
+    ) -> APIResponse[dict[str, Any]] | JSONResponse:
+        try:
+            filters = _run_archive_filters(request)
+        except RunArchiveFilterValidationError as exc:
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "api_version": "v1",
+                    "status": "unavailable",
+                    "data": None,
+                    "reason": exc.reason,
+                },
             )
+        try:
+            page = list_processing_run_summaries(
+                configured_database_path,
+                limit=limit,
+                offset=offset,
+                filters=filters,
+            )
+        except ArchiveFilterLimitExceeded:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="archive_filter_limit_exceeded"
+            )
+        return APIResponse[dict[str, Any]](
+            data=_stringify_session_uids(page)
         )
 
     @app.get(
