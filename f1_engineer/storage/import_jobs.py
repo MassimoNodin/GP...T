@@ -42,6 +42,27 @@ def _root_namespace(root: Path) -> str:
     return hashlib.sha256(str(root.resolve()).encode("utf-8")).hexdigest()
 
 
+def recording_root_namespace(root: Path) -> str:
+    """Return the stable namespace used by registrations for a configured root."""
+    return _root_namespace(root)
+
+
+def recording_download_version(
+    namespace: str,
+    capture_id: str,
+    relative_path: str,
+    byte_size: int,
+    modified_ns: int,
+) -> str:
+    """Return a stable metadata identity for one observed recording file."""
+    payload = json.dumps(
+        [namespace, capture_id, relative_path, byte_size, modified_ns],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    return hashlib.sha256(b"recording-download-v1\0" + payload).hexdigest()
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
@@ -367,11 +388,11 @@ def list_recording_sources_page(
             raise
 
     items = [
-        _recording_catalog_source(row, discovered_paths)
+        _recording_catalog_source(row, discovered_paths, namespace)
         for row in page_rows
     ]
     selected_source = (
-        _recording_catalog_source(selected_row, discovered_paths)
+        _recording_catalog_source(selected_row, discovered_paths, namespace)
         if selected_row is not None
         else None
     )
@@ -457,7 +478,7 @@ def _bounded_recording_source_discovery(
 
 
 def _recording_catalog_source(
-    row: Any, discovered_paths: set[str]
+    row: Any, discovered_paths: set[str], namespace: str
 ) -> dict[str, Any]:
     capture_id = row["capture_id"]
     display_name = row["display_name"]
@@ -511,6 +532,9 @@ def _recording_catalog_source(
         "latest_job_status": latest_job_status,
         "latest_job_run_id": latest_job_run_id,
         "available": relative_path in discovered_paths,
+        "download_version": recording_download_version(
+            namespace, capture_id, relative_path, byte_size, modified_ns
+        ),
     }
 
 

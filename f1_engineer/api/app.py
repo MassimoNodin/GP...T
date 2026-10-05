@@ -11,7 +11,7 @@ from typing import Annotated, Any, Generic, Literal, TypeVar
 
 from fastapi import FastAPI, Header, Path as ApiPath, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
@@ -75,6 +75,11 @@ from ..storage.artifacts import (
     list_processing_run_artifacts,
 )
 from ..storage.usage import measure_storage_usage
+from ..storage.recording_download import (
+    DEFAULT_MAX_RECORDING_DOWNLOAD_BYTES,
+    RecordingDownloadError,
+    RecordingDownloadService,
+)
 from ..storage.database import DatabaseSchemaError
 from ..tracks.model import TrackModel
 from ..tracks.registry import (
@@ -85,6 +90,10 @@ from ..tracks.registry import (
 from .import_controller import ImportController
 from .replay_controller import ReplayController
 from .recording_controller import RecordingController
+from .recording_download import (
+    RecordingDownloadResponse,
+    recording_download_content_disposition,
+)
 
 REPLAY_CONTROL_CONFLICT_REASONS = {
     "replay_not_playing",
@@ -150,6 +159,10 @@ class RecordingSourceRecord(BaseModel):
     available: bool
 
 
+class RecordingSourceCatalogRecord(RecordingSourceRecord):
+    download_version: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class RecordingSourceFiltersRecord(BaseModel):
     query: str = Field(max_length=128)
     latest_job_status: Literal[
@@ -160,8 +173,8 @@ class RecordingSourceFiltersRecord(BaseModel):
 
 
 class RecordingSourcePageRecord(BaseModel):
-    items: list[RecordingSourceRecord] = Field(max_length=50)
-    selected_capture: RecordingSourceRecord | None
+    items: list[RecordingSourceCatalogRecord] = Field(max_length=50)
+    selected_capture: RecordingSourceCatalogRecord | None
     total_count: int = Field(ge=0, le=10_000)
     limit: int = Field(ge=1, le=50)
     offset: int = Field(ge=0, le=100_000)
@@ -910,6 +923,7 @@ def create_app(
     recording_host: str = "0.0.0.0",
     recording_port: int = 20777,
     recording_queue_size: int = 8192,
+    max_recording_download_bytes: int = DEFAULT_MAX_RECORDING_DOWNLOAD_BYTES,
     track_models_root: str | Path | None = None,
     reviewed_track_models_root: str | Path | None = None,
 ) -> FastAPI:
@@ -944,6 +958,11 @@ def create_app(
         configured_database_path,
         configured_recordings_root,
         import_controller,
+    )
+    recording_download_service = RecordingDownloadService(
+        configured_database_path,
+        configured_recordings_root,
+        max_download_bytes=max_recording_download_bytes,
     )
 
     @asynccontextmanager
@@ -1549,6 +1568,66 @@ def create_app(
                 status="unavailable", reason="recording_catalog_unavailable"
             )
         return APIResponse[RecordingSourcePageRecord](data=page)
+
+    @app.get("/api/v1/recording-sources/{capture_id}/download")
+    def download_recording_source(
+        capture_id: str,
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> Response:
+        def error(status_code: int, reason: str) -> JSONResponse:
+            return JSONResponse(
+                status_code=status_code,
+                content={
+                    "api_version": "v1",
+                    "status": "unavailable",
+                    "data": None,
+                    "reason": reason,
+                },
+                headers={
+                    "Cache-Control": "no-store",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+
+        if not _authorized(authorization, control_token):
+            return error(401, "local_control_unauthorized")
+        if re.fullmatch(r"[a-f0-9]{32}", capture_id) is None:
+            return error(422, "recording_download_capture_id_invalid")
+        if "range" in request.headers:
+            return error(416, "recording_download_range_unsupported")
+
+        version: str | None = None
+        for key, value in request.query_params.multi_items():
+            if key != "version":
+                return error(422, "recording_download_query_parameter_invalid")
+            if version is not None:
+                return error(422, "recording_download_query_parameter_repeated")
+            version = value
+        if version is None or re.fullmatch(r"[a-f0-9]{64}", version) is None:
+            return error(422, "recording_download_version_invalid")
+
+        try:
+            opened = recording_download_service.open_download(capture_id, version)
+        except RecordingDownloadError as exc:
+            return error(exc.status_code, exc.reason)
+        except (OSError, sqlite3.DatabaseError, ValueError):
+            return error(503, "recording_download_service_unavailable")
+
+        try:
+            content_disposition = recording_download_content_disposition(
+                opened.display_name
+            )
+        except UnicodeEncodeError:
+            opened.close()
+            return error(503, "recording_download_filename_unavailable")
+        headers = {
+            "Content-Disposition": content_disposition,
+            "Content-Length": str(opened.byte_size),
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        }
+        return RecordingDownloadResponse(opened, headers=headers)
 
     @app.get(
         "/api/v1/storage/usage",

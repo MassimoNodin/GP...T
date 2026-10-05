@@ -28,6 +28,38 @@ export function isTrustedLocalMutation(request: Request) {
   );
 }
 
+export function isTrustedLocalRead(request: Request) {
+  if (request.headers.get("sec-fetch-site") !== "same-origin") return false;
+  try {
+    const requestUrl = new URL(request.url);
+    const hostname = requestUrl.hostname.replace(/^\[|\]$/g, "");
+    if (
+      !["http:", "https:"].includes(requestUrl.protocol) ||
+      !["127.0.0.1", "localhost", "::1"].includes(hostname)
+    ) {
+      return false;
+    }
+    const originHeader = request.headers.get("origin");
+    if (originHeader !== null && originHeader !== requestUrl.origin)
+      return false;
+
+    const configuredOrigin = process.env.F1_ENGINEER_WEB_ORIGIN;
+    if (!configuredOrigin) return true;
+    const configured = new URL(configuredOrigin);
+    const allowedOrigins = new Set([configured.origin]);
+    if (["127.0.0.1", "localhost", "[::1]"].includes(configured.hostname)) {
+      for (const host of ["127.0.0.1", "localhost", "[::1]"]) {
+        const alias = new URL(configured.origin);
+        alias.hostname = host;
+        allowedOrigins.add(alias.origin);
+      }
+    }
+    return allowedOrigins.has(requestUrl.origin);
+  } catch {
+    return false;
+  }
+}
+
 export async function forwardLocalRequest(
   path: string,
   init: RequestInit = {},

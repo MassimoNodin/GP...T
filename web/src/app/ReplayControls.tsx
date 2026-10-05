@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type {
   ApiResponse,
-  RecordingSourceRecord,
+  RecordingCatalogSourceRecord,
   ReplayRecord,
 } from "@/lib/api";
 import {
@@ -18,6 +18,7 @@ import {
   LiveTelemetryPanel,
 } from "./RecordingControls";
 import { appScreenHref, isSelectionTransferBlocked } from "@/lib/navigation";
+import RecordingDownloadButton from "./RecordingDownloadButton";
 
 const activeStates = new Set([
   "starting",
@@ -36,8 +37,8 @@ export default function ReplayControls({
   selectedCaptureId,
   preservedQuery = "",
 }: {
-  sources: RecordingSourceRecord[];
-  selectedSource: RecordingSourceRecord | null;
+  sources: RecordingCatalogSourceRecord[];
+  selectedSource: RecordingCatalogSourceRecord | null;
   selectedCaptureId: string;
   preservedQuery?: string;
 }) {
@@ -288,6 +289,13 @@ export default function ReplayControls({
             ))}
           </select>
         </label>
+        <RecordingDownloadButton
+          source={
+            selectedReplaySource?.capture_id === captureId
+              ? selectedReplaySource
+              : null
+          }
+        />
         {active ? (
           <>
             {playback?.state === "paused" ? (

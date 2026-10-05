@@ -54,9 +54,13 @@ export interface RecordingSourceRecord {
   available: boolean;
 }
 
+export interface RecordingCatalogSourceRecord extends RecordingSourceRecord {
+  download_version: string;
+}
+
 export interface RecordingSourcePageRecord {
-  items: RecordingSourceRecord[];
-  selected_capture: RecordingSourceRecord | null;
+  items: RecordingCatalogSourceRecord[];
+  selected_capture: RecordingCatalogSourceRecord | null;
   total_count: number;
   limit: number;
   offset: number;

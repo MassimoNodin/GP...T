@@ -4,7 +4,6 @@ import type {
   RecordingGroupRecord,
   RecordingJobRecord,
   RecordingSourcePageRecord,
-  RecordingSourceRecord,
 } from "@/lib/api";
 import ImportJobStatus from "./ImportJobStatus";
 import ReplayControls from "./ReplayControls";

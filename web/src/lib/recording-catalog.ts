@@ -1,7 +1,12 @@
-import type { RecordingSourcePageRecord, RecordingSourceRecord } from "./api";
+import type {
+  RecordingCatalogSourceRecord,
+  RecordingSourcePageRecord,
+  RecordingSourceRecord,
+} from "./api";
 
 const captureIdPattern = /^[a-f0-9]{32}$/;
 const runIdPattern = /^[a-f0-9]{64}$/;
+const downloadVersionPattern = /^[a-f0-9]{64}$/;
 const importStatuses = new Set([
   "queued",
   "running",
@@ -54,9 +59,9 @@ export function readRecordingSourcePage(
   ) {
     return null;
   }
-  const items = value.items.map(readRecordingSource);
+  const items = value.items.map(readCatalogSource);
   if (items.some((item) => item === null)) return null;
-  const normalizedItems = items as RecordingSourceRecord[];
+  const normalizedItems = items as RecordingCatalogSourceRecord[];
   if (
     new Set(normalizedItems.map((item) => item.capture_id)).size !==
     normalizedItems.length
@@ -66,7 +71,7 @@ export function readRecordingSourcePage(
   const selectedCapture =
     value.selected_capture === null
       ? null
-      : readRecordingSource(value.selected_capture);
+      : readCatalogSource(value.selected_capture);
   if (value.selected_capture !== null && selectedCapture === null) return null;
   if (
     (filters.selected_capture_id === null && selectedCapture !== null) ||
@@ -101,6 +106,21 @@ export function readRecordingSourcePage(
       selected_capture_id: filters.selected_capture_id as string | null,
     },
   };
+}
+
+function readCatalogSource(
+  value: unknown,
+): RecordingCatalogSourceRecord | null {
+  const source = readRecordingSource(value);
+  if (
+    source === null ||
+    !isRecord(value) ||
+    typeof value.download_version !== "string" ||
+    !downloadVersionPattern.test(value.download_version)
+  ) {
+    return null;
+  }
+  return { ...source, download_version: value.download_version };
 }
 
 function readRecordingSource(value: unknown): RecordingSourceRecord | null {

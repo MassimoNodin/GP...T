@@ -3765,6 +3765,23 @@ h1 span {
   align-items: flex-end;
   gap: 8px;
 }
+.recording-download-control {
+  display: flex;
+  flex: 1 0 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.recording-download-note,
+.recording-download-message {
+  color: #929e9b;
+  font-size: 9px;
+  line-height: 1.5;
+}
+.recording-download-message {
+  flex-basis: 100%;
+  margin: 0;
+}
 .replay-select-label {
   display: flex;
   min-width: 180px;

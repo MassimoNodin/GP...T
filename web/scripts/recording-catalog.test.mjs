@@ -27,6 +27,7 @@ function capture(captureId, overrides = {}) {
     latest_job_status: null,
     latest_job_run_id: null,
     available: true,
+    download_version: "c".repeat(64),
     ...overrides,
   };
 }
@@ -130,6 +131,14 @@ test("rejects malformed, unbounded, duplicate, and mismatched selections", () =>
     catalog.readRecordingSourcePage(
       page({
         items: [capture("a".repeat(32), { display_name: "../private.f1ecap" })],
+      }),
+    ),
+    null,
+  );
+  assert.equal(
+    catalog.readRecordingSourcePage(
+      page({
+        items: [capture("a".repeat(32), { download_version: "invalid" })],
       }),
     ),
     null,
