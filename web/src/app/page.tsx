@@ -47,6 +47,7 @@ import RecordedEvidenceSpeech from "./RecordedEvidenceSpeech";
 import { buildComparisonCharts } from "./comparison-charts";
 import ComparisonWindowPanel from "./ComparisonWindowPanel";
 import ComparisonConditionsPanel from "./ComparisonConditionsPanel";
+import LapDebriefPanel from "./LapDebriefPanel";
 import { comparisonReportMatchesAttempts } from "@/lib/comparison-report-match";
 import { attemptTraceChartReportMatchesSelection } from "@/lib/attempt-trace-chart-match";
 import { buildRecordedSpeechPlan } from "@/lib/recorded-speech-plan";
@@ -1385,56 +1386,12 @@ export default async function Home({
                         tone="neutral"
                       />
                     </section>
-                    {comparison.lap_debrief ? (
-                      <section
-                        className="lap-debrief panel"
-                        aria-label="Recorded lap debrief"
-                      >
-                        <div className="comparison-brief-heading">
-                          <div>
-                            <span className="eyebrow">RECORDED LAP DEBRIEF</span>
-                            <h3>Lap result at a glance</h3>
-                          </div>
-                          <span className="brief-version">
-                            {comparison.lap_debrief.status} · {comparison.lap_debrief.analysis_version}
-                          </span>
-                        </div>
-                        <p className="comparison-brief-text">
-                          {comparison.lap_debrief.text}
-                        </p>
-                        {comparison.lap_debrief.ranked_regions.length ? (
-                          <ol className="lap-debrief-regions">
-                            {comparison.lap_debrief.ranked_regions.map((region) => (
-                              <li key={`${region.rank}-${region.region_id}`}>
-                                <strong>{region.text}</strong>
-                                <small>
-                                  Rank {region.rank} · {region.provenance?.target?.attempt_key ?? "target attempt"} vs {region.provenance?.reference?.attempt_key ?? "reference"}
-                                  {region.provenance?.model?.model_id
-                                    ? ` · ${region.provenance.model.model_id} revision ${region.provenance.model.revision ?? "?"}`
-                                    : ""}
-                                </small>
-                              </li>
-                            ))}
-                          </ol>
-                        ) : null}
-                        {comparison.lap_debrief.limitations.length ? (
-                          <ul className="brief-limitations lap-debrief-limitations">
-                            {comparison.lap_debrief.limitations.map((item) => (
-                              <li key={item.code}>{item.text}</li>
-                            ))}
-                          </ul>
-                        ) : null}
-                        {target?.attempt_key && reference?.attempt_key ? (
-                          <RecordedEvidenceSpeech
-                            planResult={buildRecordedSpeechPlan({
-                              kind: "lap_debrief",
-                              report: comparison.lap_debrief,
-                              targetAttemptKey: target.attempt_key,
-                              referenceAttemptKey: reference.attempt_key,
-                            })}
-                          />
-                        ) : null}
-                      </section>
+                    {target && reference ? (
+                      <LapDebriefPanel
+                        comparison={comparison}
+                        target={target}
+                        reference={reference}
+                      />
                     ) : null}
                     <section
                       className="comparison-brief panel"

@@ -1,5 +1,6 @@
 import type { Comparison, LapRecord, ProcessingRunSummary } from "@/lib/api";
 import { appScreenHref } from "@/lib/navigation";
+import LapDebriefPanel from "./LapDebriefPanel";
 import LinkedComparisonCharts from "./LinkedComparisonCharts";
 import ComparisonWindowPanel from "./ComparisonWindowPanel";
 import { buildComparisonCharts } from "./comparison-charts";
@@ -99,6 +100,12 @@ export default function CompareResultPanel({
           tone="neutral"
         />
       </section>
+
+      <LapDebriefPanel
+        comparison={comparison}
+        target={target}
+        reference={reference}
+      />
 
       {window && comparison.comparison_window ? (
         <ComparisonWindowPanel
