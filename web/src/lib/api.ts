@@ -92,6 +92,7 @@ export interface RecordingProgressRecord {
   live_car_setup?: LiveCarSetupRecord | null;
   live_session_conditions?: LiveSessionConditionsRecord | null;
   live_motion?: LiveMotionRecord | null;
+  live_session_history?: LiveSessionHistoryRecord | null;
 }
 
 export interface LiveTelemetryRecord {
@@ -243,6 +244,51 @@ export interface LiveMotionRecord {
   validation_flags?: string[];
 }
 
+export interface LiveSessionHistoryLapRecord {
+  lap_index: number;
+  lap_number: number;
+  lap_time_ms: number;
+  lap_time_available: boolean;
+  lap_time_unavailable_reason?: string | null;
+  sector1_time_ms: number | null;
+  sector1_time_ms_part: number;
+  sector1_time_minutes_part: number;
+  sector1_time_available: boolean;
+  sector1_time_unavailable_reason?: string | null;
+  sector2_time_ms: number | null;
+  sector2_time_ms_part: number;
+  sector2_time_minutes_part: number;
+  sector2_time_available: boolean;
+  sector2_time_unavailable_reason?: string | null;
+  sector3_time_ms: number | null;
+  sector3_time_ms_part: number;
+  sector3_time_minutes_part: number;
+  sector3_time_available: boolean;
+  sector3_time_unavailable_reason?: string | null;
+  validity_flags: number;
+  lap_valid: boolean;
+  sector1_valid: boolean;
+  sector2_valid: boolean;
+  sector3_valid: boolean;
+  unknown_validity_bits: number;
+}
+
+export interface LiveSessionHistoryRecord {
+  status: "waiting" | "fresh" | "stale" | "unsupported" | "unavailable";
+  reason: string | null;
+  age_ms: number | null;
+  observation_count?: number;
+  session_uid?: string | null;
+  packet_format?: number | null;
+  player_car_index?: number | null;
+  frame_identifier?: number | null;
+  source_frame_identifier?: number | null;
+  session_time_s?: number | null;
+  populated_row_count?: number;
+  omitted_row_count?: number;
+  rows?: LiveSessionHistoryLapRecord[];
+}
+
 export interface RecordingJobRecord {
   recording_id: string;
   status:
@@ -350,6 +396,7 @@ export interface ReplayRecord {
   live_car_setup?: LiveCarSetupRecord | null;
   live_session_conditions?: LiveSessionConditionsRecord | null;
   live_motion?: LiveMotionRecord | null;
+  live_session_history?: LiveSessionHistoryRecord | null;
   failure_reason: string | null;
 }
 

@@ -423,6 +423,51 @@ class LiveMotionRecord(BaseModel):
     validation_flags: list[str] = Field(default_factory=list, max_length=2)
 
 
+class LiveSessionHistoryLapRecord(BaseModel):
+    lap_index: Annotated[int, Field(strict=True, ge=0, le=99)]
+    lap_number: Annotated[int, Field(strict=True, ge=1, le=100)]
+    lap_time_ms: Annotated[int, Field(strict=True, ge=0, le=4_294_967_295)]
+    lap_time_available: bool
+    lap_time_unavailable_reason: str | None = None
+    sector1_time_ms: Annotated[int, Field(strict=True, ge=0, le=15_365_535)] | None
+    sector1_time_ms_part: Annotated[int, Field(strict=True, ge=0, le=65_535)]
+    sector1_time_minutes_part: Annotated[int, Field(strict=True, ge=0, le=255)]
+    sector1_time_available: bool
+    sector1_time_unavailable_reason: str | None = None
+    sector2_time_ms: Annotated[int, Field(strict=True, ge=0, le=15_365_535)] | None
+    sector2_time_ms_part: Annotated[int, Field(strict=True, ge=0, le=65_535)]
+    sector2_time_minutes_part: Annotated[int, Field(strict=True, ge=0, le=255)]
+    sector2_time_available: bool
+    sector2_time_unavailable_reason: str | None = None
+    sector3_time_ms: Annotated[int, Field(strict=True, ge=0, le=15_365_535)] | None
+    sector3_time_ms_part: Annotated[int, Field(strict=True, ge=0, le=65_535)]
+    sector3_time_minutes_part: Annotated[int, Field(strict=True, ge=0, le=255)]
+    sector3_time_available: bool
+    sector3_time_unavailable_reason: str | None = None
+    validity_flags: Annotated[int, Field(strict=True, ge=0, le=255)]
+    lap_valid: bool
+    sector1_valid: bool
+    sector2_valid: bool
+    sector3_valid: bool
+    unknown_validity_bits: Annotated[int, Field(strict=True, ge=0, le=255)]
+
+
+class LiveSessionHistoryRecord(BaseModel):
+    status: Literal["waiting", "fresh", "stale", "unsupported", "unavailable"]
+    reason: str | None
+    age_ms: int | None
+    observation_count: int = Field(ge=0, le=2_147_483_647)
+    session_uid: str | None = None
+    packet_format: int | None = None
+    player_car_index: int | None = None
+    frame_identifier: int | None = None
+    source_frame_identifier: int | None = None
+    session_time_s: Annotated[float, Field(strict=True, allow_inf_nan=False)] | None = None
+    populated_row_count: Annotated[int, Field(strict=True, ge=0, le=100)] = 0
+    omitted_row_count: Annotated[int, Field(strict=True, ge=0, le=90)] = 0
+    rows: list[LiveSessionHistoryLapRecord] = Field(default_factory=list, max_length=10)
+
+
 class RecordingProgressRecord(BaseModel):
     state: str
     elapsed_ms: int
@@ -439,6 +484,7 @@ class RecordingProgressRecord(BaseModel):
     live_car_setup: LiveCarSetupRecord | None = None
     live_session_conditions: LiveSessionConditionsRecord | None = None
     live_motion: LiveMotionRecord | None = None
+    live_session_history: LiveSessionHistoryRecord | None = None
 
 
 class RecordingJobRecord(BaseModel):
@@ -547,6 +593,7 @@ class ReplayRecord(BaseModel):
     live_car_setup: LiveCarSetupRecord | None = None
     live_session_conditions: LiveSessionConditionsRecord | None = None
     live_motion: LiveMotionRecord | None = None
+    live_session_history: LiveSessionHistoryRecord | None = None
 
 
 class LapRecord(BaseModel):

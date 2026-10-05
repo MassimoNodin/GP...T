@@ -1165,6 +1165,24 @@ Add a paginated inventory to `/sessions` only for the exact selected run. Preser
 
 **Rationale:** aggregate storage usage cannot identify which evidence artifacts belong to one processing run. A bounded registration-backed catalog makes that ownership inspectable without making claims about file integrity or granting filesystem mutation authority.
 
+## Decision 0076: expose bounded live player lap-history observations
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Add one optional `live_session_history` group to recording progress, replay status and pinned `/live`. Reuse the supported F1 25 and 2026 Session History decoder. Process admitted frames only, under the active session, wire-format, selected-player barrier and rewind quarantine. Require both the packet-body car index and header player identity to match the selected player. History-only frames work without Lap Data. Retain one latest snapshot and expose at most the last 10 populated rows ordered by source lap number, with the source-reported row count and omitted-row count. Include reported lap and sector times, raw validity flags and their interpretation, unavailable-value reasons, session/format/player/frame/session-time provenance, independent age and bounded observation count.
+
+Label this group **game-reported lap history**. A populated row may describe a partial lap. It is not a stored lap attempt, proof of lap completion, lifecycle assessment or reference eligibility. Keep all game modes diagnostic, including Race and unknown modes.
+
+For same-frame candidates, compare the bounded populated timing/validity projection for the selected player. Conflicting selected-player histories make only this group unavailable. Ignore unused padding and unexposed tyre-stint/best-marker fields; packets for other cars cannot conflict with or refresh this group. Use exact supporting receive/delivery provenance and the oldest supporting timestamp. Duplicates, late packets and other packet families never refresh it. Apply the existing 500 ms recent/stale policy. A valid empty history replaces prior rows. Reset on session, selected-player, format and rewind boundaries; hide terminal values. Keep acquisition memory constant. Older or malformed optional API responses leave other monitors usable.
+
+Do not add a live `LapTracker`, accumulated histories, attempt reconciliation, personal-best selection, best-marker use, tyre-stint analysis, persistence or schema changes, coaching or strategy.
+
+**Acceptance:** synthetic F1 25 and 2026 History-only frames cover selected-player slot 23, valid empty histories, 100 populated rows, zero/invalid sectors and unknown validity bits. Agreement/conflict, opponent isolation, malformed/unsupported versions, timestamp eviction, duplicates/late frames and uint32 wrap are covered. Verify independent aging during paused replay; identity, rewind and terminal resets; optional API compatibility and bounded frontend validation. Melbourne and Shanghai replay projections match admitted raw selected-player History rows and provenance. Melbourne's invalid laps remain invalid and Shanghai's incomplete-capture warnings remain visible. Acquisition memory remains constant; importer outputs and reference eligibility remain unchanged.
+
+**Rationale:** Stage 5 explicitly calls for a live lap inventory, while current monitors expose lap timing but not recent game-reported history. A bounded source projection completes that view using the existing decoder and real capture evidence without introducing another lap lifecycle or suggesting that history rows are completed or eligible attempts. No new recording or geometry is required for this increment; positive real coaching validation remains a separate prerequisite.
+
 ## Data flow
 
 ```text

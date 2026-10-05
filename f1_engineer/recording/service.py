@@ -33,6 +33,7 @@ from ..udp.lap_data import CarLapData, LapDataDecoder
 from ..udp.models import DecodedPacket, PacketFormat, PacketFrame, PacketId, RawDatagram
 from ..udp.motion import CarMotionData, MotionDecoder
 from ..udp.session_context import SessionContextDecoder
+from ..udp.session_history import SessionHistoryDecoder, SessionHistoryLap
 from ..udp.source import UDPSource
 from .capture import CaptureWriter
 
@@ -44,10 +45,13 @@ LIVE_CAR_DAMAGE_FRESHNESS_LIMIT_MS = 500
 LIVE_CAR_SETUP_FRESHNESS_LIMIT_MS = 500
 LIVE_SESSION_CONDITIONS_FRESHNESS_LIMIT_MS = 500
 LIVE_MOTION_FRESHNESS_LIMIT_MS = 500
+LIVE_SESSION_HISTORY_FRESHNESS_LIMIT_MS = 500
 _LIVE_CAR_DAMAGE_OBSERVATION_COUNT_MAX = 2_147_483_647
 _LIVE_CAR_SETUP_OBSERVATION_COUNT_MAX = 2_147_483_647
 _LIVE_SESSION_CONDITIONS_OBSERVATION_COUNT_MAX = 2_147_483_647
 _LIVE_MOTION_OBSERVATION_COUNT_MAX = 2_147_483_647
+_LIVE_SESSION_HISTORY_OBSERVATION_COUNT_MAX = 2_147_483_647
+_LIVE_SESSION_HISTORY_ROWS_MAX = 10
 
 _LIVE_CAR_DAMAGE_WHEEL_FIELDS = {
     "tyre_wear_percent": "tyre_wear",
@@ -105,6 +109,7 @@ class RecordingSnapshot:
     live_car_setup: dict[str, object]
     live_session_conditions: dict[str, object]
     live_motion: dict[str, object]
+    live_session_history: dict[str, object]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -123,6 +128,7 @@ class RecordingSnapshot:
             "live_car_setup": dict(self.live_car_setup),
             "live_session_conditions": dict(self.live_session_conditions),
             "live_motion": dict(self.live_motion),
+            "live_session_history": dict(self.live_session_history),
         }
 
 
@@ -162,6 +168,7 @@ class AcquisitionObserver:
         self.car_damage_decoder = CarDamageDecoder()
         self.car_setups_decoder = CarSetupsDecoder()
         self.motion_decoder = MotionDecoder()
+        self.session_history_decoder = SessionHistoryDecoder()
         self.counts: Counter[str] = Counter(completed_frames=0)
         self.latest_context: dict[str, object] | None = None
         self._live_status = "waiting"
@@ -203,6 +210,11 @@ class AcquisitionObserver:
         self._live_motion_snapshot: dict[str, object] | None = None
         self._live_motion_received_monotonic_ns: int | None = None
         self._live_motion_observation_count = 0
+        self._live_session_history = "waiting"
+        self._live_session_history_reason: str | None = None
+        self._live_session_history_snapshot: dict[str, object] | None = None
+        self._live_session_history_received_monotonic_ns: int | None = None
+        self._live_session_history_observation_count = 0
         self._receive_times: OrderedDict[tuple[int, int, bytes], int] = OrderedDict()
         self._max_receive_time_entries = self.frames.max_open_frames * 8 + 4
         self._finished = False
@@ -299,6 +311,7 @@ class AcquisitionObserver:
                 PacketId.CAR_SETUPS,
                 PacketId.SESSION,
                 PacketId.MOTION,
+                PacketId.SESSION_HISTORY,
             }:
                 self._remember_receive_time(raw, packet, observed_monotonic_ns)
         self._count_completed(self._consume_frames(completed))
@@ -548,6 +561,41 @@ class AcquisitionObserver:
             )
         return snapshot
 
+    def live_session_history_snapshot(
+        self, now_monotonic_ns: int | None = None
+    ) -> dict[str, object]:
+        """Return the latest bounded game-reported lap history and its age."""
+        now = time.monotonic_ns() if now_monotonic_ns is None else now_monotonic_ns
+        age_ms = (
+            None
+            if self._live_session_history_received_monotonic_ns is None
+            else max(
+                0,
+                (now - self._live_session_history_received_monotonic_ns)
+                // 1_000_000,
+            )
+        )
+        status = self._live_session_history
+        if (
+            age_ms is not None
+            and age_ms > LIVE_SESSION_HISTORY_FRESHNESS_LIMIT_MS
+            and status in {"fresh", "unavailable"}
+        ):
+            status = "stale"
+        snapshot: dict[str, object] = {
+            "status": status,
+            "reason": self._live_session_history_reason,
+            "age_ms": age_ms,
+            "observation_count": self._live_session_history_observation_count,
+        }
+        if self._live_session_history_snapshot is not None:
+            snapshot.update(self._live_session_history_snapshot)
+        if self._live_session_history_received_monotonic_ns is not None:
+            snapshot["_observed_monotonic_ns"] = (
+                self._live_session_history_received_monotonic_ns
+            )
+        return snapshot
+
     def _reset_live_monitor(self) -> None:
         self._live_source_epoch = uuid4().hex
         self._live_status = "waiting"
@@ -566,6 +614,7 @@ class AcquisitionObserver:
         self._reset_live_car_setup_monitor()
         self._reset_live_session_conditions_monitor()
         self._reset_live_motion_monitor()
+        self._reset_live_session_history_monitor()
         self._receive_times.clear()
 
     def _observe_player_identity(self, packet: DecodedPacket) -> None:
@@ -676,9 +725,18 @@ class AcquisitionObserver:
         motion_packets = [
             packet for packet in frame.packets if packet.packet_kind is PacketId.MOTION
         ]
+        history_packets = [
+            packet
+            for packet in frame.packets
+            if packet.packet_kind is PacketId.SESSION_HISTORY
+        ]
         if self._live_player_index is None and motion_packets:
             self._set_live_motion_unavailable(
                 frame, "player_identity_unavailable", motion_packets
+            )
+        if self._live_player_index is None and history_packets:
+            self._set_live_session_history_unavailable(
+                frame, "player_identity_unavailable", history_packets
             )
         if (
             self._live_player_index is None
@@ -707,17 +765,51 @@ class AcquisitionObserver:
                 and 0 <= self._live_player_index < len(decoded_lap.lap_data.cars)
             ):
                 valid_player_lap_packets.append(packet)
-        if valid_player_lap_packets:
-            observed_times = [
-                packet.header.session_time for packet in valid_player_lap_packets
-            ]
+        selected_history_packets: list[DecodedPacket] = []
+        valid_history_clock_packets: list[DecodedPacket] = []
+        for packet in history_packets:
+            if packet.header.player_car_index != self._live_player_index:
+                continue
+            if packet.body and packet.body[0] != self._live_player_index:
+                continue
+            selected_history_packets.append(packet)
+            decoded_history = self.session_history_decoder.decode(
+                packet,
+                frame_ordinal=self.counts["completed_frames"] + 1,
+            )
+            if (
+                decoded_history.error is None
+                and decoded_history.history is not None
+                and decoded_history.history.header_player_car_index
+                == self._live_player_index
+                and decoded_history.history.car_index == self._live_player_index
+            ):
+                valid_history_clock_packets.append(packet)
+
+        lap_clock_fingerprints = {
+            packet.wire_fingerprint for packet in valid_player_lap_packets
+        }
+        history_clock_fingerprints = {
+            packet.wire_fingerprint for packet in valid_history_clock_packets
+        }
+        clock_packets = [
+            packet
+            for packet in frame.packets
+            if packet.wire_fingerprint in lap_clock_fingerprints
+            or packet.wire_fingerprint in history_clock_fingerprints
+        ]
+        observed_times = [packet.header.session_time for packet in clock_packets]
+        if observed_times:
             current_session_time = observed_times[-1]
             baseline_times = (
-                ([self._live_last_session_time_s] if self._live_last_session_time_s is not None else [])
+                ([self._live_last_session_time_s]
+                 if self._live_last_session_time_s is not None
+                 else [])
                 + observed_times
             )
             clock_regression = any(
-                session_time_discontinuity(left, right) == "session_time_regression"
+                session_time_discontinuity(left, right)
+                == "session_time_regression"
                 for left, right in zip(baseline_times, baseline_times[1:])
             )
             if clock_regression:
@@ -734,8 +826,14 @@ class AcquisitionObserver:
                     "session_time_regression",
                     valid_player_lap_packets,
                 )
+                if selected_history_packets:
+                    self._set_live_session_history_unavailable(
+                        frame,
+                        "session_time_regression",
+                        selected_history_packets,
+                    )
                 self._live_last_session_time_s = (
-                    None if len(valid_player_lap_packets) > 1 else current_session_time
+                    None if len(observed_times) > 1 else current_session_time
                 )
                 self._discard_frame_receive_times(frame)
                 return
@@ -757,6 +855,8 @@ class AcquisitionObserver:
         ]
         if setup_packets:
             self._observe_live_car_setup(frame, setup_packets)
+        if history_packets:
+            self._observe_live_session_history(frame, history_packets)
         if motion_packets:
             self._observe_live_motion(frame, motion_packets)
         car_status_candidates = []
@@ -1084,6 +1184,7 @@ class AcquisitionObserver:
                 PacketId.CAR_SETUPS,
                 PacketId.SESSION,
                 PacketId.MOTION,
+                PacketId.SESSION_HISTORY,
             }
         ]
         if not times or any(value is None for value in times):
@@ -1101,6 +1202,7 @@ class AcquisitionObserver:
                 PacketId.CAR_SETUPS,
                 PacketId.SESSION,
                 PacketId.MOTION,
+                PacketId.SESSION_HISTORY,
             }:
                 self._receive_times.pop(
                     (
@@ -1512,6 +1614,166 @@ class AcquisitionObserver:
         self._live_motion_reason = None
         self._live_motion_received_monotonic_ns = received_ns
 
+    def _observe_live_session_history(
+        self, frame: PacketFrame, history_packets: list[DecodedPacket]
+    ) -> None:
+        player_index = self._live_player_index
+        if player_index is None:
+            self._set_live_session_history_unavailable(
+                frame,
+                "player_identity_unavailable",
+                history_packets,
+            )
+            return
+        selected = [
+            packet
+            for packet in history_packets
+            if packet.header.player_car_index == player_index
+            and (not packet.body or packet.body[0] == player_index)
+        ]
+        if not selected:
+            return
+
+        decoded = []
+        projections: set[tuple[tuple[int, ...], ...]] = set()
+        for packet in selected:
+            result = self.session_history_decoder.decode(
+                packet,
+                frame_ordinal=self.counts["completed_frames"] + 1,
+            )
+            if result.error is not None or result.history is None:
+                unsupported = (
+                    result.error in {
+                        "unsupported_session_history_format",
+                        "unsupported_session_history_version",
+                    }
+                )
+                self._set_live_session_history_unavailable(
+                    frame,
+                    "session_history_adapter_unsupported"
+                    if unsupported
+                    else "session_history_decode_failed",
+                    selected,
+                    status="unsupported" if unsupported else "unavailable",
+                )
+                return
+            history = result.history
+            if history.header_player_car_index != player_index or history.car_index != player_index:
+                self._set_live_session_history_unavailable(
+                    frame,
+                    "selected_player_identity_mismatch",
+                    selected,
+                )
+                return
+            projection = tuple(
+                (
+                    lap.lap_time_ms,
+                    lap.sector1_time_ms_part,
+                    lap.sector1_time_minutes_part,
+                    lap.sector2_time_ms_part,
+                    lap.sector2_time_minutes_part,
+                    lap.sector3_time_ms_part,
+                    lap.sector3_time_minutes_part,
+                    lap.validity_flags,
+                )
+                for lap in history.lap_history
+            )
+            projections.add(projection)
+            decoded.append((packet, history))
+
+        if len(projections) > 1:
+            self._set_live_session_history_unavailable(
+                frame,
+                "conflicting_selected_player_histories",
+                selected,
+            )
+            return
+
+        received_ns = self._frame_receive_time(frame, selected)
+        if received_ns is None:
+            self._set_live_session_history_unavailable(
+                frame,
+                "receive_provenance_unavailable",
+                selected,
+            )
+            return
+
+        source_packet, source_history = min(
+            decoded,
+            key=lambda item: self._receive_times.get(
+                (
+                    frame.session_uid,
+                    frame.overall_frame_identifier,
+                    item[0].wire_fingerprint,
+                ),
+                received_ns,
+            ),
+        )
+        rows = [
+            self._live_session_history_row(lap)
+            for lap in source_history.lap_history[-_LIVE_SESSION_HISTORY_ROWS_MAX:]
+        ]
+        self._live_session_history_observation_count = min(
+            self._live_session_history_observation_count + 1,
+            _LIVE_SESSION_HISTORY_OBSERVATION_COUNT_MAX,
+        )
+        self._live_session_history_snapshot = {
+            "session_uid": str(frame.session_uid),
+            "packet_format": int(source_packet.packet_format),
+            "player_car_index": player_index,
+            "frame_identifier": frame.overall_frame_identifier,
+            "source_frame_identifier": source_packet.header.frame_identifier,
+            "session_time_s": source_packet.header.session_time,
+            "populated_row_count": source_history.num_laps,
+            "omitted_row_count": max(0, source_history.num_laps - len(rows)),
+            "rows": rows,
+        }
+        self._live_session_history = "fresh"
+        self._live_session_history_reason = None
+        self._live_session_history_received_monotonic_ns = received_ns
+
+    @staticmethod
+    def _live_session_history_row(lap: SessionHistoryLap) -> dict[str, object]:
+        def sector_values(number: int) -> dict[str, object]:
+            part = getattr(lap, f"sector{number}_time_ms_part")
+            minutes = getattr(lap, f"sector{number}_time_minutes_part")
+            total_ms = getattr(lap, f"sector{number}_time_ms")
+            available = getattr(lap, f"sector{number}_time_available")
+            reason = (
+                None
+                if available
+                else "millisecond_component_out_of_range"
+                if part >= 60_000
+                else "reported_zero"
+            )
+            return {
+                f"sector{number}_time_ms": total_ms if available else None,
+                f"sector{number}_time_ms_part": part,
+                f"sector{number}_time_minutes_part": minutes,
+                f"sector{number}_time_available": available,
+                f"sector{number}_time_unavailable_reason": reason,
+            }
+
+        flags = lap.validity_flags
+        return {
+            "lap_index": lap.lap_index,
+            "lap_number": lap.lap_index + 1,
+            "lap_time_ms": lap.lap_time_ms,
+            "lap_time_available": lap.lap_time_ms > 0,
+            "lap_time_unavailable_reason": (
+                None if lap.lap_time_ms > 0 else "reported_zero"
+            ),
+            **sector_values(1),
+            **sector_values(2),
+            **sector_values(3),
+            "validity_flags": flags,
+            "lap_valid": bool(flags & 0x01),
+            "sector1_valid": bool(flags & 0x02),
+            "sector2_valid": bool(flags & 0x04),
+            "sector3_valid": bool(flags & 0x08),
+            "unknown_validity_bits": flags & ~0x0F,
+        }
+
     def _observe_live_car_setup(
         self, frame: PacketFrame, setup_packets: list[DecodedPacket]
     ) -> None:
@@ -1730,6 +1992,13 @@ class AcquisitionObserver:
         self._live_motion_received_monotonic_ns = None
         self._live_motion_observation_count = 0
 
+    def _reset_live_session_history_monitor(self) -> None:
+        self._live_session_history = "waiting"
+        self._live_session_history_reason = None
+        self._live_session_history_snapshot = None
+        self._live_session_history_received_monotonic_ns = None
+        self._live_session_history_observation_count = 0
+
     @staticmethod
     def _empty_live_lap_timing_snapshot(
         frame: PacketFrame, player_index: int
@@ -1830,6 +2099,39 @@ class AcquisitionObserver:
             "world_velocity_mps": None,
             "validation_flags": [],
         }
+
+    @staticmethod
+    def _empty_live_session_history_snapshot(
+        frame: PacketFrame, player_index: int | None
+    ) -> dict[str, object]:
+        return {
+            "session_uid": str(frame.session_uid),
+            "packet_format": int(frame.packets[-1].packet_format),
+            "player_car_index": player_index,
+            "frame_identifier": frame.overall_frame_identifier,
+            "source_frame_identifier": frame.packets[-1].header.frame_identifier,
+            "session_time_s": None,
+            "populated_row_count": 0,
+            "omitted_row_count": 0,
+            "rows": [],
+        }
+
+    def _set_live_session_history_unavailable(
+        self,
+        frame: PacketFrame,
+        reason: str,
+        packets: list[DecodedPacket],
+        *,
+        status: str = "unavailable",
+    ) -> None:
+        self._live_session_history_snapshot = (
+            self._empty_live_session_history_snapshot(frame, self._live_player_index)
+        )
+        self._live_session_history = status
+        self._live_session_history_reason = reason
+        self._live_session_history_received_monotonic_ns = self._frame_receive_time(
+            frame, packets
+        )
 
     def _set_live_session_conditions_unavailable(
         self,
@@ -1949,6 +2251,7 @@ class AcquisitionObserver:
         self._reset_live_car_damage_monitor()
         self._reset_live_car_setup_monitor()
         self._reset_live_motion_monitor()
+        self._reset_live_session_history_monitor()
 
     @classmethod
     def _is_newer_frame(cls, candidate: int, current: int) -> bool:
@@ -2121,6 +2424,16 @@ async def record_udp_capture(
             ),
             live_motion=(
                 observer.live_motion_snapshot()
+                if observer is not None
+                else {
+                    "status": "unavailable",
+                    "reason": "live_monitor_not_enabled",
+                    "age_ms": None,
+                    "observation_count": 0,
+                }
+            ),
+            live_session_history=(
+                observer.live_session_history_snapshot()
                 if observer is not None
                 else {
                     "status": "unavailable",

@@ -18,6 +18,7 @@ from f1_engineer.api.app import (
     LiveCarSetupRecord,
     LiveMotionRecord,
     LiveSessionConditionsRecord,
+    LiveSessionHistoryRecord,
     LiveTelemetryRecord,
     create_app,
 )
@@ -34,6 +35,7 @@ _CAR_DAMAGE_CAR = struct.Struct("<4f30B")
 _CAR_SETUP_CAR = struct.Struct("<4B4f9B4fBf")
 _MOTION_CAR_F1_25 = struct.Struct("<6f6h6f")
 _MOTION_CAR_2026 = struct.Struct("<6f9h3f")
+_SESSION_HISTORY_LAP = struct.Struct("<IHBHBHBB")
 _CONTROL_TOKEN = "live-monitor-test-token"
 
 
@@ -315,6 +317,83 @@ def _session_conditions_packet(
         player_car_index=player_car_index,
         body=bytes(session_body),
         sequence=sequence,
+    )
+
+
+def _session_history_packet(
+    *,
+    frame: int = 100,
+    sequence: int = 10,
+    session_uid: int = SESSION_UID,
+    packet_format: int = 2025,
+    packet_version: int = 1,
+    player_car_index: int = 0,
+    body_car_index: int | None = None,
+    session_time_s: float = 12.5,
+    laps: tuple[tuple[int, int, int, int, int, int, int, int], ...] = (),
+    best_markers: tuple[int, int, int, int] = (0, 1, 2, 3),
+    body: bytes | None = None,
+):
+    if body is None:
+        history_body = bytearray(1460 - 29)
+        history_body[:7] = bytes(
+            (
+                player_car_index if body_car_index is None else body_car_index,
+                len(laps),
+                0,
+                *best_markers,
+            )
+        )
+        for index, values in enumerate(laps):
+            _SESSION_HISTORY_LAP.pack_into(
+                history_body,
+                7 + index * _SESSION_HISTORY_LAP.size,
+                *values,
+            )
+        body = bytes(history_body)
+    return make_datagram(
+        packet_format=packet_format,
+        packet_id=11,
+        packet_version=packet_version,
+        session_uid=session_uid,
+        frame=frame,
+        session_time=session_time_s,
+        player_car_index=player_car_index,
+        body=body,
+        sequence=sequence,
+    )
+
+
+def _publish_live_session_history(
+    observer: _AcquisitionObserver,
+    *,
+    frame: int = 100,
+    sequence: int = 10,
+    session_uid: int = SESSION_UID,
+    packet_format: int = 2025,
+    player_car_index: int = 0,
+    **kwargs,
+) -> None:
+    _process(
+        observer,
+        _session_history_packet(
+            frame=frame,
+            sequence=sequence,
+            session_uid=session_uid,
+            packet_format=packet_format,
+            player_car_index=player_car_index,
+            **kwargs,
+        ),
+    )
+    _process(
+        observer,
+        _advance(
+            frame + 1,
+            sequence + 1,
+            session_uid=session_uid,
+            player_car_index=player_car_index,
+            packet_format=packet_format,
+        ),
     )
 
 
@@ -2952,3 +3031,323 @@ def test_live_motion_resets_on_synthetic_session_time_regression_and_frame_wraps
     _publish_live_motion(wrapped, frame=0, sequence=20)
     assert wrapped.live_motion_snapshot()["frame_identifier"] == 0
     assert wrapped.live_motion_snapshot()["observation_count"] == 2
+
+
+@pytest.mark.parametrize(
+    ("packet_format", "player_car_index"), ((2025, 21), (2026, 23))
+)
+def test_live_history_maps_supported_formats_from_history_only_frames(
+    packet_format: int, player_car_index: int
+):
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_session_history(
+        observer,
+        packet_format=packet_format,
+        player_car_index=player_car_index,
+        laps=((90_123, 27_000, 0, 31_000, 0, 29_000, 0, 0x0F),),
+    )
+
+    history = observer.live_session_history_snapshot()
+    assert history["status"] == "fresh"
+    assert history["session_uid"] == str(SESSION_UID)
+    assert history["packet_format"] == packet_format
+    assert history["player_car_index"] == player_car_index
+    assert history["frame_identifier"] == 100
+    assert history["source_frame_identifier"] == 100
+    assert history["session_time_s"] == 12.5
+    assert history["populated_row_count"] == 1
+    assert history["omitted_row_count"] == 0
+    assert history["observation_count"] == 1
+    row = history["rows"][0]
+    assert row["lap_number"] == 1
+    assert row["lap_time_ms"] == 90_123
+    assert row["sector1_time_ms"] == 27_000
+    assert row["sector2_time_ms"] == 31_000
+    assert row["sector3_time_ms"] == 29_000
+    assert row["validity_flags"] == 0x0F
+    assert row["lap_valid"] is True
+    assert observer.live_lap_timing_snapshot()["status"] == "waiting"
+    assert observer.live_telemetry_snapshot()["status"] == "waiting"
+
+
+def test_live_history_caps_rows_and_preserves_invalid_times_and_unknown_flags():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    laps = tuple(
+        (
+            100_000 + index,
+            60_000 if index == 99 else 0,
+            0,
+            0,
+            0,
+            12_345,
+            0,
+            0x80,
+        )
+        for index in range(100)
+    )
+    _publish_live_session_history(observer, laps=laps)
+
+    history = observer.live_session_history_snapshot()
+    assert history["populated_row_count"] == 100
+    assert history["omitted_row_count"] == 90
+    assert [row["lap_number"] for row in history["rows"]] == list(range(91, 101))
+    assert history["rows"][-1]["lap_time_ms"] == 100_099
+    assert history["rows"][-1]["sector1_time_available"] is False
+    assert history["rows"][-1]["sector1_time_ms"] is None
+    assert (
+        history["rows"][-1]["sector1_time_unavailable_reason"]
+        == "millisecond_component_out_of_range"
+    )
+    assert history["rows"][-1]["sector2_time_unavailable_reason"] == "reported_zero"
+    assert history["rows"][-1]["sector3_time_ms"] == 12_345
+    assert history["rows"][-1]["unknown_validity_bits"] == 0x80
+    assert history["rows"][-1]["lap_valid"] is False
+
+
+def test_live_history_valid_empty_snapshot_replaces_previous_rows():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_session_history(
+        observer, laps=((90_000, 25_000, 0, 30_000, 0, 35_000, 0, 0x0F),)
+    )
+    assert observer.live_session_history_snapshot()["rows"]
+
+    _publish_live_session_history(observer, frame=103, sequence=20, laps=())
+    history = observer.live_session_history_snapshot()
+    assert history["status"] == "fresh"
+    assert history["populated_row_count"] == 0
+    assert history["omitted_row_count"] == 0
+    assert history["rows"] == []
+    assert history["observation_count"] == 2
+
+
+def test_live_history_agrees_on_selected_rows_ignores_other_cars_and_uses_oldest_time():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    base_ns = 5_000_000_000
+    selected_lap = (90_000, 25_000, 0, 30_000, 0, 35_000, 0, 0x0F)
+    first = _session_history_packet(frame=100, sequence=10, laps=(selected_lap,))
+    other_markers = _session_history_packet(
+        frame=100,
+        sequence=11,
+        laps=(selected_lap,),
+        best_markers=(80, 81, 82, 83),
+    )
+    other_car = _session_history_packet(
+        frame=100,
+        sequence=12,
+        body_car_index=1,
+        laps=((70_000, 20_000, 0, 20_000, 0, 30_000, 0, 0x0F),),
+    )
+    observer.process(replace(first, monotonic_ns=base_ns))
+    observer.process(replace(first, monotonic_ns=base_ns + 100_000_000))
+    observer.process(replace(other_markers, monotonic_ns=base_ns + 200_000_000))
+    observer.process(replace(other_car, monotonic_ns=base_ns + 300_000_000))
+    observer.process(
+        replace(_advance(101, 13), monotonic_ns=base_ns + 400_000_000)
+    )
+    observer.process(
+        replace(
+            _session_history_packet(
+                frame=100,
+                sequence=14,
+                laps=((80_000, 20_000, 0, 20_000, 0, 40_000, 0, 0x0F),),
+            ),
+            monotonic_ns=base_ns + 500_000_000,
+        )
+    )
+
+    history = observer.live_session_history_snapshot(base_ns + 500_000_000)
+    assert history["status"] == "fresh"
+    assert history["_observed_monotonic_ns"] == base_ns
+    assert history["age_ms"] == 500
+    assert history["observation_count"] == 1
+    assert history["session_time_s"] == 12.5
+    assert history["rows"][0]["lap_time_ms"] == 90_000
+
+
+def test_live_history_conflicting_selected_rows_are_unavailable():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _process(
+        observer,
+        _session_history_packet(
+            frame=100,
+            sequence=10,
+            laps=((90_000, 25_000, 0, 30_000, 0, 35_000, 0, 0x0F),),
+        ),
+    )
+    _process(
+        observer,
+        _session_history_packet(
+            frame=100,
+            sequence=11,
+            laps=((91_000, 25_000, 0, 30_000, 0, 35_000, 0, 0x0F),),
+        ),
+    )
+    _process(observer, _advance(101, 12))
+
+    history = observer.live_session_history_snapshot()
+    assert history["status"] == "unavailable"
+    assert history["reason"] == "conflicting_selected_player_histories"
+    assert history["rows"] == []
+    assert history["observation_count"] == 0
+
+
+def test_live_history_malformed_unsupported_and_missing_provenance_are_isolated():
+    malformed = _AcquisitionObserver(reorder_window_frames=1)
+    _process(
+        malformed,
+        _session_history_packet(frame=100, sequence=10, body=b""),
+    )
+    _process(malformed, _advance(101, 11))
+    assert malformed.live_session_history_snapshot()["reason"] == (
+        "session_history_decode_failed"
+    )
+
+    unsupported = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_session_history(unsupported, packet_version=2)
+    unsupported_result = unsupported.live_session_history_snapshot()
+    assert unsupported_result["status"] == "unsupported"
+    assert unsupported_result["reason"] == "session_history_adapter_unsupported"
+    assert unsupported_result["observation_count"] == 0
+
+    no_provenance = _AcquisitionObserver(reorder_window_frames=1)
+    no_provenance._max_receive_time_entries = 0
+    _publish_live_session_history(no_provenance)
+    missing = no_provenance.live_session_history_snapshot()
+    assert missing["status"] == "unavailable"
+    assert missing["reason"] == "receive_provenance_unavailable"
+    assert missing["observation_count"] == 0
+
+    assert malformed.live_motion_snapshot()["status"] == "waiting"
+    assert malformed.live_lap_timing_snapshot()["status"] == "waiting"
+
+
+def test_live_history_cache_eviction_cannot_create_fresh_observation():
+    observer = _AcquisitionObserver(reorder_window_frames=3)
+    observer._max_receive_time_entries = 1
+    _process(observer, _session_history_packet(frame=100, sequence=10))
+    for frame, sequence in ((101, 11), (102, 12), (103, 13)):
+        _process(observer, _car_status_packet(frame=frame, sequence=sequence))
+    _process(observer, _advance(104, 14))
+    history = observer.live_session_history_snapshot()
+    assert history["status"] == "unavailable"
+    assert history["reason"] == "receive_provenance_unavailable"
+    assert history["observation_count"] == 0
+
+
+def test_live_history_resets_for_identity_session_format_rewind_and_time_regression():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_session_history(observer)
+    _process(observer, _advance(102, 20, player_car_index=1))
+    assert observer.live_session_history_snapshot()["status"] == "waiting"
+    assert observer.live_session_history_snapshot()["observation_count"] == 0
+
+    _publish_live_session_history(observer, frame=103, sequence=21, player_car_index=1)
+    _process(
+        observer,
+        _flashback_packet(
+            frame=105, sequence=30, session_time=14.0, target_time=12.0
+        ),
+    )
+    _process(observer, _advance(106, 31, player_car_index=1))
+    assert observer.live_session_history_snapshot()["status"] == "waiting"
+
+    next_session = SESSION_UID + 100
+    _publish_live_session_history(
+        observer,
+        frame=1,
+        sequence=40,
+        session_uid=next_session,
+        player_car_index=1,
+    )
+    _publish_live_session_history(
+        observer,
+        frame=200,
+        sequence=50,
+        session_uid=next_session,
+        packet_format=2026,
+        player_car_index=23,
+    )
+    changed = observer.live_session_history_snapshot()
+    assert changed["packet_format"] == 2026
+    assert changed["player_car_index"] == 23
+    assert changed["observation_count"] == 1
+
+    regressed = _AcquisitionObserver(reorder_window_frames=1)
+    _publish_live_session_history(regressed, session_time_s=12.5)
+    _publish_live_session_history(
+        regressed, frame=103, sequence=20, session_time_s=1.0
+    )
+    result = regressed.live_session_history_snapshot()
+    assert result["status"] == "unavailable"
+    assert result["reason"] == "session_time_regression"
+    assert result["observation_count"] == 0
+
+
+def test_live_history_same_frame_regression_quarantines_all_frame_monitor_updates():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    shared_lap = (90_000, 25_000, 0, 30_000, 0, 35_000, 0, 0x0F)
+    for sequence, session_time_s in ((10, 101.0), (11, 90.0), (12, 102.0)):
+        _process(
+            observer,
+            _session_history_packet(
+                frame=100,
+                sequence=sequence,
+                session_time_s=session_time_s,
+                laps=(shared_lap,),
+            ),
+        )
+    _process(observer, _motion_packet(frame=100, sequence=13))
+    _process(
+        observer,
+        _lap_packet(
+            frame=100,
+            lap_number=2,
+            distance_m=15.0,
+            session_time=102.0,
+            current_lap_time_ms=2_000,
+            sequence=14,
+        ),
+    )
+    _process(observer, _telemetry_packet(frame=100, sequence=15))
+    _process(observer, _advance(101, 16))
+
+    history = observer.live_session_history_snapshot()
+    assert history["status"] == "unavailable"
+    assert history["reason"] == "session_time_regression"
+    assert history["rows"] == []
+    assert history["observation_count"] == 0
+    assert observer.live_lap_timing_snapshot()["reason"] == "session_time_regression"
+    assert observer.live_telemetry_snapshot()["reason"] == "session_time_regression"
+    assert observer.live_motion_snapshot()["status"] == "waiting"
+
+
+def test_live_history_ages_independently_wraps_and_validates_api_bounds():
+    observer = _AcquisitionObserver(reorder_window_frames=1)
+    lap = (90_000, 25_000, 0, 30_000, 0, 35_000, 0, 0x0F)
+    _publish_live_session_history(
+        observer, frame=0xFFFF_FFFE, sequence=10, laps=(lap,)
+    )
+    initial = observer.live_session_history_snapshot()
+    _publish_live_session_history(observer, frame=0, sequence=20, laps=(lap,))
+    wrapped = observer.live_session_history_snapshot()
+    assert wrapped["frame_identifier"] == 0
+    assert wrapped["observation_count"] == 2
+
+    aged = observer.live_session_history_snapshot(
+        wrapped["_observed_monotonic_ns"] + 501_000_000
+    )
+    assert aged["status"] == "stale"
+    assert aged["age_ms"] == 501
+    assert aged["rows"] == wrapped["rows"]
+    assert initial["frame_identifier"] == 0xFFFF_FFFE
+
+    record = LiveSessionHistoryRecord(**wrapped)
+    assert record.rows[0].lap_number == 1
+    with pytest.raises(ValidationError):
+        LiveSessionHistoryRecord(
+            status="fresh",
+            reason=None,
+            age_ms=0,
+            observation_count=1,
+            rows=[{}] * 11,
+        )

@@ -78,6 +78,16 @@ def test_replay_damage_observation_ages_while_paused_and_clears_at_terminal_stat
             "world_velocity_mps": [4.0, 5.0, 6.0],
             "_observed_monotonic_ns": observed_ns,
         },
+        "live_session_history": {
+            "status": "fresh",
+            "reason": None,
+            "age_ms": 0,
+            "observation_count": 2,
+            "populated_row_count": 1,
+            "omitted_row_count": 0,
+            "rows": [{"lap_number": 1, "lap_time_ms": 90_000}],
+            "_observed_monotonic_ns": observed_ns,
+        },
     }
 
     paused = controller.current()
@@ -102,6 +112,10 @@ def test_replay_damage_observation_ages_while_paused_and_clears_at_terminal_stat
     assert paused["live_motion"]["age_ms"] >= 700
     assert paused["live_motion"]["world_position_m"] == [1.0, 2.0, 3.0]
     assert "_observed_monotonic_ns" not in paused["live_motion"]
+    assert paused["live_session_history"]["status"] == "stale"
+    assert paused["live_session_history"]["age_ms"] >= 700
+    assert paused["live_session_history"]["rows"][0]["lap_time_ms"] == 90_000
+    assert "_observed_monotonic_ns" not in paused["live_session_history"]
 
     controller._snapshot["state"] = "completed"
     ended = controller.current()
@@ -128,6 +142,15 @@ def test_replay_damage_observation_ages_while_paused_and_clears_at_terminal_stat
         "reason": "operation_ended",
         "age_ms": None,
         "observation_count": 0,
+    }
+    assert ended["live_session_history"] == {
+        "status": "unavailable",
+        "reason": "operation_ended",
+        "age_ms": None,
+        "observation_count": 0,
+        "rows": [],
+        "populated_row_count": 0,
+        "omitted_row_count": 0,
     }
 
 
@@ -569,6 +592,17 @@ def test_replay_stop_during_eof_finalization_publishes_terminal_state(
                 "reason": None,
                 "age_ms": None,
                 "observation_count": 0,
+            }
+
+        def live_session_history_snapshot(self):
+            return {
+                "status": "waiting",
+                "reason": None,
+                "age_ms": None,
+                "observation_count": 0,
+                "rows": [],
+                "populated_row_count": 0,
+                "omitted_row_count": 0,
             }
 
     class ImmediateReplaySource:

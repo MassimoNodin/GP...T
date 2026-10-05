@@ -10,6 +10,8 @@ import type {
   LiveLapTimingRecord,
   LiveMotionRecord,
   LiveSessionConditionsRecord,
+  LiveSessionHistoryLapRecord,
+  LiveSessionHistoryRecord,
   LiveTelemetryRecord,
   RecordingGroupEventRecord,
   RecordingGroupRecord,
@@ -21,6 +23,7 @@ import {
   readCarSetupMonitor,
   readMotionMonitor,
   readSessionConditionsMonitor,
+  readSessionHistoryMonitor,
 } from "@/lib/live";
 import { appScreenHref, isSelectionTransferBlocked } from "@/lib/navigation";
 
@@ -444,6 +447,9 @@ export default function RecordingControls({
           ) : null}
           {progress.live_motion ? (
             <LiveMotionPanel telemetry={progress.live_motion} />
+          ) : null}
+          {progress.live_session_history ? (
+            <LiveSessionHistoryPanel telemetry={progress.live_session_history} />
           ) : null}
         </>
       )}
@@ -1350,6 +1356,151 @@ function liveMotionUnavailableReason(reason: string | null) {
   return typeof message === "string"
     ? message
     : "Player Motion is currently unavailable.";
+}
+
+export function LiveSessionHistoryPanel({
+  telemetry: inputTelemetry,
+  sourceKind = "recording",
+}: {
+  telemetry: LiveSessionHistoryRecord;
+  sourceKind?: "recording" | "replay";
+}) {
+  const telemetry = readSessionHistoryMonitor(inputTelemetry) ?? {
+    status: "unavailable" as const,
+    reason: "malformed_optional_fields",
+    age_ms: null,
+    observation_count: 0,
+    populated_row_count: 0,
+    omitted_row_count: 0,
+    rows: [],
+  };
+  const statusCopy: Record<LiveSessionHistoryRecord["status"], string> = {
+    waiting: "Waiting for an admitted selected-player Session History packet.",
+    fresh: "Recent game-reported lap history for the selected player.",
+    stale: telemetry.reason
+      ? `Last Session History observation was ${formatAge(telemetry.age_ms)} ago; no usable rows were available: ${liveSessionHistoryUnavailableReason(telemetry.reason)}`
+      : `Last Session History observation was ${formatAge(telemetry.age_ms)} ago.`,
+    unsupported:
+      sourceKind === "replay"
+        ? "Replay continues. This Session History packet version is unsupported."
+        : "Recording continues. This Session History packet version is unsupported.",
+    unavailable: liveSessionHistoryUnavailableReason(telemetry.reason),
+  };
+  const observationCount = Number.isInteger(telemetry.observation_count)
+    ? telemetry.observation_count!.toLocaleString()
+    : "—";
+
+  return (
+    <section
+      className="live-telemetry live-session-history"
+      data-state={telemetry.status}
+      aria-label="Game-reported lap history"
+    >
+      <div className="live-telemetry-heading">
+        <div>
+          <div className="eyebrow">
+            {sourceKind === "replay" ? "REPLAYED LAP HISTORY" : "LIVE LAP HISTORY"}
+          </div>
+          <p>{statusCopy[telemetry.status]}</p>
+        </div>
+        <span className={`live-telemetry-state state-${telemetry.status}`}>
+          {telemetry.status.toUpperCase()}
+        </span>
+      </div>
+      {telemetry.status !== "waiting" && (
+        <>
+          <div className="live-car-damage-meta">
+            <span>{observationCount} admitted observations</span>
+            <span>Session {safeText(telemetry.session_uid)}</span>
+            <span>Player {safeInteger(telemetry.player_car_index)}</span>
+            <span>Format {safeInteger(telemetry.packet_format)}</span>
+            <span>Frame {safeInteger(telemetry.frame_identifier)}</span>
+            <span>Source time {finiteNumber(telemetry.session_time_s)?.toFixed(2) ?? "—"} s</span>
+            <span>
+              {telemetry.omitted_row_count
+                ? `Showing the latest ${telemetry.rows?.length ?? 0} of ${telemetry.populated_row_count} rows`
+                : `${telemetry.populated_row_count ?? 0} reported rows`}
+            </span>
+          </div>
+          {telemetry.rows?.length ? (
+            <div className="live-temperature-scroll" tabIndex={0}>
+              <table className="live-temperature-table">
+                <caption>Game-reported lap and sector timing</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Lap</th>
+                    <th scope="col">Lap time</th>
+                    <th scope="col">Lap flag</th>
+                    <th scope="col">Sector 1</th>
+                    <th scope="col">Sector 2</th>
+                    <th scope="col">Sector 3</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {telemetry.rows.map((row) => (
+                    <tr key={row.lap_index}>
+                      <th scope="row">{row.lap_number}</th>
+                      <td>{reportedHistoryTime(row.lap_time_ms, row.lap_time_available, row.lap_time_unavailable_reason)}</td>
+                      <td>{row.lap_valid ? "Game valid" : "Game invalid"}</td>
+                      <td>{reportedHistorySector(row, 1)}</td>
+                      <td>{reportedHistorySector(row, 2)}</td>
+                      <td>{reportedHistorySector(row, 3)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="live-car-status-note">
+              {telemetry.reason
+                ? "The last Session History observation was unavailable; no lap rows are shown."
+                : "The latest admitted history snapshot contains no lap rows."}
+            </p>
+          )}
+          <p className="live-car-status-note">
+            History can include partial laps. Game validity flags are shown as reported; they do not confirm completion, create a stored attempt, or establish comparison eligibility.
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
+
+function liveSessionHistoryUnavailableReason(reason: string | null) {
+  const reasons: Record<string, string> = {
+    session_history_adapter_unsupported: "The game continues. This Session History packet version is unsupported.",
+    session_history_decode_failed: "History values are hidden because this packet could not be decoded safely.",
+    selected_player_identity_mismatch: "History values are hidden because the packet body and player identity disagree.",
+    conflicting_selected_player_histories: "History values are hidden because this frame contains conflicting histories for the selected player.",
+    player_identity_unavailable: "History values are hidden because the selected player could not be identified in this frame.",
+    receive_provenance_unavailable: "History values are hidden because receive-time evidence is incomplete.",
+    session_time_regression: "History values are hidden because session time moved backwards; waiting for a new observation.",
+  };
+  const message = reason && Object.hasOwn(reasons, reason) ? reasons[reason] : null;
+  return typeof message === "string"
+    ? message
+    : "Game-reported lap history is currently unavailable.";
+}
+
+function reportedHistoryTime(
+  value: number,
+  available: boolean,
+  reason?: string | null,
+) {
+  if (available) return formatLapClock(value);
+  return reason ? `Unavailable (${reason.replaceAll("_", " ")})` : "Unavailable";
+}
+
+function reportedHistorySector(
+  row: LiveSessionHistoryLapRecord,
+  sector: 1 | 2 | 3,
+) {
+  const value = row[`sector${sector}_time_ms`];
+  const available = row[`sector${sector}_time_available`];
+  const reason = row[`sector${sector}_time_unavailable_reason`];
+  const valid = row[`sector${sector}_valid`];
+  const timing = reportedHistoryTime(value ?? 0, available, reason);
+  return `${timing} · ${valid ? "game valid" : "game invalid"}`;
 }
 
 function motionComponent(value: unknown) {

@@ -15,6 +15,7 @@ from ..recording.service import (
     LIVE_CAR_DAMAGE_FRESHNESS_LIMIT_MS,
     LIVE_CAR_SETUP_FRESHNESS_LIMIT_MS,
     LIVE_MOTION_FRESHNESS_LIMIT_MS,
+    LIVE_SESSION_HISTORY_FRESHNESS_LIMIT_MS,
     LIVE_SESSION_CONDITIONS_FRESHNESS_LIMIT_MS,
     LIVE_CAR_STATUS_FRESHNESS_LIMIT_MS,
     LIVE_LAP_TIMING_FRESHNESS_LIMIT_MS,
@@ -150,6 +151,13 @@ class ReplayController:
                 "live_motion": {
                     **_waiting_monitor(),
                     "observation_count": 0,
+                },
+                "live_session_history": {
+                    **_waiting_monitor(),
+                    "observation_count": 0,
+                    "rows": [],
+                    "populated_row_count": 0,
+                    "omitted_row_count": 0,
                 },
                 "failure_reason": None,
                 "progress_updated_monotonic_ns": time.monotonic_ns(),
@@ -306,6 +314,7 @@ class ReplayController:
             "live_car_setup": LIVE_CAR_SETUP_FRESHNESS_LIMIT_MS,
             "live_session_conditions": LIVE_SESSION_CONDITIONS_FRESHNESS_LIMIT_MS,
             "live_motion": LIVE_MOTION_FRESHNESS_LIMIT_MS,
+            "live_session_history": LIVE_SESSION_HISTORY_FRESHNESS_LIMIT_MS,
         }
         for name, limit_ms in freshness_limits.items():
             monitor = result.get(name)
@@ -348,6 +357,15 @@ class ReplayController:
                 "reason": "operation_ended",
                 "age_ms": None,
                 "observation_count": 0,
+            }
+            result["live_session_history"] = {
+                "status": "unavailable",
+                "reason": "operation_ended",
+                "age_ms": None,
+                "observation_count": 0,
+                "rows": [],
+                "populated_row_count": 0,
+                "omitted_row_count": 0,
             }
         result.pop("started_monotonic_ns", None)
         return result
@@ -401,6 +419,7 @@ class ReplayController:
                 "live_car_setup": observer.live_car_setup_snapshot(),
                 "live_session_conditions": observer.live_session_conditions_snapshot(),
                 "live_motion": observer.live_motion_snapshot(),
+                "live_session_history": observer.live_session_history_snapshot(),
                 "failure_reason": failure_reason,
                 "started_monotonic_ns": started_ns,
                 "progress_updated_monotonic_ns": time.monotonic_ns(),

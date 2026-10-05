@@ -12,6 +12,7 @@ import {
   LiveCarSetupPanel,
   LiveMotionPanel,
   LiveSessionConditionsPanel,
+  LiveSessionHistoryPanel,
   LiveLapTimingPanel,
   LiveTelemetryPanel,
 } from "./RecordingControls";
@@ -342,6 +343,12 @@ export default function ReplayControls({
           ) : null}
           {playback.live_motion ? (
             <LiveMotionPanel telemetry={playback.live_motion} sourceKind="replay" />
+          ) : null}
+          {playback.live_session_history ? (
+            <LiveSessionHistoryPanel
+              telemetry={playback.live_session_history}
+              sourceKind="replay"
+            />
           ) : null}
         </>
       )}
