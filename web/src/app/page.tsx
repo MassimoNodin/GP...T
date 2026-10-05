@@ -41,6 +41,11 @@ import ThrottlePatternAssessmentPanel from "./ThrottlePatternAssessmentPanel";
 import ObservationSetPanel from "./ObservationSetPanel";
 import PairedRegionPanel from "./PairedRegionPanel";
 import EngineerQueryPanel from "./EngineerQueryPanel";
+import {
+  engineerQueryReportMatchesRequest,
+  pairedRegionReportMatchesSelection,
+  type EngineerQueryRequestIdentity,
+} from "@/lib/engineer-query-match";
 import RecordedEvidenceSpeech from "./RecordedEvidenceSpeech";
 import { buildComparisonCharts } from "./comparison-charts";
 import ComparisonWindowPanel from "./ComparisonWindowPanel";
@@ -346,21 +351,69 @@ export default async function Home({
     comparisonResponse?.status === "ok" ? comparisonResponse.data : null;
   const observationSet =
     observationSetResponse?.status === "ok" ? observationSetResponse.data : null;
-  const pairedRegionReport =
+  const pairedRegionCandidate =
     pairedRegionResponse?.status === "ok" ? pairedRegionResponse.data : null;
-  const engineerQueryReport =
+  const pairedRegionReport =
+    pairedRegionCandidate &&
+    target &&
+    manualReference &&
+    selectedModel &&
+    pairedRegionReportMatchesSelection(pairedRegionCandidate, {
+      target,
+      reference: manualReference,
+      comparisonPolicy,
+      model: selectedModel,
+    })
+      ? pairedRegionCandidate
+      : null;
+  const engineerQueryCandidate =
     engineerQueryResponse?.status === "ok" ? engineerQueryResponse.data : null;
+  const engineerQueryIdentity: EngineerQueryRequestIdentity | null =
+    engineerQueryBody?.intent === "attempt_summary"
+      ? {
+          intent: "attempt_summary",
+          targetAttemptKey: engineerQueryBody.target_attempt_key,
+        }
+      : engineerQueryBody?.intent === "region_comparison" &&
+          typeof engineerQueryBody.reference_attempt_key === "string" &&
+          (engineerQueryBody.comparison_policy === "time_trial" ||
+            engineerQueryBody.comparison_policy === "practice_qualifying") &&
+          typeof engineerQueryBody.track_model_id === "string" &&
+          typeof engineerQueryBody.track_model_revision === "number" &&
+          typeof engineerQueryBody.region_identifier === "string"
+        ? {
+            intent: "region_comparison",
+            targetAttemptKey: engineerQueryBody.target_attempt_key,
+            referenceAttemptKey: engineerQueryBody.reference_attempt_key,
+            comparisonPolicy: engineerQueryBody.comparison_policy,
+            trackModelId: engineerQueryBody.track_model_id,
+            trackModelRevision: engineerQueryBody.track_model_revision,
+            regionIdentifier: engineerQueryBody.region_identifier,
+          }
+        : null;
+  const engineerQueryReport =
+    engineerQueryCandidate &&
+    engineerQueryIdentity &&
+    engineerQueryReportMatchesRequest(
+      engineerQueryCandidate,
+      engineerQueryIdentity,
+    )
+      ? engineerQueryCandidate
+      : null;
   const engineerQueryRequestState =
     engineerIntent !== "attempt_summary" && engineerIntent !== "region_comparison"
       ? "not_requested"
       : !engineerQueryBody
         ? "not_ready"
-        : engineerQueryResponse?.status === "ok" && engineerQueryResponse.data
+        : engineerQueryResponse?.status === "ok" && engineerQueryReport
           ? "ok"
           : "failed";
   const engineerQueryRequestReason =
     engineerQueryRequestState !== "not_ready"
-      ? engineerQueryResponse?.reason ?? null
+      ? engineerQueryResponse?.reason ??
+        (engineerQueryCandidate && !engineerQueryReport
+          ? "The local API response did not match the exact request and source provenance. No substitute evidence was shown."
+          : null)
       : engineerIntent === "attempt_summary"
         ? params.target_attempt_key
           ? "The requested attempt is not available in the selected recording. Choose an attempt from this session and retry."
@@ -599,6 +652,28 @@ export default async function Home({
     identifier: region.identifier,
     label: region.label,
   }));
+  const engineerRegionLinks = Object.fromEntries(
+    params.target_attempt_key &&
+      target?.attempt_key === params.target_attempt_key &&
+      manualReference &&
+      params.reference_choice === manualReference.attempt_key &&
+      selectedModel &&
+      session &&
+      pairedRegionReport
+      ? engineerRegions.flatMap((region) => {
+          const href = appScreenHref("engineer", preservedQuery, {
+            session_key: session.session_key,
+            target_attempt_key: target.attempt_key,
+            reference_choice: manualReference.attempt_key,
+            comparison_policy: comparisonPolicy,
+            track_model_key: modelKey(selectedModel),
+            engineer_intent: "region_comparison",
+            engineer_region_identifier: region.identifier,
+          });
+          return href ? [[region.identifier, href] as const] : [];
+        })
+      : [],
+  );
 
   return (
     <div className="app-shell">
@@ -1530,6 +1605,7 @@ export default async function Home({
                 {engineerIntent !== "region_comparison" ? (
                   <PairedRegionPanel
                     report={pairedRegionReport}
+                    engineerLinks={engineerRegionLinks}
                     unavailableReason={
                       pairedRegionResponse?.status === "unavailable"
                         ? pairedRegionResponse.reason

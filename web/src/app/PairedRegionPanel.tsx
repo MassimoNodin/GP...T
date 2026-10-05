@@ -4,6 +4,7 @@ type Props = {
   report: PairedRegionReport | null;
   unavailableReason: string | null;
   selectionReady: boolean;
+  engineerLinks?: Record<string, string>;
   navigation: {
     sessionKey: string | null;
     runId: string | null;
@@ -188,6 +189,7 @@ export default function PairedRegionPanel({
   report,
   unavailableReason,
   selectionReady,
+  engineerLinks = {},
   navigation,
 }: Props) {
   if (!selectionReady) {
@@ -301,6 +303,14 @@ export default function PairedRegionPanel({
               Opens the comparison charts for this exact distance interval.
               Configured event search bounds remain separate.
             </p>
+            {typeof engineerLinks[region.identifier] === "string" ? (
+              <a
+                className="compare-button paired-region-engineer-link"
+                href={engineerLinks[region.identifier]}
+              >
+                Explain this region in Engineer <span aria-hidden="true">↗</span>
+              </a>
+            ) : null}
             <div className="paired-region-facts">
               {[
                 ["connected_interval_time", "Connected time change"],

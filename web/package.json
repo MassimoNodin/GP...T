@@ -8,7 +8,8 @@
     "start": "next start --hostname 127.0.0.1",
     "test:speech": "node scripts/recorded-speech-check.mjs",
     "test:comparison-window": "node scripts/comparison-window-brief-check.mjs",
-    "test:draft-track-model": "node scripts/draft-track-model-check.mjs"
+    "test:draft-track-model": "node scripts/draft-track-model-check.mjs",
+    "test:engineer-query-match": "node scripts/engineer-query-match-check.mjs"
   },
   "dependencies": {
     "next": "16.3.8",

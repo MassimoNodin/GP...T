@@ -21,6 +21,7 @@ type Props = {
   requestReason: string | null;
   actionPath?: string;
   summaryOnly?: boolean;
+  displayOnly?: boolean;
   summaryScreenHref?: string | null;
   preservedFormEntries?: Array<[string, string]>;
 };
@@ -42,6 +43,7 @@ export default function EngineerQueryPanel({
   requestReason,
   actionPath = "/",
   summaryOnly = false,
+  displayOnly = false,
   summaryScreenHref = null,
   preservedFormEntries = [],
 }: Props) {
@@ -65,7 +67,7 @@ export default function EngineerQueryPanel({
       {referenceChoice ? (
         <input type="hidden" name="reference_choice" value={referenceChoice} />
       ) : null}
-      {comparisonPolicy !== "time_trial" ? (
+      {!summaryOnly ? (
         <input
           type="hidden"
           name="comparison_policy"
@@ -87,12 +89,16 @@ export default function EngineerQueryPanel({
         <div>
           <div className="eyebrow">ENGINEER · RECORDED EVIDENCE</div>
           <h2 id="engineer-query-title">
-            {summaryOnly
+            {displayOnly
+              ? "Region comparison explanation"
+              : summaryOnly
               ? "Recorded attempt summary"
               : "Ask about this evidence"}
           </h2>
           <p>
-            {summaryOnly
+            {displayOnly
+              ? "Deterministic facts from the explicitly selected target, reference, model revision, and distance region."
+              : summaryOnly
               ? "Bounded facts from the selected attempt’s stored metadata, with source qualifications."
               : "Short, deterministic summaries from the selected attempt or region."}
           </p>
@@ -101,7 +107,7 @@ export default function EngineerQueryPanel({
       </header>
 
       <div className="engineer-query-actions">
-        {targetAttemptKey ? (
+        {!displayOnly && targetAttemptKey ? (
           <form action={actionPath} method="get">
             {hiddenSelection}
             {preservedFormEntries.map(([name, value], index) => (
@@ -121,13 +127,14 @@ export default function EngineerQueryPanel({
               Summarize selected attempt
             </button>
           </form>
-        ) : (
+        ) : !displayOnly ? (
           <p className="engineer-query-hint">
             Select an attempt from the lap inventory to request its summary.
           </p>
-        )}
+        ) : null}
 
-        {!summaryOnly &&
+        {!displayOnly &&
+        !summaryOnly &&
         targetAttemptKey &&
         referenceAttemptKey &&
         trackModelKey &&
@@ -156,9 +163,11 @@ export default function EngineerQueryPanel({
               <select
                 name="engineer_region_identifier"
                 defaultValue={
-                  report?.selected.region_identifier ?? regions[0]?.identifier
+                  report?.selected.region_identifier ?? ""
                 }
+                required
               >
+                <option value="">Choose a region</option>
                 {regions.map((region) => (
                   <option key={region.identifier} value={region.identifier}>
                     {region.identifier} · {region.label}
@@ -317,6 +326,10 @@ function EngineerQueryProvenance({ report }: { report: EngineerQueryReport }) {
   const capture = record(provenance.capture);
   const processing = record(provenance.processing);
   const trace = record(provenance.trace_metadata);
+  const attempts = record(provenance.attempts);
+  const targetTrace = record(attempts?.target);
+  const referenceTrace = record(attempts?.reference);
+  const model = record(provenance.model);
   const entries: Array<[string, string | null]> = [
     ["Returned attempt", report.selected.target_attempt_key],
     ["Run", stringValue(provenance.run_id)],
@@ -337,6 +350,45 @@ function EngineerQueryProvenance({ report }: { report: EngineerQueryReport }) {
           : null,
     ],
   ].filter((entry): entry is [string, string] => entry[1] !== null);
+
+  if (report.intent === "region_comparison") {
+    entries.push(
+      ...[
+        ["Selected reference", report.selected.reference_attempt_key ?? null],
+        [
+          "Comparison policy",
+          report.selected.comparison_policy?.replaceAll("_", " ") ?? null,
+        ],
+        [
+          "Track model revision",
+          joinedValues(
+            stringValue(report.selected.track_model_id),
+            positiveIntegerText(report.selected.track_model_revision, "r"),
+          ),
+        ],
+        ["Distance region", report.selected.region_identifier ?? null],
+        ["Target trace SHA-256", stringValue(targetTrace?.trace_sha256)],
+        [
+          "Target trace schema",
+          positiveIntegerText(targetTrace?.trace_schema_version, "v"),
+        ],
+        ["Reference trace SHA-256", stringValue(referenceTrace?.trace_sha256)],
+        [
+          "Reference trace schema",
+          positiveIntegerText(referenceTrace?.trace_schema_version, "v"),
+        ],
+        ["Target capture SHA-256", stringValue(capture?.target_sha256)],
+        ["Target capture complete", booleanValue(capture?.target_complete)],
+        ["Reference capture SHA-256", stringValue(capture?.reference_sha256)],
+        [
+          "Reference capture complete",
+          booleanValue(capture?.reference_complete),
+        ],
+        ["Model content SHA-256", stringValue(model?.content_sha256)],
+        ["Model origin", stringValue(model?.origin)],
+      ].filter((entry): entry is [string, string] => entry[1] !== null),
+    );
+  }
 
   if (entries.length === 0) return null;
   return (
@@ -369,6 +421,12 @@ function stringValue(value: unknown): string | null {
 function numberValue(value: unknown): string | null {
   return typeof value === "number" && Number.isFinite(value)
     ? `${value.toLocaleString()} bytes`
+    : null;
+}
+
+function positiveIntegerText(value: unknown, prefix = ""): string | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? `${prefix}${value}`
     : null;
 }
 
