@@ -6,14 +6,14 @@ import type {
   PointerEvent as ReactPointerEvent,
 } from "react";
 
-type Series = {
+export type Series = {
   label: string;
   color: string;
   values: Array<number | null>;
   mask?: boolean[];
 };
 
-type Difference = {
+export type Difference = {
   label: string;
   left: number;
   right: number;
@@ -22,7 +22,7 @@ type Difference = {
   precision?: number;
 };
 
-type ChartSpec = {
+export type ChartSpec = {
   id: string;
   title: string;
   subtitle: string;
@@ -1041,5 +1041,3 @@ function readoutForChart(chart: ChartSpec, index: number) {
   });
   return { values, differences };
 }
-
-export type { ChartSpec, Series };

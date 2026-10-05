@@ -38,7 +38,13 @@ from ..tracks.draft_authoring import (
     build_draft_track_model,
 )
 from ..storage.import_jobs import list_recording_sources
-from ..storage.importer import DEFAULT_DATABASE, list_laps, list_sessions
+from ..storage.importer import (
+    DEFAULT_DATABASE,
+    MAX_LAP_ATTEMPT_PAGE_OFFSET,
+    list_lap_attempt_page,
+    list_laps,
+    list_sessions,
+)
 from ..storage.query import (
     list_car_observation_inventory,
     load_attempt_timing_evidence,
@@ -332,6 +338,21 @@ class LapRecord(BaseModel):
     player_car_setup_context: dict[str, Any] | None = None
 
 
+class SelectedLapAttempt(BaseModel):
+    requested_attempt_key: str
+    attempt: LapRecord | None
+
+
+class LapAttemptPage(BaseModel):
+    run_id: str
+    session_uid: str
+    items: list[LapRecord]
+    total: int
+    limit: int
+    offset: int
+    selected_attempts: list[SelectedLapAttempt]
+
+
 class ReferenceCandidate(BaseModel):
     attempt_key: str
     attempt_number: int
@@ -611,6 +632,39 @@ def create_app(
                     session_uid=session_uid,
                 )
             )
+        )
+
+    @app.get(
+        "/api/v1/processing-runs/{run_id}/sessions/{session_uid}/lap-attempts",
+        response_model=APIResponse[LapAttemptPage],
+    )
+    def comparison_lap_attempts(
+        run_id: str,
+        session_uid: str,
+        limit: int = Query(default=50, ge=1, le=MAX_CHILD_PAGE_SIZE),
+        offset: int = Query(default=0, ge=0, le=MAX_LAP_ATTEMPT_PAGE_OFFSET),
+        selected_target_attempt_key: str | None = Query(
+            default=None, min_length=1, max_length=256
+        ),
+        selected_reference_attempt_key: str | None = Query(
+            default=None, min_length=1, max_length=256
+        ),
+    ) -> APIResponse[LapAttemptPage]:
+        selected_keys = tuple(
+            key
+            for key in (selected_target_attempt_key, selected_reference_attempt_key)
+            if key is not None
+        )
+        result = list_lap_attempt_page(
+            configured_database_path,
+            run_id=run_id,
+            session_uid=session_uid,
+            limit=limit,
+            offset=offset,
+            selected_attempt_keys=selected_keys,
+        )
+        return APIResponse[LapAttemptPage](
+            data=_stringify_session_uids(result)
         )
 
     @app.get(

@@ -46,6 +46,7 @@ IMPORT_CONFIG = {"max_open_frames": 256, "reorder_window_frames": 3}
 MAX_OPEN_OBSERVATION_WRITERS = 4
 MAX_OBSERVATION_CHUNKS_PER_IMPORT = 4096
 MAX_OBSERVATIONS_PER_CHUNK = MAX_OBSERVATION_CHUNK_ROWS
+MAX_LAP_ATTEMPT_PAGE_OFFSET = 100_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -1503,6 +1504,148 @@ def list_laps(
             }
             for row in rows
         ]
+
+
+def list_lap_attempt_page(
+    database_path: str | Path = DEFAULT_DATABASE,
+    *,
+    run_id: str,
+    session_uid: str,
+    limit: int = 50,
+    offset: int = 0,
+    selected_attempt_keys: tuple[str, ...] = (),
+) -> dict[str, object]:
+    """Return a bounded, session-scoped comparison inventory and exact selections."""
+    if not 1 <= limit <= 100:
+        raise ValueError("lap attempt page limit must be between 1 and 100")
+    if not 0 <= offset <= MAX_LAP_ATTEMPT_PAGE_OFFSET:
+        raise ValueError("lap attempt page offset is out of range")
+    if len(selected_attempt_keys) > 2 or any(
+        not isinstance(key, str) or not key or len(key) > 256
+        for key in selected_attempt_keys
+    ):
+        raise ValueError("at most two valid selected attempt keys are supported")
+    selected_keys = tuple(dict.fromkeys(selected_attempt_keys))
+    scope_clauses = [
+        "s.run_id = ?",
+        "s.session_uid = ?",
+        "t.ready = 1",
+        "r.status = 'complete'",
+    ]
+    scope_parameters: list[Any] = [run_id, session_uid]
+    select_sql = """SELECT l.*, s.session_uid, s.run_id, t.relative_path,
+                       t.row_count AS trace_row_count, t.quality_json, t.sha256 AS trace_sha256,
+                       t.schema_version AS trace_schema_version,
+                       e.evidence_json AS timing_evidence_json,
+                       (SELECT c.context_json FROM lap_context_segments c
+                          WHERE c.attempt_key = l.attempt_key ORDER BY c.ordinal LIMIT 1)
+                          AS initial_context_json
+                  FROM lap_attempts l JOIN sessions s USING(session_key)
+                  JOIN telemetry_files t USING(attempt_key)
+                  LEFT JOIN attempt_timing_evidence e USING(attempt_key)
+                  JOIN processing_runs r USING(run_id)"""
+
+    def materialize(db: Database, row: Any) -> dict[str, object]:
+        return {
+            "attempt_key": row["attempt_key"],
+            "run_id": row["run_id"],
+            "session_uid": row["session_uid"],
+            "car_index": row["car_index"],
+            "attempt_number": row["attempt_number"],
+            "lap_number": row["lap_number"],
+            "disposition": row["disposition"],
+            "lap_time_ms": row["lap_time_ms"],
+            "game_valid": None if row["game_valid"] is None else bool(row["game_valid"]),
+            "reference_eligible": bool(row["reference_eligible"]),
+            "start_frame_ordinal": row["start_frame_ordinal"],
+            "end_frame_ordinal": row["end_frame_ordinal"],
+            "superseded": None if row["superseded"] is None else bool(row["superseded"]),
+            "lifecycle_assessed": bool(row["lifecycle_assessed"]),
+            "start_observed": bool(row["start_observed"]),
+            "pit_encountered": bool(row["pit_encountered"]),
+            "sample_count": row["sample_count"],
+            "trace_row_count": row["trace_row_count"],
+            "trace_schema_version": row["trace_schema_version"],
+            "trace_sha256": row["trace_sha256"],
+            "context": json.loads(row["initial_context_json"])
+            if row["initial_context_json"]
+            else None,
+            "quality": json.loads(row["quality_json"]),
+            "exclusion_reasons": json.loads(row["exclusion_reasons_json"]),
+            "timing_evidence": json.loads(row["timing_evidence_json"])
+            if row["timing_evidence_json"]
+            else {
+                "status": "unavailable",
+                "reasons": ["not_available_for_legacy_import"],
+            },
+            "player_participant_context": load_attempt_player_participant_context(
+                db.connection, str(row["attempt_key"])
+            ),
+            "player_car_setup_context": load_attempt_player_car_setup_context(
+                db.connection, str(row["attempt_key"])
+            ),
+        }
+
+    with Database(database_path, read_only=True) as db:
+        db.connection.execute("BEGIN")
+        total = int(
+            db.connection.execute(
+                """SELECT COUNT(*)
+                     FROM lap_attempts l JOIN sessions s USING(session_key)
+                     JOIN telemetry_files t USING(attempt_key)
+                     JOIN processing_runs r USING(run_id)
+                    """
+                f"WHERE {' AND '.join(scope_clauses)}",
+                scope_parameters,
+            ).fetchone()[0]
+        )
+        page_rows = db.connection.execute(
+            f"""WITH page_keys AS (
+                    SELECT l.attempt_key
+                      FROM lap_attempts l JOIN sessions s USING(session_key)
+                      JOIN telemetry_files t USING(attempt_key)
+                      JOIN processing_runs r USING(run_id)
+                     WHERE {' AND '.join(scope_clauses)}
+                     ORDER BY s.run_id, s.session_uid, l.car_index, l.attempt_number
+                     LIMIT ? OFFSET ?
+                )
+                {select_sql}
+                JOIN page_keys p USING(attempt_key)
+                WHERE {' AND '.join(scope_clauses)}
+                ORDER BY s.run_id, s.session_uid, l.car_index, l.attempt_number""",
+            [*scope_parameters, limit, offset, *scope_parameters],
+        ).fetchall()
+        selected_rows: dict[str, Any] = {}
+        if selected_keys:
+            placeholders = ",".join("?" for _ in selected_keys)
+            selected_rows = {
+                str(row["attempt_key"]): row
+                for row in db.connection.execute(
+                    f"{select_sql} WHERE {' AND '.join(scope_clauses)} "
+                    f"AND l.attempt_key IN ({placeholders}) "
+                    "ORDER BY s.run_id, s.session_uid, l.car_index, l.attempt_number",
+                    [*scope_parameters, *selected_keys],
+                ).fetchall()
+            }
+        items = [materialize(db, row) for row in page_rows]
+        selected_attempts = [
+            {
+                "requested_attempt_key": key,
+                "attempt": materialize(db, selected_rows[key])
+                if key in selected_rows
+                else None,
+            }
+            for key in selected_keys
+        ]
+    return {
+        "run_id": run_id,
+        "session_uid": session_uid,
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "selected_attempts": selected_attempts,
+    }
 
 
 def get_lap(database_path: str | Path, attempt_key: str) -> dict[str, object] | None:

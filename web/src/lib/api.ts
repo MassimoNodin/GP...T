@@ -387,6 +387,21 @@ export interface LapRecord {
   player_car_setup_context?: PlayerCarSetupContext | null;
 }
 
+export interface SelectedLapAttempt {
+  requested_attempt_key: string;
+  attempt: LapRecord | null;
+}
+
+export interface LapAttemptPage {
+  run_id: string;
+  session_uid: string;
+  items: LapRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+  selected_attempts: SelectedLapAttempt[];
+}
+
 export interface AttemptTimingEvidence {
   status: "matched" | "ambiguous" | "conflicting" | "unavailable" | "truncated" | string;
   reasons: string[];
@@ -1878,6 +1893,10 @@ export interface ComparisonWindow {
   diagnostic_only: true;
   interval_convention: "[start_m, end_m)";
   window_m: { start_m: number; end_m: number };
+  source: {
+    target_attempt_key: string;
+    reference_attempt_key: string;
+  };
   config: Record<string, number>;
   event_thresholds: Record<
     string,

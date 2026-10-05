@@ -44,6 +44,7 @@ import ObservationSetPanel from "./ObservationSetPanel";
 import PairedRegionPanel from "./PairedRegionPanel";
 import EngineerQueryPanel from "./EngineerQueryPanel";
 import RecordedEvidenceSpeech from "./RecordedEvidenceSpeech";
+import { buildComparisonCharts } from "./comparison-charts";
 import { buildRecordedSpeechPlan } from "@/lib/recorded-speech-plan";
 import {
   appScreenHref,
@@ -51,7 +52,6 @@ import {
   preservedAppStateQuery,
   type AppSearchParams,
 } from "@/lib/navigation";
-import type { ChartSpec } from "./LinkedComparisonCharts";
 type SearchParams = AppSearchParams;
 
 type Series = {
@@ -1422,214 +1422,7 @@ export default async function Home({
                         params.window_start_m,
                         params.window_end_m,
                       )}
-                      charts={[
-                        {
-                          id: "speed",
-                          title: "Speed trace",
-                          subtitle: "Vehicle speed · km/h",
-                          unit: "KM/H",
-                          valueUnit: "km/h",
-                          series: [
-                            {
-                              label: `Target · ${lapTime(target?.lap_time_ms)}`,
-                              color: "#f06a4f",
-                              values: speed(
-                                comparison.target_trace.values.speed_mps,
-                              ),
-                              mask: comparison.target_trace.masks.speed_mps,
-                            },
-                            {
-                              label: `Reference · ${lapTime(reference?.lap_time_ms)}`,
-                              color: "#71c7b5",
-                              values: speed(
-                                comparison.reference_trace.values.speed_mps,
-                              ),
-                              mask: comparison.reference_trace.masks.speed_mps,
-                            },
-                          ],
-                          differences: [
-                            {
-                              label: "Target − reference",
-                              left: 0,
-                              right: 1,
-                              unit: "km/h",
-                            },
-                          ],
-                        },
-                        {
-                          id: "delta",
-                          title: "Lap delta",
-                          subtitle: "Positive means target is slower · seconds",
-                          unit: "SECONDS",
-                          valueUnit: "s",
-                          signedValues: true,
-                          precision: 3,
-                          zero: true,
-                          series: [
-                            {
-                              label: "Target − reference",
-                              color: "#f0b45c",
-                              values: comparison.delta_s,
-                              mask: comparison.delta_mask,
-                            },
-                          ],
-                        },
-                        {
-                          id: "inputs",
-                          title: "Driver inputs",
-                          subtitle: "Brake and throttle · percent",
-                          unit: "%",
-                          valueUnit: "%",
-                          valueScale: 100,
-                          range: [0, 1],
-                          percentAxis: true,
-                          series: [
-                            {
-                              label: "Target brake",
-                              color: "#f06a4f",
-                              values: numeric(
-                                comparison.target_trace.values.brake,
-                              ),
-                              mask: comparison.target_trace.masks.brake,
-                            },
-                            {
-                              label: "Target throttle",
-                              color: "#71c7b5",
-                              values: numeric(
-                                comparison.target_trace.values.throttle,
-                              ),
-                              mask: comparison.target_trace.masks.throttle,
-                            },
-                            {
-                              label: "Reference brake",
-                              color: "#d89079",
-                              values: numeric(
-                                comparison.reference_trace.values.brake,
-                              ),
-                              mask: comparison.reference_trace.masks.brake,
-                            },
-                            {
-                              label: "Reference throttle",
-                              color: "#97b2a9",
-                              values: numeric(
-                                comparison.reference_trace.values.throttle,
-                              ),
-                              mask: comparison.reference_trace.masks.throttle,
-                            },
-                          ],
-                          differences: [
-                            {
-                              label: "Brake · target − reference",
-                              left: 0,
-                              right: 2,
-                              unit: "percentage points",
-                              scale: 100,
-                            },
-                            {
-                              label: "Throttle · target − reference",
-                              left: 1,
-                              right: 3,
-                              unit: "percentage points",
-                              scale: 100,
-                            },
-                          ],
-                        },
-                        {
-                          id: "steering",
-                          optional: true,
-                          overlayLabel: "Steering input",
-                          title: "Steering input",
-                          subtitle:
-                            "Signed normalized player input · not steering angle",
-                          unit: "NORMALIZED",
-                          valueUnit: "input",
-                          range: [-1, 1],
-                          signedValues: true,
-                          precision: 2,
-                          series: [
-                            {
-                              label: "Target steering input",
-                              color: "#f06a4f",
-                              values: comparisonChannelValues(
-                                comparison.target_trace,
-                                "steering",
-                                comparison.distance_m.length,
-                              ),
-                              mask: comparisonChannelMask(
-                                comparison.target_trace,
-                                "steering",
-                                comparison.distance_m.length,
-                              ),
-                            },
-                            {
-                              label: "Reference steering input",
-                              color: "#71c7b5",
-                              values: comparisonChannelValues(
-                                comparison.reference_trace,
-                                "steering",
-                                comparison.distance_m.length,
-                              ),
-                              mask: comparisonChannelMask(
-                                comparison.reference_trace,
-                                "steering",
-                                comparison.distance_m.length,
-                              ),
-                            },
-                          ],
-                          differences: [
-                            {
-                              label: "Target − reference",
-                              left: 0,
-                              right: 1,
-                              unit: "input",
-                              precision: 2,
-                            },
-                          ],
-                        },
-                        {
-                          id: "gear",
-                          optional: true,
-                          overlayLabel: "Gear",
-                          title: "Gear changes",
-                          subtitle:
-                            "Discrete reported gear · shifts shown as steps",
-                          unit: "GEAR",
-                          valueUnit: "gear",
-                          valueFormat: "gear",
-                          renderMode: "step",
-                          range: [-1, 8],
-                          series: [
-                            {
-                              label: "Target gear",
-                              color: "#f06a4f",
-                              values: comparisonChannelValues(
-                                comparison.target_trace,
-                                "gear",
-                                comparison.distance_m.length,
-                              ),
-                              mask: comparisonChannelMask(
-                                comparison.target_trace,
-                                "gear",
-                                comparison.distance_m.length,
-                              ),
-                            },
-                            {
-                              label: "Reference gear",
-                              color: "#71c7b5",
-                              values: comparisonChannelValues(
-                                comparison.reference_trace,
-                                "gear",
-                                comparison.distance_m.length,
-                              ),
-                              mask: comparisonChannelMask(
-                                comparison.reference_trace,
-                                "gear",
-                                comparison.distance_m.length,
-                              ),
-                            },
-                          ],
-                        },
-                      ] satisfies ChartSpec[]}
+                      charts={buildComparisonCharts(comparison, target, reference)}
                     />
                     <section className="quality-row panel">
                       <div className="quality-title">
@@ -3186,26 +2979,6 @@ function comparisonQuery(
 }
 const numeric = (values: Array<number | boolean | null>) =>
   values.map((value) => (typeof value === "number" ? value : null));
-function comparisonChannelValues(
-  trace: Comparison["target_trace"],
-  channel: string,
-  gridLength: number,
-) {
-  const values = trace.values[channel];
-  return Array.isArray(values) && values.length === gridLength
-    ? numeric(values)
-    : Array.from({ length: gridLength }, () => null);
-}
-function comparisonChannelMask(
-  trace: Comparison["target_trace"],
-  channel: string,
-  gridLength: number,
-) {
-  const mask = trace.masks[channel];
-  return Array.isArray(mask) && mask.length === gridLength
-    ? mask
-    : Array.from({ length: gridLength }, () => false);
-}
 const label = (value: unknown) =>
   typeof value === "string" && value
     ? value.replaceAll("_", " ").toUpperCase()

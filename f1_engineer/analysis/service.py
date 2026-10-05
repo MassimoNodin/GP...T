@@ -311,7 +311,7 @@ def compare_attempts(
         },
     }
     if distance_window is not None:
-        result["comparison_window"] = analyze_comparison_window(
+        window_report = analyze_comparison_window(
             target_samples,
             reference_samples,
             target_resampled,
@@ -320,6 +320,11 @@ def compare_attempts(
             distance_window,
             config=config,
         )
+        window_report["source"] = {
+            "target_attempt_key": target.attempt_key,
+            "reference_attempt_key": reference.attempt_key,
+        }
+        result["comparison_window"] = window_report
     if model is not None:
         corner_analysis = analyze_corner_regions(
             target_samples,
