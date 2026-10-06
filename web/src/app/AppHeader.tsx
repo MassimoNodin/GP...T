@@ -29,6 +29,8 @@ export default function AppHeader({
   const dashboardHref = navigation.find(
     (item) => item.screen === "dashboard",
   )?.href;
+  const recordingsHref = appScreenHref("recordings", preservedQuery);
+  const settingsHref = appScreenHref("settings", preservedQuery);
   const transferBlocked =
     isSelectionTransferBlocked(preservedQuery) ||
     navigation.some((item) => item.href === null);
@@ -36,7 +38,7 @@ export default function AppHeader({
     <>
       <span className="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 36 36">
-          <path d="M4 23 10 7h8l-5 13h6l5-13h8l-8 22h-8l4-11h-6l-4 11H2z" />
+          <path d="M7 4h10l-5 10H2zM21 4h10l-5 10H16zM2 18h10L7 32H0zM16 18h10l-5 10H11z" />
         </svg>
       </span>
       <span className="brand-lockup">
@@ -96,8 +98,9 @@ export default function AppHeader({
           ) : null}
         </nav>
         <div className="rail-footnote">
-          <span className="rail-footnote-icon" aria-hidden="true">▰</span>
-          <span><strong>Local workspace</strong><small>Telemetry analysis</small></span>
+          <span className="rail-footnote-icon" aria-hidden="true">▤</span>
+          <span><strong>Storage</strong><small>Usage unavailable</small></span>
+          <span className="rail-storage-track" aria-hidden="true"><i /></span>
         </div>
       </aside>
       <header className="topbar">
@@ -106,8 +109,20 @@ export default function AppHeader({
           <span><strong>Local mode</strong><small>Data stays on this computer</small></span>
         </div>
         <div className="topbar-right">
-          <span className="topbar-evidence">EVIDENCE-BASED ANALYSIS</span>
-          <span className="topbar-version">F1 TELEMETRY</span>
+          <span className="topbar-recording-state">
+            <i aria-hidden="true" />
+            Recorder status unavailable
+          </span>
+          {transferBlocked || !recordingsHref ? (
+            <span className="topbar-recording-link" aria-disabled="true" title="Selection is too large to carry safely.">Recording controls</span>
+          ) : (
+            <a className="topbar-recording-link" href={recordingsHref}>Recording controls</a>
+          )}
+          {transferBlocked || !settingsHref ? (
+            <span className="topbar-settings-link" aria-disabled="true" title="Selection is too large to carry safely." aria-label="Settings">⚙</span>
+          ) : (
+            <a className="topbar-settings-link" href={settingsHref} aria-label="Settings">⚙</a>
+          )}
         </div>
       </header>
     </>

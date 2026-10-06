@@ -15,6 +15,7 @@ import {
 } from "@/lib/navigation";
 import AppHeader from "../AppHeader";
 import LiveTelemetryView from "../LiveTelemetryView";
+import ReferenceScreen from "../ReferenceScreens";
 
 type InitialStatus = PinnedLiveRead["status"] | "unselected" | "invalid";
 
@@ -53,7 +54,11 @@ export default async function LivePage({
   return (
     <div className="app-shell">
       <AppHeader active="live" preservedQuery={preservedQuery} />
-      <main className="page-content live-page-content" id="main-content" tabIndex={-1}>
+      <main className="page-content reference-page-content" id="main-content" tabIndex={-1}>
+        <ReferenceScreen screen="live" preservedQuery={preservedQuery} />
+        <details className="ref-workflow-details">
+          <summary>Open the pinned live telemetry workflow</summary>
+          <div className="ref-workflow-content">
         <section className="live-page-intro">
           <div className="eyebrow">LIVE / PINNED TELEMETRY SOURCE</div>
           <h1>
@@ -78,6 +83,8 @@ export default async function LivePage({
           }
           hudHref={blocked ? null : appScreenHref("hud", preservedQuery)}
         />
+          </div>
+        </details>
       </main>
       <footer className="footer-bar">
         <span>

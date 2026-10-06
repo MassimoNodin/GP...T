@@ -20,6 +20,7 @@ import {
 import AppHeader from "../AppHeader";
 import EngineerQueryPanel from "../EngineerQueryPanel";
 import EngineerQuestionComposer from "../EngineerQuestionComposer";
+import ReferenceScreen from "../ReferenceScreens";
 import {
   appScreenHref,
   isSelectionTransferBlocked,
@@ -264,10 +265,14 @@ export default async function EngineerPage({
     <div className="app-shell">
       <AppHeader active="engineer" preservedQuery={preservedQuery} />
       <main
-        className="page-content engineer-page-content"
+        className="page-content reference-page-content"
         id="main-content"
         tabIndex={-1}
       >
+        <ReferenceScreen screen="engineer" preservedQuery={preservedQuery} />
+        <details className="ref-workflow-details" id="engineer-workflow">
+          <summary>Open the recorded-evidence engineer workflow</summary>
+          <div className="ref-workflow-content">
         <section className="engineer-page-intro">
           <div className="eyebrow">ENGINEER / RECORDED EVIDENCE</div>
           <h1>
@@ -386,6 +391,8 @@ export default async function EngineerPage({
             ) : null}
           </>
         )}
+          </div>
+        </details>
       </main>
       <footer className="footer-bar">
         <span>

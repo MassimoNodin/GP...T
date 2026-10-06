@@ -17,6 +17,7 @@ import {
   lapAttemptPageMatchesScope,
 } from "@/lib/attempt-inventory";
 import AppHeader from "../AppHeader";
+import ReferenceScreen from "../ReferenceScreens";
 import TrackDiagnosticEvidencePanels from "../TrackDiagnosticEvidencePanels";
 import DraftTrackModelPanel from "../DraftTrackModelPanel";
 import AttemptTraceCharts from "../AttemptTraceCharts";
@@ -254,7 +255,11 @@ export default async function TrackPage({
   return (
     <div className="app-shell">
       <AppHeader active="track" preservedQuery={preservedQuery} />
-      <main className="page-content compare-page-content" id="main-content" tabIndex={-1}>
+      <main className="page-content reference-page-content" id="main-content" tabIndex={-1}>
+        <ReferenceScreen screen="track" preservedQuery={preservedQuery} />
+        <details className="ref-workflow-details" id="track-evidence">
+          <summary id="track-evidence-trigger">Open observed path and region evidence</summary>
+          <div className="ref-workflow-content">
         <section className="compare-page-intro">
           <div className="eyebrow">TRACK / ONE RECORDED ATTEMPT</div>
           <h1>
@@ -481,6 +486,8 @@ export default async function TrackPage({
             />
           </>
         ) : null}
+          </div>
+        </details>
       </main>
       <footer className="footer-bar">
         <span>GP...T <b>·</b> LOCAL FIRST</span>

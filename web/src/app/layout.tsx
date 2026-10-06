@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import ReferenceDisclosureOpener from "./ReferenceDisclosureOpener";
 
 export const metadata: Metadata = {
   title: "GP...T · AI Race Engineer",
@@ -10,7 +11,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        {children}
+        <ReferenceDisclosureOpener />
+      </body>
     </html>
   );
 }

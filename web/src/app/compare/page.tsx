@@ -20,6 +20,7 @@ import {
   lapAttemptPageMatchesScope,
 } from "@/lib/attempt-inventory";
 import AppHeader from "../AppHeader";
+import ReferenceScreen from "../ReferenceScreens";
 import CompareResultPanel from "../CompareResultPanel";
 import PairedRegionPanel from "../PairedRegionPanel";
 import TrajectoryComparisonPanel from "../TrajectoryComparisonPanel";
@@ -624,10 +625,14 @@ export default async function ComparePage({
     <div className="app-shell">
       <AppHeader active="compare" preservedQuery={preservedQuery} />
       <main
-        className="page-content compare-page-content"
+        className="page-content reference-page-content"
         id="main-content"
         tabIndex={-1}
       >
+        <ReferenceScreen screen="compare" preservedQuery={preservedQuery} />
+        <details className="ref-workflow-details" id="comparison-workflow">
+          <summary>Open exact lap and comparison controls</summary>
+          <div className="ref-workflow-content">
         <section className="compare-page-intro">
           <div className="eyebrow">COMPARE / RECORDED ATTEMPTS</div>
           <h1>
@@ -1285,6 +1290,8 @@ export default async function ComparePage({
           {dashboardHref && <a href={dashboardHref}>Back to dashboard</a>}
           {resetHref && <a href={resetHref}>Clear comparison selections</a>}
         </div>
+          </div>
+        </details>
       </main>
       <footer className="footer-bar">
         <span>
