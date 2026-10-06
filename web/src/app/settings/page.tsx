@@ -87,8 +87,8 @@ export default async function SettingsPage({
                 Telemetry <b>Read-only</b>
               </li>
               <li>
-                <span className="settings-availability-dot" />
-                Devices <b>Planned</b>
+                <span className="settings-availability-dot is-ready" />
+                Devices <b>Local only</b>
               </li>
               <li>
                 <span className="settings-availability-dot is-ready" />
@@ -129,13 +129,15 @@ export default async function SettingsPage({
               <div className="settings-section-heading">
                 <div>
                   <span className="eyebrow">DEVICES</span>
-                  <h2>Input and output</h2>
+                  <h2>Microphone and voice</h2>
                 </div>
-                <span className="settings-state">PLANNED</span>
+                <span className="settings-state">LOCAL ONLY</span>
               </div>
               <p className="settings-copy">
-                Voice output uses the browser-discovered local voice. Device
-                routing, microphone access, and speech input are not available.
+                Voice output uses the browser-discovered local voice. In
+                Engineer, an explicit microphone recording can become an
+                editable English draft when the pinned local runtime is ready.
+                Device routing and background listening are not available.
               </p>
             </section>
             <SettingsHudPreferences />

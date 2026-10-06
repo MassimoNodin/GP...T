@@ -9,6 +9,7 @@ import type {
   TrackModelRecord,
 } from "@/lib/api";
 import { buildRecordedSpeechPlan } from "@/lib/recorded-speech-plan";
+import EngineerSpeechDraft from "./EngineerSpeechDraft";
 import {
   parseEngineerApiFailure,
   parseEngineerAskResult,
@@ -49,6 +50,8 @@ export default function EngineerQuestionComposer({
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<QuestionTurn[]>([]);
   const [busy, setBusy] = useState(false);
+  const [speechBusy, setSpeechBusy] = useState(false);
+  const [speechResetToken, setSpeechResetToken] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const activeRequest = useRef<AbortController | null>(null);
   const requestGeneration = useRef(0);
@@ -78,6 +81,7 @@ export default function EngineerQuestionComposer({
 
   const clear = () => {
     cancel();
+    setSpeechResetToken((current) => current + 1);
     setTurns([]);
     setQuestion("");
     setError(null);
@@ -85,7 +89,7 @@ export default function EngineerQuestionComposer({
 
   const ask = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (busy || turns.length >= MAX_TURNS) return;
+    if (busy || speechBusy || turns.length >= MAX_TURNS) return;
     const trimmed = question.trim();
     if (!trimmed) {
       setError("Enter a question about the selected recorded evidence.");
@@ -223,6 +227,14 @@ export default function EngineerQuestionComposer({
           placeholder="What does the selected lap show?"
           disabled={busy || turns.length >= MAX_TURNS}
         />
+        <EngineerSpeechDraft
+          question={question}
+          onQuestionChange={setQuestion}
+          selectionKey={selectionKey}
+          disabled={busy || turns.length >= MAX_TURNS}
+          resetToken={speechResetToken}
+          onWorkingChange={setSpeechBusy}
+        />
         <div className="engineer-ask-form-footer">
           <span aria-live="polite">
             {questionBytes.toLocaleString()} /{" "}
@@ -243,11 +255,16 @@ export default function EngineerQuestionComposer({
               type="submit"
               disabled={
                 busy ||
+                speechBusy ||
                 questionBytes > MAX_QUESTION_BYTES ||
                 turns.length >= MAX_TURNS
               }
             >
-              {busy ? "Checking selected evidence…" : "Ask"}
+              {busy
+                ? "Checking selected evidence…"
+                : speechBusy
+                  ? "Transcribing question…"
+                  : "Ask"}
             </button>
           </div>
         </div>

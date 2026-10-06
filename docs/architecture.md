@@ -1349,6 +1349,26 @@ Expose a bounded active-queue snapshot with at most 17 compact job rows, waiting
 
 **Rationale:** Stage 3 already calls for an import queue, while recording, replay, upload, and import already share one exclusive reservation. Durable FIFO state completes that workflow without competing ownership or a second scheduling mechanism. Pinning source metadata prevents an accepted queued job from silently changing meaning while it waits.
 
+## Decision 0086: add local speech drafts to the Engineer
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Add a user-triggered speech input path to the existing Ask GP...T composer. Record at most one 12-second clip after an explicit action and microphone permission. The browser produces a canonical 16 kHz, mono, signed 16-bit little-endian PCM WAV from the actual capture sample rate, with a bounded sample buffer independent of timer delivery. Stop and close tracks and audio processing on every terminal path, including permission resolving after cancellation, page hide, navigation, device loss, selection change, timeout, and replacement. Stop current read-aloud before opening the microphone.
+
+The protected local API and same-origin proxy accept at most 512 KiB and validate a strict 44-byte WAV header, format, channel count, sample rate, byte rate, alignment, data length, positive sample count, and no trailing data. Reject compressed audio and arbitrary request-supplied paths. Use a startup-configured absolute whisper.cpp CPU CLI and `tiny.en` model with pinned build, executable/dependency, and model SHA-256 identities. Fix language to English, transcription mode, CPU use, thread count, and output paths. Invoke through an argument array without a shell; never download or change model/runtime files during a request.
+
+Use one non-waiting process-local AI admission gate shared with Decision 0082. Transcription holds the gate until the child process exits, output streams are drained, and temporary files are removed. Ask retains its gate while cancellation-detached deterministic analysis drains. Neither operation reserves recording, replay, upload, or import. Cancellation terminates and reaps the transcription child; an unfinished cleanup continues to hold admission.
+
+The Windows setup helper builds whisper.cpp v1.9.3 at upstream commit `371b5a7561823ab2bb32142d2751e35e7534727b` and checks the published `tiny.en` SHA-1 before generating local SHA-256 pins. The executable and model remain outside the repository. The pin manifest is written beside the configured database and checked against the installed files before status or transcription is reported ready.
+
+Store audio and transcript only in app-owned temporary files and in bounded process memory; do not persist them in telemetry, import archives, question history, or logs. Recover and remove only strictly named stale files in the dedicated temporary directory at startup. Limit requests to 60 seconds, stdout/stderr and output files to fixed bounds, response bodies to 16 KiB, and transcripts to 4 KiB UTF-8. Return a bounded request ID, the exact audio SHA-256, and pinned runtime/model identities as processing provenance; these do not assert transcription accuracy or evidence validity.
+
+Return recognized text as an explicitly unverified English draft. Preserve the current typed question until the user chooses **Use transcript**. Never submit automatically or allow speech to change selected evidence, mode, reference, model, region, or query route. Keep the existing 1 KiB Ask limit; an oversized transcript must be edited and is never silently truncated. If microphone, runtime, or model is unavailable, typed questions remain available and the speech control reports the specific unavailable state. Do not use browser `SpeechRecognition`, background listening, remote recognition, global push-to-talk, or automatic response playback.
+
+**Rationale:** The browser can add a convenient voice path while the existing D0082 selection and deterministic evidence checks remain authoritative. A fixed local recognizer preserves the local-first data boundary, and an editable draft prevents recognition errors from silently becoming questions or changing an evidence selection. The shared AI gate bounds CPU use and stays held through work that outlives a cancelled request.
+
 ## Data flow
 
 ```text

@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-import threading
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from .ai_admission import AIGateLease, PROCESS_ENGINEER_AI_GATE
 from ..tracks.registry import TrackModelCatalog
 from .engineer_ask import (
     ENGINEER_ASK_VERSION,
@@ -20,9 +20,6 @@ from .ollama_runtime import OllamaUnavailable, OllamaRuntime
 from .service import ComparisonPolicy, compare_attempts
 
 
-_ANALYSIS_GATE = threading.Lock()
-
-
 async def answer_engineer_question(
     database_path: str | Path,
     selection: Mapping[str, object],
@@ -30,6 +27,7 @@ async def answer_engineer_question(
     *,
     runtime: OllamaRuntime,
     track_model_catalog: TrackModelCatalog | None = None,
+    gate_lease: AIGateLease | None = None,
 ) -> dict[str, object]:
     intent = selection.get("intent")
     allowed_routes = (
@@ -73,7 +71,9 @@ async def answer_engineer_question(
         }
 
     if route.route == "attempt_summary":
-        report = await _run_analysis(query_engineer_evidence, database_path, selection)
+        report = await _run_analysis(
+            query_engineer_evidence, database_path, selection, gate_lease=gate_lease
+        )
         report = _focused_report(report, route)
         return _report_answer(selection, route, model, report)
 
@@ -83,6 +83,7 @@ async def answer_engineer_question(
             database_path,
             selection,
             track_model_catalog=track_model_catalog,
+            gate_lease=gate_lease,
         )
         report = _focused_report(report, route)
         return _report_answer(selection, route, model, report)
@@ -94,6 +95,7 @@ async def answer_engineer_question(
             route,
             model,
             track_model_catalog=track_model_catalog,
+            gate_lease=gate_lease,
         )
 
     return _unavailable(selection, "router_route_unavailable", model=model)
@@ -160,6 +162,7 @@ async def _lap_debrief_answer(
     model: Mapping[str, object],
     *,
     track_model_catalog: TrackModelCatalog | None,
+    gate_lease: AIGateLease | None,
 ) -> dict[str, object]:
     if not _lap_debrief_is_selectable(selection, track_model_catalog):
         return _unavailable(selection, "lap_debrief_selection_unavailable", model=model)
@@ -176,6 +179,7 @@ async def _lap_debrief_answer(
             policy=ComparisonPolicy(str(selection["comparison_policy"])),
             track_model=entry.model,
             track_model_catalog=track_model_catalog,
+            gate_lease=gate_lease,
         )
     except (OSError, sqlite3.Error):
         return _unavailable(selection, "comparison_source_unavailable", model=model)
@@ -453,17 +457,23 @@ def _project_mapping(value: object, fields: Sequence[str]) -> dict[str, object] 
     return {field: value[field] for field in fields if field in value}
 
 
-async def _run_analysis(function: Any, *args: Any, **kwargs: Any) -> Any:
-    if not _ANALYSIS_GATE.acquire(blocking=False):
+async def _run_analysis(
+    function: Any,
+    *args: Any,
+    gate_lease: AIGateLease | None = None,
+    **kwargs: Any,
+) -> Any:
+    owns_lease = gate_lease is None
+    lease = gate_lease or PROCESS_ENGINEER_AI_GATE.try_acquire()
+    if lease is None:
         raise OllamaUnavailable("analysis_busy")
     work = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
     try:
         result = await asyncio.shield(work)
     except asyncio.CancelledError:
-        work.add_done_callback(lambda _done: _ANALYSIS_GATE.release())
+        lease.retain_until(work)
         raise
-    except BaseException:
-        _ANALYSIS_GATE.release()
-        raise
-    _ANALYSIS_GATE.release()
+    finally:
+        if owns_lease:
+            lease.close()
     return result

@@ -87,6 +87,18 @@ The helper uses a dedicated model directory under `%LOCALAPPDATA%\GP...T\ollama`
 
 For a side-by-side or portable Ollama install, pass its executable with `-OllamaExecutable C:\path\to\ollama.exe`; otherwise the helper uses `ollama` from `PATH`.
 
+### Local speech drafts
+
+On Windows, install the pinned local speech runtime once from the repository root:
+
+```powershell
+.\scripts\setup_local_speech_runtime.ps1
+```
+
+The script builds whisper.cpp v1.9.3 from the pinned upstream commit with CPU inference, downloads the English-only `tiny.en` model, verifies its published SHA-1, and writes SHA-256 pins for the executable, model, and any bundled DLLs. The build and model live under `%LOCALAPPDATA%\GP...T\speech-runtime`; only the pin manifest is written beside the configured database under `data`. With a different API database path, pass the same path using `-DatabasePath`.
+
+In **Engineer**, choose **Record question**, grant microphone access, then stop the clip or cancel it. GP...T transcribes locally and presents an editable, unverified English draft. **Use transcript** copies that draft into the existing question; it never submits automatically. Audio and transcript files are temporary and removed after processing. If the pinned runtime or microphone is unavailable, typed questions continue to work.
+
 Restart Next.js whenever this setting changes. Same-origin recording, import, replay, and upload actions accept the built-in port-3000 origins plus the configured local origin and its loopback host aliases; do not set it to a public or non-loopback origin. The API's database path and recording root are selected at server startup and are never accepted from a request. The API creates a random control token at the configured token-file path; the Next server reads it for same-origin recording, import, replay, and upload actions, and it is never sent to browser code. If you choose a different token-file path, set `F1_ENGINEER_CONTROL_TOKEN_FILE` for the Next server to that same path.
 
 Open **Recordings** and start recording before driving, then stop it after the session. Stop drains queued datagrams, writes and syncs the capture footer, then publishes the `.f1ecap` file into the inbox. A finalized capture can still have packet drops or invalid laps; inspect its capture-quality and lap evidence before treating it as a reference. Starting a capture while an import is running, or importing while recording, is rejected until the current operation finishes. If the API exits unexpectedly, its `.part` file is retained and marked interrupted; it is not resumed or imported automatically.

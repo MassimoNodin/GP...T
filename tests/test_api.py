@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import struct
 from types import SimpleNamespace
 
 import pytest
@@ -9,9 +11,23 @@ pytest.importorskip("fastapi")
 httpx = pytest.importorskip("httpx")
 
 import f1_engineer.api.app as api_module
+from f1_engineer.analysis.ai_admission import EngineerAIGate
 from f1_engineer.analysis.comparison_window import DistanceWindow
 from f1_engineer.api.app import create_app
 from f1_engineer.tracks import registry
+
+
+def _canonical_speech_wav(sample_count: int = 1) -> bytes:
+    pcm = b"\x00\x00" * sample_count
+    return (
+        b"RIFF"
+        + struct.pack("<I", 36 + len(pcm))
+        + b"WAVEfmt "
+        + struct.pack("<IHHIIHH", 16, 1, 1, 16_000, 32_000, 2, 16)
+        + b"data"
+        + struct.pack("<I", len(pcm))
+        + pcm
+    )
 
 
 def _get(
@@ -44,6 +60,52 @@ def _post_content(app, path: str, content: bytes) -> httpx.Response:
             return await client.post(path, content=content)
 
     return asyncio.run(request())
+
+
+def test_engineer_ai_gate_stays_held_while_cancelled_request_drains() -> None:
+    gate = EngineerAIGate()
+    lease = gate.try_acquire()
+    assert lease is not None
+    worker_started = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    finish_cleanup = asyncio.Event()
+
+    class ConnectedRequest:
+        async def is_disconnected(self) -> bool:
+            return False
+
+    async def worker() -> None:
+        worker_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cleanup_started.set()
+            await finish_cleanup.wait()
+            raise
+
+    async def exercise() -> None:
+        request_task = asyncio.create_task(
+            api_module._run_until_client_disconnect(
+                worker(), ConnectedRequest(), gate_lease=lease
+            )
+        )
+        await worker_started.wait()
+        request_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request_task
+        lease.close()
+        await cleanup_started.wait()
+        assert gate.try_acquire() is None
+        finish_cleanup.set()
+        async with asyncio.timeout(1):
+            while True:
+                next_lease = gate.try_acquire()
+                if next_lease is not None:
+                    next_lease.close()
+                    break
+                await asyncio.sleep(0.01)
+
+    asyncio.run(exercise())
 
 
 def test_sessions_api_is_versioned_and_keeps_session_uid_as_text(monkeypatch, tmp_path) -> None:
@@ -1616,9 +1678,73 @@ def test_engineer_ask_rejects_second_active_request_as_busy(monkeypatch, tmp_pat
             )
             assert second.status_code == 409
             assert second.json()["reason"] == "engineer_ask_busy"
+            audio = _canonical_speech_wav()
+            speech = await client.post(
+                "/api/v1/engineer/transcribe",
+                headers={
+                    "Authorization": "Bearer test-engineer-control-token",
+                    "Content-Type": "audio/wav",
+                    "X-Request-ID": "12345678-1234-4abc-8abc-123456789abc",
+                    "X-Audio-SHA256": hashlib.sha256(audio).hexdigest(),
+                },
+                content=audio,
+            )
+            assert speech.status_code == 409
+            assert speech.json()["reason"] == "engineer_ask_busy"
             release.set()
             first_response = await first
             assert first_response.status_code == 200
             assert first_response.json()["data"]["status"] == "unavailable"
 
     asyncio.run(exercise())
+
+
+def test_engineer_speech_status_strict_wav_and_missing_pin(tmp_path) -> None:
+    fastapi_testclient = pytest.importorskip("fastapi.testclient")
+    app = create_app(
+        tmp_path / "speech.sqlite3",
+        recordings_root=tmp_path / "captures",
+        control_token="test-speech-control-token",
+        recording_host="127.0.0.1",
+        recording_port=20890,
+    )
+    headers = {
+        "Authorization": "Bearer test-speech-control-token",
+        "Content-Type": "audio/wav",
+        "X-Request-ID": "12345678-1234-4abc-8abc-123456789abc",
+    }
+
+    with fastapi_testclient.TestClient(app) as client:
+        status = client.get("/api/v1/engineer/transcribe")
+        assert status.status_code == 200
+        assert status.json()["data"]["status"] == "unavailable"
+        assert status.json()["data"]["reason"] == "runtime_not_configured"
+
+        malformed = b"not a canonical WAV"
+        malformed_response = client.post(
+            "/api/v1/engineer/transcribe",
+            headers={**headers, "X-Audio-SHA256": hashlib.sha256(malformed).hexdigest()},
+            content=malformed,
+        )
+        assert malformed_response.status_code == 422
+        assert malformed_response.json()["reason"] == "audio_size_invalid"
+
+        audio = _canonical_speech_wav()
+        audio_headers = {**headers, "X-Audio-SHA256": hashlib.sha256(audio).hexdigest()}
+        unavailable = client.post(
+            "/api/v1/engineer/transcribe",
+            headers=audio_headers,
+            content=audio,
+        )
+        assert unavailable.status_code == 503
+        assert unavailable.json()["reason"] == "runtime_not_configured"
+        retried = client.post(
+            "/api/v1/engineer/transcribe",
+            headers=audio_headers,
+            content=audio,
+        )
+        assert retried.status_code == 503
+        assert retried.json()["reason"] == "runtime_not_configured"
+        speech_temp = tmp_path / ".f1-engineer-speech"
+        assert speech_temp.exists()
+        assert list(speech_temp.iterdir()) == []

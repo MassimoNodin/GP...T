@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import os
 import re
@@ -17,6 +18,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, select_reference
+from ..analysis.ai_admission import AIGateLease, PROCESS_ENGINEER_AI_GATE
+from ..analysis.local_speech import (
+    LocalSpeechRuntime,
+    LocalSpeechUnavailable,
+    SPEECH_MAX_AUDIO_BYTES,
+    SPEECH_MAX_RESPONSE_BYTES,
+    validate_canonical_wav,
+)
 from ..analysis.session_best import assess_session_best
 from ..analysis.comparison_window import optional_distance_window
 from ..analysis.engineer_query import query_engineer_evidence
@@ -111,6 +120,10 @@ REPLAY_CONTROL_CONFLICT_REASONS = {
     "replay_not_paused",
     "replay_step_in_progress",
 }
+_ENGINEER_SPEECH_REQUEST_ID = re.compile(
+    r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$"
+)
+_ENGINEER_SPEECH_SHA256 = re.compile(r"^[a-f0-9]{64}$")
 
 
 PayloadT = TypeVar("PayloadT")
@@ -1029,6 +1042,10 @@ def create_app(
     ollama_runtime = engineer_runtime or OllamaRuntime(
         configured_database_path.parent / ".f1-engineer-ollama-model.json"
     )
+    local_speech_runtime = LocalSpeechRuntime(
+        configured_database_path.parent / ".f1-engineer-whisper-pin.json",
+        configured_database_path.parent / ".f1-engineer-speech",
+    )
     engineer_ask_lock = asyncio.Lock()
 
     @asynccontextmanager
@@ -1038,11 +1055,13 @@ def create_app(
         recording_controller.start()
         replay_controller.start()
         import_controller.enable_dispatch()
+        await run_in_threadpool(local_speech_runtime.cleanup_stale_temporary_files)
         app.state.import_controller = import_controller
         app.state.recording_controller = recording_controller
         app.state.replay_controller = replay_controller
         app.state.recording_upload_service = recording_upload_service
         app.state.ollama_runtime = ollama_runtime
+        app.state.local_speech_runtime = local_speech_runtime
         try:
             yield
         finally:
@@ -2537,6 +2556,15 @@ def create_app(
         status = await ollama_runtime.status()
         return APIResponse[dict[str, Any]](data=status)
 
+    @app.get("/api/v1/engineer/transcribe", response_model=APIResponse[dict[str, Any]])
+    async def engineer_speech_runtime_status(
+        request: Request,
+    ) -> APIResponse[dict[str, Any]] | JSONResponse:
+        if request.query_params:
+            return _api_error(400, "engineer_speech_query_not_allowed")
+        status = await run_in_threadpool(local_speech_runtime.status)
+        return APIResponse[dict[str, Any]](data=status)
+
     @app.post("/api/v1/engineer/ask")
     async def engineer_ask(
         request: Request,
@@ -2551,6 +2579,7 @@ def create_app(
             return _api_error(415, "engineer_ask_json_required")
         deadline = asyncio.get_running_loop().time() + 60.0
         lock_acquired = False
+        gate_lease: AIGateLease | None = None
         try:
             async with asyncio.timeout_at(deadline):
                 try:
@@ -2571,17 +2600,22 @@ def create_app(
                 if engineer_ask_lock.locked():
                     return _api_error(409, "engineer_ask_busy")
 
+                gate_lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
+                if gate_lease is None:
+                    return _api_error(409, "engineer_ask_busy")
                 await engineer_ask_lock.acquire()
                 lock_acquired = True
-                data = await _run_engineer_ask_until_disconnect(
+                data = await _run_until_client_disconnect(
                     answer_engineer_question(
                         configured_database_path,
                         body.selection.model_dump(),
                         body.question.strip(),
                         runtime=ollama_runtime,
                         track_model_catalog=track_model_catalog,
+                        gate_lease=gate_lease,
                     ),
                     request,
+                    gate_lease=gate_lease,
                 )
                 response = JSONResponse(
                     status_code=200,
@@ -2600,7 +2634,7 @@ def create_app(
             return _api_error(504, "engineer_ask_deadline_exceeded")
         except _EngineerAskBodyLimitExceeded:
             return _api_error(413, "engineer_ask_request_limit_exceeded")
-        except _EngineerAskClientDisconnected:
+        except _EngineerClientDisconnected:
             return _api_error(499, "engineer_ask_client_disconnected")
         except OllamaUnavailable as exc:
             if exc.reason == "analysis_busy":
@@ -2615,8 +2649,99 @@ def create_app(
         except RuntimeError:
             return _api_error(503, "engineer_ask_unavailable")
         finally:
+            if gate_lease is not None:
+                gate_lease.close()
             if lock_acquired:
                 engineer_ask_lock.release()
+
+    @app.post("/api/v1/engineer/transcribe")
+    async def engineer_speech_transcription(
+        request: Request,
+        authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+        request_id: Annotated[str | None, Header(alias="X-Request-ID")] = None,
+        expected_audio_sha256: Annotated[str | None, Header(alias="X-Audio-SHA256")] = None,
+    ) -> JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(401, "engineer_speech_unauthorized")
+        if request.query_params:
+            return _api_error(400, "engineer_speech_query_not_allowed")
+        content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if content_type != "audio/wav":
+            return _api_error(415, "engineer_speech_wav_required")
+        if (
+            not isinstance(request_id, str)
+            or not _ENGINEER_SPEECH_REQUEST_ID.fullmatch(request_id)
+            or not isinstance(expected_audio_sha256, str)
+            or not _ENGINEER_SPEECH_SHA256.fullmatch(expected_audio_sha256)
+        ):
+            return _api_error(422, "engineer_speech_correlation_invalid")
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            if not re.fullmatch(r"[0-9]{1,10}", content_length):
+                return _api_error(400, "engineer_speech_content_length_invalid")
+            if int(content_length) > SPEECH_MAX_AUDIO_BYTES:
+                return _api_error(413, "engineer_speech_audio_limit_exceeded")
+
+        deadline = asyncio.get_running_loop().time() + 60.0
+        gate_lease: AIGateLease | None = None
+        try:
+            async with asyncio.timeout_at(deadline):
+                wav = await _read_limited_body(request, SPEECH_MAX_AUDIO_BYTES)
+                validate_canonical_wav(wav)
+                actual_audio_sha256 = hashlib.sha256(wav).hexdigest()
+                if not hmac.compare_digest(actual_audio_sha256, expected_audio_sha256):
+                    return _api_error(422, "engineer_speech_audio_digest_mismatch")
+                gate_lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
+                if gate_lease is None:
+                    return _api_error(409, "engineer_ask_busy")
+                transcription = await _run_until_client_disconnect(
+                    local_speech_runtime.transcribe(wav, gate_lease=gate_lease),
+                    request,
+                    gate_lease=gate_lease,
+                )
+                response = JSONResponse(
+                    status_code=200,
+                    content={
+                        "api_version": "v1",
+                        "status": "ok",
+                        "data": {
+                            "schema_version": 1,
+                            "request_id": request_id,
+                            "audio_sha256": transcription.audio_sha256,
+                            "transcript": transcription.transcript,
+                            "language": "en",
+                            "verified": False,
+                            "runtime": {
+                                "name": "whisper.cpp",
+                                "version": transcription.runtime_version,
+                                "model_name": transcription.model_name,
+                                "model_sha256": transcription.model_sha256,
+                                "runtime_id": transcription.runtime_id,
+                                "placement": "CPU",
+                            },
+                        },
+                        "reason": None,
+                    },
+                    headers={"Cache-Control": "no-store"},
+                )
+                if len(response.body) > SPEECH_MAX_RESPONSE_BYTES:
+                    return _api_error(502, "engineer_speech_response_limit_exceeded")
+                return response
+        except LocalSpeechUnavailable as exc:
+            return _api_error(_engineer_speech_error_status(exc.reason), exc.reason)
+        except TimeoutError:
+            return _api_error(504, "engineer_speech_deadline_exceeded")
+        except _EngineerRequestBodyLimitExceeded:
+            return _api_error(413, "engineer_speech_audio_limit_exceeded")
+        except ValueError:
+            return _api_error(400, "engineer_speech_content_length_invalid")
+        except _EngineerClientDisconnected:
+            return _api_error(499, "engineer_speech_client_disconnected")
+        except (OSError, RuntimeError):
+            return _api_error(503, "engineer_speech_unavailable")
+        finally:
+            if gate_lease is not None:
+                gate_lease.close()
 
     @app.get(
         "/api/v1/references/session-best",
@@ -2718,49 +2843,94 @@ def _api_error(status_code: int, reason: str) -> JSONResponse:
     )
 
 
-class _EngineerAskBodyLimitExceeded(Exception):
+def _engineer_speech_error_status(reason: str) -> int:
+    if "limit_exceeded" in reason:
+        return 413
+    if reason.startswith("audio_") or reason == "engineer_speech_audio_digest_mismatch":
+        return 422
+    if reason == "transcription_timeout":
+        return 504
+    return 503
+
+
+class _EngineerRequestBodyLimitExceeded(Exception):
     pass
 
 
-class _EngineerAskClientDisconnected(Exception):
+class _EngineerAskBodyLimitExceeded(_EngineerRequestBodyLimitExceeded):
+    pass
+
+
+class _EngineerClientDisconnected(Exception):
     pass
 
 
 async def _read_engineer_ask_body(request: Request) -> bytes:
-    maximum = 8 * 1_024
+    return await _read_limited_body(
+        request,
+        8 * 1_024,
+        limit_exception=_EngineerAskBodyLimitExceeded,
+    )
+
+
+async def _read_limited_body(
+    request: Request,
+    maximum: int,
+    *,
+    limit_exception: type[Exception] = _EngineerRequestBodyLimitExceeded,
+) -> bytes:
     declared = request.headers.get("content-length")
     if declared is not None:
         if not re.fullmatch(r"[0-9]{1,10}", declared):
             raise ValueError("invalid_content_length")
         if int(declared) > maximum:
-            raise _EngineerAskBodyLimitExceeded
+            raise limit_exception
     chunks: list[bytes] = []
     size = 0
     async for chunk in request.stream():
         size += len(chunk)
         if size > maximum:
-            raise _EngineerAskBodyLimitExceeded
+            raise limit_exception
         chunks.append(chunk)
     return b"".join(chunks)
 
 
-async def _run_engineer_ask_until_disconnect(awaitable: Any, request: Request) -> Any:
+async def _run_until_client_disconnect(
+    awaitable: Any,
+    request: Request,
+    *,
+    gate_lease: AIGateLease,
+) -> Any:
     task = asyncio.create_task(awaitable)
+    drain_task: asyncio.Task[None] | None = None
+
+    def cancel_and_drain() -> asyncio.Task[None]:
+        nonlocal drain_task
+        if drain_task is None:
+            task.cancel()
+            drain_task = asyncio.create_task(_consume_cancelled_task(task))
+        return drain_task
+
     try:
         while True:
             done, _pending = await asyncio.wait({task}, timeout=0.2)
             if done:
                 return await task
             if await request.is_disconnected():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                raise _EngineerAskClientDisconnected
+                drain = cancel_and_drain()
+                gate_lease.retain_until(drain)
+                raise _EngineerClientDisconnected
     except asyncio.CancelledError:
-        task.cancel()
+        drain = cancel_and_drain()
+        gate_lease.retain_until(drain)
         raise
+
+
+async def _consume_cancelled_task(task: asyncio.Task[Any]) -> None:
+    try:
+        await task
+    except BaseException:
+        pass
 
 
 def _stringify_session_uids(value: Any) -> Any:
