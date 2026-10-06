@@ -4,6 +4,7 @@ import AppHeader from "../AppHeader";
 import SettingsVoicePreferences from "../SettingsVoicePreferences";
 import SettingsStorageUsage from "../SettingsStorageUsage";
 import SettingsHudPreferences from "../SettingsHudPreferences";
+import SettingsTelemetryService from "../SettingsTelemetryService";
 
 const sections = [
   { id: "general", label: "General" },
@@ -35,7 +36,7 @@ export default async function SettingsPage({
             <span>engineer setup.</span>
           </h1>
           <p>
-            Voice read-aloud preferences are available in this browser. Service and data settings will appear here only when their controls are ready.
+            Voice preferences, telemetry service status, and managed storage are available here. Other settings remain clearly marked until their controls are ready.
           </p>
         </section>
 
@@ -51,12 +52,12 @@ export default async function SettingsPage({
           <aside className="settings-overview panel" aria-label="Settings availability">
             <span className="eyebrow">AVAILABILITY</span>
             <h2>One active group</h2>
-            <p>Voice &amp; Audio changes only the browser’s local read-aloud presentation.</p>
+            <p>Voice &amp; Audio changes stay in this browser; telemetry status is observed from the local service.</p>
             <ul>
               <li><span className="settings-availability-dot is-ready" />Voice &amp; Audio <b>Available</b></li>
               <li><span className="settings-availability-dot" />General <b>Planned</b></li>
               <li><span className="settings-availability-dot" />AI Runtime <b>Not configured</b></li>
-              <li><span className="settings-availability-dot" />Telemetry <b>Planned</b></li>
+              <li><span className="settings-availability-dot is-ready" />Telemetry <b>Read-only</b></li>
               <li><span className="settings-availability-dot" />Devices <b>Planned</b></li>
               <li><span className="settings-availability-dot is-ready" />HUD <b>Available</b></li>
               <li><span className="settings-availability-dot is-ready" />Storage <b>Measured</b></li>
@@ -81,13 +82,7 @@ export default async function SettingsPage({
 
             <SettingsVoicePreferences />
 
-            <section className="settings-section settings-planned-section panel" id="telemetry">
-              <div className="settings-section-heading">
-                <div><span className="eyebrow">TELEMETRY</span><h2>Local service</h2></div>
-                <span className="settings-state">PLANNED</span>
-              </div>
-              <p className="settings-copy">UDP host, port, and service state are not changed from this page.</p>
-            </section>
+            <SettingsTelemetryService />
             <section className="settings-section settings-planned-section panel" id="devices">
               <div className="settings-section-heading">
                 <div><span className="eyebrow">DEVICES</span><h2>Input and output</h2></div>
@@ -102,7 +97,7 @@ export default async function SettingsPage({
       </main>
       <footer className="footer-bar">
         <span>GP...T <b>·</b> LOCAL FIRST</span>
-        <span>Browser speech preferences · Read-only storage measurement</span>
+        <span>Browser speech preferences · Read-only telemetry and storage</span>
       </footer>
     </div>
   );

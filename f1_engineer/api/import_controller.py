@@ -45,6 +45,12 @@ class ImportController:
     def ready(self) -> bool:
         return self._owns_lock and self._executor is not None
 
+    @property
+    def current_operation_reservation(self) -> str | None:
+        """Return the current exclusive operation without changing ownership."""
+        with self._operation_lock:
+            return self._active_operation
+
     def start(self) -> None:
         try:
             self._lock.__enter__()

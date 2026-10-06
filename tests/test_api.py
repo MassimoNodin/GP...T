@@ -1399,3 +1399,86 @@ def test_storage_usage_api_measures_only_configured_locations(tmp_path) -> None:
     assert body["data"]["scopes"]["database"]["logical_bytes"] == len(b"database")
     assert body["data"]["scopes"]["finalized_captures"]["logical_bytes"] == len(b"capture-data")
     assert str(tmp_path) not in response.text
+
+
+def test_telemetry_service_reports_bounded_effective_configuration(tmp_path) -> None:
+    app = create_app(
+        tmp_path / "telemetry.sqlite3",
+        recordings_root=tmp_path / "captures",
+        recording_host="127.0.0.1",
+        recording_port=20888,
+        recording_queue_size=4096,
+    )
+
+    response = _get(app, "/api/v1/telemetry/service")
+
+    assert response.status_code == 200
+    assert len(response.content) <= 4096
+    assert response.headers["cache-control"] == "no-store"
+    body = response.json()
+    assert body["api_version"] == "v1"
+    assert body["status"] == "ok"
+    assert body["data"]["udp_bind_host"] == "127.0.0.1"
+    assert body["data"]["udp_port"] == 20888
+    assert body["data"]["receive_queue_size"] == 4096
+    assert body["data"]["configuration_available"] is True
+    assert body["data"]["controller_ready"] is False
+    assert body["data"]["operation_reservation"] == "unavailable"
+    assert body["data"]["unavailable_reason"] == "recording_controller_unavailable"
+    assert body["data"]["observed_at_utc"].endswith("Z")
+
+
+def test_telemetry_service_rejects_query_parameters_and_unsupported_configuration(
+    tmp_path,
+) -> None:
+    query_response = _get(
+        create_app(tmp_path / "query.sqlite3"),
+        "/api/v1/telemetry/service",
+        params={"host": "127.0.0.1"},
+    )
+    assert query_response.status_code == 422
+    assert (
+        query_response.json()["reason"]
+        == "telemetry_service_query_parameters_unsupported"
+    )
+
+    unsupported = _get(
+        create_app(
+            tmp_path / "unsupported.sqlite3",
+            recording_queue_size=1_000_001,
+        ),
+        "/api/v1/telemetry/service",
+    )
+    assert unsupported.status_code == 200
+    data = unsupported.json()["data"]
+    assert data["configuration_available"] is False
+    assert data["udp_bind_host"] is None
+    assert data["udp_port"] is None
+    assert data["receive_queue_size"] is None
+    assert data["unavailable_reason"] == "telemetry_configuration_unsupported"
+
+
+def test_telemetry_service_reports_reservations_without_changing_them(tmp_path) -> None:
+    app = create_app(tmp_path / "reservations.sqlite3")
+
+    async def exercise() -> None:
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                controller = app.state.import_controller
+                for operation in ("recording", "import", "replay", "upload"):
+                    assert controller.reserve_operation(operation)
+                    first = await client.get("/api/v1/telemetry/service")
+                    second = await client.get("/api/v1/telemetry/service")
+                    assert first.status_code == second.status_code == 200
+                    assert first.json()["data"]["controller_ready"] is True
+                    assert first.json()["data"]["operation_reservation"] == operation
+                    assert second.json()["data"]["operation_reservation"] == operation
+                    assert controller.current_operation_reservation == operation
+                    controller.release_operation(operation)
+                idle = await client.get("/api/v1/telemetry/service")
+                assert idle.json()["data"]["operation_reservation"] == "idle"
+
+    asyncio.run(exercise())

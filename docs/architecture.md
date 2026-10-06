@@ -1261,6 +1261,20 @@ Validate only the bounded F1ECAP magic, metadata length, JSON-object metadata, a
 
 **Rationale:** capture download, catalog discovery, replay, and import already use one configured recordings root. A streaming upload completes the missing local ingestion path while keeping filesystem authority in the service, operation exclusivity consistent, and import/analysis decisions independent from transfer success. Handle-based publication plus a held marker supplies a race-resistant Windows directory boundary while retaining atomic no-replacement publication on supported local filesystems. Detached finalizers preserve the total response deadline without releasing the reservation while storage work still owns the upload.
 
+## Decision 0081: expose bounded telemetry service status in Settings
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Add read-only `GET /api/v1/telemetry/service` and a same-origin web proxy. The response reports an observation timestamp, the effective UDP bind host, port, and receive queue capacity from the existing `RecordingController`, controller readiness, and the current exclusive operation reservation (`idle`, `recording`, `import`, `replay`, or `upload`). Reservation is read through a new public accessor protected by the import controller's operation lock. Bound the complete response to 4 KiB, the host to 256 characters, the port to 1–65,535, and the supported queue size to 1–1,000,000. Unsupported configuration is explicitly unavailable rather than truncated or reinterpreted. Reject all query parameters and accept no client-supplied path or configuration.
+
+The Settings panel provides explicit Refresh and Copy Port actions, last-checked time, and the configured service values. Explain that a wildcard bind such as `0.0.0.0` is a listening address, not the destination address entered in the game. Report only configured settings and last-observed controller/reservation state: readiness does not prove that a UDP socket is bound, the game is connected, or packets are arriving. Failed refreshes clear previously displayed status. Give each refresh a 10-second deadline covering response-body parsing; a newer request or unmount aborts the prior request, and timeout leaves retry available. Do not open sockets, probe the game, scan files, read telemetry history, change reservations, or couple this observation to browser-local voice/HUD preferences. Capture remains mode-independent and this panel grants no comparison or coaching eligibility.
+
+**Acceptance:** default and custom bind/queue settings are reported exactly; bounded unsupported settings are explicit; idle, recording (including paused groups), import, replay, and upload reservations are observed without mutation; a controller that cannot start reports unavailable; query parameters are rejected; repeated reads leave operation ownership and capture counters unchanged; malformed responses, service failure, clipboard denial, keyboard navigation, and narrow layouts have usable states.
+
+**Rationale:** the configured UDP destination and an occupied local operation are frequent setup questions. Reusing controller configuration and the existing reservation owner makes those facts visible without creating a second source of truth, touching capture state, or implying that the game is sending packets.
+
 ## Data flow
 
 ```text

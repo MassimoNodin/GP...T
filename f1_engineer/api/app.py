@@ -5,7 +5,7 @@ import os
 import re
 import sqlite3
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Generic, Literal, TypeVar
 
@@ -221,6 +221,21 @@ class StorageUsageRecord(BaseModel):
     measurement_note: str
     scopes: StorageScopesRecord
     volumes: StorageVolumesRecord
+
+
+class TelemetryServiceRecord(BaseModel):
+    observed_at_utc: str = Field(max_length=40)
+    udp_bind_host: str | None = Field(max_length=256)
+    udp_port: int | None = Field(ge=1, le=65535)
+    receive_queue_size: int | None = Field(ge=1, le=1_000_000)
+    configuration_available: bool
+    controller_ready: bool
+    operation_reservation: Literal[
+        "idle", "recording", "import", "replay", "upload", "unavailable"
+    ]
+    unavailable_reason: Literal[
+        "telemetry_configuration_unsupported", "recording_controller_unavailable"
+    ] | None
 
 
 class ImportProgressRecord(BaseModel):
@@ -1729,6 +1744,65 @@ def create_app(
                 configured_database_path, configured_recordings_root
             )
         )
+
+    @app.get(
+        "/api/v1/telemetry/service",
+        response_model=APIResponse[TelemetryServiceRecord],
+    )
+    def telemetry_service(
+        request: Request, response: Response
+    ) -> APIResponse[TelemetryServiceRecord] | JSONResponse:
+        response.headers["Cache-Control"] = "no-store"
+        if request.query_params:
+            return _api_error(422, "telemetry_service_query_parameters_unsupported")
+
+        host = recording_controller.host
+        port = recording_controller.port
+        queue_size = recording_controller.queue_size
+        configuration_available = (
+            isinstance(host, str)
+            and 0 < len(host) <= 256
+            and isinstance(port, int)
+            and not isinstance(port, bool)
+            and 1 <= port <= 65535
+            and isinstance(queue_size, int)
+            and not isinstance(queue_size, bool)
+            and 1 <= queue_size <= 1_000_000
+        )
+        controller_ready = recording_controller.ready
+        reservation = (
+            import_controller.current_operation_reservation
+            if controller_ready
+            else None
+        )
+        if reservation not in {None, "recording", "import", "replay", "upload"}:
+            reservation = None
+
+        unavailable_reason = (
+            "telemetry_configuration_unsupported"
+            if not configuration_available
+            else "recording_controller_unavailable"
+            if not controller_ready
+            else None
+        )
+        data = TelemetryServiceRecord(
+            observed_at_utc=datetime.now(timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            udp_bind_host=host if configuration_available else None,
+            udp_port=port if configuration_available else None,
+            receive_queue_size=queue_size if configuration_available else None,
+            configuration_available=configuration_available,
+            controller_ready=controller_ready,
+            operation_reservation=(
+                (reservation or "idle") if controller_ready else "unavailable"
+            ),
+            unavailable_reason=unavailable_reason,
+        )
+        response = APIResponse[TelemetryServiceRecord](data=data)
+        if len(response.model_dump_json().encode("utf-8")) > 4096:
+            return _api_error(503, "telemetry_service_response_unavailable")
+        return response
 
     @app.post(
         "/api/v1/recording-groups/start",
