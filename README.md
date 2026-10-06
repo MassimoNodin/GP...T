@@ -75,6 +75,16 @@ $env:F1_ENGINEER_WEB_ORIGIN = "http://127.0.0.1:3001"
 npm run dev -- --port 3001
 ```
 
+### Local Ask GP...T runtime
+
+Install Ollama 0.9.0 or newer, then start the app-managed private profile and download the pinned Qwen3 4B model once:
+
+```powershell
+.\scripts\start-private-ollama.ps1 -InstallModel
+```
+
+The helper uses a dedicated model directory under `%LOCALAPPDATA%\GP...T\ollama`, binds only to `127.0.0.1:11435`, requests Ollama's no-cloud setting, and writes the exact model digest pin under `data`. The 0.9.0 minimum supports the `think` request control used by the router. Later starts use `.\scripts\start-private-ollama.ps1`; stop the app-managed process with `.\scripts\stop-private-ollama.ps1`. Stopping preserves the downloaded model and pin. The Settings page shows the observed model digest and, after a successful question, the last confirmed CPU placement. Cloud routing remains labeled **unverified** because the app cannot attest every Ollama daemon setting; the no-cloud request is not treated as proof. The app has no remote-model or cloud fallback and sends the model only the current bounded question and supported route choices.
+
 Restart Next.js whenever this setting changes. Same-origin recording, import, replay, and upload actions accept the built-in port-3000 origins plus the configured local origin and its loopback host aliases; do not set it to a public or non-loopback origin. The API's database path and recording root are selected at server startup and are never accepted from a request. The API creates a random control token at the configured token-file path; the Next server reads it for same-origin recording, import, replay, and upload actions, and it is never sent to browser code. If you choose a different token-file path, set `F1_ENGINEER_CONTROL_TOKEN_FILE` for the Next server to that same path.
 
 Open **Recordings** and start recording before driving, then stop it after the session. Stop drains queued datagrams, writes and syncs the capture footer, then publishes the `.f1ecap` file into the inbox. A finalized capture can still have packet drops or invalid laps; inspect its capture-quality and lap evidence before treating it as a reference. Starting a capture while an import is running, or importing while recording, is rejected until the current operation finishes. If the API exits unexpectedly, its `.part` file is retained and marked interrupted; it is not resumed or imported automatically.

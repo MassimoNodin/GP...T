@@ -1,4 +1,8 @@
-import type { Comparison, LapDebrief, LapRecord } from "@/lib/api";
+import type {
+  Comparison,
+  LapDebrief,
+  LapRecord as FullLapRecord,
+} from "@/lib/api";
 
 const debriefVersion = "lap-debrief-v1";
 const comparisonBriefVersion = "comparison-brief-v1";
@@ -24,21 +28,24 @@ const supportValues = [
   "shared_time_coverage",
 ] as const;
 
-type AttemptIdentity = Pick<
-  LapRecord,
+export type LapDebriefAttemptIdentity = Pick<
+  FullLapRecord,
   | "attempt_key"
   | "run_id"
   | "session_uid"
   | "car_index"
+  | "lap_time_ms"
   | "trace_sha256"
   | "trace_schema_version"
 >;
+type AttemptIdentity = LapDebriefAttemptIdentity;
+type LapRecord = LapDebriefAttemptIdentity;
 
 export function lapDebriefMatchesComparison(
   value: unknown,
   comparisonValue: unknown,
-  target: LapRecord,
-  reference: LapRecord,
+  target: LapDebriefAttemptIdentity,
+  reference: LapDebriefAttemptIdentity,
 ): value is LapDebrief {
   const report = record(value);
   const comparison = record(comparisonValue);

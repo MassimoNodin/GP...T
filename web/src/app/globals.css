@@ -932,6 +932,87 @@ h1 span {
 .settings-telemetry-warning {
   color: #895c3c;
 }
+.settings-ai-runtime {
+  display: grid;
+  gap: 10px;
+}
+.settings-ai-runtime > .settings-copy,
+.settings-ai-note,
+.settings-ai-setup p,
+.settings-ai-setup li,
+.settings-ai-actions > span {
+  margin: 0;
+  color: #71809a;
+  font-size: 10px;
+  line-height: 1.65;
+}
+.settings-ai-runtime .settings-state {
+  max-width: 150px;
+  text-align: center;
+}
+.settings-ai-grid {
+  margin-top: 0;
+}
+.settings-ai-setup {
+  padding: 13px;
+  border: 1px solid #e5ebf3;
+  background: #f8faff;
+}
+.settings-ai-setup h3 {
+  margin: 0 0 8px;
+  color: #253550;
+  font-size: 11px;
+}
+.settings-ai-setup ol {
+  margin: 0;
+  padding-left: 20px;
+}
+.settings-ai-command {
+  display: block;
+  margin: 9px 0;
+  padding: 10px 12px;
+  overflow-wrap: anywhere;
+  border: 1px solid #dce5ef;
+  color: #192842;
+  background: #fff;
+  font: 10px var(--font-mono);
+}
+.settings-ai-setup p code {
+  color: #253550;
+  font: 9px var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.settings-ai-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.settings-ai-actions .button-tertiary {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid #cbd7e8;
+  border-radius: 6px;
+  color: #29466e;
+  background: #f8faff;
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.settings-ai-actions .button-tertiary:focus-visible {
+  outline: 2px solid #2670dd;
+  outline-offset: 2px;
+}
+.settings-ai-actions .button-tertiary:disabled {
+  color: #8b98aa;
+  background: #f2f5f9;
+  cursor: wait;
+}
+.settings-ai-error {
+  margin: 0;
+  color: #895c3c;
+  font-size: 10px;
+}
 .track-selection-panel,
 .track-attempt-summary,
 .track-model-panel {

@@ -43,6 +43,74 @@ export interface EngineerQueryReport {
   ranking_eligible: false;
 }
 
+export type EngineerAskSelection =
+  | {
+      intent: "attempt_summary";
+      target_attempt_key: string;
+    }
+  | {
+      intent: "region_comparison";
+      target_attempt_key: string;
+      reference_attempt_key: string;
+      comparison_policy: "time_trial" | "practice_qualifying";
+      track_model_id: string;
+      track_model_revision: number;
+      region_identifier: string;
+    };
+
+export interface EngineerAskModel {
+  model_name: string;
+  model_digest: string;
+  runtime_version: string | null;
+  inference_placement: string;
+  latency_ms: number;
+}
+
+export interface EngineerAskResult {
+  schema_version: 1;
+  analysis_version: "engineer-ask-v1";
+  status: "answered" | "partial" | "unavailable" | "unsupported";
+  route:
+    | "attempt_summary"
+    | "region_comparison"
+    | "lap_debrief"
+    | "unsupported"
+    | null;
+  focus: string | null;
+  message: string;
+  reason?: string;
+  selection: Record<string, unknown>;
+  report: EngineerQueryReport | null;
+  debrief: LapDebrief | null;
+  debrief_evidence: Record<string, unknown> | null;
+  model: EngineerAskModel | null;
+  diagnostic_only: true;
+  coaching_eligible: false;
+  ranking_eligible: false;
+}
+
+export interface EngineerRuntimeStatus {
+  status:
+    | "ready"
+    | "not_configured"
+    | "model_unavailable"
+    | "model_changed"
+    | "model_rejected"
+    | "unavailable";
+  reason: string | null;
+  runtime: "Ollama";
+  runtime_version: string | null;
+  endpoint: string;
+  model_name: string;
+  model_digest: string | null;
+  model_quantization: string | null;
+  model_parameter_size: string | null;
+  cloud_routing: string;
+  requested_placement: "CPU";
+  last_inference_placement: string | null;
+  last_inference_at_utc: string | null;
+}
+
 export interface RecordingSourceRecord {
   capture_id: string;
   display_name: string;
@@ -533,7 +601,12 @@ export interface PlayerParticipantSnapshot {
 
 export interface PlayerParticipantContext {
   schema_version: 1;
-  status: "observed" | "observed_unchanged" | "observed_changed" | "unknown" | "incomplete";
+  status:
+    | "observed"
+    | "observed_unchanged"
+    | "observed_changed"
+    | "unknown"
+    | "incomplete";
   continuity_claim: false;
   reason?: string;
   reasons?: string[];
@@ -581,7 +654,12 @@ export interface PlayerCarSetupSnapshot {
 
 export interface PlayerCarSetupContext {
   schema_version: 1;
-  status: "observed" | "observed_unchanged" | "observed_changed" | "unknown" | "incomplete";
+  status:
+    | "observed"
+    | "observed_unchanged"
+    | "observed_changed"
+    | "unknown"
+    | "incomplete";
   continuity_claim: false;
   reason?: string;
   reasons?: string[];
@@ -647,7 +725,13 @@ export interface LapAttemptPage {
 }
 
 export interface AttemptTimingEvidence {
-  status: "matched" | "ambiguous" | "conflicting" | "unavailable" | "truncated" | string;
+  status:
+    | "matched"
+    | "ambiguous"
+    | "conflicting"
+    | "unavailable"
+    | "truncated"
+    | string;
   reasons: string[];
   reported_lap_time_ms?: number | null;
   sector1_time_ms?: number | null;
@@ -677,15 +761,29 @@ export interface AttemptObservedStatus {
   sample_count: number;
   missing_join_sample_count: number | null;
   unavailable_reason_counts: Record<string, number> | null;
-  fields: Record<string, {
-    valid_count: number;
-    missing_count: number;
-    invalid_count: number;
-  }> | null;
-  first_last_observed: Record<string, {
-    first: { value: unknown; frame_identifier: number; session_time_s: number } | null;
-    last: { value: unknown; frame_identifier: number; session_time_s: number } | null;
-  }> | null;
+  fields: Record<
+    string,
+    {
+      valid_count: number;
+      missing_count: number;
+      invalid_count: number;
+    }
+  > | null;
+  first_last_observed: Record<
+    string,
+    {
+      first: {
+        value: unknown;
+        frame_identifier: number;
+        session_time_s: number;
+      } | null;
+      last: {
+        value: unknown;
+        frame_identifier: number;
+        session_time_s: number;
+      } | null;
+    }
+  > | null;
   discrete_changes: Array<{
     field: string;
     from_frame_identifier: number;
@@ -695,8 +793,16 @@ export interface AttemptObservedStatus {
   }> | null;
   discrete_changes_truncated: boolean | null;
   distinct_compounds: {
-    actual: Array<{ raw_id: number; formula_id: number | null; label: string | null }>;
-    visual: Array<{ raw_id: number; formula_id: number | null; label: string | null }>;
+    actual: Array<{
+      raw_id: number;
+      formula_id: number | null;
+      label: string | null;
+    }>;
+    visual: Array<{
+      raw_id: number;
+      formula_id: number | null;
+      label: string | null;
+    }>;
   } | null;
   fuel_quantity_unit_note: string;
 }
@@ -710,15 +816,21 @@ export interface CarDamageObservationSummary {
   matched_sample_count: number | null;
   missing_join_sample_count: number | null;
   unavailable_reason_counts: Record<string, number> | null;
-  fields: Record<string, {
-    valid_count: number;
-    missing_count: number;
-    invalid_count: number;
-  }> | null;
-  first_last_observed: Record<string, {
-    first: ObservedConditionAnchor | null;
-    last: ObservedConditionAnchor | null;
-  }> | null;
+  fields: Record<
+    string,
+    {
+      valid_count: number;
+      missing_count: number;
+      invalid_count: number;
+    }
+  > | null;
+  first_last_observed: Record<
+    string,
+    {
+      first: ObservedConditionAnchor | null;
+      last: ObservedConditionAnchor | null;
+    }
+  > | null;
 }
 
 export interface ObservedTrajectoryPoint {
@@ -760,7 +872,10 @@ export interface AttemptTrajectoryPreview {
     exclusion_reasons: string[];
     trace_sha256: string;
     trace_schema_version: number;
-    context_segments: Array<{ from_frame_identifier: number; context: Record<string, unknown> | null }>;
+    context_segments: Array<{
+      from_frame_identifier: number;
+      context: Record<string, unknown> | null;
+    }>;
   };
   coverage: {
     source_sample_count: number;
@@ -781,7 +896,9 @@ export interface AttemptTrajectoryPreview {
     points: ObservedTrajectoryPoint[];
   }>;
   break_examples: ObservedTrajectoryBreakExample[];
-  unsupported_examples: Array<ObservedTrajectoryBreakExample & { frame_identifier: number | null }>;
+  unsupported_examples: Array<
+    ObservedTrajectoryBreakExample & { frame_identifier: number | null }
+  >;
   preview: {
     point_limit: number;
     source_position_point_count: number;
@@ -817,34 +934,37 @@ export interface ObservedTrajectoryComparisonPreview {
     world_x: [number, number];
     world_z: [number, number];
   };
-  paths: Record<"target" | "reference", {
-    source: Omit<AttemptTrajectoryPreview["source"], "context_segments">;
-    attempt_evidence: {
-      disposition: string;
-      lap_time_ms: number | null;
-      game_valid: boolean | null;
-      reference_eligible: boolean;
-      superseded: boolean | null;
-      lifecycle_assessed: boolean;
-      lifecycle_exclusions: string[];
-      exclusion_reasons: string[];
-      source_sample_count: number;
-    };
-    capture_evidence: {
-      sha256: string | null;
-      byte_size: number | null;
-      complete: boolean | null;
-      footer_status: string | null;
-      recording_counters: Record<string, number | null>;
-      recording_observer_counters: Record<string, number | null>;
-    } | null;
-    coverage: AttemptTrajectoryPreview["coverage"];
-    preview: AttemptTrajectoryPreview["preview"];
-    segments: AttemptTrajectoryPreview["segments"];
-    break_examples: AttemptTrajectoryPreview["break_examples"];
-    unsupported_examples: AttemptTrajectoryPreview["unsupported_examples"];
-    position_probe?: ObservedPositionProbe;
-  }>;
+  paths: Record<
+    "target" | "reference",
+    {
+      source: Omit<AttemptTrajectoryPreview["source"], "context_segments">;
+      attempt_evidence: {
+        disposition: string;
+        lap_time_ms: number | null;
+        game_valid: boolean | null;
+        reference_eligible: boolean;
+        superseded: boolean | null;
+        lifecycle_assessed: boolean;
+        lifecycle_exclusions: string[];
+        exclusion_reasons: string[];
+        source_sample_count: number;
+      };
+      capture_evidence: {
+        sha256: string | null;
+        byte_size: number | null;
+        complete: boolean | null;
+        footer_status: string | null;
+        recording_counters: Record<string, number | null>;
+        recording_observer_counters: Record<string, number | null>;
+      } | null;
+      coverage: AttemptTrajectoryPreview["coverage"];
+      preview: AttemptTrajectoryPreview["preview"];
+      segments: AttemptTrajectoryPreview["segments"];
+      break_examples: AttemptTrajectoryPreview["break_examples"];
+      unsupported_examples: AttemptTrajectoryPreview["unsupported_examples"];
+      position_probe?: ObservedPositionProbe;
+    }
+  >;
   position_probe?: {
     schema_version: 1;
     analysis_version: string;
@@ -894,7 +1014,8 @@ export interface ObservedPositionProbe {
   reason_code: string | null;
 }
 
-export type AttemptTraceChannelKey = "speed" | "throttle" | "brake" | "steering";
+export type AttemptTraceChannelKey =
+  "speed" | "throttle" | "brake" | "steering";
 
 export interface AttemptTraceChartPoint {
   frame_identifier: number;
@@ -1043,7 +1164,8 @@ export interface RunArchiveFilters {
   q: string | null;
   packet_format: number | null;
   track_id: number | null;
-  session_category: "time_trial" | "practice" | "qualifying" | "race" | "unknown" | null;
+  session_category:
+    "time_trial" | "practice" | "qualifying" | "race" | "unknown" | null;
   started_from: string | null;
   started_through: string | null;
 }
@@ -1121,8 +1243,7 @@ export interface ProcessingRunDetail {
 }
 
 export type ProcessingRunArtifactKind =
-  | "player_trace"
-  | "car_observation_chunk";
+  "player_trace" | "car_observation_chunk";
 
 export interface ProcessingRunArtifact {
   artifact_id: string;
@@ -1614,7 +1735,11 @@ export interface PairedRegionReport {
   diagnostic_only: true;
   coaching_eligible: false;
   ranking_eligible: false;
-  config: { grid_step_m: number; max_bracket_time_s: number; max_bracket_distance_m: number };
+  config: {
+    grid_step_m: number;
+    max_bracket_time_s: number;
+    max_bracket_distance_m: number;
+  };
   policy_limitations: string[];
   track: {
     packet_format: number;
@@ -1623,22 +1748,28 @@ export interface PairedRegionReport {
     track_length_m: number;
     layout_identity_status: "caller_declared";
   };
-  attempts: Record<"target" | "reference", {
-    attempt_key: string;
-    run_id: string;
-    session_uid: string;
-    car_index: number;
-    game_valid: boolean | null;
-    reference_eligible: boolean;
-    superseded: boolean | null;
-    lifecycle_assessed: boolean;
-    trace_sha256: string;
-    trace_schema_version: number;
-    capture: Record<string, unknown> | null;
-    replay_counters: Record<string, unknown> | null;
-    [key: string]: unknown;
-  }>;
-  warnings: Record<"target" | "reference", Array<{ code: string; text: string }>>;
+  attempts: Record<
+    "target" | "reference",
+    {
+      attempt_key: string;
+      run_id: string;
+      session_uid: string;
+      car_index: number;
+      game_valid: boolean | null;
+      reference_eligible: boolean;
+      superseded: boolean | null;
+      lifecycle_assessed: boolean;
+      trace_sha256: string;
+      trace_schema_version: number;
+      capture: Record<string, unknown> | null;
+      replay_counters: Record<string, unknown> | null;
+      [key: string]: unknown;
+    }
+  >;
+  warnings: Record<
+    "target" | "reference",
+    Array<{ code: string; text: string }>
+  >;
   model: TrackModelRecord & {
     distance_origin_m: number;
     layout_identity_status: "caller_declared";
@@ -1699,10 +1830,24 @@ export interface AttemptRegionReport {
   artifact_kind: "single_attempt_distance_region_observations";
   diagnostic_only: true;
   context_mode: "time_trial" | "practice_qualifying";
-  config: { grid_step_m: number; max_bracket_time_s: number; max_bracket_distance_m: number };
+  config: {
+    grid_step_m: number;
+    max_bracket_time_s: number;
+    max_bracket_distance_m: number;
+  };
   resource_policy: {
-    resampling: { version: string; estimated_work: number; limit: number; status: string };
-    region_analysis: { version: string; estimated_work: number; limit: number; status: string };
+    resampling: {
+      version: string;
+      estimated_work: number;
+      limit: number;
+      status: string;
+    };
+    region_analysis: {
+      version: string;
+      estimated_work: number;
+      limit: number;
+      status: string;
+    };
   };
   warnings: Array<{ code: string; text: string }>;
   source: {
@@ -1873,9 +2018,21 @@ export interface CornerComparisonFact {
   text: string;
   source_fields: Record<string, string>;
   provenance: {
-    target: { attempt_key?: string | null; run_id?: string | null; trace_sha256?: string | null };
-    reference: { attempt_key?: string | null; run_id?: string | null; trace_sha256?: string | null };
-    model: { model_id?: string; revision?: number; model_content_sha256?: string | null };
+    target: {
+      attempt_key?: string | null;
+      run_id?: string | null;
+      trace_sha256?: string | null;
+    };
+    reference: {
+      attempt_key?: string | null;
+      run_id?: string | null;
+      trace_sha256?: string | null;
+    };
+    model: {
+      model_id?: string;
+      revision?: number;
+      model_content_sha256?: string | null;
+    };
     reference_selection: Record<string, unknown>;
   };
   [key: string]: unknown;
@@ -2036,7 +2193,10 @@ export interface LapDebrief {
     provenance: {
       target?: Record<string, unknown> & { attempt_key?: string };
       reference?: Record<string, unknown> & { attempt_key?: string };
-      model?: Record<string, unknown> & { model_id?: string; revision?: number };
+      model?: Record<string, unknown> & {
+        model_id?: string;
+        revision?: number;
+      };
       reference_selection?: Record<string, unknown>;
     };
   }>;
@@ -2160,12 +2320,18 @@ export interface ObservedConditionSummary {
   > | null;
   discrete_changes: unknown[] | null;
   discrete_changes_truncated: boolean | null;
-  distinct_compounds:
-    | {
-        actual: Array<{ raw_id: number; formula_id: number | null; label: string | null }>;
-        visual: Array<{ raw_id: number; formula_id: number | null; label: string | null }>;
-      }
-    | null;
+  distinct_compounds: {
+    actual: Array<{
+      raw_id: number;
+      formula_id: number | null;
+      label: string | null;
+    }>;
+    visual: Array<{
+      raw_id: number;
+      formula_id: number | null;
+      label: string | null;
+    }>;
+  } | null;
   fuel_quantity_unit_note: string;
   car_damage_observations?: CarDamageObservationSummary;
   environment_context: {
@@ -2308,8 +2474,16 @@ export interface ObservationSetAttempt {
     source_sample_count: number;
     speed_sample_count: number;
     brake_sample_count: number;
-    minimum_speed: { status: string; speed_kph: number | null; anchor: Record<string, unknown> | null };
-    peak_brake: { status: string; value: number | null; anchor: Record<string, unknown> | null };
+    minimum_speed: {
+      status: string;
+      speed_kph: number | null;
+      anchor: Record<string, unknown> | null;
+    };
+    peak_brake: {
+      status: string;
+      value: number | null;
+      anchor: Record<string, unknown> | null;
+    };
     coverage: Record<string, number>;
     threshold_events: Record<string, ObservationThresholdEventSummary>;
   };
@@ -2400,10 +2574,17 @@ export interface ObservationSetReport {
   consistency_claim: false;
   interval_convention: "[start_m, end_m)";
   window_m: { start_m: number; end_m: number };
-  track: { track_id: number | null; track_name: string | null; track_length_m: number };
+  track: {
+    track_id: number | null;
+    track_name: string | null;
+    track_length_m: number;
+  };
   scope: { run_id: string; session_uid: string; car_index: number };
   attempts: ObservationSetAttempt[];
-  aggregates: { minimum_speed: ObservationSetMetric; peak_brake: ObservationSetMetric };
+  aggregates: {
+    minimum_speed: ObservationSetMetric;
+    peak_brake: ObservationSetMetric;
+  };
   onset_repeatability?: ObservationOnsetRepeatability;
   warnings: Array<{ code: string; text: string }>;
   limits: Record<string, number>;

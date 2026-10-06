@@ -1,5 +1,16 @@
-import type { EngineerQueryReport } from "@/lib/api";
-import { requestApiPost } from "@/lib/api";
+import type {
+  EngineerAskSelection,
+  EngineerQueryReport,
+  LapAttemptPage,
+  LapRecord,
+  TrackModelRecord,
+} from "@/lib/api";
+import { requestApi, requestApiPost } from "@/lib/api";
+import {
+  attemptInventoryUrl,
+  exactLapAttempt,
+  lapAttemptPageMatchesScope,
+} from "@/lib/attempt-inventory";
 import {
   attemptIdentity,
   engineerQueryReportMatchesRequest,
@@ -8,6 +19,7 @@ import {
 } from "@/lib/engineer-query-match";
 import AppHeader from "../AppHeader";
 import EngineerQueryPanel from "../EngineerQueryPanel";
+import EngineerQuestionComposer from "../EngineerQuestionComposer";
 import {
   appScreenHref,
   isSelectionTransferBlocked,
@@ -30,10 +42,8 @@ export default async function EngineerPage({
   const requestedPolicy = singleParam(params.comparison_policy);
   const requestedModelKey = singleParam(params.track_model_key);
   const requestedRegionId = singleParam(params.engineer_region_identifier);
-  const ambiguousAttempt =
-    hasMultiple(params.target_attempt_key);
-  const ambiguousIntent =
-    hasMultiple(params.engineer_intent);
+  const ambiguousAttempt = hasMultiple(params.target_attempt_key);
+  const ambiguousIntent = hasMultiple(params.engineer_intent);
   const attemptKey = validAttemptKey(requestedAttempt)
     ? requestedAttempt
     : null;
@@ -76,26 +86,26 @@ export default async function EngineerPage({
       : null;
   const regionScopeMatches = Boolean(
     parsedTargetIdentity &&
-      parsedReferenceIdentity &&
-      parsedSessionIdentity &&
-      parsedSessionIdentity.runId === parsedTargetIdentity.runId &&
-      parsedSessionIdentity.sessionUid === parsedTargetIdentity.sessionUid &&
-      parsedSessionIdentity.runId === parsedReferenceIdentity.runId &&
-      parsedSessionIdentity.sessionUid === parsedReferenceIdentity.sessionUid,
+    parsedReferenceIdentity &&
+    parsedSessionIdentity &&
+    parsedSessionIdentity.runId === parsedTargetIdentity.runId &&
+    parsedSessionIdentity.sessionUid === parsedTargetIdentity.sessionUid &&
+    parsedSessionIdentity.runId === parsedReferenceIdentity.runId &&
+    parsedSessionIdentity.sessionUid === parsedReferenceIdentity.sessionUid,
   );
   const canRequestRegion = Boolean(
     regionIntent &&
-      !selectionTransferBlocked &&
-      !malformedAttempt &&
-      !ambiguousIntent &&
-      !ambiguousRegionSelection &&
-      attemptKey &&
-      requestedReferenceKey !== "session_best" &&
-      parsedReferenceIdentity &&
-      comparisonPolicy &&
-      parsedModel &&
-      regionIdentifier &&
-      regionScopeMatches,
+    !selectionTransferBlocked &&
+    !malformedAttempt &&
+    !ambiguousIntent &&
+    !ambiguousRegionSelection &&
+    attemptKey &&
+    requestedReferenceKey !== "session_best" &&
+    parsedReferenceIdentity &&
+    comparisonPolicy &&
+    parsedModel &&
+    regionIdentifier &&
+    regionScopeMatches,
   );
   const canRequestSummary = Boolean(
     !selectionTransferBlocked &&
@@ -139,6 +149,23 @@ export default async function EngineerPage({
             region_identifier: requestIdentity.regionIdentifier,
           }
         : null;
+  const askSelection: EngineerAskSelection | null =
+    requestIdentity?.intent === "attempt_summary"
+      ? {
+          intent: "attempt_summary",
+          target_attempt_key: requestIdentity.targetAttemptKey,
+        }
+      : requestIdentity?.intent === "region_comparison"
+        ? {
+            intent: "region_comparison",
+            target_attempt_key: requestIdentity.targetAttemptKey,
+            reference_attempt_key: requestIdentity.referenceAttemptKey,
+            comparison_policy: requestIdentity.comparisonPolicy,
+            track_model_id: requestIdentity.trackModelId,
+            track_model_revision: requestIdentity.trackModelRevision,
+            region_identifier: requestIdentity.regionIdentifier,
+          }
+        : null;
   const reportResponse = requestBody
     ? await requestApiPost<EngineerQueryReport>(
         "/api/v1/engineer/query",
@@ -147,12 +174,18 @@ export default async function EngineerPage({
     : null;
   const candidateReport =
     reportResponse?.status === "ok" ? reportResponse.data : null;
-  const report = candidateReport && requestIdentity &&
+  const report =
+    candidateReport &&
+    requestIdentity &&
     engineerQueryReportMatchesRequest(candidateReport, requestIdentity)
       ? candidateReport
       : null;
-  const querySubmitted =
-    requestedIntent === "attempt_summary" || regionIntent;
+  const debriefValidation = await loadDebriefValidation(
+    askSelection,
+    report,
+    parsedSessionIdentity,
+  );
+  const querySubmitted = requestedIntent === "attempt_summary" || regionIntent;
   const requestState = !querySubmitted
     ? "not_requested"
     : requestIdentity
@@ -204,7 +237,9 @@ export default async function EngineerPage({
     : appScreenHref("dashboard", dashboardState.toString(), {
         ...(requestedSessionKey ? { session_key: requestedSessionKey } : {}),
         ...(attemptKey ? { target_attempt_key: attemptKey } : {}),
-        ...(requestedReferenceKey ? { reference_choice: requestedReferenceKey } : {}),
+        ...(requestedReferenceKey
+          ? { reference_choice: requestedReferenceKey }
+          : {}),
         ...(comparisonPolicy ? { comparison_policy: comparisonPolicy } : {}),
         ...(requestedModelKey ? { track_model_key: requestedModelKey } : {}),
       });
@@ -238,7 +273,9 @@ export default async function EngineerPage({
           <h1>
             {regionIntent ? "One region." : "One attempt."}
             <br />
-            <span>{regionIntent ? "Both laps, sourced." : "Evidence in context."}</span>
+            <span>
+              {regionIntent ? "Both laps, sourced." : "Evidence in context."}
+            </span>
           </h1>
           <p>
             {regionIntent
@@ -265,9 +302,9 @@ export default async function EngineerPage({
             <div>
               <h2>Regional selection is ambiguous</h2>
               <p>
-                Multiple values were supplied for a required selection. No
-                query was sent and the request was not converted into an
-                attempt summary.
+                Multiple values were supplied for a required selection. No query
+                was sent and the request was not converted into an attempt
+                summary.
               </p>
               {dashboardHref ? (
                 <a className="engineer-return-link" href={dashboardHref}>
@@ -304,26 +341,50 @@ export default async function EngineerPage({
             </div>
           </section>
         ) : (
-          <EngineerQueryPanel
-            report={report}
-            requestState={requestState}
-            intent={querySubmitted ? requestedIntent ?? "region_comparison" : null}
-            sessionKey={regionIntent ? requestedSessionKey ?? null : null}
-            targetAttemptKey={attemptKey}
-            referenceAttemptKey={regionIntent ? requestedReferenceKey ?? null : null}
-            referenceChoice={regionIntent ? requestedReferenceKey ?? null : null}
-            comparisonPolicy={comparisonPolicy ?? "time_trial"}
-            trackModelKey={regionIntent ? requestedModelKey ?? null : null}
-            regions={regionIdentifier ? [{ identifier: regionIdentifier, label: regionIdentifier }] : []}
-            targetHref={returnedTargetHref}
-            referenceHref={returnedReferenceHref}
-            comparisonHref={regionIntent ? dashboardHref : null}
-            requestReason={requestReason}
-            actionPath="/engineer"
-            summaryOnly={!regionIntent}
-            displayOnly={regionIntent}
-            preservedFormEntries={preservedFormEntries}
-          />
+          <>
+            <EngineerQueryPanel
+              report={report}
+              requestState={requestState}
+              intent={
+                querySubmitted ? (requestedIntent ?? "region_comparison") : null
+              }
+              sessionKey={regionIntent ? (requestedSessionKey ?? null) : null}
+              targetAttemptKey={attemptKey}
+              referenceAttemptKey={
+                regionIntent ? (requestedReferenceKey ?? null) : null
+              }
+              referenceChoice={
+                regionIntent ? (requestedReferenceKey ?? null) : null
+              }
+              comparisonPolicy={comparisonPolicy ?? "time_trial"}
+              trackModelKey={regionIntent ? (requestedModelKey ?? null) : null}
+              regions={
+                regionIdentifier
+                  ? [{ identifier: regionIdentifier, label: regionIdentifier }]
+                  : []
+              }
+              targetHref={returnedTargetHref}
+              referenceHref={returnedReferenceHref}
+              comparisonHref={regionIntent ? dashboardHref : null}
+              requestReason={requestReason}
+              actionPath="/engineer"
+              summaryOnly={!regionIntent}
+              displayOnly={regionIntent}
+              preservedFormEntries={preservedFormEntries}
+            />
+            {askSelection && report && report.status !== "unavailable" ? (
+              <EngineerQuestionComposer
+                key={JSON.stringify(askSelection)}
+                selection={askSelection}
+                targetHref={returnedTargetHref}
+                referenceHref={returnedReferenceHref}
+                validationReport={report}
+                targetAttempt={debriefValidation.target}
+                referenceAttempt={debriefValidation.reference}
+                selectedModel={debriefValidation.model}
+              />
+            ) : null}
+          </>
         )}
       </main>
       <footer className="footer-bar">
@@ -333,6 +394,135 @@ export default async function EngineerPage({
         <span>Recorded evidence · Diagnostic only</span>
       </footer>
     </div>
+  );
+}
+
+async function loadDebriefValidation(
+  selection: EngineerAskSelection | null,
+  report: EngineerQueryReport | null,
+  session: { runId: string; sessionUid: string } | null,
+): Promise<{
+  target: LapRecord | null;
+  reference: LapRecord | null;
+  model: TrackModelRecord | null;
+}> {
+  const empty = { target: null, reference: null, model: null };
+  if (
+    !selection ||
+    selection.intent !== "region_comparison" ||
+    !report ||
+    report.status === "unavailable" ||
+    !session
+  ) {
+    return empty;
+  }
+  const [attemptResponse, modelResponse] = await Promise.all([
+    requestApi<LapAttemptPage>(
+      attemptInventoryUrl({
+        runId: session.runId,
+        sessionUid: session.sessionUid,
+        offset: 0,
+        limit: 1,
+        targetAttemptKey: selection.target_attempt_key,
+        referenceAttemptKey: selection.reference_attempt_key,
+      }),
+    ),
+    requestApi<unknown>("/api/v1/track-models"),
+  ]);
+  const candidatePage =
+    attemptResponse?.status === "ok" ? attemptResponse.data : null;
+  const page = lapAttemptPageMatchesScope(
+    candidatePage,
+    session.runId,
+    session.sessionUid,
+  )
+    ? candidatePage
+    : null;
+  const target = exactLapAttempt(
+    page,
+    selection.target_attempt_key,
+    session.runId,
+    session.sessionUid,
+  );
+  const reference = exactLapAttempt(
+    page,
+    selection.reference_attempt_key,
+    session.runId,
+    session.sessionUid,
+  );
+  const modelRows =
+    modelResponse?.status === "ok" &&
+    Array.isArray(modelResponse.data) &&
+    modelResponse.data.length <= 512 &&
+    modelResponse.data.every(isTrackModelRecord)
+      ? modelResponse.data
+      : null;
+  const modelCandidate = modelRows
+    ? (modelRows.find(
+        (item) =>
+          item.model_id === selection.track_model_id &&
+          item.revision === selection.track_model_revision,
+      ) ?? null)
+    : null;
+  const model =
+    modelCandidate && modelMatchesQueryReport(modelCandidate, report)
+      ? modelCandidate
+      : null;
+  return { target, reference, model };
+}
+
+function isTrackModelRecord(value: unknown): value is TrackModelRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return Boolean(
+    typeof row.model_id === "string" &&
+    row.model_id.length > 0 &&
+    row.model_id.length <= 256 &&
+    Number.isSafeInteger(row.revision) &&
+    Number(row.revision) > 0 &&
+    Number.isSafeInteger(row.packet_format) &&
+    Number.isSafeInteger(row.track_id) &&
+    typeof row.track_name === "string" &&
+    row.track_name.length > 0 &&
+    row.track_name.length <= 256 &&
+    typeof row.layout_id === "string" &&
+    row.layout_id.length <= 256 &&
+    typeof row.track_length_m === "number" &&
+    Number.isFinite(row.track_length_m) &&
+    row.track_length_m > 0 &&
+    (row.validation_status === "draft" ||
+      row.validation_status === "validated") &&
+    typeof row.provenance === "string" &&
+    (row.origin === undefined ||
+      ["packaged", "local_draft", "reviewed", "unattributed"].includes(
+        String(row.origin),
+      )) &&
+    ["content_sha256", "model_content_sha256"].every(
+      (key) =>
+        row[key] === undefined ||
+        row[key] === null ||
+        (typeof row[key] === "string" && row[key].length <= 128),
+    ),
+  );
+}
+
+function modelMatchesQueryReport(
+  model: TrackModelRecord,
+  report: EngineerQueryReport,
+) {
+  const provenance = report.provenance;
+  const selected = provenance.model;
+  const selectedModel = selected as Record<string, unknown>;
+  return Boolean(
+    provenance.verification_scope === "checksummed_trace_analysis" &&
+    selected &&
+    typeof selected === "object" &&
+    !Array.isArray(selected) &&
+    selectedModel.model_id === model.model_id &&
+    selectedModel.revision === model.revision &&
+    selectedModel.content_sha256 === model.content_sha256 &&
+    selectedModel.model_content_sha256 === model.model_content_sha256 &&
+    selectedModel.origin === model.origin,
   );
 }
 

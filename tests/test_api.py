@@ -1482,3 +1482,67 @@ def test_telemetry_service_reports_reservations_without_changing_them(tmp_path) 
                 assert idle.json()["data"]["operation_reservation"] == "idle"
 
     asyncio.run(exercise())
+
+
+def test_engineer_ask_rejects_second_active_request_as_busy(monkeypatch, tmp_path) -> None:
+    app = create_app(
+        tmp_path / "engineer-ask.sqlite3",
+        recordings_root=tmp_path / "captures",
+        control_token="test-engineer-control-token",
+        recording_host="127.0.0.1",
+        recording_port=20889,
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def hold_answer(*_args, **_kwargs):
+        entered.set()
+        await release.wait()
+        return {
+            "schema_version": 1,
+            "analysis_version": "engineer-ask-v1",
+            "status": "unavailable",
+            "route": None,
+            "focus": None,
+            "message": "Selected evidence is unavailable.",
+            "selection": {"intent": "attempt_summary", "target_attempt_key": "run:1:0:2"},
+            "report": None,
+            "debrief": None,
+            "debrief_evidence": None,
+            "model": None,
+            "diagnostic_only": True,
+            "coaching_eligible": False,
+            "ranking_eligible": False,
+        }
+
+    monkeypatch.setattr(api_module, "answer_engineer_question", hold_answer)
+
+    async def exercise() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            headers = {
+                "Authorization": "Bearer test-engineer-control-token",
+                "Content-Type": "application/json",
+            }
+            body = {
+                "question": "What does the lap show?",
+                "selection": {
+                    "intent": "attempt_summary",
+                    "target_attempt_key": "run:1:0:2",
+                },
+            }
+            first = asyncio.create_task(
+                client.post("/api/v1/engineer/ask", headers=headers, json=body)
+            )
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            second = await client.post(
+                "/api/v1/engineer/ask", headers=headers, json=body
+            )
+            assert second.status_code == 409
+            assert second.json()["reason"] == "engineer_ask_busy"
+            release.set()
+            first_response = await first
+            assert first_response.status_code == 200
+            assert first_response.json()["data"]["status"] == "unavailable"
+
+    asyncio.run(exercise())
