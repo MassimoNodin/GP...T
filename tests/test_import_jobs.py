@@ -14,12 +14,17 @@ httpx = pytest.importorskip("httpx")
 
 from f1_engineer.api.app import create_app
 from f1_engineer.api.import_controller import ImportController
+import f1_engineer.api.import_controller as import_controller_module
 from f1_engineer.recording.capture import CaptureWriter
 from f1_engineer.storage.database import Database
 from f1_engineer.storage.import_jobs import (
+    MAX_IMPORT_QUEUE_WAITING,
     RecordingCatalogUnavailable,
+    cancel_queued_import_job,
+    claim_oldest_import_job,
     create_import_job,
     get_import_job,
+    import_queue_snapshot,
     list_recording_sources,
     list_recording_sources_page,
     recover_abandoned_import_jobs,
@@ -72,10 +77,107 @@ def test_database_schema_v4_migrates_and_backfills_job_update_time(tmp_path):
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recording_jobs'"
         ).fetchone()
 
-    assert version == 14
+    assert version == 15
     assert recording_table is not None
     assert "updated_at_utc" in columns
     assert updated_at == "2026-10-01T01:02:03.000000+00:00"
+
+
+def test_schema_14_migration_preserves_jobs_and_rebuilds_queue_indexes(tmp_path):
+    database = tmp_path / "schema-14.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    captures = [root / f"capture-{index}.f1ecap" for index in range(3)]
+    for capture in captures:
+        _capture(capture)
+    sources = list_recording_sources(database, root)
+    completed, _ = create_import_job(database, sources[0]["capture_id"])
+    update_import_job(
+        database,
+        completed["job_id"],
+        status="complete",
+        phase="complete",
+        result={"run_id": "run-preserved"},
+        finished=True,
+    )
+    waiting, _ = create_import_job(database, sources[1]["capture_id"])
+    failed, _ = create_import_job(database, sources[2]["capture_id"])
+    update_import_job(
+        database, failed["job_id"], status="failed", phase="failed", finished=True
+    )
+    expected_fields = {
+        completed["job_id"]: (completed["capture_id"], "complete", "complete"),
+        waiting["job_id"]: (waiting["capture_id"], "queued", "queued"),
+        failed["job_id"]: (failed["capture_id"], "failed", "failed"),
+    }
+
+    # Recreate the actual v14 table shape and single-active-import constraint.
+    with Database(database) as db:
+        with db.connection:
+            for index in (
+                "idx_import_jobs_latest",
+                "idx_import_jobs_queue",
+                "idx_import_jobs_queue_order",
+                "idx_one_running_import_job",
+                "idx_one_active_import_per_capture",
+            ):
+                db.connection.execute(f"DROP INDEX IF EXISTS {index}")
+            db.connection.execute(
+                "CREATE TABLE import_jobs_v14 ("
+                "job_id TEXT PRIMARY KEY, capture_id TEXT NOT NULL REFERENCES recording_sources(capture_id), "
+                "status TEXT NOT NULL CHECK (status IN ('queued','running','complete','failed','interrupted')), "
+                "phase TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 1 CHECK (attempt_count > 0), "
+                "created_at_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                "updated_at_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, started_at_utc TEXT, "
+                "finished_at_utc TEXT, result_json TEXT, failure_reason TEXT)"
+            )
+            db.connection.execute(
+                "INSERT INTO import_jobs_v14 SELECT job_id,capture_id,status,phase,attempt_count,"
+                "created_at_utc,updated_at_utc,started_at_utc,finished_at_utc,result_json,failure_reason "
+                "FROM import_jobs"
+            )
+            db.connection.execute("DROP TABLE import_jobs")
+            db.connection.execute("ALTER TABLE import_jobs_v14 RENAME TO import_jobs")
+            db.connection.execute(
+                "CREATE INDEX idx_import_jobs_capture ON import_jobs(capture_id, created_at_utc)"
+            )
+            db.connection.execute(
+                "CREATE UNIQUE INDEX idx_one_active_import_job ON import_jobs((1)) "
+                "WHERE status IN ('queued','running')"
+            )
+            db.connection.execute("UPDATE schema_info SET version=14 WHERE singleton=1")
+
+    with Database(database) as db:
+        version = db.connection.execute(
+            "SELECT version FROM schema_info WHERE singleton=1"
+        ).fetchone()[0]
+        rows = db.connection.execute(
+            "SELECT job_id,capture_id,status,phase,result_json,queue_order,"
+            "source_root_namespace,source_metadata_version FROM import_jobs"
+        ).fetchall()
+        indexes = {
+            row["name"]: row["unique"]
+            for row in db.connection.execute("PRAGMA index_list(import_jobs)")
+        }
+
+    assert version == 15
+    assert len(rows) == 3
+    by_id = {row["job_id"]: row for row in rows}
+    assert {
+        job_id: (row["capture_id"], row["status"], row["phase"])
+        for job_id, row in by_id.items()
+    } == expected_fields
+    assert by_id[completed["job_id"]]["result_json"] == '{"run_id":"run-preserved"}'
+    assert [
+        by_id[job_id]["queue_order"]
+        for job_id in (waiting["job_id"], completed["job_id"], failed["job_id"])
+    ] == [1, 2, 3]
+    assert all(len(row["source_root_namespace"] or "") == 64 for row in rows)
+    assert all(len(row["source_metadata_version"] or "") == 64 for row in rows)
+    assert indexes["idx_one_running_import_job"] == 1
+    assert indexes["idx_one_active_import_per_capture"] == 1
+    assert indexes["idx_import_jobs_queue_order"] == 1
+    assert "idx_one_active_import_job" not in indexes
 
 
 def test_database_schema_v5_migrates_to_recording_jobs(tmp_path):
@@ -93,7 +195,7 @@ def test_database_schema_v5_migrates_to_recording_jobs(tmp_path):
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recording_jobs'"
         ).fetchone()
 
-    assert version == 14
+    assert version == 15
     assert recording_table is not None
 
 
@@ -124,7 +226,7 @@ def test_database_schema_v7_migrates_bounded_lifecycle_metadata(tmp_path):
             for row in db.connection.execute("PRAGMA table_info(lifecycle_events)")
         }
 
-    assert version == 14
+    assert version == 15
     assert {"details_length_bytes", "details_truncated"} <= columns
 
 
@@ -145,7 +247,7 @@ def test_database_schema_v8_migrates_session_history_evidence(tmp_path):
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='attempt_timing_evidence'"
         ).fetchone()
 
-    assert version == 14
+    assert version == 15
     assert table is not None
 
 
@@ -415,7 +517,7 @@ def test_recording_source_resolution_rejects_database_path_escape(tmp_path):
     assert resolve_recording_source(database, root, source["capture_id"]) is None
 
 
-def test_import_jobs_are_single_active_and_retry_only_terminal_failures(tmp_path):
+def test_import_jobs_queue_distinct_captures_and_retry_terminal_failures(tmp_path):
     database = tmp_path / "archive.sqlite3"
     root = tmp_path / "recordings"
     root.mkdir()
@@ -429,8 +531,9 @@ def test_import_jobs_are_single_active_and_retry_only_terminal_failures(tmp_path
     assert created is True
     assert created_again is False
     assert same["job_id"] == first["job_id"]
-    with pytest.raises(ValueError, match="another_import_is_in_progress"):
-        create_import_job(database, second_id)
+    second, second_created = create_import_job(database, second_id)
+    assert second_created is True
+    assert second["status"] == "queued"
     with pytest.raises(ValueError, match="import_job_not_retryable"):
         retry_import_job(database, first["job_id"])
 
@@ -445,6 +548,167 @@ def test_import_jobs_are_single_active_and_retry_only_terminal_failures(tmp_path
     retried = retry_import_job(database, first["job_id"])
     assert retried["status"] == "queued"
     assert retried["attempt_count"] == 2
+    with Database(database) as db:
+        orders = dict(
+            db.connection.execute(
+                "SELECT job_id, queue_order FROM import_jobs"
+            ).fetchall()
+        )
+    assert orders[first["job_id"]] > orders[second["job_id"]]
+
+
+def test_import_queue_fifo_capacity_snapshot_and_waiting_only_cancel(tmp_path):
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    for index in range(MAX_IMPORT_QUEUE_WAITING + 1):
+        _capture(root / f"capture-{index:02d}.f1ecap")
+    sources = list_recording_sources(database, root)
+
+    jobs = [create_import_job(database, source["capture_id"])[0] for source in sources[:16]]
+    with pytest.raises(ValueError, match="import_queue_full"):
+        create_import_job(database, sources[16]["capture_id"])
+
+    snapshot = import_queue_snapshot(database, "replay")
+    assert snapshot["waiting_count"] == 16
+    assert [row["queue_position"] for row in snapshot["waiting_jobs"]] == list(range(1, 17))
+    assert "result" not in snapshot["waiting_jobs"][0]
+    assert snapshot["blocking_reservation"] == "replay"
+
+    cancelled, changed = cancel_queued_import_job(database, jobs[1]["job_id"])
+    assert changed is True
+    assert cancelled is not None and cancelled["status"] == "cancelled"
+    claimed = claim_oldest_import_job(database)
+    assert claimed is not None and claimed["job_id"] == jobs[0]["job_id"]
+    running, changed = cancel_queued_import_job(database, claimed["job_id"])
+    assert changed is False
+    assert running is not None and running["status"] == "running"
+
+    accepted, created = create_import_job(database, sources[16]["capture_id"])
+    assert created is True
+    assert accepted["status"] == "queued"
+    requeued, created = create_import_job(database, sources[1]["capture_id"])
+    assert created is True
+    assert requeued["status"] == "queued"
+    after_cancel = import_queue_snapshot(database, "import")
+    assert after_cancel["waiting_count"] == 16
+    assert [row["queue_position"] for row in after_cancel["waiting_jobs"]] == list(range(1, 17))
+    assert after_cancel["running_job"]["job_id"] == claimed["job_id"]
+
+
+def test_import_queue_snapshot_rejects_unbounded_database_text(tmp_path):
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    _capture(root / "large-phase.f1ecap")
+    capture_id = list_recording_sources(database, root)[0]["capture_id"]
+    job, _ = create_import_job(database, capture_id)
+    with Database(database) as db, db.connection:
+        db.connection.execute(
+            "UPDATE import_jobs SET phase=? WHERE job_id=?",
+            ("x" * 100_000, job["job_id"]),
+        )
+
+    with pytest.raises(ValueError, match="import_queue_snapshot_unavailable"):
+        import_queue_snapshot(database, None)
+
+
+def test_import_queue_cancel_and_claim_race_has_one_winner(tmp_path):
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    _capture(root / "race.f1ecap")
+    capture_id = list_recording_sources(database, root)[0]["capture_id"]
+    queued, _ = create_import_job(database, capture_id)
+    barrier = threading.Barrier(3)
+    outcomes = {}
+
+    def cancel():
+        barrier.wait()
+        outcomes["cancel"] = cancel_queued_import_job(database, queued["job_id"])
+
+    def claim():
+        barrier.wait()
+        outcomes["claim"] = claim_oldest_import_job(database)
+
+    cancel_thread = threading.Thread(target=cancel)
+    claim_thread = threading.Thread(target=claim)
+    cancel_thread.start()
+    claim_thread.start()
+    barrier.wait()
+    cancel_thread.join(timeout=5)
+    claim_thread.join(timeout=5)
+    assert not cancel_thread.is_alive()
+    assert not claim_thread.is_alive()
+
+    cancelled_job, cancelled = outcomes["cancel"]
+    claimed_job = outcomes["claim"]
+    if cancelled:
+        assert cancelled_job["status"] == "cancelled"
+        assert claimed_job is None
+    else:
+        assert cancelled_job["status"] == "running"
+        assert claimed_job["job_id"] == queued["job_id"]
+
+
+@pytest.mark.parametrize("reservation", ["recording", "replay", "upload"])
+def test_waiting_import_starts_only_after_reservation_release(tmp_path, reservation):
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    _capture(root / "queued.f1ecap")
+    controller = ImportController(database, root)
+    controller.start()
+    assert controller.ready
+    controller.enable_dispatch()
+    try:
+        assert controller.reserve_operation(reservation)
+        capture_id = list_recording_sources(database, root)[0]["capture_id"]
+        queued = controller.submit(capture_id, queue_if_busy=True)
+        assert queued["status"] == "queued"
+        assert controller.get(queued["job_id"])["status"] == "queued"
+        queue = controller.queue_snapshot()
+        assert queue["waiting_count"] == 1
+        assert queue["blocking_reservation"] == reservation
+        controller.release_operation(reservation)
+        for _ in range(200):
+            current = controller.get(queued["job_id"])
+            if current and current["status"] in {"failed", "complete"}:
+                break
+            time.sleep(0.02)
+        assert current is not None and current["status"] == "complete"
+    finally:
+        controller.release_operation(reservation)
+        controller.close()
+
+
+def test_waiting_import_fails_if_source_metadata_changes_before_dispatch(tmp_path):
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    capture = root / "mutable.f1ecap"
+    _capture(capture)
+    controller = ImportController(database, root)
+    controller.start()
+    assert controller.ready
+    controller.enable_dispatch()
+    try:
+        assert controller.reserve_operation("upload")
+        capture_id = list_recording_sources(database, root)[0]["capture_id"]
+        queued = controller.submit(capture_id, queue_if_busy=True)
+        assert queued["status"] == "queued"
+        capture.write_bytes(b"replacement with changed metadata")
+        controller.release_operation("upload")
+        for _ in range(100):
+            current = controller.get(queued["job_id"])
+            if current and current["status"] in {"failed", "complete"}:
+                break
+            time.sleep(0.02)
+        assert current is not None and current["status"] == "failed"
+        assert current["failure_reason"] == "capture_source_changed_refresh_catalog"
+    finally:
+        controller.release_operation("upload")
+        controller.close()
 
 
 def test_inbox_chooses_the_job_with_latest_retry_timestamp(tmp_path):
@@ -544,13 +808,15 @@ def test_worker_revalidates_source_identity_before_import(tmp_path, monkeypatch)
         controller.close()
 
 
-def test_restart_marks_queued_and_running_imports_interrupted(tmp_path):
+def test_restart_preserves_waiting_imports_and_interrupts_the_running_job(tmp_path):
     database = tmp_path / "archive.sqlite3"
     root = tmp_path / "recordings"
     root.mkdir()
     _capture(root / "one.f1ecap")
-    capture_id = list_recording_sources(database, root)[0]["capture_id"]
-    job, _ = create_import_job(database, capture_id)
+    _capture(root / "two.f1ecap")
+    sources = list_recording_sources(database, root)
+    job, _ = create_import_job(database, sources[0]["capture_id"])
+    waiting, _ = create_import_job(database, sources[1]["capture_id"])
     update_import_job(
         database,
         job["job_id"],
@@ -561,11 +827,22 @@ def test_restart_marks_queued_and_running_imports_interrupted(tmp_path):
 
     recover_abandoned_import_jobs(database)
     recovered = get_import_job(database, job["job_id"])
+    with Database(database) as db:
+        waiting_order = db.connection.execute(
+            "SELECT queue_order FROM import_jobs WHERE job_id=?",
+            (waiting["job_id"],),
+        ).fetchone()[0]
 
     assert recovered is not None
     assert recovered["status"] == "interrupted"
     assert recovered["phase"] == "interrupted"
     assert recovered["failure_reason"] == "api_restarted_before_import_completed"
+    assert get_import_job(database, waiting["job_id"])["status"] == "queued"
+    with Database(database) as db:
+        assert db.connection.execute(
+            "SELECT queue_order FROM import_jobs WHERE job_id=?",
+            (waiting["job_id"],),
+        ).fetchone()[0] == waiting_order
 
 
 def test_api_requires_server_token_and_imports_a_local_capture(tmp_path):
@@ -623,3 +900,202 @@ def test_api_requires_server_token_and_imports_a_local_capture(tmp_path):
                 assert app.state.import_controller._progress == {}
 
     asyncio.run(exercise())
+
+
+def test_api_opt_in_queue_snapshot_and_protected_waiting_cancellation(tmp_path):
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    _capture(root / "waiting.f1ecap")
+    token = "b" * 48
+    app = create_app(database, recordings_root=root, control_token=token)
+
+    async def exercise():
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://127.0.0.1"
+            ) as client:
+                source = (await client.get("/api/v1/recording-sources")).json()["data"][0]
+                controller = app.state.import_controller
+                assert controller.reserve_operation("upload")
+                headers = {"authorization": "Bearer " + token}
+
+                legacy = await client.post(
+                    "/api/v1/import-jobs",
+                    json={"capture_id": source["capture_id"]},
+                    headers=headers,
+                )
+                assert legacy.status_code == 409
+
+                queued = await client.post(
+                    "/api/v1/import-jobs",
+                    json={"capture_id": source["capture_id"], "queue_if_busy": True},
+                    headers=headers,
+                )
+                assert queued.status_code == 202
+                job_id = queued.json()["data"]["job_id"]
+                assert queued.json()["data"]["status"] == "queued"
+
+                snapshot = await client.get("/api/v1/import-jobs/queue")
+                assert snapshot.status_code == 200
+                assert snapshot.json()["data"]["waiting_count"] == 1
+                assert snapshot.json()["data"]["blocking_reservation"] == "upload"
+                assert "result" not in snapshot.json()["data"]["waiting_jobs"][0]
+
+                denied = await client.post(f"/api/v1/import-jobs/{job_id}/cancel")
+                assert denied.status_code == 403
+                cancelled = await client.post(
+                    f"/api/v1/import-jobs/{job_id}/cancel", headers=headers
+                )
+                assert cancelled.status_code == 200
+                assert cancelled.json()["data"]["status"] == "cancelled"
+                repeated = await client.post(
+                    f"/api/v1/import-jobs/{job_id}/cancel", headers=headers
+                )
+                assert repeated.status_code == 409
+                controller.release_operation("upload")
+
+    asyncio.run(exercise())
+
+
+def test_import_controller_releases_claim_after_source_resolver_exception(
+    tmp_path, monkeypatch
+):
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    _capture(root / "first.f1ecap")
+    _capture(root / "second.f1ecap")
+    controller = ImportController(database, root)
+    controller.start()
+    assert controller.ready
+    controller.enable_dispatch()
+    original_resolver = import_controller_module.resolve_pinned_recording_source
+    first_call = True
+
+    def fail_first_resolution(*args, **kwargs):
+        nonlocal first_call
+        if first_call:
+            first_call = False
+            raise RuntimeError("simulated catalog read failure")
+        return original_resolver(*args, **kwargs)
+
+    monkeypatch.setattr(
+        import_controller_module,
+        "resolve_pinned_recording_source",
+        fail_first_resolution,
+    )
+    try:
+        assert controller.reserve_operation("upload")
+        sources = list_recording_sources(database, root)
+        first = controller.submit(sources[0]["capture_id"], queue_if_busy=True)
+        second = controller.submit(sources[1]["capture_id"], queue_if_busy=True)
+        controller.release_operation("upload")
+
+        for _ in range(250):
+            first_current = controller.get(first["job_id"])
+            second_current = controller.get(second["job_id"])
+            if (
+                first_current is not None
+                and second_current is not None
+                and first_current["status"] == "failed"
+                and second_current["status"] == "complete"
+            ):
+                break
+            time.sleep(0.02)
+
+        assert first_current is not None
+        assert first_current["status"] == "failed"
+        assert first_current["failure_reason"] == "capture_source_changed_refresh_catalog"
+        assert second_current is not None and second_current["status"] == "complete"
+        assert controller.current_operation_reservation is None
+    finally:
+        controller.release_operation("upload")
+        controller.close()
+
+
+def test_import_controller_closing_rejects_new_claims_and_keeps_waiters(tmp_path):
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    _capture(root / "queued.f1ecap")
+    _capture(root / "retry.f1ecap")
+    controller = ImportController(database, root)
+    controller.start()
+    assert controller.ready
+    controller.enable_dispatch()
+    try:
+        sources = list_recording_sources(database, root)
+        assert controller.reserve_operation("upload")
+        queued = controller.submit(sources[0]["capture_id"], queue_if_busy=True)
+        failed, _ = create_import_job(database, sources[1]["capture_id"])
+        update_import_job(
+            database,
+            failed["job_id"],
+            status="failed",
+            phase="failed",
+            finished=True,
+        )
+
+        controller.stop_dispatch()
+        controller.release_operation("upload")
+        with pytest.raises(ValueError, match="import_controller_shutting_down"):
+            controller.submit(sources[1]["capture_id"])
+        with pytest.raises(ValueError, match="import_controller_shutting_down"):
+            controller.retry(failed["job_id"])
+        assert controller.reserve_operation("replay") is False
+        assert controller.get(queued["job_id"])["status"] == "queued"
+        assert controller.get(failed["job_id"])["status"] == "failed"
+        assert controller.current_operation_reservation is None
+    finally:
+        controller.release_operation("upload")
+        controller.close()
+
+
+def test_failed_immediate_claim_releases_reservation_and_keeps_job_queued(
+    tmp_path, monkeypatch
+):
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    _capture(root / "claim-failure.f1ecap")
+    controller = ImportController(database, root)
+    controller.start()
+    assert controller.ready
+    monkeypatch.setattr(import_controller_module, "claim_oldest_import_job", lambda _path: None)
+    try:
+        capture_id = list_recording_sources(database, root)[0]["capture_id"]
+        with pytest.raises(ValueError, match="import_queue_claim_failed"):
+            controller.submit(capture_id)
+        assert controller.current_operation_reservation is None
+        assert list_recording_sources(database, root)[0]["latest_job_status"] == "queued"
+    finally:
+        controller.close()
+
+
+def test_api_remains_readable_when_another_instance_owns_import_control(tmp_path):
+    database = tmp_path / "archive.sqlite3"
+    root = tmp_path / "recordings"
+    root.mkdir()
+    _capture(root / "read-only.f1ecap")
+    list_recording_sources(database, root)
+    owner = ImportController(database, root)
+    owner.start()
+    assert owner.ready
+    app = create_app(database, recordings_root=root)
+
+    async def exercise():
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://127.0.0.1"
+            ) as client:
+                response = await client.get("/api/v1/recording-sources")
+                assert response.status_code == 200
+                assert response.json()["status"] == "ok"
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        owner.close()

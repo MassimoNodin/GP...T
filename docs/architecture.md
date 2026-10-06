@@ -1329,6 +1329,26 @@ Expose a separate read-only API and an explicit Sessions “Inspect observations
 
 Acceptance requires: recovered Shanghai observations matching an independent exact `(session_uid, packet_format, lifecycle_epoch, car_index, start..end)` selection; the completed lap excludes its completion-transition observation while the incoming lap includes it when in range; partial and abandoned attempts remain inspectable only within recorded bounds; wrong/off-page identities never fall back; replaced tenure, rewind/wrap, and format boundaries stay separate; checksum drift, missing or malformed chunks, forged manifest counts/scope, missing bounds, and all work/response limits fail closed; and player APIs and coaching admission remain unchanged.
 
+## Decision 0085: queue imports durably behind local operations
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Extend the existing `import_jobs` and `ImportController` to provide an opt-in durable FIFO queue. Keep the existing local operation reservation as the sole authority for running an import, recording, replay, or upload; do not introduce another scheduler or allow queued jobs to reserve the service. Allow at most 16 waiting jobs and one running job, with no more than one queued or running job for a capture. Persist a monotonic `queue_order`, independent of timestamps. Duplicate submissions return the existing active job without changing its position; retry assigns a new queue position at the tail.
+
+Preserve the existing import POST behavior when idle and retain its busy response when another local operation or older waiting import owns priority. Add an explicit queue-enabled submission option that may wait behind any local reservation. Neither submission mode may bypass older queued work. Reservation release wakes a controller-owned dispatcher asynchronously; it must not synchronously start an import while a recording, replay, or upload lifecycle lock is held. The dispatcher atomically claims the oldest queued database row and reserves the existing import operation. Paused recording groups keep the recording reservation and therefore block import dispatch.
+
+At acceptance, pin the configured-root namespace and catalog metadata version for the selected capture. Revalidate both registration and actual file metadata before dispatch. A missing, replaced, or changed source fails with an explicit refresh-required outcome; never retarget the job to another file or silently update its pin. This pin identifies catalog metadata and does not claim content integrity. Cancellation is an atomic transition from `queued` to `cancelled`; running-job cancellation is not supported. Restart preserves queued jobs and their order, and marks a prior running job `interrupted`, requiring explicit retry. Enable dispatch only after recording/replay startup recovery; disable dispatch before shutdown closes those controllers. An already-running import follows the existing shutdown wait policy, while waiting jobs remain durable.
+
+Bump the SQLite schema from 14 to 15. Add `queue_order`, pinned source namespace/version, and `cancelled` status; rebuild the status constraint while preserving every existing job. Replace the global active-job index with one unique running-job index and a unique queued/running-per-capture index. Backfill any legacy active queue order deterministically. Keep importer identity, trace schemas, and telemetry eligibility unchanged.
+
+Expose a bounded active-queue snapshot with at most 17 compact job rows, waiting count, queue positions, current running job, and blocking reservation. Limit its serialized response to 64 KiB before transfer, and do not include stored import result JSON. Protect cancellation with the existing local API token and same-origin proxy checks.
+
+**Acceptance:** concurrent queue submissions and duplicate capture handling; 16 waiting jobs plus one running job and rejection at the next slot; FIFO claim and retry-to-tail order; cancellation-versus-claim race; capacity/error recovery; source version and configured-root drift; no dispatch during recording, paused groups, replay, or upload; dispatch after reservation release; restart preservation and interruption; shutdown/release races; legacy busy behavior; bounded snapshot and cancellation authorization. Real Melbourne/Shanghai imports must retain existing checksum, idempotency, and diagnostic limitations.
+
+**Rationale:** Stage 3 already calls for an import queue, while recording, replay, upload, and import already share one exclusive reservation. Durable FIFO state completes that workflow without competing ownership or a second scheduling mechanism. Pinning source metadata prevents an accepted queued job from silently changing meaning while it waits.
+
 ## Data flow
 
 ```text

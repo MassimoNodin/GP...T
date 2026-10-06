@@ -6,6 +6,7 @@ import type {
   RecordingSourcePageRecord,
 } from "@/lib/api";
 import ImportJobStatus from "./ImportJobStatus";
+import ImportQueue from "./ImportQueue";
 import ReplayControls from "./ReplayControls";
 import RecordingControls from "./RecordingControls";
 import RecordingUploadPanel from "./RecordingUploadPanel";
@@ -16,13 +17,22 @@ import {
 } from "@/lib/navigation";
 
 const importErrorText: Record<string, string> = {
-  busy: "Another recording is importing. Wait for it to finish, then try again.",
+  busy: "Another local operation is using the service. Wait or queue the import.",
   capture_unavailable: "That recording is no longer available in the inbox.",
   job_unavailable: "That import job is no longer available.",
   unavailable:
     "The local import service is unavailable. Check the API and try again.",
   import_control_not_authorized:
     "Local import authorization is unavailable. Restart the API and dashboard.",
+  import_queue_full:
+    "The import queue is full. Wait for a slot to open, then try again.",
+  capture_source_changed_refresh_catalog:
+    "The capture changed after it was selected. Refresh the catalog before importing it.",
+  job_not_waiting:
+    "That import has already started and can no longer be cancelled.",
+  import_capture_already_active:
+    "An import for this capture is already waiting or running.",
+  import_job_not_retryable: "This import is no longer available to retry.",
 };
 
 export default function RecordingInbox({
@@ -72,6 +82,7 @@ export default function RecordingInbox({
     "complete",
     "failed",
     "interrupted",
+    "cancelled",
   ].includes(catalogFilters.latestJobStatus)
     ? catalogFilters.latestJobStatus
     : "all";
@@ -179,6 +190,7 @@ export default function RecordingInbox({
                 <option value="complete">Complete</option>
                 <option value="failed">Failed</option>
                 <option value="interrupted">Interrupted</option>
+                <option value="cancelled">Cancelled</option>
               </select>
             </label>
             <label>
@@ -318,6 +330,14 @@ export default function RecordingInbox({
                               ? "Check for updates"
                               : "Import recording"}
                           </button>
+                          <button
+                            className="import-button secondary-import-button"
+                            type="submit"
+                            name="queue_if_busy"
+                            value="true"
+                          >
+                            Queue if busy
+                          </button>
                         </form>
                       ) : null}
                     </div>
@@ -380,6 +400,7 @@ export default function RecordingInbox({
           remains usable.
         </p>
       )}
+      <ImportQueue returnTo={returnTo} preservedQuery={preservedQuery} />
       <ImportJobStatus
         initialJob={job}
         returnTo={returnTo}

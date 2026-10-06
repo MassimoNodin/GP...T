@@ -28,36 +28,36 @@ function redirectWith(
   return NextResponse.redirect(destination, 303);
 }
 
-export async function POST(request: Request) {
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ job_id: string }> },
+) {
+  const { job_id } = await params;
   if (!isTrustedLocalMutation(request)) {
     return NextResponse.json(
       { error: "same_origin_request_required" },
       { status: 403 },
     );
   }
-  const form = await request.formData();
-  const returnTo = appScreenFrom(form.get("return_to"));
+  let form: FormData | null = null;
+  try {
+    form = await request.formData();
+  } catch {
+    form = null;
+  }
+  const returnTo = appScreenFrom(form?.get("return_to") ?? null);
   const preservedQuery = sanitizeAppStateQuery(
-    String(form.get("preserved_query") ?? ""),
+    String(form?.get("preserved_query") ?? ""),
   );
-  const queueIfBusy = form.get("queue_if_busy") === "true";
-  const captureId = form.get("capture_id");
-  if (typeof captureId !== "string" || !/^[a-f0-9]{32}$/.test(captureId)) {
+  if (!/^[a-f0-9]{32}$/.test(job_id)) {
     return redirectWith(request, returnTo, preservedQuery, {
-      import_error: "capture_unavailable",
+      import_error: "job_unavailable",
     });
   }
   try {
     const response = await forwardLocalRequest(
-      "/api/v1/import-jobs",
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          capture_id: captureId,
-          queue_if_busy: queueIfBusy,
-        }),
-      },
+      `/api/v1/import-jobs/${job_id}/cancel`,
+      { method: "POST" },
       true,
     );
     const result = (await response.json()) as {
@@ -65,14 +65,11 @@ export async function POST(request: Request) {
       reason?: string;
     };
     if (!response.ok || !result.data?.job_id) {
-      const busy =
-        result.reason === "another_import_is_in_progress" ||
-        result.reason === "another_local_operation_is_in_progress";
       return redirectWith(request, returnTo, preservedQuery, {
-        import_error: busy
-          ? "busy"
-          : (result.reason ??
-            (response.status === 409 ? "busy" : "unavailable")),
+        import_error:
+          response.status === 409
+            ? "job_not_waiting"
+            : (result.reason ?? "unavailable"),
       });
     }
     return redirectWith(request, returnTo, preservedQuery, {

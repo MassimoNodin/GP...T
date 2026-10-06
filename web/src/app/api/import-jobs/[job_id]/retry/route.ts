@@ -67,7 +67,8 @@ export async function POST(
     if (!response.ok || !result.data?.job_id) {
       return redirectWith(request, returnTo, preservedQuery, {
         import_error:
-          response.status === 409 ? "busy" : (result.reason ?? "unavailable"),
+          result.reason ??
+          (response.status === 409 ? "busy" : "unavailable"),
       });
     }
     return redirectWith(request, returnTo, preservedQuery, {

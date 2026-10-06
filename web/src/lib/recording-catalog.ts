@@ -13,6 +13,7 @@ const importStatuses = new Set([
   "complete",
   "failed",
   "interrupted",
+  "cancelled",
 ]);
 const catalogStatuses = new Set([
   "all",
@@ -22,6 +23,7 @@ const catalogStatuses = new Set([
   "complete",
   "failed",
   "interrupted",
+  "cancelled",
 ]);
 const availabilityFilters = new Set(["all", "available", "missing"]);
 

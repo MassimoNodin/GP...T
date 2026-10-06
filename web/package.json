@@ -11,6 +11,7 @@
     "test:car-lap-inventory": "node --test scripts/car-lap-inventory.test.mjs",
     "test:car-lap-observations": "node --test scripts/car-lap-observations.test.mjs",
     "test:recording-catalog": "node --test scripts/recording-catalog.test.mjs",
+    "test:import-queue": "node --test scripts/import-queue.test.mjs",
     "test:recording-download-proxy": "node --test scripts/recording-download-proxy.test.mjs",
     "test:recording-upload-proxy": "node --test scripts/recording-upload-proxy.test.mjs",
     "test:telemetry-service": "node --test scripts/telemetry-service.test.mjs",

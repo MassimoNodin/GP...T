@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .database import Database
+from .database import Database, recording_source_metadata_version
 
 
 MAX_RECORDING_CATALOG_DIRECTORY_ENTRIES = 4_096
@@ -28,6 +28,7 @@ _RECORDING_CATALOG_STATUSES = {
     "complete",
     "failed",
     "interrupted",
+    "cancelled",
 }
 _RECORDING_CATALOG_AVAILABILITY = {"all", "available", "missing"}
 
@@ -238,12 +239,9 @@ def recording_download_version(
     modified_ns: int,
 ) -> str:
     """Return a stable metadata identity for one observed recording file."""
-    payload = json.dumps(
-        [namespace, capture_id, relative_path, byte_size, modified_ns],
-        ensure_ascii=True,
-        separators=(",", ":"),
-    ).encode("ascii")
-    return hashlib.sha256(b"recording-download-v1\0" + payload).hexdigest()
+    return recording_source_metadata_version(
+        namespace, capture_id, relative_path, byte_size, modified_ns
+    )
 
 
 def _utc_now() -> str:
@@ -520,7 +518,7 @@ def list_recording_sources_page(
                                           WHEN typeof(latest_job.status)='text'
                                            AND latest_job.status IN (
                                                'queued', 'running', 'complete',
-                                               'failed', 'interrupted')
+                                               'failed', 'interrupted', 'cancelled')
                                           THEN latest_job.status
                                           ELSE NULL
                                       END AS latest_job_status,
@@ -688,7 +686,7 @@ def _recording_catalog_source(
         not isinstance(latest_job_id, str)
         or re.fullmatch(r"[a-f0-9]{32}", latest_job_id) is None
         or latest_job_status
-        not in {"queued", "running", "complete", "failed", "interrupted"}
+        not in {"queued", "running", "complete", "failed", "interrupted", "cancelled"}
     ):
         latest_job_id = None
         latest_job_status = None
@@ -789,33 +787,168 @@ def resolve_recording_source(
     return source
 
 
-def create_import_job(
-    database_path: str | Path, capture_id: str
+def recording_source_pin(
+    database_path: str | Path,
+    recordings_root: str | Path,
+    capture_id: str,
+) -> dict[str, Any] | None:
+    """Read and verify the selected catalog metadata before accepting a job."""
+    root = _absolute_recordings_root(recordings_root)
+    namespace = _root_namespace(root)
+    with Database(database_path, read_only=True) as db:
+        row = db.connection.execute(
+            """SELECT root_namespace, relative_path, byte_size, modified_ns
+                 FROM recording_sources
+                WHERE capture_id=? AND root_namespace=?""",
+            (capture_id, namespace),
+        ).fetchone()
+    if row is None:
+        return None
+    source = resolve_recording_source(database_path, root, capture_id)
+    if source is None:
+        return None
+    try:
+        source_stat = source.stat()
+    except OSError:
+        return None
+    if (
+        source_stat.st_size != row["byte_size"]
+        or source_stat.st_mtime_ns != row["modified_ns"]
+    ):
+        raise ValueError("capture_source_changed_refresh_catalog")
+    return {
+        "root_namespace": namespace,
+        "metadata_version": recording_source_metadata_version(
+            namespace,
+            capture_id,
+            row["relative_path"],
+            row["byte_size"],
+            row["modified_ns"],
+        ),
+        "relative_path": row["relative_path"],
+        "byte_size": row["byte_size"],
+        "modified_ns": row["modified_ns"],
+    }
+
+
+def resolve_pinned_recording_source(
+    database_path: str | Path,
+    recordings_root: str | Path,
+    capture_id: str,
+    source_root_namespace: str | None,
+    source_metadata_version: str | None,
+) -> Path | None:
+    """Resolve a job only while both its catalog pin and actual file still match."""
+    root = _absolute_recordings_root(recordings_root)
+    namespace = _root_namespace(root)
+    if (
+        source_root_namespace != namespace
+        or not isinstance(source_metadata_version, str)
+        or re.fullmatch(r"[a-f0-9]{64}", source_metadata_version) is None
+    ):
+        return None
+    with Database(database_path, read_only=True) as db:
+        row = db.connection.execute(
+            """SELECT root_namespace, relative_path, byte_size, modified_ns
+                 FROM recording_sources
+                WHERE capture_id=? AND root_namespace=?""",
+            (capture_id, namespace),
+        ).fetchone()
+    if row is None:
+        return None
+    current_version = recording_source_metadata_version(
+        namespace,
+        capture_id,
+        row["relative_path"],
+        row["byte_size"],
+        row["modified_ns"],
+    )
+    if current_version != source_metadata_version:
+        return None
+    source = resolve_recording_source(database_path, root, capture_id)
+    if source is None:
+        return None
+    try:
+        source_stat = source.stat()
+    except OSError:
+        return None
+    if (
+        source_stat.st_size != row["byte_size"]
+        or source_stat.st_mtime_ns != row["modified_ns"]
+    ):
+        return None
+    return source
+
+
+MAX_IMPORT_QUEUE_WAITING = 16
+MAX_IMPORT_QUEUE_RESPONSE_BYTES = 65_536
+
+
+def enqueue_import_job(
+    database_path: str | Path,
+    capture_id: str,
+    source_root_namespace: str,
+    source_metadata_version: str,
 ) -> tuple[dict[str, Any], bool]:
     with Database(database_path) as db:
         connection = db.connection
         connection.execute("BEGIN IMMEDIATE")
         source = connection.execute(
-            "SELECT capture_id FROM recording_sources WHERE capture_id=?",
-            (capture_id,),
+            """SELECT capture_id, relative_path, byte_size, modified_ns FROM recording_sources
+                 WHERE capture_id=? AND root_namespace=?""",
+            (capture_id, source_root_namespace),
         ).fetchone()
         if source is None:
             raise ValueError("capture_id_unavailable")
+        expected_version = recording_source_metadata_version(
+            source_root_namespace,
+            capture_id,
+            source["relative_path"],
+            source["byte_size"],
+            source["modified_ns"],
+        )
+        if expected_version != source_metadata_version:
+            raise ValueError("capture_source_changed_refresh_catalog")
         active = connection.execute(
             """SELECT * FROM import_jobs
-                 WHERE status IN ('queued', 'running')
-                 ORDER BY created_at_utc DESC LIMIT 1"""
+                 WHERE capture_id=? AND status IN ('queued', 'running')
+                 ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END,
+                          queue_order LIMIT 1""",
+            (capture_id,),
         ).fetchone()
         if active is not None:
             connection.commit()
-            if active["capture_id"] != capture_id:
-                raise ValueError("another_import_is_in_progress")
             return _job_record(active), False
+        waiting_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM import_jobs WHERE status='queued'"
+            ).fetchone()[0]
+        )
+        if waiting_count > MAX_IMPORT_QUEUE_WAITING:
+            connection.rollback()
+            raise ValueError("import_queue_capacity_inconsistent")
+        if waiting_count >= MAX_IMPORT_QUEUE_WAITING:
+            connection.rollback()
+            raise ValueError("import_queue_full")
+        queue_order = int(
+            connection.execute(
+                "SELECT COALESCE(MAX(queue_order), 0) + 1 FROM import_jobs"
+            ).fetchone()[0]
+        )
         job_id = uuid.uuid4().hex
         connection.execute(
-            """INSERT INTO import_jobs(job_id, capture_id, status, phase, updated_at_utc)
-                 VALUES (?, ?, 'queued', 'queued', ?)""",
-            (job_id, capture_id, _utc_now()),
+            """INSERT INTO import_jobs(
+                   job_id, capture_id, status, phase, updated_at_utc,
+                   queue_order, source_root_namespace, source_metadata_version)
+                 VALUES (?, ?, 'queued', 'queued', ?, ?, ?, ?)""",
+            (
+                job_id,
+                capture_id,
+                _utc_now(),
+                queue_order,
+                source_root_namespace,
+                source_metadata_version,
+            ),
         )
         connection.commit()
         row = connection.execute(
@@ -826,7 +959,10 @@ def create_import_job(
 
 
 def retry_import_job(
-    database_path: str | Path, job_id: str
+    database_path: str | Path,
+    job_id: str,
+    source_root_namespace: str | None = None,
+    source_metadata_version: str | None = None,
 ) -> dict[str, Any]:
     with Database(database_path) as db:
         connection = db.connection
@@ -838,18 +974,64 @@ def retry_import_job(
             raise ValueError("import_job_unavailable")
         if row["status"] not in {"failed", "interrupted"}:
             raise ValueError("import_job_not_retryable")
+        source = connection.execute(
+            """SELECT root_namespace, relative_path, byte_size, modified_ns
+                 FROM recording_sources WHERE capture_id=?
+                   AND (? IS NULL OR root_namespace=?)""",
+            (row["capture_id"], source_root_namespace, source_root_namespace),
+        ).fetchone()
+        if source is None:
+            raise ValueError("capture_id_unavailable")
+        source_root_namespace = source["root_namespace"]
+        if source_metadata_version is None:
+            source_metadata_version = recording_source_metadata_version(
+                source_root_namespace,
+                row["capture_id"],
+                source["relative_path"],
+                source["byte_size"],
+                source["modified_ns"],
+            )
+        elif source_metadata_version != recording_source_metadata_version(
+            source_root_namespace,
+            row["capture_id"],
+            source["relative_path"],
+            source["byte_size"],
+            source["modified_ns"],
+        ):
+            raise ValueError("capture_source_changed_refresh_catalog")
         active = connection.execute(
-            "SELECT 1 FROM import_jobs WHERE status IN ('queued', 'running') LIMIT 1"
+            """SELECT 1 FROM import_jobs WHERE capture_id=?
+                 AND status IN ('queued', 'running') LIMIT 1""",
+            (row["capture_id"],),
         ).fetchone()
         if active is not None:
-            raise ValueError("another_import_is_in_progress")
+            raise ValueError("import_capture_already_active")
+        waiting_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM import_jobs WHERE status='queued'"
+            ).fetchone()[0]
+        )
+        if waiting_count >= MAX_IMPORT_QUEUE_WAITING:
+            raise ValueError("import_queue_full")
+        queue_order = int(
+            connection.execute(
+                "SELECT COALESCE(MAX(queue_order), 0) + 1 FROM import_jobs"
+            ).fetchone()[0]
+        )
         connection.execute(
             """UPDATE import_jobs
                   SET status='queued', phase='queued', attempt_count=attempt_count+1,
                       started_at_utc=NULL, finished_at_utc=NULL,
-                      result_json=NULL, failure_reason=NULL, updated_at_utc=?
+                      result_json=NULL, failure_reason=NULL, updated_at_utc=?,
+                      queue_order=?, source_root_namespace=?, source_metadata_version=?
                 WHERE job_id=?""",
-            (_utc_now(), job_id),
+            (
+                _utc_now(),
+                queue_order,
+                source_root_namespace,
+                source_metadata_version,
+                job_id,
+            ),
         )
         connection.commit()
         retried = connection.execute(
@@ -857,6 +1039,177 @@ def retry_import_job(
         ).fetchone()
     assert retried is not None
     return _job_record(retried)
+
+
+def create_import_job(
+    database_path: str | Path, capture_id: str
+) -> tuple[dict[str, Any], bool]:
+    """Compatibility helper for storage callers that already selected a capture."""
+    with Database(database_path, read_only=True) as db:
+        source = db.connection.execute(
+            """SELECT root_namespace, relative_path, byte_size, modified_ns
+                 FROM recording_sources WHERE capture_id=?""",
+            (capture_id,),
+        ).fetchone()
+    if source is None:
+        raise ValueError("capture_id_unavailable")
+    version = recording_source_metadata_version(
+        source["root_namespace"],
+        capture_id,
+        source["relative_path"],
+        source["byte_size"],
+        source["modified_ns"],
+    )
+    return enqueue_import_job(
+        database_path, capture_id, source["root_namespace"], version
+    )
+
+
+def active_import_job_for_capture(
+    database_path: str | Path, capture_id: str
+) -> dict[str, Any] | None:
+    with Database(database_path, read_only=True) as db:
+        row = db.connection.execute(
+            """SELECT * FROM import_jobs WHERE capture_id=?
+                 AND status IN ('queued', 'running')
+                 ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END,
+                          queue_order LIMIT 1""",
+            (capture_id,),
+        ).fetchone()
+    return _job_record(row) if row is not None else None
+
+
+def has_queued_import_jobs(database_path: str | Path) -> bool:
+    with Database(database_path, read_only=True) as db:
+        return db.connection.execute(
+            "SELECT 1 FROM import_jobs WHERE status='queued' LIMIT 1"
+        ).fetchone() is not None
+
+
+def claim_oldest_import_job(database_path: str | Path) -> dict[str, Any] | None:
+    """Atomically make the oldest durable waiter the single running import."""
+    with Database(database_path) as db:
+        connection = db.connection
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            """SELECT * FROM import_jobs WHERE status='queued'
+                 ORDER BY queue_order ASC, created_at_utc ASC, rowid ASC LIMIT 1"""
+        ).fetchone()
+        if row is None:
+            connection.commit()
+            return None
+        connection.execute(
+            """UPDATE import_jobs
+                  SET status='running', phase='starting',
+                      started_at_utc=CURRENT_TIMESTAMP, updated_at_utc=?
+                WHERE job_id=? AND status='queued'""",
+            (_utc_now(), row["job_id"]),
+        )
+        claimed = connection.execute(
+            "SELECT * FROM import_jobs WHERE job_id=?", (row["job_id"],)
+        ).fetchone()
+        connection.commit()
+    return _job_record(claimed) if claimed is not None else None
+
+
+def cancel_queued_import_job(
+    database_path: str | Path, job_id: str
+) -> tuple[dict[str, Any] | None, bool]:
+    """Cancel only if the job is still waiting; claim and cancel serialize in SQLite."""
+    with Database(database_path) as db:
+        connection = db.connection
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            "SELECT * FROM import_jobs WHERE job_id=?", (job_id,)
+        ).fetchone()
+        if row is None:
+            connection.commit()
+            return None, False
+        cancelled = False
+        if row["status"] == "queued":
+            cursor = connection.execute(
+                """UPDATE import_jobs
+                      SET status='cancelled', phase='cancelled',
+                          finished_at_utc=CURRENT_TIMESTAMP, updated_at_utc=?,
+                          failure_reason=NULL
+                    WHERE job_id=? AND status='queued'""",
+                (_utc_now(), job_id),
+            )
+            cancelled = cursor.rowcount == 1
+        result = connection.execute(
+            "SELECT * FROM import_jobs WHERE job_id=?", (job_id,)
+        ).fetchone()
+        connection.commit()
+    return (_job_record(result) if result is not None else None), cancelled
+
+
+def import_queue_snapshot(
+    database_path: str | Path, blocking_reservation: str | None
+) -> dict[str, Any]:
+    """Return a result-only-free snapshot bounded before it reaches the API."""
+    projected_columns = """CASE WHEN typeof(job_id)='text' AND length(job_id)=32
+            AND job_id NOT GLOB '*[^0-9a-f]*' THEN job_id END AS job_id,
+        CASE WHEN typeof(capture_id)='text' AND length(capture_id)=32
+            AND capture_id NOT GLOB '*[^0-9a-f]*' THEN capture_id END AS capture_id,
+        status,
+        CASE WHEN typeof(phase)='text'
+            AND length(CAST(phase AS BLOB)) BETWEEN 1 AND 64
+            AND phase NOT GLOB '*[^a-zA-Z0-9_]*' THEN phase END AS phase,
+        CASE WHEN typeof(attempt_count)='integer'
+            AND attempt_count BETWEEN 1 AND 1000000 THEN attempt_count END AS attempt_count,
+        CASE WHEN typeof(created_at_utc)='text'
+            AND length(CAST(created_at_utc AS BLOB)) BETWEEN 1 AND 40
+            THEN created_at_utc END AS created_at_utc,
+        CASE WHEN typeof(updated_at_utc)='text'
+            AND length(CAST(updated_at_utc AS BLOB)) BETWEEN 1 AND 40
+            THEN updated_at_utc END AS updated_at_utc"""
+    with Database(database_path, read_only=True) as db:
+        db.connection.execute("BEGIN")
+        running_rows = db.connection.execute(
+            f"SELECT {projected_columns} FROM import_jobs "
+            "WHERE status='running' LIMIT 2"
+        ).fetchall()
+        waiting = db.connection.execute(
+            f"SELECT {projected_columns} FROM import_jobs WHERE status='queued' "
+            "ORDER BY queue_order ASC, created_at_utc ASC, rowid ASC LIMIT ?",
+            (MAX_IMPORT_QUEUE_WAITING + 1,),
+        ).fetchall()
+        waiting_count = int(
+            db.connection.execute(
+                "SELECT COUNT(*) FROM import_jobs WHERE status='queued'"
+            ).fetchone()[0]
+        )
+        db.connection.commit()
+
+    if waiting_count > MAX_IMPORT_QUEUE_WAITING:
+        raise ValueError("import_queue_capacity_inconsistent")
+    if len(running_rows) > 1 or len(waiting) != waiting_count:
+        raise ValueError("import_queue_snapshot_unavailable")
+
+    def compact(row: Any, position: int | None) -> dict[str, Any]:
+        item = {
+            "job_id": row["job_id"],
+            "capture_id": row["capture_id"],
+            "status": row["status"],
+            "phase": row["phase"],
+            "attempt_count": row["attempt_count"],
+            "created_at_utc": row["created_at_utc"],
+            "updated_at_utc": row["updated_at_utc"],
+            "queue_position": position,
+        }
+        if any(value is None for key, value in item.items() if key != "queue_position"):
+            raise ValueError("import_queue_snapshot_unavailable")
+        return item
+
+    result = {
+        "waiting_count": waiting_count,
+        "running_job": compact(running_rows[0], None) if running_rows else None,
+        "waiting_jobs": [compact(row, index) for index, row in enumerate(waiting[:16], 1)],
+        "blocking_reservation": blocking_reservation or "idle",
+    }
+    if len(json.dumps(result, separators=(",", ":"), ensure_ascii=True).encode("utf-8")) > MAX_IMPORT_QUEUE_RESPONSE_BYTES:
+        raise ValueError("import_queue_response_limit")
+    return result
 
 
 def update_import_job(
@@ -913,7 +1266,7 @@ def recover_abandoned_import_jobs(database_path: str | Path) -> None:
                           finished_at_utc=CURRENT_TIMESTAMP,
                           updated_at_utc=?,
                           failure_reason='api_restarted_before_import_completed'
-                    WHERE status IN ('queued', 'running')"""
+                    WHERE status='running'"""
                 ,
                 (_utc_now(),)
             )
@@ -932,4 +1285,6 @@ def _job_record(row: Any) -> dict[str, Any]:
         "finished_at_utc": row["finished_at_utc"],
         "result": json.loads(row["result_json"]) if row["result_json"] else None,
         "failure_reason": row["failure_reason"],
+        "source_root_namespace": row["source_root_namespace"],
+        "source_metadata_version": row["source_metadata_version"],
     }

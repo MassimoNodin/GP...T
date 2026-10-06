@@ -4586,6 +4586,55 @@ h1 span {
   border-color: #31433e;
   background: rgba(13, 19, 18, 0.72);
 }
+.import-queue {
+  margin-top: 17px;
+  padding: 17px 19px;
+  border-color: #31433e;
+  background: rgba(13, 19, 18, 0.72);
+}
+.import-queue-list {
+  display: grid;
+  gap: 7px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.import-queue-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+  padding: 8px 0;
+  border-top: 1px solid rgba(115, 139, 131, 0.18);
+  color: #c0cbc5;
+  font: 10px var(--font-mono);
+}
+.import-queue-row > span:last-child {
+  color: #82918c;
+  text-transform: capitalize;
+}
+.import-queue-row form {
+  flex: 0 0 auto;
+}
+.queue-cancel-button {
+  padding: 5px 8px;
+  border: 1px solid #4d5653;
+  border-radius: 2px;
+  background: transparent;
+  color: #aab6b1;
+  cursor: pointer;
+  font: 9px var(--font-mono);
+  text-transform: uppercase;
+}
+.queue-cancel-button:hover {
+  border-color: #bd8267;
+  color: #edb59a;
+}
+.queue-cancel-button:focus-visible {
+  outline: 2px solid var(--mint);
+  outline-offset: 2px;
+}
 .import-job-heading {
   align-items: center;
 }

@@ -142,7 +142,8 @@ export interface RecordingSourcePageRecord {
       | "running"
       | "complete"
       | "failed"
-      | "interrupted";
+      | "interrupted"
+      | "cancelled";
     availability: "all" | "available" | "missing";
     selected_capture_id: string | null;
   };
@@ -158,7 +159,8 @@ export interface ImportProgressRecord {
 export interface ImportJobRecord {
   job_id: string;
   capture_id: string;
-  status: "queued" | "running" | "complete" | "failed" | "interrupted";
+  status:
+    "queued" | "running" | "complete" | "failed" | "interrupted" | "cancelled";
   phase: string;
   attempt_count: number;
   created_at_utc: string;
@@ -168,6 +170,26 @@ export interface ImportJobRecord {
   result: Record<string, unknown> | null;
   failure_reason: string | null;
   progress: ImportProgressRecord | null;
+  source_root_namespace?: string | null;
+  source_metadata_version?: string | null;
+}
+
+export interface ImportQueueJobRecord {
+  job_id: string;
+  capture_id: string;
+  status: "queued" | "running";
+  phase: string;
+  attempt_count: number;
+  created_at_utc: string;
+  updated_at_utc: string;
+  queue_position: number | null;
+}
+
+export interface ImportQueueRecord {
+  waiting_count: number;
+  running_job: ImportQueueJobRecord | null;
+  waiting_jobs: ImportQueueJobRecord[];
+  blocking_reservation: "idle" | "recording" | "import" | "replay" | "upload";
 }
 
 export interface RecordingProgressRecord {

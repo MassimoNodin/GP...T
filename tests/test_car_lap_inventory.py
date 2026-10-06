@@ -462,7 +462,7 @@ def test_schema_13_migrates_diagnostic_car_lap_tables(tmp_path) -> None:
             )
         }
 
-    assert version == 14
+    assert version == 15
     assert "car_slot_tenures" in table_names
     assert "observed_car_lap_attempts" in table_names
 

@@ -177,7 +177,7 @@ class RecordingSourceCatalogRecord(RecordingSourceRecord):
 class RecordingSourceFiltersRecord(BaseModel):
     query: str = Field(max_length=128)
     latest_job_status: Literal[
-        "all", "none", "queued", "running", "complete", "failed", "interrupted"
+        "all", "none", "queued", "running", "complete", "failed", "interrupted", "cancelled"
     ]
     availability: Literal["all", "available", "missing"]
     selected_capture_id: str | None
@@ -253,7 +253,7 @@ class ImportProgressRecord(BaseModel):
 class ImportJobRecord(BaseModel):
     job_id: str
     capture_id: str
-    status: Literal["queued", "running", "complete", "failed", "interrupted"]
+    status: Literal["queued", "running", "complete", "failed", "interrupted", "cancelled"]
     phase: str
     attempt_count: int
     created_at_utc: str
@@ -263,12 +263,33 @@ class ImportJobRecord(BaseModel):
     result: dict[str, Any] | None
     failure_reason: str | None
     progress: ImportProgressRecord | None = None
+    source_root_namespace: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    source_metadata_version: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+
+class ImportQueueJobRecord(BaseModel):
+    job_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    capture_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    status: Literal["queued", "running"]
+    phase: str = Field(max_length=64)
+    attempt_count: int = Field(ge=1)
+    created_at_utc: str = Field(max_length=40)
+    updated_at_utc: str = Field(max_length=40)
+    queue_position: int | None = Field(default=None, ge=1, le=16)
+
+
+class ImportQueueRecord(BaseModel):
+    waiting_count: int = Field(ge=0, le=16)
+    running_job: ImportQueueJobRecord | None
+    waiting_jobs: list[ImportQueueJobRecord] = Field(max_length=16)
+    blocking_reservation: Literal["idle", "recording", "import", "replay", "upload"]
 
 
 class ImportJobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     capture_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    queue_if_busy: bool = False
 
 
 class AttemptSummaryQueryBody(BaseModel):
@@ -1016,6 +1037,7 @@ def create_app(
         recording_upload_service.start()
         recording_controller.start()
         replay_controller.start()
+        import_controller.enable_dispatch()
         app.state.import_controller = import_controller
         app.state.recording_controller = recording_controller
         app.state.replay_controller = replay_controller
@@ -1024,6 +1046,7 @@ def create_app(
         try:
             yield
         finally:
+            import_controller.stop_dispatch()
             await run_in_threadpool(recording_upload_service.close)
             replay_controller.close()
             recording_controller.close()
@@ -2262,7 +2285,9 @@ def create_app(
         if not _authorized(authorization, control_token):
             return _api_error(403, "import_control_not_authorized")
         try:
-            job = import_controller.submit(request.capture_id)
+            job = import_controller.submit(
+                request.capture_id, queue_if_busy=request.queue_if_busy
+            )
         except ValueError as exc:
             reason = str(exc)
             status_code = (
@@ -2271,11 +2296,25 @@ def create_app(
                 in {
                     "another_import_is_in_progress",
                     "another_local_operation_is_in_progress",
+                    "import_queue_full",
+                    "import_queue_capacity_inconsistent",
+                    "capture_source_changed_refresh_catalog",
                 }
                 else 503
             )
             return _api_error(status_code, reason)
         return APIResponse[ImportJobRecord](data=job)
+
+    @app.get(
+        "/api/v1/import-jobs/queue",
+        response_model=APIResponse[ImportQueueRecord],
+    )
+    def import_job_queue() -> APIResponse[ImportQueueRecord] | JSONResponse:
+        try:
+            snapshot = import_controller.queue_snapshot()
+        except ValueError as exc:
+            return _api_error(503, str(exc))
+        return APIResponse[ImportQueueRecord](data=snapshot)
 
     @app.get(
         "/api/v1/import-jobs/{job_id}",
@@ -2309,10 +2348,34 @@ def create_app(
                     "another_import_is_in_progress",
                     "another_local_operation_is_in_progress",
                     "import_job_not_retryable",
+                    "import_queue_full",
+                    "import_queue_capacity_inconsistent",
+                    "import_capture_already_active",
+                    "capture_source_changed_refresh_catalog",
                 }
                 else 503
             )
             return _api_error(status_code, reason)
+        return APIResponse[ImportJobRecord](data=job)
+
+    @app.post(
+        "/api/v1/import-jobs/{job_id}/cancel",
+        response_model=APIResponse[ImportJobRecord],
+    )
+    def cancel_import(
+        job_id: str,
+        authorization: str | None = Header(default=None),
+    ) -> APIResponse[ImportJobRecord] | JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "import_control_not_authorized")
+        try:
+            job, cancelled = import_controller.cancel(job_id)
+        except ValueError as exc:
+            return _api_error(503, str(exc))
+        if job is None:
+            return _api_error(404, "import_job_unavailable")
+        if not cancelled:
+            return _api_error(409, "import_job_not_waiting")
         return APIResponse[ImportJobRecord](data=job)
 
     @app.get(

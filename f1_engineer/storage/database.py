@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 class DatabaseSchemaError(ValueError):
@@ -356,8 +359,6 @@ CREATE TABLE IF NOT EXISTS recording_jobs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_import_jobs_capture ON import_jobs(capture_id, created_at_utc);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_import_job
-    ON import_jobs((1)) WHERE status IN ('queued', 'running');
 CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_recording_job
     ON recording_jobs((1)) WHERE status IN ('starting', 'recording', 'stopping');
 
@@ -716,11 +717,157 @@ class Database:
             )
             self.connection.commit()
             version = 14
+        if version == 14:
+            # Serialize upgrades before reading any rows. A second process may
+            # have completed this migration while this connection was opening.
+            self.connection.execute("BEGIN IMMEDIATE")
+            locked_version = self.connection.execute(
+                "SELECT version FROM schema_info WHERE singleton = 1"
+            ).fetchone()[0]
+            if locked_version != 14:
+                self.connection.commit()
+                if locked_version != SCHEMA_VERSION:
+                    self.connection.close()
+                    raise ValueError(
+                        f"database schema {locked_version} is not supported"
+                    )
+                return
+            rows = self.connection.execute(
+                """SELECT j.rowid AS row_id, j.job_id, j.capture_id, j.status,
+                          j.created_at_utc, s.root_namespace, s.relative_path,
+                          s.byte_size, s.modified_ns
+                     FROM import_jobs j
+                     LEFT JOIN recording_sources s ON s.capture_id=j.capture_id
+                    ORDER BY CASE j.status WHEN 'running' THEN 0
+                                           WHEN 'queued' THEN 1 ELSE 2 END,
+                             j.created_at_utc, j.rowid"""
+            ).fetchall()
+            pinned_rows: list[tuple[object, ...]] = []
+            for queue_order, row in enumerate(rows, start=1):
+                namespace = row["root_namespace"]
+                relative_path = row["relative_path"]
+                byte_size = row["byte_size"]
+                modified_ns = row["modified_ns"]
+                version_pin = None
+                if (
+                    isinstance(namespace, str)
+                    and re.fullmatch(r"[a-f0-9]{64}", namespace) is not None
+                    and isinstance(relative_path, str)
+                    and isinstance(byte_size, int)
+                    and not isinstance(byte_size, bool)
+                    and isinstance(modified_ns, int)
+                    and not isinstance(modified_ns, bool)
+                ):
+                    version_pin = recording_source_metadata_version(
+                        namespace,
+                        row["capture_id"],
+                        relative_path,
+                        byte_size,
+                        modified_ns,
+                    )
+                pinned_rows.append(
+                    (
+                        queue_order,
+                        namespace
+                        if isinstance(namespace, str)
+                        and re.fullmatch(r"[a-f0-9]{64}", namespace) is not None
+                        else None,
+                        version_pin,
+                        row["job_id"],
+                    )
+                )
+            self.connection.execute("DROP INDEX IF EXISTS idx_one_active_import_job")
+            self.connection.execute("DROP INDEX IF EXISTS idx_import_jobs_capture")
+            self.connection.execute("DROP INDEX IF EXISTS idx_import_jobs_latest")
+            self.connection.execute(
+                """CREATE TABLE import_jobs_v15 (
+                    job_id TEXT PRIMARY KEY,
+                    capture_id TEXT NOT NULL REFERENCES recording_sources(capture_id),
+                    status TEXT NOT NULL CHECK (status IN (
+                        'queued', 'running', 'complete', 'failed', 'interrupted', 'cancelled')),
+                    phase TEXT NOT NULL,
+                    attempt_count INTEGER NOT NULL DEFAULT 1 CHECK (attempt_count > 0),
+                    created_at_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    started_at_utc TEXT,
+                    finished_at_utc TEXT,
+                    result_json TEXT,
+                    failure_reason TEXT,
+                    queue_order INTEGER NOT NULL DEFAULT 0 CHECK (queue_order >= 0),
+                    source_root_namespace TEXT CHECK (
+                        source_root_namespace IS NULL OR (
+                            length(source_root_namespace)=64
+                            AND source_root_namespace NOT GLOB '*[^0-9a-f]*'
+                        )
+                    ),
+                    source_metadata_version TEXT CHECK (
+                        source_metadata_version IS NULL OR (
+                            length(source_metadata_version)=64
+                            AND source_metadata_version NOT GLOB '*[^0-9a-f]*'
+                        )
+                    )
+                )"""
+            )
+            self.connection.execute(
+                """INSERT INTO import_jobs_v15(
+                       job_id, capture_id, status, phase, attempt_count,
+                       created_at_utc, updated_at_utc, started_at_utc,
+                       finished_at_utc, result_json, failure_reason,
+                       queue_order, source_root_namespace, source_metadata_version)
+                   SELECT job_id, capture_id, status, phase, attempt_count,
+                          created_at_utc, updated_at_utc, started_at_utc,
+                          finished_at_utc, result_json, failure_reason,
+                          0, NULL, NULL
+                     FROM import_jobs"""
+            )
+            self.connection.executemany(
+                """UPDATE import_jobs_v15
+                      SET queue_order=?, source_root_namespace=?, source_metadata_version=?
+                    WHERE job_id=?""",
+                pinned_rows,
+            )
+            self.connection.execute("DROP TABLE import_jobs")
+            self.connection.execute("ALTER TABLE import_jobs_v15 RENAME TO import_jobs")
+            self.connection.execute(
+                "CREATE INDEX idx_import_jobs_capture ON import_jobs(capture_id, created_at_utc)"
+            )
+            self.connection.execute(
+                "CREATE INDEX idx_import_jobs_queue ON import_jobs(status, queue_order)"
+            )
+            self.connection.execute(
+                "CREATE UNIQUE INDEX idx_import_jobs_queue_order ON import_jobs(queue_order)"
+            )
+            self.connection.execute(
+                "CREATE INDEX idx_import_jobs_latest ON import_jobs(capture_id, updated_at_utc DESC)"
+            )
+            self.connection.execute(
+                "CREATE UNIQUE INDEX idx_one_running_import_job ON import_jobs((1)) WHERE status='running'"
+            )
+            self.connection.execute(
+                "CREATE UNIQUE INDEX idx_one_active_import_per_capture ON import_jobs(capture_id) WHERE status IN ('queued', 'running')"
+            )
+            self.connection.execute(
+                "UPDATE schema_info SET version = 15 WHERE singleton = 1"
+            )
+            self.connection.commit()
+            version = 15
         if version != SCHEMA_VERSION:
             self.connection.close()
             raise ValueError(f"database schema {version} is not supported")
         self.connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_import_jobs_latest ON import_jobs(capture_id, updated_at_utc DESC)"
+        )
+        self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_import_jobs_queue ON import_jobs(status, queue_order)"
+        )
+        self.connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_import_jobs_queue_order ON import_jobs(queue_order)"
+        )
+        self.connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_one_running_import_job ON import_jobs((1)) WHERE status='running'"
+        )
+        self.connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_import_per_capture ON import_jobs(capture_id) WHERE status IN ('queued', 'running')"
         )
         self.connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_recording_jobs_latest ON recording_jobs(updated_at_utc DESC)"
@@ -738,3 +885,19 @@ class Database:
 
     def __exit__(self, *_: object) -> None:
         self.close()
+
+
+def recording_source_metadata_version(
+    namespace: str,
+    capture_id: str,
+    relative_path: str,
+    byte_size: int,
+    modified_ns: int,
+) -> str:
+    """Return the shared stable catalog metadata identity for one capture."""
+    payload = json.dumps(
+        [namespace, capture_id, relative_path, byte_size, modified_ns],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    return hashlib.sha256(b"recording-download-v1\0" + payload).hexdigest()

@@ -123,6 +123,11 @@ export default function ImportJobStatus({
             ? "The capture checksum matches an existing completed import. The archive is up to date."
             : `${importedSessions ?? 0} session${importedSessions === 1 ? "" : "s"}, ${importedAttempts ?? 0} lap attempts, and ${importedCarObservations ?? 0} car-slot observations are now in the local archive.`}
         </p>
+      ) : job.status === "cancelled" ? (
+        <p className="import-job-copy">
+          This import was cancelled while waiting. You can submit it again from
+          the recording catalog.
+        </p>
       ) : (
         <>
           <p className="import-job-copy">
@@ -160,13 +165,14 @@ export default function ImportJobStatus({
 }
 
 function isTerminal(status: ImportJobRecord["status"]) {
-  return ["complete", "failed", "interrupted"].includes(status);
+  return ["complete", "failed", "interrupted", "cancelled"].includes(status);
 }
 
 function jobTitle(job: ImportJobRecord) {
   if (job.status === "queued") return "Import queued";
   if (job.status === "failed") return "Import needs attention";
   if (job.status === "interrupted") return "Import interrupted";
+  if (job.status === "cancelled") return "Import cancelled";
   return "Importing recording";
 }
 
