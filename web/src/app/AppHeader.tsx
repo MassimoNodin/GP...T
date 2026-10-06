@@ -238,9 +238,22 @@ export default function AppHeader({
             </a>
           )}
           <div className="topbar-window-controls" aria-hidden="true">
-            <span className="win-btn">—</span>
-            <span className="win-btn">▢</span>
-            <span className="win-btn">✕</span>
+            <span className="win-btn">
+              <svg viewBox="0 0 10 10" width="10" height="10" stroke="currentColor" strokeWidth="1.2">
+                <line x1="1" y1="5" x2="9" y2="5" />
+              </svg>
+            </span>
+            <span className="win-btn">
+              <svg viewBox="0 0 10 10" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.2">
+                <rect x="1.5" y="1.5" width="7" height="7" rx="1" />
+              </svg>
+            </span>
+            <span className="win-btn">
+              <svg viewBox="0 0 10 10" width="10" height="10" stroke="currentColor" strokeWidth="1.2">
+                <line x1="2" y1="2" x2="8" y2="8" />
+                <line x1="8" y1="2" x2="2" y2="8" />
+              </svg>
+            </span>
           </div>
         </div>
       </header>

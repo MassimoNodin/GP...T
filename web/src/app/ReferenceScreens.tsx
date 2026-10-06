@@ -5,6 +5,62 @@ import {
   type AppScreen,
 } from "@/lib/navigation";
 
+import {
+  ChevronDownIcon,
+  FuelIcon,
+  ZapIcon,
+  SunIcon,
+  ThermometerIcon,
+  StopwatchIcon,
+  GearIcon,
+  CalendarIcon,
+  CheckIcon,
+  WarningIcon,
+  CrossIcon,
+  FileIcon,
+  FolderIcon,
+  BarChartIcon,
+  LineChartIcon,
+  DatabaseIcon,
+  SearchIcon,
+  StarIcon,
+  LightbulbIcon,
+  CarIcon,
+  MapPinIcon,
+  RefreshIcon,
+  ChatBubbleIcon,
+  SendIcon,
+  ThumbUpIcon,
+  ThumbDownIcon,
+  CopyClipboardIcon,
+  TargetIcon,
+  FlagOutlineIcon,
+  PauseIcon,
+  PlayIcon,
+  StopIcon,
+  SkipBackIcon,
+  SkipForwardIcon,
+  TrashIcon,
+  BrainIcon,
+  SpeakerIcon,
+  GamepadIcon,
+  MonitorIcon,
+  MicrophoneIcon,
+  KeyboardIcon,
+  UserIcon,
+  WaveIcon,
+  FlagCheckeredIcon,
+  SignalIcon,
+  CircuitIcon,
+  TableIcon,
+  UploadIcon,
+  DownloadIcon,
+  ArrowUpIcon,
+  ArrowDownIcon,
+  ArrowUpRightIcon,
+  InfoIcon,
+} from "./Icons";
+
 function FlagIT() {
   return (
     <svg viewBox="0 0 3 2" width="16" height="11" style={{ borderRadius: "2px", display: "inline-block", verticalAlign: "middle", marginRight: "5px" }}>
@@ -194,7 +250,7 @@ function Dashboard({ preservedQuery }: { preservedQuery: string }) {
               <Badge tone="good">
                 <span className="dot-green-pulse" /> RECORDING (UDP)
               </Badge>
-              <span className="ref-f1-badge">🏎 F1 124 📶</span>
+              <span className="ref-f1-badge"><CarIcon size={12} style={{ marginRight: 4 }} /> F1 124 <SignalIcon size={11} style={{ marginLeft: 4 }} /></span>
             </div>
             <div className="ref-receiving-port">Receiving telemetry on 20777</div>
             <div className="ref-recording-big">
@@ -305,8 +361,8 @@ function Dashboard({ preservedQuery }: { preservedQuery: string }) {
           {/* Bottom quick stats */}
           <div className="ref-dash-quick-stats">
             <div><span>Tyres</span> <strong><span className="badge-tyre-m">M</span> 63%</strong></div>
-            <div><span>Fuel</span> <strong>⛽ 22.4 L</strong></div>
-            <div><span>ERS</span> <strong>⚡ 78%</strong></div>
+            <div><span>Fuel</span> <strong><FuelIcon size={12} style={{ marginRight: 3 }} /> 22.4 L</strong></div>
+            <div><span>ERS</span> <strong><ZapIcon size={12} style={{ marginRight: 3 }} /> 78%</strong></div>
           </div>
         </Panel>
 
@@ -322,7 +378,7 @@ function Dashboard({ preservedQuery }: { preservedQuery: string }) {
           action={<Badge tone="neutral"><span className="dot-green" /> Local AI (Offline)</Badge>}
         >
           <div className="ref-engineer-welcome">
-            <span className="ai-bot-avatar">💬</span>
+            <span className="ai-bot-avatar"><ChatBubbleIcon size={14} /></span>
             <p>
               I'm your AI race engineer. Ask me about pace, braking, traction, strategy or anything about your driving. I'll use your live and recorded data.
             </p>
@@ -343,7 +399,7 @@ function Dashboard({ preservedQuery }: { preservedQuery: string }) {
           </div>
           <div className="ref-composer">
             <input type="text" placeholder="Ask your engineer..." readOnly />
-            <button type="button" aria-label="Send">➤</button>
+            <button type="button" aria-label="Send"><SendIcon size={13} /></button>
           </div>
         </Panel>
       </div>
@@ -365,8 +421,8 @@ function Dashboard({ preservedQuery }: { preservedQuery: string }) {
             <button className="tab-pill">Imported Sessions</button>
           </div>
           <div className="ref-select-row">
-            <button type="button">Practice 1 ⌄</button>
-            <button type="button">Monza ⌄</button>
+            <button type="button">Practice 1 <ChevronDownIcon size={11} /></button>
+            <button type="button">Monza <ChevronDownIcon size={11} /></button>
           </div>
           <div className="ref-table-wrap is-compact">
             <table className="ref-table">
@@ -438,10 +494,10 @@ function Dashboard({ preservedQuery }: { preservedQuery: string }) {
           </div>
           <div className="ref-metric-grid five">
             <Metric label="Tyre" value="Medium" detail="63% · Est. 7 laps" icon={<span className="badge-tyre-m">M</span>} />
-            <Metric label="Fuel Load" value="22.4 L" detail="Est. 5.1 laps" icon="⛽" />
-            <Metric label="ERS Usage" value="78%" detail="Hotlap" icon="⚡" />
-            <Metric label="Track Temp" value="33°C" icon="☀️" />
-            <Metric label="Air Temp" value="28°C" icon="☀️" />
+            <Metric label="Fuel Load" value="22.4 L" detail="Est. 5.1 laps" icon={<FuelIcon size={13} />} />
+            <Metric label="ERS Usage" value="78%" detail="Hotlap" icon={<ZapIcon size={13} />} />
+            <Metric label="Track Temp" value="33°C" icon={<SunIcon size={13} />} />
+            <Metric label="Air Temp" value="28°C" icon={<SunIcon size={13} />} />
           </div>
         </Panel>
 
@@ -453,7 +509,7 @@ function Dashboard({ preservedQuery }: { preservedQuery: string }) {
               <path d="M7 18c-2.5 0-4-1.5-4-3.5 0-2.5 2-4.5 4.5-4.5h2c2.5 0 3.5-1.5 4.5-3 1.2-1.8 3-2 5-1 2.2 1.1 3 3.5 1.5 5.8l-2.5 4c-1.2 2-3.2 3.2-5.5 2.2H7z" />
             </svg>
           }
-          action={<button className="ref-dropdown-btn">Monza ⌄</button>}
+          action={<button className="ref-dropdown-btn">Monza <ChevronDownIcon size={11} /></button>}
         >
           <div className="ref-track-map-wrapper">
             <img src="/track-monza.png" alt="Monza Track Analysis" className="ref-monza-img" />
@@ -480,23 +536,23 @@ function Dashboard({ preservedQuery }: { preservedQuery: string }) {
               </thead>
               <tbody>
                 <tr>
-                  <td><span className="icon-play">▶</span> Monza_Practice1_2026_09_06_1123</td>
+                  <td><span className="icon-play"><PlayIcon size={10} /></span> Monza_Practice1_2026_09_06_1123</td>
                   <td>Monza</td><td>Practice</td><td>Today, 11:23</td><td>18</td><td>2.4 GB</td><td>•••</td>
                 </tr>
                 <tr>
-                  <td><span className="icon-play">▶</span> Zandvoort_Race_2026_08_31</td>
+                  <td><span className="icon-play"><PlayIcon size={10} /></span> Zandvoort_Race_2026_08_31</td>
                   <td>Zandvoort</td><td>Race</td><td>31 Aug 2026</td><td>72</td><td>2.1 GB</td><td>•••</td>
                 </tr>
                 <tr>
-                  <td><span className="icon-play">▶</span> Spa_Qualifying_2026_08_24</td>
+                  <td><span className="icon-play"><PlayIcon size={10} /></span> Spa_Qualifying_2026_08_24</td>
                   <td>Spa</td><td>Qualifying</td><td>24 Aug 2026</td><td>12</td><td>420 MB</td><td>•••</td>
                 </tr>
                 <tr>
-                  <td><span className="icon-play">▶</span> Silverstone_Practice_2026_08_17</td>
+                  <td><span className="icon-play"><PlayIcon size={10} /></span> Silverstone_Practice_2026_08_17</td>
                   <td>Silverstone</td><td>Practice</td><td>17 Aug 2026</td><td>46</td><td>1.4 GB</td><td>•••</td>
                 </tr>
                 <tr>
-                  <td><span className="icon-play">▶</span> Imola_Race_2026_08_10</td>
+                  <td><span className="icon-play"><PlayIcon size={10} /></span> Imola_Race_2026_08_10</td>
                   <td>Imola</td><td>Race</td><td>10 Aug 2026</td><td>63</td><td>2.2 GB</td><td>•••</td>
                 </tr>
               </tbody>
@@ -515,15 +571,15 @@ function Dashboard({ preservedQuery }: { preservedQuery: string }) {
           action={
             <div className="ref-chart-header-controls">
               <span className="ref-compare-to">Compare to</span>
-              <button className="ref-dropdown-btn">Session Best (1:20.095) ⌄</button>
+              <button className="ref-dropdown-btn">Session Best (1:20.095) <ChevronDownIcon size={11} /></button>
               <span className="ref-legend-item"><span className="dot-blue" /> Current Lap (1:20.412)</span>
               <span className="ref-legend-item"><span className="dot-red" /> Reference Lap (1:20.095)</span>
               <div className="ref-tab-pills small">
                 <button className="tab-pill">Sectors</button>
                 <button className="tab-pill active">Full Lap</button>
               </div>
-              <button className="ref-dropdown-btn">Speed ⌄</button>
-              <button className="ref-btn-icon">⚙</button>
+              <button className="ref-dropdown-btn">Speed <ChevronDownIcon size={11} /></button>
+              <button className="ref-btn-icon"><GearIcon size={12} /></button>
             </div>
           }
         >
@@ -618,8 +674,8 @@ function Live({ preservedQuery }: { preservedQuery: string }) {
               <div className="ref-bar-row"><span>DRS</span><div className="bar-track"><div className="bar-fill fill-blue" style={{ width: "100%" }} /></div><strong className="text-blue">Open</strong></div>
             </div>
             <div className="ref-live-tyre-fuel-grid">
-              <div><span>Fuel</span> <strong>⛽ 22.4 L</strong></div>
-              <div><span>ERS</span> <strong>⚡ 78% <small className="text-blue">Deploy</small></strong></div>
+              <div><span>Fuel</span> <strong><FuelIcon size={12} style={{ marginRight: 3 }} /> 22.4 L</strong></div>
+              <div><span>ERS</span> <strong><ZapIcon size={12} style={{ marginRight: 3 }} /> 78% <small className="text-blue">Deploy</small></strong></div>
               <div><span>Tyres</span> <strong><span className="badge-tyre-m">M</span> 63%</strong></div>
               <div className="ref-tyre-wear-4">
                 <span>Tyre Wear</span>
@@ -669,7 +725,7 @@ function Live({ preservedQuery }: { preservedQuery: string }) {
       {/* Middle Row */}
       <div className="ref-grid live-middle">
         {/* Panel 4: Live Lap Timing */}
-        <Panel title="Live Lap Timing" icon="⏱" action={<Badge>Lap 12 / 18</Badge>}>
+        <Panel title="Live Lap Timing" icon={<StopwatchIcon size={14} />} action={<Badge>Lap 12 / 18</Badge>}>
           <div className="ref-lap-hero">
             <span>Current Lap</span>
             <strong>1:20.412</strong>
@@ -696,11 +752,11 @@ function Live({ preservedQuery }: { preservedQuery: string }) {
         >
           <div className="ref-car-status-grid">
             <div className="ref-facts-col">
-              <div><span>Fuel Load</span> <strong>⛽ 22.4 L <small>Est. 4.2 laps</small></strong></div>
-              <div><span>ERS Mode</span> <strong className="text-blue">⚡ Deploy</strong></div>
-              <div><span>ERS Battery</span> <strong>⚡ 78%</strong></div>
-              <div><span>Engine Mode</span> <strong>⚙ Standard</strong></div>
-              <div><span>Brake Bias</span> <strong>⚙ 56.0%</strong></div>
+              <div><span>Fuel Load</span> <strong><FuelIcon size={12} style={{ marginRight: 3 }} /> 22.4 L <small>Est. 4.2 laps</small></strong></div>
+              <div><span>ERS Mode</span> <strong className="text-blue"><ZapIcon size={12} style={{ marginRight: 3 }} /> Deploy</strong></div>
+              <div><span>ERS Battery</span> <strong><ZapIcon size={12} style={{ marginRight: 3 }} /> 78%</strong></div>
+              <div><span>Engine Mode</span> <strong><GearIcon size={12} style={{ marginRight: 3 }} /> Standard</strong></div>
+              <div><span>Brake Bias</span> <strong><GearIcon size={12} style={{ marginRight: 3 }} /> 56.0%</strong></div>
             </div>
             <div className="ref-facts-col">
               <div><span>Tyre Compound</span> <strong><span className="badge-tyre-m">M</span> Medium</strong></div>
@@ -716,7 +772,7 @@ function Live({ preservedQuery }: { preservedQuery: string }) {
               <div className="tyre-temp-block">
                 <span>Tyre Temp (°C)</span>
                 <div className="tyre-temp-row">
-                  <span>🌡 FL 96</span> <span>FR 98</span> <span>RL 93</span> <span>RR 95</span>
+                  <span><ThermometerIcon size={12} style={{ marginRight: 2 }} /> FL 96</span> <span>FR 98</span> <span>RL 93</span> <span>RR 95</span>
                 </div>
               </div>
             </div>
@@ -731,7 +787,7 @@ function Live({ preservedQuery }: { preservedQuery: string }) {
               <path d="M7 18c-2.5 0-4-1.5-4-3.5 0-2.5 2-4.5 4.5-4.5h2c2.5 0 3.5-1.5 4.5-3 1.2-1.8 3-2 5-1 2.2 1.1 3 3.5 1.5 5.8l-2.5 4c-1.2 2-3.2 3.2-5.5 2.2H7z" />
             </svg>
           }
-          action={<button className="ref-dropdown-btn">Monza ⌄</button>}
+          action={<button className="ref-dropdown-btn">Monza <ChevronDownIcon size={11} /></button>}
         >
           <div className="ref-track-map-wrapper">
             <img src="/track-live-monza.png" alt="Monza Track Map" className="ref-monza-img" />
@@ -742,7 +798,7 @@ function Live({ preservedQuery }: { preservedQuery: string }) {
       {/* Bottom Row */}
       <div className="ref-grid live-bottom">
         {/* Panel 7: Recent Laps */}
-        <Panel title="Recent Laps" icon="▤" action={<ActionLink screen="sessions" preservedQuery={preservedQuery}>View All Laps →</ActionLink>}>
+        <Panel title="Recent Laps" icon={<TableIcon size={14} />} action={<ActionLink screen="sessions" preservedQuery={preservedQuery}>View All Laps →</ActionLink>}>
           <div className="ref-table-wrap is-compact">
             <table className="ref-table">
               <thead>
@@ -751,13 +807,13 @@ function Live({ preservedQuery }: { preservedQuery: string }) {
               <tbody>
                 <tr className="is-selected">
                   <td><strong>12</strong></td><td><strong>1:20.412</strong></td><td>27.321</td><td>28.547</td><td>24.544</td>
-                  <td><span className="badge-delta-good">-0.317</span></td><td><span className="badge-tyre-m">M</span></td><td><span className="tick-green">✔</span></td>
+                  <td><span className="badge-delta-good">-0.317</span></td><td><span className="badge-tyre-m">M</span></td><td><span className="tick-green"><CheckIcon size={11} /></span></td>
                 </tr>
-                <tr><td>11</td><td>1:20.941</td><td>27.682</td><td>28.691</td><td>24.568</td><td><span className="badge-delta-bad">+0.212</span></td><td><span className="badge-tyre-m">M</span></td><td><span className="tick-green">✔</span></td></tr>
-                <tr><td>10</td><td>1:21.003</td><td>27.804</td><td>28.920</td><td>24.279</td><td><span className="badge-delta-bad">+0.274</span></td><td><span className="badge-tyre-m">M</span></td><td><span className="tick-green">✔</span></td></tr>
-                <tr><td>9</td><td>1:22.137</td><td>28.341</td><td>29.011</td><td>24.785</td><td><span className="badge-delta-bad">+1.408</span></td><td><span className="badge-tyre-m">M</span></td><td><span className="tick-green">✔</span></td></tr>
-                <tr><td>8</td><td>1:21.998</td><td>28.005</td><td>29.103</td><td>24.890</td><td><span className="badge-delta-bad">+1.269</span></td><td><span className="badge-tyre-m">M</span></td><td><span className="tick-green">✔</span></td></tr>
-                <tr><td>7</td><td>1:22.491</td><td>28.444</td><td>29.337</td><td>24.710</td><td><span className="badge-delta-bad">+1.762</span></td><td><span className="badge-tyre-s">S</span></td><td><span className="tick-green">✔</span></td></tr>
+                <tr><td>11</td><td>1:20.941</td><td>27.682</td><td>28.691</td><td>24.568</td><td><span className="badge-delta-bad">+0.212</span></td><td><span className="badge-tyre-m">M</span></td><td><span className="tick-green"><CheckIcon size={11} /></span></td></tr>
+                <tr><td>10</td><td>1:21.003</td><td>27.804</td><td>28.920</td><td>24.279</td><td><span className="badge-delta-bad">+0.274</span></td><td><span className="badge-tyre-m">M</span></td><td><span className="tick-green"><CheckIcon size={11} /></span></td></tr>
+                <tr><td>9</td><td>1:22.137</td><td>28.341</td><td>29.011</td><td>24.785</td><td><span className="badge-delta-bad">+1.408</span></td><td><span className="badge-tyre-m">M</span></td><td><span className="tick-green"><CheckIcon size={11} /></span></td></tr>
+                <tr><td>8</td><td>1:21.998</td><td>28.005</td><td>29.103</td><td>24.890</td><td><span className="badge-delta-bad">+1.269</span></td><td><span className="badge-tyre-m">M</span></td><td><span className="tick-green"><CheckIcon size={11} /></span></td></tr>
+                <tr><td>7</td><td>1:22.491</td><td>28.444</td><td>29.337</td><td>24.710</td><td><span className="badge-delta-bad">+1.762</span></td><td><span className="badge-tyre-s">S</span></td><td><span className="tick-green"><CheckIcon size={11} /></span></td></tr>
               </tbody>
             </table>
           </div>
@@ -766,7 +822,7 @@ function Live({ preservedQuery }: { preservedQuery: string }) {
         {/* Panel 8: Live Telemetry Graphs */}
         <Panel
           title="Live Telemetry Graphs"
-          icon="∿"
+          icon={<WaveIcon size={14} />}
           action={
             <div className="ref-chart-header-controls">
               <div className="ref-tab-pills small">
@@ -777,8 +833,8 @@ function Live({ preservedQuery }: { preservedQuery: string }) {
               <span className="ref-legend-item"><span className="dot-green" /> Throttle</span>
               <span className="ref-legend-item"><span className="dot-red" /> Brake</span>
               <span className="ref-legend-item"><span className="dot-orange" /> Gear</span>
-              <button className="ref-dropdown-btn">Current Lap (12) ⌄</button>
-              <button className="ref-btn-icon">⚙</button>
+              <button className="ref-dropdown-btn">Current Lap (12) <ChevronDownIcon size={11} /></button>
+              <button className="ref-btn-icon"><GearIcon size={12} /></button>
             </div>
           }
         >
@@ -808,18 +864,18 @@ function Sessions({ preservedQuery }: { preservedQuery: string }) {
           }
         />
         <div className="ref-session-filters">
-          <label><span>Track</span><button type="button">All Tracks ⌄</button></label>
-          <label><span>Session Type</span><button type="button">All Types ⌄</button></label>
-          <label><span>Date Range</span><button type="button">📅 01 Aug 2026 - 30 Sep 2026</button></label>
+          <label><span>Track</span><button type="button">All Tracks <ChevronDownIcon size={11} /></button></label>
+          <label><span>Session Type</span><button type="button">All Types <ChevronDownIcon size={11} /></button></label>
+          <label><span>Date Range</span><button type="button"><CalendarIcon size={13} style={{ marginRight: 4 }} /> 01 Aug 2026 - 30 Sep 2026</button></label>
           <div className="ref-search-box">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="#94a3b8" strokeWidth="2" className="ref-search-icon">
               <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
             </svg>
             <input placeholder="Search sessions..." readOnly />
-            <button className="ref-search-clear" type="button">✕</button>
+            <button className="ref-search-clear" type="button"><CrossIcon size={11} /></button>
           </div>
           <ActionLink screen="recordings" preservedQuery={preservedQuery} primary>
-            ⬆ Import Session
+            <UploadIcon size={13} style={{ marginRight: 4 }} /> Import Session
           </ActionLink>
         </div>
       </div>
@@ -827,11 +883,11 @@ function Sessions({ preservedQuery }: { preservedQuery: string }) {
       <div className="ref-grid sessions-main">
         {/* Left Column Stack */}
         <div className="ref-stack">
-          <Panel title="Imported Sessions" icon="▤" action={<ActionLink screen="sessions" preservedQuery={preservedQuery}>View all sessions →</ActionLink>}>
+          <Panel title="Imported Sessions" icon={<TableIcon size={14} />} action={<ActionLink screen="sessions" preservedQuery={preservedQuery}>View all sessions →</ActionLink>}>
             <div className="ref-table-wrap is-compact">
               <table className="ref-table">
                 <thead>
-                  <tr><th>#</th><th>Track</th><th>Session</th><th>Date ▼</th><th>Mode</th><th>Best Lap</th><th>Laps</th><th>Status</th></tr>
+                  <tr><th>#</th><th>Track</th><th>Session</th><th>Date <ChevronDownIcon size={10} /></th><th>Mode</th><th>Best Lap</th><th>Laps</th><th>Status</th></tr>
                 </thead>
                 <tbody>
                   <tr className="is-selected">
@@ -849,7 +905,7 @@ function Sessions({ preservedQuery }: { preservedQuery: string }) {
             </div>
           </Panel>
 
-          <Panel title="Processing Runs" icon="⚙" action={<button className="ref-dropdown-btn">All Status ⌄</button>}>
+          <Panel title="Processing Runs" icon={<GearIcon size={14} />} action={<button className="ref-dropdown-btn">All Status <ChevronDownIcon size={11} /></button>}>
             <div className="ref-table-wrap is-compact">
               <table className="ref-table">
                 <thead>
@@ -876,7 +932,7 @@ function Sessions({ preservedQuery }: { preservedQuery: string }) {
         <div className="ref-stack">
           <Panel
             title="Run Details"
-            icon="💬"
+            icon={<ChatBubbleIcon size={14} />}
             action={
               <div className="ref-run-details-actions">
                 <Badge tone="good"><span className="dot-green" /> Completed</Badge>
@@ -907,7 +963,7 @@ function Sessions({ preservedQuery }: { preservedQuery: string }) {
 
             {/* Lifecycle Stages */}
             <div className="ref-lifecycle-card">
-              <span className="ref-lifecycle-title">⚙ Processing Lifecycle</span>
+              <span className="ref-lifecycle-title"><GearIcon size={13} style={{ marginRight: 4 }} /> Processing Lifecycle</span>
               <div className="ref-lifecycle-stepper">
                 {[
                   ["Imported", "14:02:17"],
@@ -917,7 +973,7 @@ function Sessions({ preservedQuery }: { preservedQuery: string }) {
                   ["Completed", "14:12:11"],
                 ].map(([step, time]) => (
                   <div className="stepper-step" key={step}>
-                    <span className="stepper-dot">✔</span>
+                    <span className="stepper-dot"><CheckIcon size={10} /></span>
                     <strong>{step}</strong>
                     <small>{time}</small>
                   </div>
@@ -926,13 +982,13 @@ function Sessions({ preservedQuery }: { preservedQuery: string }) {
             </div>
 
             <div className="ref-metric-grid three">
-              <Metric label="Attempts Generated" value="58" detail="Valid: 52  Rejected: 6" icon="📄" />
-              <Metric label="Processing Time" value="9m 54s" icon="⏱" />
-              <Metric label="Evidence Files" value="12" detail="~420 MB" icon="🗄" />
+              <Metric label="Attempts Generated" value="58" detail="Valid: 52  Rejected: 6" icon={<FileIcon size={13} />} />
+              <Metric label="Processing Time" value="9m 54s" icon={<StopwatchIcon size={13} />} />
+              <Metric label="Evidence Files" value="12" detail="~420 MB" icon={<DatabaseIcon size={13} />} />
             </div>
           </Panel>
 
-          <Panel title="Attempts (Laps)" icon="☷" action={<><Badge>58 attempts</Badge><button className="ref-dropdown-btn">All Laps ⌄</button></>}>
+          <Panel title="Attempts (Laps)" icon={<TableIcon size={14} />} action={<><Badge>58 attempts</Badge><button className="ref-dropdown-btn">All Laps <ChevronDownIcon size={11} /></button></>}>
             <div className="ref-table-wrap is-compact">
               <table className="ref-table">
                 <thead>
@@ -941,15 +997,15 @@ function Sessions({ preservedQuery }: { preservedQuery: string }) {
                 <tbody>
                   <tr className="is-selected">
                     <td><strong>8</strong></td><td><strong>1:20.412</strong></td><td>27.321</td><td>28.547</td><td>24.544</td>
-                    <td><Badge tone="blue">Reference</Badge></td><td><span className="tick-green">✔</span></td><td><strong>Best lap</strong></td>
+                    <td><Badge tone="blue">Reference</Badge></td><td><span className="tick-green"><CheckIcon size={11} /></span></td><td><strong>Best lap</strong></td>
                   </tr>
-                  <tr><td>9</td><td>1:20.941</td><td>27.682</td><td>28.691</td><td>24.568</td><td><Badge tone="neutral">Push</Badge></td><td><span className="tick-green">✔</span></td><td>Clean lap</td></tr>
-                  <tr><td>10</td><td>1:21.003</td><td>27.804</td><td>28.920</td><td>24.279</td><td><Badge tone="neutral">Push</Badge></td><td><span className="tick-green">✔</span></td><td>Clean lap</td></tr>
-                  <tr><td>11</td><td>1:22.137</td><td>28.341</td><td>29.011</td><td>24.785</td><td><Badge tone="neutral">Push</Badge></td><td><span className="tick-green">✔</span></td><td>Clean lap</td></tr>
-                  <tr><td>12</td><td>1:21.998</td><td>28.005</td><td>29.103</td><td>24.890</td><td><Badge tone="warning">Out Lap</Badge></td><td><span className="badge-warn">⚠</span></td><td>Track limits</td></tr>
-                  <tr><td>13</td><td>1:22.491</td><td>28.444</td><td>29.337</td><td>24.710</td><td><Badge tone="bad">Invalid</Badge></td><td><span className="badge-cross">✖</span></td><td>Cut track</td></tr>
-                  <tr><td>14</td><td>1:23.004</td><td>28.889</td><td>29.512</td><td>24.603</td><td><Badge tone="neutral">Push</Badge></td><td><span className="tick-green">✔</span></td><td>Clean lap</td></tr>
-                  <tr><td>15</td><td>1:25.632</td><td>29.440</td><td>30.221</td><td>25.971</td><td><Badge tone="neutral">In Lap</Badge></td><td><span className="tick-green">✔</span></td><td>Cooldown</td></tr>
+                  <tr><td>9</td><td>1:20.941</td><td>27.682</td><td>28.691</td><td>24.568</td><td><Badge tone="neutral">Push</Badge></td><td><span className="tick-green"><CheckIcon size={11} /></span></td><td>Clean lap</td></tr>
+                  <tr><td>10</td><td>1:21.003</td><td>27.804</td><td>28.920</td><td>24.279</td><td><Badge tone="neutral">Push</Badge></td><td><span className="tick-green"><CheckIcon size={11} /></span></td><td>Clean lap</td></tr>
+                  <tr><td>11</td><td>1:22.137</td><td>28.341</td><td>29.011</td><td>24.785</td><td><Badge tone="neutral">Push</Badge></td><td><span className="tick-green"><CheckIcon size={11} /></span></td><td>Clean lap</td></tr>
+                  <tr><td>12</td><td>1:21.998</td><td>28.005</td><td>29.103</td><td>24.890</td><td><Badge tone="warning">Out Lap</Badge></td><td><span className="badge-warn"><WarningIcon size={11} /></span></td><td>Track limits</td></tr>
+                  <tr><td>13</td><td>1:22.491</td><td>28.444</td><td>29.337</td><td>24.710</td><td><Badge tone="bad">Invalid</Badge></td><td><span className="badge-cross"><CrossIcon size={11} /></span></td><td>Cut track</td></tr>
+                  <tr><td>14</td><td>1:23.004</td><td>28.889</td><td>29.512</td><td>24.603</td><td><Badge tone="neutral">Push</Badge></td><td><span className="tick-green"><CheckIcon size={11} /></span></td><td>Clean lap</td></tr>
+                  <tr><td>15</td><td>1:25.632</td><td>29.440</td><td>30.221</td><td>25.971</td><td><Badge tone="neutral">In Lap</Badge></td><td><span className="tick-green"><CheckIcon size={11} /></span></td><td>Cooldown</td></tr>
                 </tbody>
               </table>
             </div>
@@ -958,7 +1014,7 @@ function Sessions({ preservedQuery }: { preservedQuery: string }) {
 
         {/* Right Column Stack */}
         <div className="ref-stack">
-          <Panel title="Session Summary" icon="▣">
+          <Panel title="Session Summary" icon={<FileIcon size={14} />}>
             <div className="ref-session-card">
               <div className="ref-session-info">
                 <div className="ref-track-title"><FlagIT /> Monza</div>
@@ -971,18 +1027,18 @@ function Sessions({ preservedQuery }: { preservedQuery: string }) {
               <div><span>Best Lap</span> <strong>1:20.412</strong></div>
               <div><span>Total Laps</span> <strong>58</strong></div>
               <div><span>Track Length</span> <strong>5.793 km</strong></div>
-              <div><span>Weather</span> <strong>☀️ Dry, 27°C</strong></div>
+              <div><span>Weather</span> <strong><SunIcon size={12} style={{ marginRight: 3 }} /> Dry, 27°C</strong></div>
               <div><span>Air Temp</span> <strong>27°C</strong></div>
-              <div><span>Track Temp</span> <strong>☀️ 32°C</strong></div>
+              <div><span>Track Temp</span> <strong><SunIcon size={12} style={{ marginRight: 3 }} /> 32°C</strong></div>
             </div>
-            <button className="ref-button is-primary full-width">📁 Open Session</button>
+            <button className="ref-button is-primary full-width"><FolderIcon size={13} style={{ marginRight: 5 }} /> Open Session</button>
             <div className="ref-session-actions-row">
-              <button className="ref-btn-subtle">📊 View Attempts</button>
-              <button className="ref-btn-subtle">📈 Compare Lap</button>
+              <button className="ref-btn-subtle"><BarChartIcon size={12} style={{ marginRight: 4 }} /> View Attempts</button>
+              <button className="ref-btn-subtle"><LineChartIcon size={12} style={{ marginRight: 4 }} /> Compare Lap</button>
             </div>
           </Panel>
 
-          <Panel title="Observation Inventory" icon="📄" action={<Badge>View All →</Badge>}>
+          <Panel title="Observation Inventory" icon={<FileIcon size={14} />} action={<Badge>View All →</Badge>}>
             <div className="ref-inventory-list">
               {[
                 ["Lap Charts", "12 files"],
@@ -993,19 +1049,19 @@ function Sessions({ preservedQuery }: { preservedQuery: string }) {
                 ["AI Analysis Notes", "3 files"],
               ].map(([name, count]) => (
                 <div key={name}>
-                  <span>📄 {name}</span>
+                  <span><FileIcon size={12} style={{ marginRight: 4 }} /> {name}</span>
                   <b>{count}</b>
-                  <i className="tick-green">✔</i>
+                  <i className="tick-green"><CheckIcon size={11} /></i>
                 </div>
               ))}
             </div>
           </Panel>
 
-          <Panel title="Archive Status" icon="🗄">
+          <Panel title="Archive Status" icon={<DatabaseIcon size={14} />}>
             <div className="ref-archive-status-box">
-              <div><span>Session Folder</span> <strong>sessions/2026/09/08/monza_p1 📁</strong></div>
+              <div><span>Session Folder</span> <strong>sessions/2026/09/08/monza_p1 <FolderIcon size={12} style={{ marginLeft: 3 }} /></strong></div>
               <div><span>Size on Disk</span> <strong>1.8 GB</strong></div>
-              <div><span>Compressed Archive</span> <strong>monza_p1_20260908.zip (420 MB) ⬇</strong></div>
+              <div><span>Compressed Archive</span> <strong>monza_p1_20260908.zip (420 MB) <DownloadIcon size={12} style={{ marginLeft: 3 }} /></strong></div>
               <div><span>Archive Status</span> <strong><span className="dot-green"/> Archived</strong></div>
               <div><span>Last Updated</span> <strong>08 Sep 2026 14:12:11</strong></div>
             </div>
@@ -1042,7 +1098,7 @@ function Compare({ preservedQuery }: { preservedQuery: string }) {
         </label>
         <label>
           <span>Comparison Policy</span>
-          <button type="button">Delta to Reference ⌄</button>
+          <button type="button">Delta to Reference <ChevronDownIcon size={11} /></button>
         </label>
         <label>
           <span>Distance Window (Optional)</span>
@@ -1053,7 +1109,7 @@ function Compare({ preservedQuery }: { preservedQuery: string }) {
         </label>
         <label>
           <span>Presets</span>
-          <button type="button" className="is-primary-choice">Full Lap ⌄</button>
+          <button type="button" className="is-primary-choice">Full Lap <ChevronDownIcon size={11} /></button>
         </label>
       </div>
 
@@ -1061,7 +1117,7 @@ function Compare({ preservedQuery }: { preservedQuery: string }) {
         <Metric label="Target Lap (Lap 12)" value="1:20.412" detail="+0.317 vs reference" icon={<span className="dot-blue"/>} />
         <Metric label="Reference Lap (Session Best)" value="1:20.095" detail="Lap 8 · Practice 1" icon={<span className="dot-red"/>} />
         <Metric label="Delta to Reference" value="+0.317" detail="Slower" tone="bad" />
-        <Metric label="Top Speed" value="339 km/h" detail="Reference: 342 km/h" icon="⏱" />
+        <Metric label="Top Speed" value="339 km/h" detail="Reference: 342 km/h" icon={<StopwatchIcon size={13} />} />
         <Metric label="Sector 1" value="+0.123" detail="Slower" tone="bad" />
         <Metric label="Sector 2" value="-0.041" detail="Faster" tone="good" />
         <Metric label="Sector 3" value="+0.153" detail="Slower" tone="bad" />
@@ -1071,7 +1127,7 @@ function Compare({ preservedQuery }: { preservedQuery: string }) {
         {/* Telemetry Comparison Chart */}
         <Panel
           title="Telemetry Comparison"
-          icon="▤"
+          icon={<BarChartIcon size={14} />}
           action={
             <div className="ref-chart-header-controls">
               <span className="ref-legend-item"><span className="dot-blue" /> Target Lap (1:20.412)</span>
@@ -1095,13 +1151,13 @@ function Compare({ preservedQuery }: { preservedQuery: string }) {
 
         {/* Right Stack */}
         <div className="ref-stack">
-          <Panel title="Track Map – Delta to Reference" icon="⌁" action={<button className="ref-dropdown-btn">Monza ⌄</button>}>
+          <Panel title="Track Map – Delta to Reference" icon={<CircuitIcon size={14} />} action={<button className="ref-dropdown-btn">Monza <ChevronDownIcon size={11} /></button>}>
             <div className="ref-track-map-wrapper">
               <img src="/track-compare-monza.png" alt="Track Map Delta" className="ref-monza-img" />
             </div>
           </Panel>
 
-          <Panel title="Reference Selection" icon="◉">
+          <Panel title="Reference Selection" icon={<TargetIcon size={13} />}>
             <div className="ref-reference-card-rich">
               <div className="ref-ref-head">
                 <span className="dot-red" />
@@ -1114,7 +1170,7 @@ function Compare({ preservedQuery }: { preservedQuery: string }) {
                 <button className="ref-btn-subtle">Change</button>
               </div>
               <div className="ref-ref-banner">
-                ★ This is the fastest lap of the session and is used as the reference for comparison.
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><StarIcon size={13} /> This is the fastest lap of the session and is used as the reference for comparison.</span>
               </div>
             </div>
           </Panel>
@@ -1122,7 +1178,7 @@ function Compare({ preservedQuery }: { preservedQuery: string }) {
       </div>
 
       <div className="ref-grid compare-bottom">
-        <Panel title="Sector Comparison" icon="▤">
+        <Panel title="Sector Comparison" icon={<TableIcon size={14} />}>
           <div className="ref-table-wrap is-compact">
             <table className="ref-table">
               <thead>
@@ -1138,10 +1194,10 @@ function Compare({ preservedQuery }: { preservedQuery: string }) {
           </div>
         </Panel>
 
-        <Panel title="Key Findings & Evidence" icon="💡">
+        <Panel title="Key Findings & Evidence" icon={<LightbulbIcon size={14} />}>
           <div className="ref-findings-list">
             <div className="finding-row">
-              <span className="badge-arrow-red">⬆</span>
+              <span className="badge-arrow-red"><ArrowUpIcon size={11} /></span>
               <div className="finding-text">
                 <strong className="text-red">Time lost in Sector 1 (+0.123s)</strong>
                 <p>Lower minimum speed at Turn 4 and later throttle application compared to the reference lap.</p>
@@ -1150,7 +1206,7 @@ function Compare({ preservedQuery }: { preservedQuery: string }) {
               <span className="finding-arrow">›</span>
             </div>
             <div className="finding-row">
-              <span className="badge-arrow-green">⬇</span>
+              <span className="badge-arrow-green"><ArrowDownIcon size={11} /></span>
               <div className="finding-text">
                 <strong className="text-green">Time gained in Sector 2 (-0.041s)</strong>
                 <p>Slightly better exit at Turn 7 with earlier throttle application.</p>
@@ -1159,7 +1215,7 @@ function Compare({ preservedQuery }: { preservedQuery: string }) {
               <span className="finding-arrow">›</span>
             </div>
             <div className="finding-row">
-              <span className="badge-arrow-red">⬆</span>
+              <span className="badge-arrow-red"><ArrowUpIcon size={11} /></span>
               <div className="finding-text">
                 <strong className="text-red">Time lost in Sector 3 (+0.153s)</strong>
                 <p>Lower top speed on the main straight and later braking into Turn 11.</p>
@@ -1205,25 +1261,25 @@ function Track({ preservedQuery: _preservedQuery }: { preservedQuery: string }) 
         <label className="ref-field">
           <span>Track Model</span>
           <div className="ref-field-input-row">
-            <button type="button">Current Session (AI Model) ⌄</button>
-            <button type="button" className="ref-btn-icon" title="Configure Model">⚙</button>
+            <button type="button">Current Session (AI Model) <ChevronDownIcon size={11} /></button>
+            <button type="button" className="ref-btn-icon" title="Configure Model"><GearIcon size={12} /></button>
           </div>
           <small>Uses your session data to build track performance model</small>
         </label>
         <label className="ref-field">
           <span>Region Set</span>
           <div className="ref-field-input-row">
-            <button type="button">Corners & Key Zones ⌄</button>
-            <button type="button" className="ref-btn-icon" title="Edit Regions">⚲</button>
+            <button type="button">Corners & Key Zones <ChevronDownIcon size={11} /></button>
+            <button type="button" className="ref-btn-icon" title="Edit Regions"><MapPinIcon size={12} /></button>
           </div>
           <small>Standard corner-based regions with DRS zones</small>
         </label>
-        <button className="ref-button is-primary">🔄 Analyze Another Lap</button>
+        <button className="ref-button is-primary"><RefreshIcon size={13} style={{ marginRight: 5 }} /> Analyze Another Lap</button>
       </div>
 
       <div className="ref-grid track-main">
         {/* Track Map */}
-        <Panel title="Track Map & Region Analysis" icon="⌁">
+        <Panel title="Track Map & Region Analysis" icon={<CircuitIcon size={14} />}>
           <div className="ref-track-map-wrapper">
             <img src="/track-analysis-map.png" alt="Monza Track Map" className="ref-analysis-map-img" />
           </div>
@@ -1233,20 +1289,20 @@ function Track({ preservedQuery: _preservedQuery }: { preservedQuery: string }) 
         <div className="ref-stack">
           <Panel
             title="Region Metrics – Turn 4 (Lesmo 1)"
-            icon="💡"
+            icon={<LightbulbIcon size={14} />}
             action={<span className="lap-nav-arrows">‹ Region 4 of 11 ›</span>}
           >
             <div className="ref-metric-grid five">
-              <Metric label="Minimum Speed" value="168" unit=" km/h" detail="-12 km/h · Ref: 180 km/h" tone="bad" icon="⏱" />
-              <Metric label="Apex Speed" value="212" unit=" km/h" detail="-8 km/h · Ref: 220 km/h" tone="bad" icon="⏱" />
-              <Metric label="Entry Speed" value="294" unit=" km/h" detail="-6 km/h · Ref: 300 km/h" tone="bad" icon="↗" />
-              <Metric label="Throttle On Dist." value="310" unit=" m" detail="+24 m · Ref: 286 m" tone="good" icon="⚡" />
-              <Metric label="Time Delta" value="+0.245" unit=" s" detail="Slower vs Reference" tone="bad" icon="⏱" />
+              <Metric label="Minimum Speed" value="168" unit=" km/h" detail="-12 km/h · Ref: 180 km/h" tone="bad" icon={<StopwatchIcon size={13} />} />
+              <Metric label="Apex Speed" value="212" unit=" km/h" detail="-8 km/h · Ref: 220 km/h" tone="bad" icon={<StopwatchIcon size={13} />} />
+              <Metric label="Entry Speed" value="294" unit=" km/h" detail="-6 km/h · Ref: 300 km/h" tone="bad" icon={<ArrowUpRightIcon size={13} />} />
+              <Metric label="Throttle On Dist." value="310" unit=" m" detail="+24 m · Ref: 286 m" tone="good" icon={<ZapIcon size={13} />} />
+              <Metric label="Time Delta" value="+0.245" unit=" s" detail="Slower vs Reference" tone="bad" icon={<StopwatchIcon size={13} />} />
             </div>
           </Panel>
 
           <div className="ref-grid track-insights">
-            <Panel title="Key Insights – Turn 4 (Lesmo 1)" icon="💡">
+            <Panel title="Key Insights – Turn 4 (Lesmo 1)" icon={<LightbulbIcon size={14} />}>
               <ul className="ref-insights-bullet-list">
                 <li><span className="dot-red" /> Minimum speed is 12 km/h lower than reference, costing ~0.145s.</li>
                 <li><span className="dot-red" /> Later throttle application by 24 m compared to reference.</li>
@@ -1256,7 +1312,7 @@ function Track({ preservedQuery: _preservedQuery }: { preservedQuery: string }) 
               </ul>
             </Panel>
 
-            <Panel title="Region List – Biggest Time Losses" icon="▤" action={<button className="ref-dropdown-btn">Sort by: Time Delta ⌄</button>}>
+            <Panel title="Region List – Biggest Time Losses" icon={<TableIcon size={14} />} action={<button className="ref-dropdown-btn">Sort by: Time Delta <ChevronDownIcon size={11} /></button>}>
               <div className="ref-table-wrap is-compact">
                 <table className="ref-table">
                   <thead>
@@ -1283,7 +1339,7 @@ function Track({ preservedQuery: _preservedQuery }: { preservedQuery: string }) 
       <div className="ref-grid track-bottom">
         <Panel
           title="Region Comparison – Turn 4 (Lesmo 1)"
-          icon="▤"
+          icon={<TableIcon size={14} />}
           action={
             <div className="ref-chart-header-controls">
               <span className="ref-legend-item"><span className="dot-red"/> Current Lap (1:20.412)</span>
@@ -1304,7 +1360,7 @@ function Track({ preservedQuery: _preservedQuery }: { preservedQuery: string }) 
 
         <Panel
           title="Observed vs Reference Trajectory"
-          icon="📊"
+          icon={<BarChartIcon size={14} />}
           action={
             <div className="ref-chart-header-controls">
               <span className="ref-legend-item"><span className="dot-red"/> Current Lap</span>
@@ -1320,7 +1376,7 @@ function Track({ preservedQuery: _preservedQuery }: { preservedQuery: string }) 
       </div>
 
       <div className="ref-grid track-observations">
-        <Panel title="Driving Pattern Observations" icon="🏎">
+        <Panel title="Driving Pattern Observations" icon={<CarIcon size={14} />}>
           <ul className="ref-insights-bullet-list">
             <li><span className="dot-red"/> Later turn-in compared to reference, resulting in a wider entry line.</li>
             <li><span className="dot-red"/> Lower minimum speed indicates reduced confidence or over-braking.</li>
@@ -1328,7 +1384,7 @@ function Track({ preservedQuery: _preservedQuery }: { preservedQuery: string }) 
             <li><span className="dot-blue"/> Aim for a smoother, earlier turn-in to maintain higher minimum speed.</li>
           </ul>
         </Panel>
-        <Panel title="Throttle & Exit Pattern Observations" icon="📊">
+        <Panel title="Throttle & Exit Pattern Observations" icon={<BarChartIcon size={14} />}>
           <ul className="ref-insights-bullet-list">
             <li><span className="dot-red"/> Throttle application is 24 m later than reference.</li>
             <li><span className="dot-red"/> Progressive throttle is good, but overall exit speed is lower by 8 km/h.</li>
@@ -1455,7 +1511,7 @@ function Engineer({ preservedQuery: _preservedQuery }: { preservedQuery: string 
                 </div>
 
                 <div className="ai-key-takeaway">
-                  <span className="takeaway-icon">💡</span>
+                  <span className="takeaway-icon"><LightbulbIcon size={14} /></span>
                   <div>
                     <strong>Key takeaway</strong>
                     <p>Focus on a later brake and smoother trail braking into Turn 4. Carry more speed through the mid-corner (Turn 5) and be cleaner on throttle application at the exit.</p>
@@ -1465,9 +1521,9 @@ function Engineer({ preservedQuery: _preservedQuery }: { preservedQuery: string 
                 <div className="bubble-actions-row">
                   <span className="time-stamp">14:03</span>
                   <div className="action-icons">
-                    <button>👍</button>
-                    <button>👎</button>
-                    <button>📋</button>
+                    <button aria-label="Helpful"><ThumbUpIcon size={13} /></button>
+                    <button aria-label="Not helpful"><ThumbDownIcon size={13} /></button>
+                    <button aria-label="Copy message"><CopyClipboardIcon size={13} /></button>
                     <button>•••</button>
                   </div>
                 </div>
@@ -1478,11 +1534,11 @@ function Engineer({ preservedQuery: _preservedQuery }: { preservedQuery: string 
           <div className="ref-suggest-section">
             <span className="ref-suggest-label">Try asking about:</span>
             <div className="ref-chip-row">
-              <button className="ref-chip-btn">◎ Tyre wear analysis</button>
-              <button className="ref-chip-btn">🎯 Braking points</button>
-              <button className="ref-chip-btn">⚐ Strategy options</button>
-              <button className="ref-chip-btn">📊 Compare to best lap</button>
-              <button className="ref-chip-btn">💡 Focus areas</button>
+              <button className="ref-chip-btn"><TargetIcon size={12} style={{ marginRight: 4 }} /> Tyre wear analysis</button>
+              <button className="ref-chip-btn"><TargetIcon size={12} style={{ marginRight: 4 }} /> Braking points</button>
+              <button className="ref-chip-btn"><FlagOutlineIcon size={12} style={{ marginRight: 4 }} /> Strategy options</button>
+              <button className="ref-chip-btn"><BarChartIcon size={12} style={{ marginRight: 4 }} /> Compare to best lap</button>
+              <button className="ref-chip-btn"><LightbulbIcon size={12} style={{ marginRight: 4 }} /> Focus areas</button>
             </div>
           </div>
 
@@ -1499,7 +1555,7 @@ function Engineer({ preservedQuery: _preservedQuery }: { preservedQuery: string 
         {/* Right Stack */}
         <div className="ref-stack">
           {/* Context & Data Source */}
-          <Panel title="Context & Data Source" icon="🗄" action={<button className="ref-btn-subtle">Change Context</button>}>
+          <Panel title="Context & Data Source" icon={<DatabaseIcon size={14} />} action={<button className="ref-btn-subtle">Change Context</button>}>
             <div className="ref-context-card">
               <img src="/monza-thumb.png" alt="Monza" className="ref-session-thumb" />
               <div className="ref-context-info">
@@ -1509,10 +1565,10 @@ function Engineer({ preservedQuery: _preservedQuery }: { preservedQuery: string 
                 <div className="ref-session-date">08 Sep 2026 14:02</div>
               </div>
               <div className="ref-context-selectors">
-                <div><span>Session</span> <button>Practice 1 ⌄</button></div>
+                <div><span>Session</span> <button>Practice 1 <ChevronDownIcon size={11} /></button></div>
                 <div><span>Lap</span> <button>‹ 12 / 18 ›</button></div>
-                <div><span>Reference</span> <button>Best Lap (1:20.095) ⌄</button></div>
-                <div><span>Focus</span> <button>Sector 2 ⌄</button></div>
+                <div><span>Reference</span> <button>Best Lap (1:20.095) <ChevronDownIcon size={11} /></button></div>
+                <div><span>Focus</span> <button>Sector 2 <ChevronDownIcon size={11} /></button></div>
               </div>
             </div>
           </Panel>
@@ -1520,22 +1576,22 @@ function Engineer({ preservedQuery: _preservedQuery }: { preservedQuery: string 
           {/* Voice Response */}
           <Panel
             title="Voice Response (Local)"
-            icon="∿"
+            icon={<WaveIcon size={14} />}
             action={<div className="ref-voice-badges"><Badge tone="neutral">Piper (local)</Badge><Badge tone="good"><span className="dot-green"/> Ready</Badge></div>}
           >
             <div className="ref-voice-controls-rich">
-              <button className="play-circle-btn">▶</button>
-              <button className="stop-square-btn">■</button>
+              <button className="play-circle-btn"><PlayIcon size={11} /></button>
+              <button className="stop-square-btn"><StopIcon size={10} /></button>
               <div className="waveform-bar-area">
                 <img src="/ai-voice-waveform.png" alt="Waveform" className="ref-waveform-img" />
               </div>
               <span className="waveform-time">0:00 / 0:18</span>
-              <button className="ref-dropdown-btn">1.0x ⌄</button>
+              <button className="ref-dropdown-btn">1.0x <ChevronDownIcon size={11} /></button>
             </div>
           </Panel>
 
           {/* Key Evidence */}
-          <Panel title="Key Evidence" icon="📊">
+          <Panel title="Key Evidence" icon={<BarChartIcon size={14} />}>
             <div className="ref-metric-grid three">
               <Metric label="Sector 1" value="27.321" detail="-0.123 vs Best" tone="good" />
               <Metric label="Sector 2" value="28.547" detail="+0.317 vs Best" tone="bad" />
@@ -1545,14 +1601,14 @@ function Engineer({ preservedQuery: _preservedQuery }: { preservedQuery: string 
               <div className="evidence-sub-card">
                 <div className="evidence-sub-header">
                   <span>Track View – Sector 2</span>
-                  <button className="ref-dropdown-btn">Sector 2 ⌄</button>
+                  <button className="ref-dropdown-btn">Sector 2 <ChevronDownIcon size={11} /></button>
                 </div>
                 <img src="/ai-s2-track-clean.png" alt="Sector 2 Track" className="ref-s2-img" />
               </div>
               <div className="evidence-sub-card">
                 <div className="evidence-sub-header">
                   <span>Speed Comparison – Sector 2</span>
-                  <button className="ref-dropdown-btn">Turn 4-5 ⌄</button>
+                  <button className="ref-dropdown-btn">Turn 4-5 <ChevronDownIcon size={11} /></button>
                 </div>
                 <img src="/ai-s2-speed-clean.png" alt="Sector 2 Speed Chart" className="ref-s2-chart-img" />
               </div>
@@ -1583,7 +1639,7 @@ function Recordings({ preservedQuery }: { preservedQuery: string }) {
               Listening on UDP port 20777
             </span>
             <ActionLink screen="settings" preservedQuery={preservedQuery}>
-              <span style={{ marginRight: "3px" }}>⚙</span> Configure...
+              <span style={{ marginRight: "3px" }}><GearIcon size={12} /></span> Configure...
             </ActionLink>
           </div>
         }
@@ -1597,8 +1653,8 @@ function Recordings({ preservedQuery }: { preservedQuery: string }) {
             <div className="ref-rec-big-row">
               <strong>00:18:42</strong>
               <div className="ref-rec-btns">
-                <button className="ref-btn-subtle">❚❚ Pause Recording</button>
-                <button className="ref-stop-btn-red">■ Stop Recording</button>
+                <button className="ref-btn-subtle"><PauseIcon size={12} style={{ marginRight: 4 }} /> Pause Recording</button>
+                <button className="ref-stop-btn-red"><StopIcon size={11} style={{ marginRight: 4 }} /> Stop Recording</button>
               </div>
             </div>
             <div className="ref-lap-capture-sub">
@@ -1653,10 +1709,10 @@ function Recordings({ preservedQuery }: { preservedQuery: string }) {
           action={
             <div className="ref-captures-header-actions">
               <div className="ref-search-input-pill">
-                <span>🔍</span>
+                <span><SearchIcon size={13} /></span>
                 <input placeholder="Search recordings..." readOnly />
               </div>
-              <button className="ref-btn-subtle">⬆ Import Files</button>
+              <button className="ref-btn-subtle"><UploadIcon size={12} style={{ marginRight: 4 }} /> Import Files</button>
               <button className="ref-btn-icon">•••</button>
             </div>
           }
@@ -1669,7 +1725,7 @@ function Recordings({ preservedQuery }: { preservedQuery: string }) {
           <div className="ref-table-wrap is-compact">
             <table className="ref-table">
               <thead>
-                <tr><th>Name</th><th>Track ⌄</th><th>Mode</th><th>Date / Time</th><th>Laps</th><th>Size</th><th>Status</th><th></th></tr>
+                <tr><th>Name</th><th>Track <ChevronDownIcon size={10} /></th><th>Mode</th><th>Date / Time</th><th>Laps</th><th>Size</th><th>Status</th><th></th></tr>
               </thead>
               <tbody>
                 <tr className="is-selected">
@@ -1706,9 +1762,9 @@ function Recordings({ preservedQuery }: { preservedQuery: string }) {
             <span>1:20:41</span>
           </div>
           <div className="ref-replay-controls-row">
-            <button className="ctrl-btn">⏮</button>
-            <button className="play-circle-btn">▶</button>
-            <button className="ctrl-btn">⏭</button>
+            <button className="ctrl-btn"><SkipBackIcon size={13} /></button>
+            <button className="play-circle-btn"><PlayIcon size={12} /></button>
+            <button className="ctrl-btn"><SkipForwardIcon size={13} /></button>
             <div className="ref-tab-pills small">
               <button className="tab-pill">0.5x</button>
               <button className="tab-pill active">1x</button>
@@ -1720,7 +1776,7 @@ function Recordings({ preservedQuery }: { preservedQuery: string }) {
         </Panel>
 
         {/* Import Jobs */}
-        <Panel title="Import Jobs" icon="⬆" action={<div className="ref-import-actions"><button className="ref-btn-subtle">⬆ Import from file...</button><button className="ref-btn-icon">•••</button></div>}>
+        <Panel title="Import Jobs" icon={<UploadIcon size={14} />} action={<div className="ref-import-actions"><button className="ref-btn-subtle"><UploadIcon size={12} style={{ marginRight: 4 }} /> Import from file...</button><button className="ref-btn-icon">•••</button></div>}>
           <div className="ref-table-wrap is-compact">
             <table className="ref-table">
               <thead>
@@ -1728,22 +1784,22 @@ function Recordings({ preservedQuery }: { preservedQuery: string }) {
               </thead>
               <tbody>
                 <tr>
-                  <td>📄 Monza_Race_2026_09_05.f1r</td><td>Monza</td><td>Race</td>
+                  <td><FileIcon size={12} style={{ marginRight: 4 }} /> Monza_Race_2026_09_05.f1r</td><td>Monza</td><td>Race</td>
                   <td><div className="bar-track small"><div className="bar-fill fill-blue" style={{ width: "65%" }} /></div> 65%</td>
                   <td><Badge tone="blue"><span className="dot-blue-spin"/> Importing</Badge></td><td>Today, 15:21</td><td>•••</td>
                 </tr>
                 <tr>
-                  <td>📄 Hungaroring_Practice_2026_08_31.f1r</td><td>Hungaroring</td><td>Practice</td>
+                  <td><FileIcon size={12} style={{ marginRight: 4 }} /> Hungaroring_Practice_2026_08_31.f1r</td><td>Hungaroring</td><td>Practice</td>
                   <td><div className="bar-track small"><div className="bar-fill fill-green" style={{ width: "100%" }} /></div> 100%</td>
                   <td><Badge tone="good"><span className="dot-green"/> Complete</Badge></td><td>Today, 14:03</td><td>•••</td>
                 </tr>
                 <tr>
-                  <td>📄 Spa_Race_2026_08_24.f1r</td><td>Spa</td><td>Race</td>
+                  <td><FileIcon size={12} style={{ marginRight: 4 }} /> Spa_Race_2026_08_24.f1r</td><td>Spa</td><td>Race</td>
                   <td><div className="bar-track small"><div className="bar-fill" style={{ width: "0%" }} /></div> 0%</td>
                   <td><Badge tone="neutral"><span className="dot-gray"/> Queued</Badge></td><td>Today, 13:12</td><td>•••</td>
                 </tr>
                 <tr>
-                  <td>📄 Austin_Practice_2026_08_18.f1r</td><td>Austin</td><td>Practice</td>
+                  <td><FileIcon size={12} style={{ marginRight: 4 }} /> Austin_Practice_2026_08_18.f1r</td><td>Austin</td><td>Practice</td>
                   <td><div className="bar-track small"><div className="bar-fill fill-red" style={{ width: "0%" }} /></div> 0%</td>
                   <td><Badge tone="bad"><span className="dot-red"/> Failed</Badge></td><td>Today, 11:46</td><td>•••</td>
                 </tr>
@@ -1753,7 +1809,7 @@ function Recordings({ preservedQuery }: { preservedQuery: string }) {
         </Panel>
 
         {/* Selected Recording Details */}
-        <Panel title="Selected Recording Details" icon="🗄" action={<button className="ref-btn-icon">•••</button>}>
+        <Panel title="Selected Recording Details" icon={<DatabaseIcon size={14} />} action={<button className="ref-btn-icon">•••</button>}>
           <div className="ref-recording-details-body">
             <div className="ref-rec-info-col">
               <div className="ref-rec-thumb-row">
@@ -1814,10 +1870,10 @@ function Recordings({ preservedQuery }: { preservedQuery: string }) {
 
           <div className="ref-rec-quick-actions">
             <span className="qa-label">Quick Actions</span>
-            <button className="ref-btn-blue-action">⬇ Import</button>
-            <button className="ref-btn-subtle">🔍 Inspect</button>
-            <button className="ref-btn-subtle">▶ Replay</button>
-            <button className="ref-btn-danger">🗑 Delete</button>
+            <button className="ref-btn-blue-action"><DownloadIcon size={12} style={{ marginRight: 4 }} /> Import</button>
+            <button className="ref-btn-subtle"><SearchIcon size={12} style={{ marginRight: 4 }} /> Inspect</button>
+            <button className="ref-btn-subtle"><PlayIcon size={11} style={{ marginRight: 4 }} /> Replay</button>
+            <button className="ref-btn-danger"><TrashIcon size={12} style={{ marginRight: 4 }} /> Delete</button>
           </div>
         </Panel>
       </div>
@@ -1834,28 +1890,28 @@ function Settings(_props: { preservedQuery: string }) {
       <PageHeading
         title="Settings"
         subtitle="Configure your AI race engineer, devices, telemetry and more"
-        icon="⚙"
+        icon={<GearIcon size={20} />}
       />
       <div className="ref-privacy-banner">
-        <span className="icon-info">ⓘ</span>
+        <span className="icon-info"><InfoIcon size={14} /></span>
         <strong>All processing is local on your computer.</strong>
         <span>Your data, voice, and telemetry never leave this device.</span>
-        <button className="close-banner-btn">✕</button>
+        <button className="close-banner-btn"><CrossIcon size={11} /></button>
       </div>
 
       <div className="ref-grid settings-main">
         {/* Left Nav */}
         <nav className="ref-settings-nav" aria-label="Settings categories">
           {[
-            ["General", "App behaviour & preferences", "⚙", true],
-            ["AI Settings", "Model & personality", "🧠", false],
-            ["Voice & Audio", "Speech input & output", "🔊", false],
-            ["Telemetry", "UDP & data settings", "∿", false],
-            ["Devices", "Wheel, buttons & PTT", "🎮", false],
-            ["Overlay", "HUD & in-game display", "🖥", false],
-            ["Storage", "Recordings & data management", "🗄", false],
-          ].map(([title, subtitle, icon, active]) => (
-            <button className={`ref-settings-nav-item ${active ? "is-active" : ""}`} key={title as string}>
+            { title: "General", subtitle: "App behaviour & preferences", icon: <GearIcon size={14} />, active: true },
+            { title: "AI Settings", subtitle: "Model & personality", icon: <BrainIcon size={14} />, active: false },
+            { title: "Voice & Audio", subtitle: "Speech input & output", icon: <SpeakerIcon size={14} />, active: false },
+            { title: "Telemetry", subtitle: "UDP & data settings", icon: <WaveIcon size={14} />, active: false },
+            { title: "Devices", subtitle: "Wheel, buttons & PTT", icon: <GamepadIcon size={14} />, active: false },
+            { title: "Overlay", subtitle: "HUD & in-game display", icon: <MonitorIcon size={14} />, active: false },
+            { title: "Storage", subtitle: "Recordings & data management", icon: <DatabaseIcon size={14} />, active: false },
+          ].map(({ title, subtitle, icon, active }) => (
+            <button className={`ref-settings-nav-item ${active ? "is-active" : ""}`} key={title}>
               <span className="settings-nav-icon">{icon}</span>
               <div className="settings-nav-text">
                 <b>{title}</b>
@@ -1881,23 +1937,23 @@ function Settings(_props: { preservedQuery: string }) {
               <div className="card-col">
                 <div className="ref-field">
                   <span>Local Model</span>
-                  <button className="ref-select-full"><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><span className="dot-green"/> Llama 3.1 8B Instruct (Recommended)</span> <span>⌄</span></button>
+                  <button className="ref-select-full"><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><span className="dot-green"/> Llama 3.1 8B Instruct (Recommended)</span> <span><ChevronDownIcon size={11} /></span></button>
                 </div>
                 <div className="ref-field">
                   <span>Personality & Focus</span>
-                  <button className="ref-select-full"><span>🏁 Race Engineer (Balanced)</span> <span>⌄</span></button>
+                  <button className="ref-select-full"><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><FlagCheckeredIcon size={13} /> Race Engineer (Balanced)</span> <span><ChevronDownIcon size={11} /></span></button>
                   <small>Balanced advice on pace, strategy, tyre management and safety.</small>
                 </div>
                 <div className="ref-field">
                   <span>Response Length</span>
-                  <button className="ref-select-full"><span>Medium</span> <span>⌄</span></button>
+                  <button className="ref-select-full"><span>Medium</span> <span><ChevronDownIcon size={11} /></span></button>
                   <small>Concise and actionable responses.</small>
                 </div>
               </div>
               <div className="card-col">
                 <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "8px" }}>
                   <button className="ref-btn-subtle" style={{ color: "#0260e8", border: "1px solid #bfdbfe", background: "#f8fafc", padding: "4px 10px", fontSize: "11px", borderRadius: "6px" }}>
-                    🗄 Manage Models
+                    <><DatabaseIcon size={12} style={{ marginRight: 4 }} /> Manage Models</>
                   </button>
                 </div>
                 <div className="ref-toggle-list">
@@ -1949,7 +2005,7 @@ function Settings(_props: { preservedQuery: string }) {
               </label>
               <label className="ref-field">
                 <span>Data Freshness</span>
-                <button className="ref-select-full"><span>Normal (100 ms)</span> <span>⌄</span></button>
+                <button className="ref-select-full"><span>Normal (100 ms)</span> <span><ChevronDownIcon size={11} /></span></button>
                 <small>How quickly to process incoming data</small>
               </label>
             </div>
@@ -1975,13 +2031,13 @@ function Settings(_props: { preservedQuery: string }) {
                 </div>
               </div>
               <div className="card-col">
-                <div className="ref-field"><span>Overlay Position</span><button className="ref-select-full"><span>Top Right</span> <span>⌄</span></button></div>
+                <div className="ref-field"><span>Overlay Position</span><button className="ref-select-full"><span>Top Right</span> <span><ChevronDownIcon size={11} /></span></button></div>
                 <div className="ref-slider-field" style={{ margin: "4px 0" }}>
                   <div className="slider-header-label"><span>Opacity</span><strong>80%</strong></div>
                   <div className="slider-row"><div className="slider-track"><div className="slider-fill" style={{ width: "80%" }}><div className="slider-thumb"/></div></div></div>
                 </div>
-                <div className="ref-field"><span>Text Size</span><button className="ref-select-full"><span>Medium</span> <span>⌄</span></button></div>
-                <div className="ref-field"><span>Theme</span><button className="ref-select-full"><span>Auto (Light/Dark)</span> <span>⌄</span></button></div>
+                <div className="ref-field"><span>Text Size</span><button className="ref-select-full"><span>Medium</span> <span><ChevronDownIcon size={11} /></span></button></div>
+                <div className="ref-field"><span>Theme</span><button className="ref-select-full"><span>Auto (Light/Dark)</span> <span><ChevronDownIcon size={11} /></span></button></div>
               </div>
             </div>
           </Panel>
@@ -2003,7 +2059,7 @@ function Settings(_props: { preservedQuery: string }) {
               <div className="card-col">
                 <div className="ref-field">
                   <span>Speech-to-Text (Microphone)</span>
-                  <button className="ref-select-full"><span>🎙 Windows Default Device</span> <span>⌄</span></button>
+                  <button className="ref-select-full"><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><MicrophoneIcon size={13} /> Windows Default Device</span> <span><ChevronDownIcon size={11} /></span></button>
                   <div className="vu-meter">
                     {Array.from({ length: 32 }, (_, i) => (
                       <span key={i} className={i < 17 ? "lit" : ""} />
@@ -2012,21 +2068,21 @@ function Settings(_props: { preservedQuery: string }) {
                 </div>
                 <div className="ref-field">
                   <span>Push-to-Talk</span>
-                  <button className="ref-select-full"><span>⌨ Mouse Button 4 (Side)</span> <span>⌄</span></button>
+                  <button className="ref-select-full"><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><KeyboardIcon size={13} /> Mouse Button 4 (Side)</span> <span><ChevronDownIcon size={11} /></span></button>
                   <small>Hold to talk to the AI engineer</small>
                 </div>
                 <div className="ref-field">
                   <span>Text-to-Speech (Output)</span>
-                  <button className="ref-select-full"><span>🔊 Windows Default Device</span> <span>⌄</span></button>
+                  <button className="ref-select-full"><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><SpeakerIcon size={13} /> Windows Default Device</span> <span><ChevronDownIcon size={11} /></span></button>
                 </div>
               </div>
               <div className="card-col">
                 <div className="ref-field">
                   <span>AI Voice</span>
-                  <button className="ref-select-full"><span>👤 Brian (British, Calm)</span> <span>⌄</span></button>
+                  <button className="ref-select-full"><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><UserIcon size={13} /> Brian (British, Calm)</span> <span><ChevronDownIcon size={11} /></span></button>
                 </div>
                 <button className="ref-btn-play-voice">
-                  ▶ Play Test Voice
+                  <PlayIcon size={11} style={{ marginRight: 5 }} /> Play Test Voice
                 </button>
                 <div className="ref-slider-field">
                   <div className="slider-header-label">
@@ -2059,31 +2115,31 @@ function Settings(_props: { preservedQuery: string }) {
                 <rect x="2" y="6" width="20" height="12" rx="4"/><line x1="6" y1="12" x2="10" y2="12"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="15" y1="13" x2="15.01" y2="13"/><line x1="18" y1="11" x2="18.01" y2="11"/>
               </svg>
             }
-            action={<button className="ref-btn-subtle" style={{ fontSize: "11px", padding: "4px 8px" }}>🔄 Detect Devices</button>}
+            action={<button className="ref-btn-subtle" style={{ fontSize: "11px", padding: "4px 8px" }}><RefreshIcon size={11} style={{ marginRight: 4 }} /> Detect Devices</button>}
           >
             <div className="ref-settings-card-2col">
               <div className="card-col">
                 <div className="ref-field">
                   <span>Selected Device</span>
-                  <button className="ref-select-full"><span>🎮 Logitech G Pro Racing Wheel</span> <span>⌄</span></button>
+                  <button className="ref-select-full"><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><GamepadIcon size={13} /> Logitech G Pro Racing Wheel</span> <span><ChevronDownIcon size={11} /></span></button>
                 </div>
                 <div>
                   <span style={{ fontSize: "11px", fontWeight: "600", color: "#1e293b", display: "block", marginBottom: "6px" }}>Button Mapping</span>
-                  <div className="btn-map-row"><span>Button 1</span><button className="ref-select-full"><span>Request Tyre Info</span> <span>⌄</span></button></div>
-                  <div className="btn-map-row"><span>Button 2</span><button className="ref-select-full"><span>Ask About Pace</span> <span>⌄</span></button></div>
-                  <div className="btn-map-row"><span>Button 3</span><button className="ref-select-full"><span>Toggle Overlay</span> <span>⌄</span></button></div>
-                  <div className="btn-map-row"><span>Button 4</span><button className="ref-select-full"><span>Cycle AI Focus</span> <span>⌄</span></button></div>
+                  <div className="btn-map-row"><span>Button 1</span><button className="ref-select-full"><span>Request Tyre Info</span> <span><ChevronDownIcon size={11} /></span></button></div>
+                  <div className="btn-map-row"><span>Button 2</span><button className="ref-select-full"><span>Ask About Pace</span> <span><ChevronDownIcon size={11} /></span></button></div>
+                  <div className="btn-map-row"><span>Button 3</span><button className="ref-select-full"><span>Toggle Overlay</span> <span><ChevronDownIcon size={11} /></span></button></div>
+                  <div className="btn-map-row"><span>Button 4</span><button className="ref-select-full"><span>Cycle AI Focus</span> <span><ChevronDownIcon size={11} /></span></button></div>
                 </div>
               </div>
               <div className="card-col">
                 <div className="ref-field">
                   <span>Push-to-Talk Assignment</span>
-                  <button className="ref-select-full"><span>Mouse Button 4 (Side)</span> <span>⌄</span></button>
+                  <button className="ref-select-full"><span>Mouse Button 4 (Side)</span> <span><ChevronDownIcon size={11} /></span></button>
                   <small>Hold to talk to the AI engineer</small>
                 </div>
                 <div className="ref-field" style={{ marginTop: "12px" }}>
                   <span>Secondary Device (Optional)</span>
-                  <button className="ref-select-full"><span>🎮 No device selected</span> <span>⌄</span></button>
+                  <button className="ref-select-full"><span style={{ display: "flex", alignItems: "center", gap: "6px" }}><GamepadIcon size={13} /> No device selected</span> <span><ChevronDownIcon size={11} /></span></button>
                   <small>e.g. Stream Deck, button box</small>
                 </div>
               </div>
@@ -2140,8 +2196,8 @@ function Settings(_props: { preservedQuery: string }) {
                     <div><span style={{ color: "#94a3b8", marginRight: "4px" }}>●</span> Temporary Files <b>0.9 GB</b></div>
                   </div>
                   <div className="storage-action-row" style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
-                    <button className="ref-btn-danger">🗑 Clean Old Recordings...</button>
-                    <button className="ref-btn-subtle" style={{ fontSize: "11px", padding: "5px 10px" }}>📁 Open Folder</button>
+                    <button className="ref-btn-danger"><TrashIcon size={12} style={{ marginRight: 4 }} /> Clean Old Recordings...</button>
+                    <button className="ref-btn-subtle" style={{ fontSize: "11px", padding: "5px 10px" }}><FolderIcon size={12} style={{ marginRight: 4 }} /> Open Folder</button>
                   </div>
                 </div>
               </div>
@@ -2151,9 +2207,9 @@ function Settings(_props: { preservedQuery: string }) {
       </div>
 
       <footer className="ref-settings-footer-actions">
-        <button className="ref-btn-subtle">🔄 Reset to Defaults</button>
+        <button className="ref-btn-subtle"><RefreshIcon size={12} style={{ marginRight: 4 }} /> Reset to Defaults</button>
         <button className="ref-btn-subtle">Cancel</button>
-        <button className="ref-btn-blue-action" style={{ padding: "7px 18px" }}>✔ Apply Settings</button>
+        <button className="ref-btn-blue-action" style={{ padding: "7px 18px" }}><CheckIcon size={12} style={{ marginRight: 4 }} /> Apply Settings</button>
       </footer>
     </>
   );
