@@ -47,6 +47,10 @@ MAX_OBSERVATION_PREVIEW_ROW_GROUPS = 1024
 MAX_OBSERVATION_PREVIEW_ROWS_READ = 4_194_304
 MAX_OBSERVATION_PREVIEW_PATH_BYTES = 512
 MAX_OBSERVATION_PREVIEW_SHA256_BYTES = 64
+MAX_CAR_LAP_OBSERVATION_ATTEMPT_KEY_BYTES = 512
+MAX_CAR_LAP_OBSERVATION_RESPONSE_BYTES = 512 * 1024
+MAX_CAR_LAP_OBSERVATION_PAGE_ROWS = 100
+MAX_CAR_LAP_OBSERVATION_CONTEXT_BYTES = 16 * 1024
 
 
 ANALYSIS_TRACE_COLUMNS = [
@@ -1670,12 +1674,64 @@ def load_car_observation_preview(
     offset: int = 0,
 ) -> dict[str, object] | None:
     """Read a bounded per-slot preview from checksummed observation chunks."""
+    return _load_car_observation_page(
+        database_path,
+        run_id,
+        session_uid,
+        car_index,
+        limit=limit,
+        offset=offset,
+        lap_attempt_key=None,
+    )
+
+
+def load_car_lap_observation_page(
+    database_path: str | Path,
+    run_id: str,
+    session_uid: str | int,
+    car_index: int,
+    attempt_key: str,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, object] | None:
+    """Read one exact admitted slot lap from its bounded archived observations."""
+    return _load_car_observation_page(
+        database_path,
+        run_id,
+        session_uid,
+        car_index,
+        limit=limit,
+        offset=offset,
+        lap_attempt_key=attempt_key,
+    )
+
+
+def _load_car_observation_page(
+    database_path: str | Path,
+    run_id: str,
+    session_uid: str | int,
+    car_index: int,
+    *,
+    limit: int,
+    offset: int,
+    lap_attempt_key: str | None,
+) -> dict[str, object] | None:
     if not 0 <= car_index <= 23:
         raise ValueError("car index is out of range")
-    if not 1 <= limit <= 500 or not 0 <= offset <= 100_000:
+    max_limit = 500 if lap_attempt_key is None else MAX_CAR_LAP_OBSERVATION_PAGE_ROWS
+    if not 1 <= limit <= max_limit or not 0 <= offset <= 100_000:
         raise ValueError("car observation preview page is out of range")
+    if lap_attempt_key is not None and (
+        not isinstance(lap_attempt_key, str)
+        or not lap_attempt_key
+        or len(lap_attempt_key) > MAX_CAR_LAP_OBSERVATION_ATTEMPT_KEY_BYTES
+    ):
+        raise ValueError("car_lap_observation_attempt_key_invalid")
     database_path = Path(database_path)
+    lap_scope: dict[str, object] | None = None
     with Database(database_path, read_only=True) as db:
+        db.connection.execute("BEGIN")
         session = db.connection.execute(
             """SELECT s.session_key, s.session_uid, r.status,
                       CASE WHEN length(CAST(r.metrics_json AS BLOB)) <= ?
@@ -1707,6 +1763,174 @@ def load_car_observation_preview(
             and session["completion_json_bytes"] > MAX_OBSERVATION_CAPTURE_COMPLETION_BYTES
         ):
             raise ValueError("observation_capture_completion_limit_exceeded")
+        if lap_attempt_key is not None:
+            attempt_row = db.connection.execute(
+                """SELECT a.attempt_key, a.packet_format, a.lifecycle_epoch,
+                          a.car_index, a.tenure_ordinal, a.attempt_number,
+                          a.lap_number, a.disposition, a.lap_time_ms, a.game_valid,
+                          a.start_observed, a.pit_encountered, a.sample_count,
+                          a.start_frame_ordinal, a.end_frame_ordinal,
+                          a.completion_frame_ordinal, a.diagnostic_only,
+                          CASE WHEN length(CAST(a.exclusion_reasons_json AS BLOB)) <= ?
+                               THEN a.exclusion_reasons_json ELSE NULL END AS exclusion_reasons_json,
+                          length(CAST(a.exclusion_reasons_json AS BLOB)) AS exclusion_reasons_bytes,
+                          t.start_frame_ordinal AS tenure_start_frame_ordinal,
+                          t.end_frame_ordinal_exclusive AS tenure_end_frame_ordinal_exclusive,
+                          t.participant_frame_identifier,
+                          t.participant_wire_fingerprint,
+                          t.close_reason
+                     FROM observed_car_lap_attempts a
+                     JOIN car_slot_tenures t
+                       ON t.session_key=a.session_key
+                      AND t.packet_format=a.packet_format
+                      AND t.lifecycle_epoch=a.lifecycle_epoch
+                      AND t.car_index=a.car_index
+                      AND t.tenure_ordinal=a.tenure_ordinal
+                     JOIN sessions s ON s.session_key=a.session_key
+                     JOIN processing_runs r USING(run_id)
+                    WHERE r.run_id=? AND s.session_uid=?
+                      AND s.session_key=? AND a.car_index=? AND a.attempt_key=?""",
+                (
+                    MAX_CAR_LAP_REASONS_JSON_BYTES,
+                    run_id,
+                    str(session_uid),
+                    session["session_key"],
+                    car_index,
+                    lap_attempt_key,
+                ),
+            ).fetchone()
+            if attempt_row is None or attempt_row["diagnostic_only"] != 1:
+                return None
+            if (
+                attempt_row["exclusion_reasons_bytes"] is None
+                or attempt_row["exclusion_reasons_bytes"]
+                > MAX_CAR_LAP_REASONS_JSON_BYTES
+            ):
+                raise ValueError("car_lap_observation_attempt_metadata_limit_exceeded")
+            try:
+                exclusion_reasons = json.loads(attempt_row["exclusion_reasons_json"])
+            except (json.JSONDecodeError, TypeError, RecursionError, ValueError) as exc:
+                raise ValueError("car_lap_observation_attempt_metadata_invalid") from exc
+            if (
+                not isinstance(exclusion_reasons, list)
+                or len(exclusion_reasons) > 64
+                or not all(
+                    isinstance(reason, str) and len(reason) <= 96
+                    for reason in exclusion_reasons
+                )
+            ):
+                raise ValueError("car_lap_observation_attempt_metadata_invalid")
+            start = attempt_row["start_frame_ordinal"]
+            end = attempt_row["end_frame_ordinal"]
+            tenure_start = attempt_row["tenure_start_frame_ordinal"]
+            tenure_end = attempt_row["tenure_end_frame_ordinal_exclusive"]
+            completion_frame = attempt_row["completion_frame_ordinal"]
+            close_reason = attempt_row["close_reason"]
+            numeric_attempt_fields = (
+                attempt_row["packet_format"],
+                attempt_row["lifecycle_epoch"],
+                attempt_row["tenure_ordinal"],
+                attempt_row["attempt_number"],
+                attempt_row["lap_number"],
+                attempt_row["sample_count"],
+                attempt_row["participant_frame_identifier"],
+            )
+            if (
+                any(type(value) is not int for value in numeric_attempt_fields)
+                or attempt_row["packet_format"] not in (2025, 2026)
+                or attempt_row["lifecycle_epoch"] < 0
+                or not 1 <= attempt_row["tenure_ordinal"] <= 100_000
+                or not 1 <= attempt_row["attempt_number"] <= 100_000
+                or attempt_row["lap_number"] < 0
+                or not 0 <= attempt_row["sample_count"] <= 2**53 - 1
+                or attempt_row["disposition"] not in ("completed", "partial", "abandoned")
+                or (
+                    attempt_row["lap_time_ms"] is not None
+                    and (
+                        type(attempt_row["lap_time_ms"]) is not int
+                        or not 0 <= attempt_row["lap_time_ms"] <= 2**53 - 1
+                    )
+                )
+                or attempt_row["game_valid"] not in (None, 0, 1)
+                or attempt_row["start_observed"] not in (0, 1)
+                or attempt_row["pit_encountered"] not in (0, 1)
+                or type(start) is not int
+                or type(end) is not int
+                or type(tenure_start) is not int
+                or type(tenure_end) is not int
+                or (
+                    completion_frame is not None
+                    and type(completion_frame) is not int
+                )
+                or not isinstance(close_reason, str)
+                or len(close_reason) > 96
+                or start <= 0
+                or end < start
+                or tenure_start <= 0
+                or tenure_end <= tenure_start
+                or not tenure_start <= start <= end < tenure_end
+                or (
+                    completion_frame is not None
+                    and (
+                        type(completion_frame) is not int
+                        or completion_frame <= end
+                    )
+                )
+            ):
+                raise ValueError("car_lap_observation_ownership_bounds_unavailable")
+            wire_fingerprint = attempt_row["participant_wire_fingerprint"]
+            if (
+                not isinstance(wire_fingerprint, str)
+                or len(wire_fingerprint) != 64
+                or any(character not in "0123456789abcdef" for character in wire_fingerprint)
+            ):
+                raise ValueError("car_lap_observation_tenure_provenance_invalid")
+            expected_attempt_key = (
+                f"{run_id}:car-lap:{session['session_uid']}:"
+                f"{attempt_row['packet_format']}:{attempt_row['lifecycle_epoch']}:"
+                f"{car_index}:{attempt_row['tenure_ordinal']}:{attempt_row['attempt_number']}"
+            )
+            if lap_attempt_key != expected_attempt_key:
+                return None
+            lap_scope = {
+                "attempt_key": lap_attempt_key,
+                "packet_format": int(attempt_row["packet_format"]),
+                "lifecycle_epoch": int(attempt_row["lifecycle_epoch"]),
+                "car_index": car_index,
+                "tenure_ordinal": int(attempt_row["tenure_ordinal"]),
+                "attempt_number": int(attempt_row["attempt_number"]),
+                "lap_number": int(attempt_row["lap_number"]),
+                "disposition": str(attempt_row["disposition"]),
+                "lap_time_ms": (
+                    int(attempt_row["lap_time_ms"])
+                    if attempt_row["lap_time_ms"] is not None
+                    else None
+                ),
+                "game_valid": (
+                    None
+                    if attempt_row["game_valid"] is None
+                    else bool(attempt_row["game_valid"])
+                ),
+                "start_observed": bool(attempt_row["start_observed"]),
+                "pit_encountered": bool(attempt_row["pit_encountered"]),
+                "sample_count": int(attempt_row["sample_count"]),
+                "reference_eligible": False,
+                "coaching_eligible": False,
+                "exclusion_reasons": exclusion_reasons,
+                "start_frame_ordinal": start,
+                "end_frame_ordinal": end,
+                "completion_frame_ordinal": completion_frame,
+                "tenure": {
+                    "ordinal": int(attempt_row["tenure_ordinal"]),
+                    "start_frame_ordinal": tenure_start,
+                    "end_frame_ordinal_exclusive": tenure_end,
+                    "participant_frame_identifier": int(
+                        attempt_row["participant_frame_identifier"]
+                    ),
+                    "participant_packet_fingerprint": wire_fingerprint,
+                    "close_reason": str(attempt_row["close_reason"]),
+                },
+            }
         raw_chunks = db.connection.execute(
             """WITH candidate_chunks AS (
                      SELECT packet_format,lifecycle_epoch,chunk_ordinal,
@@ -1721,6 +1945,8 @@ def load_car_observation_preview(
                             length(CAST(quality_json AS BLOB)) AS manifest_bytes
                        FROM car_observation_chunks
                       WHERE session_key=? AND ready=1
+                        AND (? IS NULL OR packet_format=?)
+                        AND (? IS NULL OR lifecycle_epoch=?)
                       ORDER BY lifecycle_epoch,chunk_ordinal,packet_format LIMIT ?
                  ), sized_chunks AS (
                      SELECT *, SUM(manifest_bytes) OVER() AS total_manifest_bytes
@@ -1737,6 +1963,10 @@ def load_car_observation_preview(
                 MAX_OBSERVATION_PREVIEW_PATH_BYTES,
                 MAX_OBSERVATION_PREVIEW_SHA256_BYTES,
                 session["session_key"],
+                None if lap_scope is None else lap_scope["packet_format"],
+                None if lap_scope is None else lap_scope["packet_format"],
+                None if lap_scope is None else lap_scope["lifecycle_epoch"],
+                None if lap_scope is None else lap_scope["lifecycle_epoch"],
                 MAX_OBSERVATION_PREVIEW_CHUNKS + 1,
                 MAX_OBSERVATION_PREVIEW_MANIFEST_BYTES,
                 MAX_OBSERVATION_PREVIEW_MANIFEST_TOTAL_BYTES,
@@ -1761,10 +1991,15 @@ def load_car_observation_preview(
                 raise ValueError("observation_preview_manifest_limit_exceeded")
             if len(raw_quality.encode("utf-8")) > MAX_OBSERVATION_PREVIEW_MANIFEST_BYTES:
                 raise ValueError("observation_preview_manifest_limit_exceeded")
-            quality = json.loads(raw_quality)
+            try:
+                quality = json.loads(raw_quality)
+            except (json.JSONDecodeError, TypeError, RecursionError, ValueError) as exc:
+                raise ValueError("observation_preview_manifest_invalid") from exc
             if not isinstance(quality, dict) or not isinstance(quality.get("slots"), dict):
                 raise ValueError("observation_preview_manifest_invalid")
             slot = quality.get("slots", {}).get(str(car_index), {})
+            if not isinstance(slot, dict):
+                raise ValueError("observation_preview_manifest_invalid")
             raw_count = slot.get("observation_count", 0)
             if type(raw_count) is not int or raw_count < 0:
                 raise ValueError("observation_preview_manifest_invalid")
@@ -1774,31 +2009,51 @@ def load_car_observation_preview(
             if int(chunk["schema_version"]) != OBSERVATION_SCHEMA_VERSION:
                 raise ValueError("observation_preview_schema_mismatch")
             count = raw_count
-            if count:
+            if count or lap_scope is not None:
                 chunks.append((chunk, quality, count))
-                total += count
+                if lap_scope is None:
+                    total += count
         chunks.sort(
             key=lambda item: (
-                int(item[1].get("first_frame_ordinal", 0) or 0),
-                int(item[0]["lifecycle_epoch"]),
-                int(item[0]["packet_format"]),
-                int(item[0]["chunk_ordinal"]),
+                (
+                    int(item[0]["lifecycle_epoch"]),
+                    int(item[0]["packet_format"]),
+                    int(item[0]["chunk_ordinal"]),
+                )
+                if lap_scope is not None
+                else (
+                    int(item[1].get("first_frame_ordinal", 0) or 0),
+                    int(item[0]["lifecycle_epoch"]),
+                    int(item[0]["packet_format"]),
+                    int(item[0]["chunk_ordinal"]),
+                )
             )
         )
-        completion = (
-            json.loads(session["completion_json"])
-            if session["completion_json"]
-            else {}
-        )
+        try:
+            completion = (
+                json.loads(session["completion_json"])
+                if session["completion_json"]
+                else {}
+            )
+        except (json.JSONDecodeError, TypeError, RecursionError, ValueError) as exc:
+            raise ValueError("observation_capture_completion_invalid") from exc
+        if not isinstance(completion, dict):
+            raise ValueError("observation_capture_completion_invalid")
 
     root = database_path.parent.resolve()
     remaining_skip = offset
     selected_rows: list[dict[str, object]] = []
     selected_chunks: set[str] = set()
+    verified_chunks: list[dict[str, object]] = []
+    frame_bounds_by_chunk: dict[str, list[tuple[int, int]]] = {}
+    matched_total = 0
+    previous_matched_frame_ordinal: int | None = None
+    previous_observation_group_last_frame: int | None = None
     source_bytes_read = 0
     row_groups_read = 0
     rows_read = 0
     columns = (
+        "session_uid",
         "frame_identifier",
         "frame_ordinal",
         "session_time_s",
@@ -1833,8 +2088,8 @@ def load_car_observation_preview(
         "context_json",
         "validation_flags",
     )
-    for chunk, _, slot_count in chunks:
-        if remaining_skip >= slot_count:
+    for chunk, chunk_quality, slot_count in chunks:
+        if lap_scope is None and remaining_skip >= slot_count:
             remaining_skip -= slot_count
             continue
         relative = Path(chunk["relative_path"])
@@ -1862,6 +2117,17 @@ def load_car_observation_preview(
         actual_hash = hashlib.sha256(source_bytes).hexdigest()
         if actual_hash != chunk["sha256"]:
             raise ValueError("observation chunk checksum does not match SQLite")
+        if lap_scope is not None:
+            verified_chunks.append(
+                {
+                    "packet_format": int(chunk["packet_format"]),
+                    "lifecycle_epoch": int(chunk["lifecycle_epoch"]),
+                    "chunk_ordinal": int(chunk["chunk_ordinal"]),
+                    "row_count": int(chunk["row_count"]),
+                    "sha256": actual_hash,
+                    "schema_version": int(chunk["schema_version"]),
+                }
+            )
         parquet = pq.ParquetFile(io.BytesIO(source_bytes))
         metadata = parquet.metadata
         raw_version = (metadata.metadata or {}).get(b"observation_schema_version")
@@ -1876,9 +2142,66 @@ def load_car_observation_preview(
             or int(chunk["row_count"]) > MAX_OBSERVATION_CHUNK_ROWS
         ):
             raise ValueError("observation chunk schema or row count does not match SQLite")
+        if lap_scope is not None:
+            manifest_rows = chunk_quality.get("observation_count")
+            manifest_first = chunk_quality.get("first_frame_ordinal")
+            manifest_last = chunk_quality.get("last_frame_ordinal")
+            if (
+                type(manifest_rows) is not int
+                or manifest_rows != metadata.num_rows
+                or type(manifest_first) is not int
+                or type(manifest_last) is not int
+            ):
+                raise ValueError("observation_preview_manifest_invalid")
+            try:
+                frame_column_index = metadata.schema.names.index("frame_ordinal")
+            except ValueError as exc:
+                raise ValueError("observation_preview_frame_statistics_unavailable") from exc
+            frame_bounds = []
+            for frame_group in range(metadata.num_row_groups):
+                statistics = metadata.row_group(frame_group).column(
+                    frame_column_index
+                ).statistics
+                if statistics is None or not statistics.has_min_max:
+                    raise ValueError("observation_preview_frame_statistics_unavailable")
+                first_frame = statistics.min
+                last_frame = statistics.max
+                if (
+                    type(first_frame) is not int
+                    or type(last_frame) is not int
+                    or first_frame <= 0
+                    or last_frame < first_frame
+                ):
+                    raise ValueError("observation_preview_frame_statistics_invalid")
+                frame_bounds.append((first_frame, last_frame))
+            if (
+                not frame_bounds
+                or min(first for first, _ in frame_bounds) != manifest_first
+                or max(last for _, last in frame_bounds) != manifest_last
+            ):
+                raise ValueError("observation_preview_manifest_frame_bounds_mismatch")
+            frame_bounds_by_chunk[str(relative)] = frame_bounds
         selected_chunks.add(str(relative))
         for row_group in range(metadata.num_row_groups):
             row_group_metadata = metadata.row_group(row_group)
+            frame_group_bounds = (
+                frame_bounds_by_chunk[str(relative)][row_group]
+                if lap_scope is not None
+                else None
+            )
+            if lap_scope is not None:
+                assert frame_group_bounds is not None
+                if (
+                    previous_observation_group_last_frame is not None
+                    and frame_group_bounds[0] < previous_observation_group_last_frame
+                ):
+                    raise ValueError("car_lap_observation_frame_order_invalid")
+                previous_observation_group_last_frame = frame_group_bounds[1]
+                if (
+                    frame_group_bounds[1] < lap_scope["start_frame_ordinal"]
+                    or frame_group_bounds[0] > lap_scope["end_frame_ordinal"]
+                ):
+                    continue
             if row_groups_read >= MAX_OBSERVATION_PREVIEW_ROW_GROUPS:
                 raise ValueError("observation_preview_row_group_limit_exceeded")
             if (
@@ -1891,42 +2214,199 @@ def load_car_observation_preview(
             row_groups_read += 1
             rows_read += row_group_metadata.num_rows
             table = parquet.read_row_group(row_group, columns=list(columns))
-            filtered = table.filter(pc.equal(table["car_index"], car_index))
+            if lap_scope is None:
+                filtered = table.filter(pc.equal(table["car_index"], car_index))
+            else:
+                expected_chunk_scope = (
+                    ("session_uid", str(session["session_uid"])),
+                    ("packet_format", int(chunk["packet_format"])),
+                    ("lifecycle_epoch", int(chunk["lifecycle_epoch"])),
+                )
+                if any(
+                    any(value != expected for value in table[column].to_pylist())
+                    for column, expected in expected_chunk_scope
+                ):
+                    raise ValueError("car_lap_observation_chunk_scope_invalid")
+                frame_column = table["frame_ordinal"]
+                mask = pc.and_kleene(
+                    pc.equal(table["session_uid"], str(session["session_uid"])),
+                    pc.equal(table["packet_format"], lap_scope["packet_format"]),
+                )
+                mask = pc.and_kleene(mask, pc.equal(table["lifecycle_epoch"], lap_scope["lifecycle_epoch"]))
+                mask = pc.and_kleene(mask, pc.equal(table["car_index"], car_index))
+                mask = pc.and_kleene(
+                    mask,
+                    pc.greater_equal(frame_column, lap_scope["start_frame_ordinal"]),
+                )
+                mask = pc.and_kleene(
+                    mask,
+                    pc.less_equal(frame_column, lap_scope["end_frame_ordinal"]),
+                )
+                mask = pc.and_kleene(
+                    mask,
+                    pc.greater_equal(
+                        frame_column,
+                        lap_scope["tenure"]["start_frame_ordinal"],
+                    ),
+                )
+                mask = pc.and_kleene(
+                    mask,
+                    pc.less(
+                        frame_column,
+                        lap_scope["tenure"]["end_frame_ordinal_exclusive"],
+                    ),
+                )
+                if lap_scope["completion_frame_ordinal"] is not None:
+                    mask = pc.and_kleene(
+                        mask,
+                        pc.not_equal(
+                            frame_column,
+                            lap_scope["completion_frame_ordinal"],
+                        ),
+                    )
+                filtered = table.filter(mask)
             if filtered.num_rows == 0:
                 continue
             rows = filtered.to_pylist()
+            if lap_scope is not None:
+                for row in rows:
+                    frame_ordinal = row["frame_ordinal"]
+                    if (
+                        str(row["session_uid"]) != str(session["session_uid"])
+                        or row["packet_format"] != lap_scope["packet_format"]
+                        or row["lifecycle_epoch"] != lap_scope["lifecycle_epoch"]
+                        or row["car_index"] != car_index
+                        or type(frame_ordinal) is not int
+                        or not lap_scope["start_frame_ordinal"]
+                        <= frame_ordinal
+                        <= lap_scope["end_frame_ordinal"]
+                        or not lap_scope["tenure"]["start_frame_ordinal"]
+                        <= frame_ordinal
+                        < lap_scope["tenure"]["end_frame_ordinal_exclusive"]
+                        or frame_ordinal == lap_scope["completion_frame_ordinal"]
+                    ):
+                        raise ValueError("car_lap_observation_row_scope_invalid")
+                    if (
+                        previous_matched_frame_ordinal is not None
+                        and frame_ordinal < previous_matched_frame_ordinal
+                    ):
+                        raise ValueError("car_lap_observation_frame_order_invalid")
+                    previous_matched_frame_ordinal = frame_ordinal
+                    if offset <= matched_total < offset + limit:
+                        selected_rows.append(row)
+                    matched_total += 1
+                continue
             if remaining_skip >= len(rows):
                 remaining_skip -= len(rows)
                 continue
             rows = rows[remaining_skip:]
             remaining_skip = 0
             selected_rows.extend(rows[: limit - len(selected_rows)])
-            if len(selected_rows) >= limit:
+            if len(selected_rows) >= limit and lap_scope is None:
                 break
-        if len(selected_rows) >= limit:
+        if len(selected_rows) >= limit and lap_scope is None:
             break
 
     for row in selected_rows:
         context_raw = row.pop("context_json", None)
-        row["context"] = json.loads(context_raw) if context_raw else None
-    return {
+        if lap_scope is not None and context_raw is not None and len(context_raw.encode("utf-8")) > MAX_CAR_LAP_OBSERVATION_CONTEXT_BYTES:
+            raise ValueError("car_lap_observation_context_limit_exceeded")
+        try:
+            row["context"] = json.loads(context_raw) if context_raw else None
+        except (json.JSONDecodeError, TypeError, RecursionError, ValueError) as exc:
+            raise ValueError("observation_preview_context_invalid") from exc
+        if lap_scope is None:
+            row.pop("session_uid", None)
+    if lap_scope is None:
+        return {
+            "run_id": run_id,
+            "session_uid": str(session["session_uid"]),
+            "car_index": car_index,
+            "status": "available",
+            "archive_status": _car_observation_archive_status(session["metrics_json"]),
+            "verification_scope": "session_car_observations",
+            "opponent_eligibility": "not_assessed",
+            "capture": {
+                "complete": bool(session["complete"]),
+                "footer_status": completion.get("status"),
+            },
+            "observations": {
+                "limit": limit,
+                "offset": offset,
+                "total": total,
+                "returned": len(selected_rows),
+                "source_chunks_read": len(selected_chunks),
+                "items": selected_rows,
+            },
+        }
+    if not verified_chunks:
+        raise ValueError("car_lap_observation_archive_unavailable")
+    try:
+        metrics = json.loads(session["metrics_json"]) if session["metrics_json"] else {}
+    except (json.JSONDecodeError, TypeError, RecursionError, ValueError) as exc:
+        raise ValueError("observation_session_metrics_invalid") from exc
+    quality = metrics.get("capture_quality") if isinstance(metrics, dict) else None
+    replay_quality = quality.get("replay_quality") if isinstance(quality, dict) else None
+    if not isinstance(replay_quality, dict):
+        replay_quality = {
+            "late_packets_ignored": quality.get("import_late_packets_ignored") if isinstance(quality, dict) else None,
+            "frame_overflow_packets_dropped": quality.get("import_frame_overflow_packets_dropped") if isinstance(quality, dict) else None,
+            "conflicting_observation_frames": quality.get("car_observation_conflict_count") if isinstance(quality, dict) else None,
+        }
+    for name in (
+        "late_packets_ignored",
+        "frame_overflow_packets_dropped",
+        "conflicting_observation_frames",
+    ):
+        value = replay_quality.get(name)
+        replay_quality[name] = (
+            value if type(value) is int and 0 <= value <= 2**53 - 1 else None
+        )
+    archive_status = _car_observation_archive_status(session["metrics_json"])
+    if archive_status != "available":
+        raise ValueError("car_lap_observation_archive_unavailable")
+    capture_status = completion.get("status")
+    if not isinstance(capture_status, str) or len(capture_status) > 96:
+        capture_status = None
+    result = {
+        "schema_version": 1,
         "run_id": run_id,
         "session_uid": str(session["session_uid"]),
         "car_index": car_index,
         "status": "available",
-        "archive_status": _car_observation_archive_status(session["metrics_json"]),
-        "verification_scope": "session_car_observations",
+        "verification_scope": "exact_admitted_slot_lap_observations",
         "opponent_eligibility": "not_assessed",
+        "reference_eligible": False,
+        "coaching_eligible": False,
+        "attempt": lap_scope,
         "capture": {
+            "archive_status": archive_status,
             "complete": bool(session["complete"]),
-            "footer_status": completion.get("status"),
+            "footer_status": capture_status,
+            "replay_quality": replay_quality,
         },
+        "source_chunks": verified_chunks,
         "observations": {
             "limit": limit,
             "offset": offset,
-            "total": total,
+            "total": matched_total,
             "returned": len(selected_rows),
-            "source_chunks_read": len(selected_chunks),
+            "verified_row_count": matched_total,
+            "source_chunks_read": len(verified_chunks),
             "items": selected_rows,
         },
     }
+    try:
+        serialized_size = len(
+            json.dumps(
+                result,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        )
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise ValueError("car_lap_observation_response_invalid") from exc
+    if serialized_size > MAX_CAR_LAP_OBSERVATION_RESPONSE_BYTES:
+        raise ValueError("car_lap_observation_response_limit_exceeded")
+    return result

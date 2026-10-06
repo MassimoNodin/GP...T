@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type {
   CarLapInventory,
+  CarLapObservationPage,
   CarObservationInventory,
   CarObservationPreview,
   ProcessingRunAttempt,
@@ -33,6 +34,8 @@ type ObservationUrlState = {
   carIndexParam: string | null;
   offsetParam: string | null;
   carLapOffsetParam?: string | null;
+  carLapAttemptKeyParam?: string | null;
+  carLapObservationOffsetParam?: string | null;
 };
 
 export default function RunEvidencePanel({
@@ -57,6 +60,12 @@ export default function RunEvidencePanel({
   observationInventoryFailure,
   observationPreviewFailure,
   carLapInventoryFailure,
+  carLapObservations,
+  carLapAttemptKeyParam,
+  carLapAttemptKeyRepeated,
+  carLapObservationOffset,
+  carLapObservationOffsetParam,
+  carLapObservationsFailure,
   runId,
   runOffset,
   sessionOffset,
@@ -88,6 +97,12 @@ export default function RunEvidencePanel({
   observationInventoryFailure: ObservationRequestFailure | null;
   observationPreviewFailure: ObservationRequestFailure | null;
   carLapInventoryFailure: ObservationRequestFailure | null;
+  carLapObservations: CarLapObservationPage | null;
+  carLapAttemptKeyParam: string | null;
+  carLapAttemptKeyRepeated: boolean;
+  carLapObservationOffset: number | null;
+  carLapObservationOffsetParam: string | null;
+  carLapObservationsFailure: ObservationRequestFailure | null;
   runId: string | null;
   runOffset: number;
   sessionOffset: number;
@@ -233,11 +248,19 @@ export default function RunEvidencePanel({
           observationInventoryFailure={observationInventoryFailure}
           observationPreviewFailure={observationPreviewFailure}
           carLapInventoryFailure={carLapInventoryFailure}
+          carLapObservations={carLapObservations}
+          carLapAttemptKeyParam={carLapAttemptKeyParam}
+          carLapAttemptKeyRepeated={carLapAttemptKeyRepeated}
+          carLapObservationOffset={carLapObservationOffset}
+          carLapObservationOffsetParam={carLapObservationOffsetParam}
+          carLapObservationsFailure={carLapObservationsFailure}
           observationUrlState={{
             sessionUid: observationSessionUid,
             carIndexParam: observationCarIndexParam,
             offsetParam: observationOffsetParam,
             carLapOffsetParam: carLapInventoryOffsetParam,
+            carLapAttemptKeyParam,
+            carLapObservationOffsetParam,
           }}
           runOffset={runOffset}
           sessionOffset={sessionOffset}
@@ -390,6 +413,12 @@ function RunDetail({
   observationInventoryFailure,
   observationPreviewFailure,
   carLapInventoryFailure,
+  carLapObservations,
+  carLapAttemptKeyParam,
+  carLapAttemptKeyRepeated,
+  carLapObservationOffset,
+  carLapObservationOffsetParam,
+  carLapObservationsFailure,
   observationUrlState,
   runOffset,
   sessionOffset,
@@ -413,6 +442,12 @@ function RunDetail({
   observationInventoryFailure: ObservationRequestFailure | null;
   observationPreviewFailure: ObservationRequestFailure | null;
   carLapInventoryFailure: ObservationRequestFailure | null;
+  carLapObservations: CarLapObservationPage | null;
+  carLapAttemptKeyParam: string | null;
+  carLapAttemptKeyRepeated: boolean;
+  carLapObservationOffset: number | null;
+  carLapObservationOffsetParam: string | null;
+  carLapObservationsFailure: ObservationRequestFailure | null;
   observationUrlState: ObservationUrlState;
   runOffset: number;
   sessionOffset: number;
@@ -457,6 +492,8 @@ function RunDetail({
             "observation_car_index",
             "observation_offset",
             "car_lap_offset",
+            "car_lap_attempt_key",
+            "car_lap_observation_offset",
             "artifact_kind",
             "artifact_offset",
           ]) ?? undefined}
@@ -558,6 +595,12 @@ function RunDetail({
         inventoryFailure={observationInventoryFailure}
         previewFailure={observationPreviewFailure}
         lapInventoryFailure={carLapInventoryFailure}
+        carLapObservations={carLapObservations}
+        carLapAttemptKeyParam={carLapAttemptKeyParam}
+        carLapAttemptKeyRepeated={carLapAttemptKeyRepeated}
+        carLapObservationOffset={carLapObservationOffset}
+        carLapObservationOffsetParam={carLapObservationOffsetParam}
+        carLapObservationsFailure={carLapObservationsFailure}
         sessions={sessions.items}
         runId={summary.run_id}
         runOffset={runOffset}
@@ -809,6 +852,12 @@ function CarObservationArchive({
   inventoryFailure,
   previewFailure,
   lapInventoryFailure,
+  carLapObservations,
+  carLapAttemptKeyParam,
+  carLapAttemptKeyRepeated,
+  carLapObservationOffset,
+  carLapObservationOffsetParam,
+  carLapObservationsFailure,
   sessions,
   runId,
   runOffset,
@@ -831,6 +880,12 @@ function CarObservationArchive({
   inventoryFailure: ObservationRequestFailure | null;
   previewFailure: ObservationRequestFailure | null;
   lapInventoryFailure: ObservationRequestFailure | null;
+  carLapObservations: CarLapObservationPage | null;
+  carLapAttemptKeyParam: string | null;
+  carLapAttemptKeyRepeated: boolean;
+  carLapObservationOffset: number | null;
+  carLapObservationOffsetParam: string | null;
+  carLapObservationsFailure: ObservationRequestFailure | null;
   sessions: ProcessingRunDetail["sessions"]["items"];
   runId: string;
   runOffset: number;
@@ -854,7 +909,27 @@ function CarObservationArchive({
     "observation_car_index",
     "observation_offset",
     "car_lap_offset",
+    "car_lap_attempt_key",
+    "car_lap_observation_offset",
   ]);
+  const lapObservationPageHref = (attemptKey: string, nextOffset: number) =>
+    selectedSessionUid !== null && selectedCarIndex !== null
+      ? carLapObservationPageUrl(
+          screen,
+          preservedQuery,
+          runId,
+          runOffset,
+          sessionOffset,
+          attemptOffset,
+          lifecycleEventOffset,
+          selectedSessionUid,
+          selectedCarIndex,
+          attemptKey,
+          nextOffset,
+          lapInventoryOffsetParam,
+          offsetParam,
+        )
+      : null;
 
   return (
     <section className="run-page-group" aria-labelledby="car-observations-title">
@@ -1117,6 +1192,7 @@ function CarObservationArchive({
             selectedCarIndexParam={selectedCarIndexParam}
             observationOffset={offset}
             observationOffsetParam={offsetParam}
+            observationPageHref={lapObservationPageHref}
             runId={runId}
             runOffset={runOffset}
             sessionOffset={sessionOffset}
@@ -1127,6 +1203,19 @@ function CarObservationArchive({
           />
         </>
       )}
+      <CarLapObservationDetail
+        page={carLapObservations}
+        selectedAttemptKey={carLapAttemptKeyParam}
+        selectedAttemptKeyRepeated={carLapAttemptKeyRepeated}
+        selectedOffset={carLapObservationOffset}
+        selectedOffsetParam={carLapObservationOffsetParam}
+        failure={carLapObservationsFailure}
+        pageHref={lapObservationPageHref}
+        closeHref={screenHref(screen, preservedQuery, {}, [
+          "car_lap_attempt_key",
+          "car_lap_observation_offset",
+        ])}
+      />
     </section>
   );
 }
@@ -1139,6 +1228,7 @@ function CarLapInventorySection({
   selectedSessionUid,
   selectedCarIndex,
   selectedCarIndexParam,
+  observationPageHref,
   observationOffset,
   observationOffsetParam,
   runId,
@@ -1156,6 +1246,7 @@ function CarLapInventorySection({
   selectedSessionUid: string | null;
   selectedCarIndex: number | null;
   selectedCarIndexParam: string | null;
+  observationPageHref: (attemptKey: string, offset: number) => string | null;
   observationOffset: number | null;
   observationOffsetParam: string | null;
   runId: string;
@@ -1256,6 +1347,7 @@ function CarLapInventorySection({
                   <th scope="col">Source frame ordinals</th>
                   <th scope="col">Roster tenure</th>
                   <th scope="col">Evidence limits</th>
+                  <th scope="col">Archived observations</th>
                 </tr>
               </thead>
               <tbody>
@@ -1269,6 +1361,170 @@ function CarLapInventorySection({
                     <td>{attempt.source_frame_ordinals.start}–{attempt.source_frame_ordinals.end ?? "open"} · complete {attempt.source_frame_ordinals.completion ?? "—"}</td>
                     <td>{attempt.tenure.ordinal} · {attempt.tenure.start_frame_ordinal}–{attempt.tenure.end_frame_ordinal_exclusive} · {humanize(attempt.tenure.close_reason)}</td>
                     <td>{attempt.exclusion_reasons.length ? attempt.exclusion_reasons.map(humanize).join(" · ") : "No timing exclusions reported; still diagnostic only"}</td>
+                    <td>
+                      <a href={observationPageHref(attempt.attempt_key, 0) ?? undefined}>
+                        Inspect observations
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function CarLapObservationDetail({
+  page,
+  selectedAttemptKey,
+  selectedAttemptKeyRepeated,
+  selectedOffset,
+  selectedOffsetParam,
+  failure,
+  pageHref,
+  closeHref,
+}: {
+  page: CarLapObservationPage | null;
+  selectedAttemptKey: string | null;
+  selectedAttemptKeyRepeated: boolean;
+  selectedOffset: number | null;
+  selectedOffsetParam: string | null;
+  failure: ObservationRequestFailure | null;
+  pageHref: (attemptKey: string, offset: number) => string | null;
+  closeHref: string | null;
+}) {
+  if (!selectedAttemptKeyRepeated && selectedAttemptKey === null) return null;
+  const exactPage = page?.observations;
+  return (
+    <section className="run-page-group" aria-labelledby="car-lap-observations-title">
+      <div className="run-page-heading">
+        <div>
+          <h5 id="car-lap-observations-title">Exact lap observations</h5>
+          <p>
+            Read-only archived rows for one selected slot attempt. A slot is not a driver identity; this evidence cannot be used as a reference, comparison, ranking, or coaching input.
+          </p>
+        </div>
+        {closeHref ? <a href={closeHref}>Close observations</a> : null}
+      </div>
+      {selectedAttemptKeyRepeated ? (
+        <p className="run-evidence-error" role="status">
+          The selected attempt key was repeated. Remove duplicate selection parameters; no attempt was chosen.
+        </p>
+      ) : failure ? (
+        <p className="run-evidence-error" role="status">
+          {observationRequestFailureText("lap observations", failure)}
+          {failure.reason === "car_lap_attempt_key_mismatch"
+            ? " The key does not belong to the selected run, session, or slot."
+            : failure.reason === "car_lap_observation_scope_repeated"
+              ? " One or more run, session, slot, attempt, or page selectors were repeated. Remove duplicates and select the attempt again."
+              : failure.reason === "car_lap_observation_scope_incomplete"
+                ? " The run, session, slot, and attempt must each be selected exactly once."
+            : " No substitute attempt was loaded."}
+        </p>
+      ) : !page || !exactPage ? (
+        <p className="run-evidence-empty" role="status">
+          The exact archived observations are unavailable. No other attempt was selected.
+        </p>
+      ) : (
+        <>
+          <p className="run-evidence-empty">
+            Attempt {page.attempt.attempt_number} · lap {page.attempt.lap_number} · {humanize(page.attempt.disposition)} · reported time {formatLapTime(page.attempt.lap_time_ms)} · Lap Data sample count {page.attempt.sample_count.toLocaleString()} · verified archived rows {exactPage.verified_row_count.toLocaleString()}
+          </p>
+          <p className="run-evidence-empty">
+            Frames {page.attempt.start_frame_ordinal.toLocaleString()}–{page.attempt.end_frame_ordinal.toLocaleString()} inclusive · completion transition {page.attempt.completion_frame_ordinal?.toLocaleString() ?? "not recorded"} is excluded from this outgoing lap. Tenure {page.attempt.tenure.ordinal}: {page.attempt.tenure.start_frame_ordinal.toLocaleString()}–{page.attempt.tenure.end_frame_ordinal_exclusive.toLocaleString()} (end exclusive) · {humanize(page.attempt.tenure.close_reason)}.
+          </p>
+          <p className="run-evidence-empty">
+            Roster packet fingerprint {page.attempt.tenure.participant_packet_fingerprint} · roster frame {page.attempt.tenure.participant_frame_identifier.toLocaleString()}
+          </p>
+          <p className="run-evidence-empty">
+            Capture {page.capture.complete ? "finalized" : "incomplete"} · footer {humanize(page.capture.footer_status ?? "unknown")} · replay late packets ignored {countText(page.capture.replay_quality.late_packets_ignored)} · frame overflow drops {countText(page.capture.replay_quality.frame_overflow_packets_dropped)} · conflicting observation frames {countText(page.capture.replay_quality.conflicting_observation_frames)}
+          </p>
+          {!page.capture.complete ? (
+            <p className="run-evidence-error" role="status">
+              The capture is incomplete; these verified rows remain diagnostic evidence.
+            </p>
+          ) : null}
+          {page.attempt.exclusion_reasons.length ? (
+            <p className="run-evidence-error" role="status">
+              Attempt qualifications: {page.attempt.exclusion_reasons.map(humanize).join(" · ")}
+            </p>
+          ) : null}
+          <details className="run-observation-source-chunks">
+            <summary>Verified source chunks ({page.source_chunks.length})</summary>
+            <ul>
+              {page.source_chunks.map((chunk) => (
+                <li key={`${chunk.packet_format}:${chunk.lifecycle_epoch}:${chunk.chunk_ordinal}`}>
+                  Format {chunk.packet_format} · epoch {chunk.lifecycle_epoch} · chunk {chunk.chunk_ordinal} · {chunk.row_count.toLocaleString()} rows · SHA-256 {chunk.sha256}
+                </li>
+              ))}
+            </ul>
+          </details>
+          <nav className="run-page-navigation" aria-label="Exact lap observation pages">
+            <span>
+              {exactPage.returned.toLocaleString()} displayed · {exactPage.total.toLocaleString()} verified rows
+              {exactPage.returned > 0
+                ? ` · rows ${exactPage.offset + 1}–${exactPage.offset + exactPage.returned}`
+                : ` · no rows at offset ${exactPage.offset.toLocaleString()}`}
+            </span>
+            <div>
+              {exactPage.offset > 0 ? (
+                <a href={pageHref(page.attempt.attempt_key, previousObservationOffset(exactPage.offset, exactPage.total, exactPage.limit)) ?? undefined}>
+                  Previous page
+                </a>
+              ) : null}
+              {exactPage.offset + exactPage.limit <= 100_000 &&
+              exactPage.offset + exactPage.returned < exactPage.total ? (
+                <a href={pageHref(page.attempt.attempt_key, exactPage.offset + exactPage.limit) ?? undefined}>
+                  Next page
+                </a>
+              ) : null}
+            </div>
+          </nav>
+          {selectedOffset === null ? (
+            <p className="run-evidence-empty" role="status">
+              Observation page offset “{selectedOffsetParam}” is invalid or exceeds the 100,000-row bound.
+            </p>
+          ) : null}
+          <div className="run-observation-table-wrap">
+            <table className="run-observation-table">
+              <thead>
+                <tr>
+                  <th scope="col">Frame ordinal</th>
+                  <th scope="col">Time (s)</th>
+                  <th scope="col">Lap time</th>
+                  <th scope="col">Distance (m)</th>
+                  <th scope="col">Speed (km/h)</th>
+                  <th scope="col">Throttle</th>
+                  <th scope="col">Brake</th>
+                  <th scope="col">Steering</th>
+                  <th scope="col">Gear</th>
+                  <th scope="col">RPM</th>
+                  <th scope="col">DRS</th>
+                  <th scope="col">Car telemetry</th>
+                  <th scope="col">Motion</th>
+                  <th scope="col">Row validation</th>
+                </tr>
+              </thead>
+              <tbody>
+                {exactPage.items.map((item) => (
+                  <tr key={`${item.frame_ordinal}:${item.frame_identifier}`}>
+                    <td>{item.frame_ordinal.toLocaleString()}</td>
+                    <td>{item.session_time_s.toFixed(3)}</td>
+                    <td>{formatLapTime(item.current_lap_time_ms)}</td>
+                    <td>{item.lap_distance_m?.toFixed(1) ?? "—"}</td>
+                    <td>{item.speed_mps === null ? "—" : (item.speed_mps * 3.6).toFixed(1)}</td>
+                    <td>{item.throttle === null ? "—" : `${(item.throttle * 100).toFixed(0)}%`}</td>
+                    <td>{item.brake === null ? "—" : `${(item.brake * 100).toFixed(0)}%`}</td>
+                    <td>{item.steering === null ? "—" : item.steering.toFixed(3)}</td>
+                    <td>{item.gear ?? "—"}</td>
+                    <td>{item.engine_rpm?.toLocaleString() ?? "—"}</td>
+                    <td>{item.drs_active === null ? "—" : item.drs_active ? "active" : "inactive"}</td>
+                    <td>{availabilityText(item.car_telemetry_available, item.car_telemetry_unavailable_reason)}</td>
+                    <td>{availabilityText(item.motion_available, item.motion_unavailable_reason)}</td>
+                    <td>{item.validation_flags.length ? item.validation_flags.map(humanize).join(" · ") : "none reported"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1452,6 +1708,15 @@ function runUrl(
       observation_car_index: observationState?.carIndexParam ?? "",
       observation_offset: observationState?.offsetParam ?? (observationState ? "0" : ""),
       car_lap_offset: observationState?.carLapOffsetParam ?? (observationState ? "0" : ""),
+      ...(observationState && Object.hasOwn(observationState, "carLapAttemptKeyParam")
+        ? { car_lap_attempt_key: observationState.carLapAttemptKeyParam ?? "" }
+        : {}),
+      ...(observationState && Object.hasOwn(observationState, "carLapObservationOffsetParam")
+        ? {
+            car_lap_observation_offset:
+              observationState.carLapObservationOffsetParam ?? "",
+          }
+        : {}),
     },
     runId ? [] : ["run_id"],
   );
@@ -1515,6 +1780,40 @@ function carLapPageUrl(
       carLapOffsetParam: String(carLapOffset),
     },
   ) ?? undefined;
+}
+
+function carLapObservationPageUrl(
+  screen: AppScreen,
+  preservedQuery: string,
+  runId: string,
+  runOffset: number,
+  sessionOffset: number,
+  attemptOffset: number,
+  lifecycleEventOffset: number,
+  sessionUid: string,
+  carIndex: number,
+  attemptKey: string,
+  observationOffset: number,
+  carLapInventoryOffsetParam: string | null,
+  observationOffsetParam: string | null,
+) {
+  return runUrl(
+    screen,
+    preservedQuery,
+    runId,
+    runOffset,
+    sessionOffset,
+    attemptOffset,
+    lifecycleEventOffset,
+    {
+      sessionUid,
+      carIndexParam: String(carIndex),
+      offsetParam: observationOffsetParam ?? "0",
+      carLapOffsetParam: carLapInventoryOffsetParam ?? "0",
+      carLapAttemptKeyParam: attemptKey,
+      carLapObservationOffsetParam: String(observationOffset),
+    },
+  );
 }
 
 function screenHref(
@@ -1711,7 +2010,7 @@ function previousObservationOffset(offset: number, total: number, limit: number)
 }
 
 function observationRequestFailureText(
-  resource: "inventory" | "preview" | "lap inventory",
+  resource: "inventory" | "preview" | "lap inventory" | "lap observations",
   failure: ObservationRequestFailure,
 ) {
   if (failure.kind === "request_failed") {

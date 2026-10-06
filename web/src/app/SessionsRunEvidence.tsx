@@ -1,5 +1,6 @@
 import {
   CarLapInventory,
+  CarLapObservationPage,
   LapAttemptPage,
   CarObservationInventory,
   CarObservationPreview,
@@ -15,6 +16,10 @@ import {
 } from "@/lib/api";
 import { attemptInventoryUrl } from "@/lib/attempt-inventory";
 import { isMatchingCarLapInventory } from "@/lib/car-lap-inventory.mjs";
+import {
+  hasUnambiguousCarLapObservationScope,
+  isMatchingCarLapObservationPage,
+} from "@/lib/car-lap-observations.mjs";
 import {
   isSelectionTransferBlocked,
   preservedAppStateQuery,
@@ -166,6 +171,34 @@ export default async function SessionsRunEvidence({
   const observationOffset = parseObservationOffset(observationOffsetParam);
   const carLapInventoryOffsetParam = firstParam(params.car_lap_offset);
   const carLapInventoryOffset = parseObservationOffset(carLapInventoryOffsetParam);
+  const carLapAttemptKeyValues = parameterValues(params.car_lap_attempt_key);
+  const carLapAttemptKeyParam =
+    carLapAttemptKeyValues.length === 1 ? carLapAttemptKeyValues[0] : null;
+  const carLapObservationOffsetValues = parameterValues(
+    params.car_lap_observation_offset,
+  );
+  const carLapObservationOffsetParam =
+    carLapObservationOffsetValues.length === 1
+      ? carLapObservationOffsetValues[0]
+      : undefined;
+  const carLapObservationOffset =
+    carLapObservationOffsetValues.length > 1
+      ? null
+      : parseObservationOffset(carLapObservationOffsetParam);
+  const lapObservationScopeSelectors = {
+    runIds: parameterValues(params.run_id),
+    sessionUids: parameterValues(params.observation_session_uid),
+    carIndexes: parameterValues(params.observation_car_index),
+    attemptKeys: carLapAttemptKeyValues,
+    observationOffsets: carLapObservationOffsetValues,
+  };
+  const carLapObservationScopeUnambiguous =
+    hasUnambiguousCarLapObservationScope(lapObservationScopeSelectors);
+  const carLapObservationScopeRepeated =
+    lapObservationScopeSelectors.runIds.length > 1 ||
+    lapObservationScopeSelectors.sessionUids.length > 1 ||
+    lapObservationScopeSelectors.carIndexes.length > 1 ||
+    lapObservationScopeSelectors.observationOffsets.length > 1;
   const selectedObservationSlot =
     observationCarIndex === null
       ? null
@@ -215,6 +248,58 @@ export default async function SessionsRunEvidence({
     )
       ? carLapInventoryResponse.data
       : null;
+  const carLapAttemptKeyParts = carLapAttemptKeyParam?.split(":") ?? [];
+  const carLapAttemptKeyIsValid = Boolean(
+    runId &&
+      observationSession &&
+      observationCarIndex !== null &&
+      carLapAttemptKeyParam &&
+      carLapAttemptKeyParam.length <= 512 &&
+      carLapAttemptKeyParts.length === 8 &&
+      carLapAttemptKeyParts[0] === runId &&
+      carLapAttemptKeyParts[1] === "car-lap" &&
+      carLapAttemptKeyParts[2] === observationSession.session_uid &&
+      (carLapAttemptKeyParts[3] === "2025" ||
+        carLapAttemptKeyParts[3] === "2026") &&
+      /^(?:0|[1-9]\d*)$/.test(carLapAttemptKeyParts[4] ?? "") &&
+      carLapAttemptKeyParts[5] === String(observationCarIndex) &&
+      /^[1-9]\d*$/.test(carLapAttemptKeyParts[6] ?? "") &&
+      /^[1-9]\d*$/.test(carLapAttemptKeyParts[7] ?? ""),
+  );
+  const shouldLoadCarLapObservations = Boolean(
+    !selectionTransferBlocked &&
+      carLapObservationScopeUnambiguous &&
+      carLapAttemptKeyIsValid &&
+      carLapObservationOffset !== null,
+  );
+  const carLapObservationResponse =
+    shouldLoadCarLapObservations &&
+    runId &&
+    observationSession &&
+    observationCarIndex !== null &&
+    carLapAttemptKeyParam &&
+    carLapObservationOffset !== null
+      ? await requestApi<CarLapObservationPage>(
+          `/api/v1/processing-runs/${encodeURIComponent(runId)}/sessions/${encodeURIComponent(observationSession.session_uid)}/cars/${observationCarIndex}/lap-attempts/${encodeURIComponent(carLapAttemptKeyParam)}/observations?limit=50&offset=${carLapObservationOffset}`,
+        )
+      : null;
+  const carLapObservations =
+    carLapObservationResponse?.status === "ok" &&
+    runId &&
+    observationSession &&
+    observationCarIndex !== null &&
+    carLapAttemptKeyParam &&
+    carLapObservationOffset !== null &&
+    isMatchingCarLapObservationPage(
+      carLapObservationResponse.data,
+      runId,
+      observationSession.session_uid,
+      observationCarIndex,
+      carLapAttemptKeyParam,
+      carLapObservationOffset,
+    )
+      ? carLapObservationResponse.data
+      : null;
   const inventoryFailure = observationSession
     ? inventoryResponse === null
       ? { kind: "request_failed" as const, reason: null }
@@ -259,6 +344,56 @@ export default async function SessionsRunEvidence({
     (screen !== "sessions" || archivePageMatchesRequest)
       ? runsResponse.data
       : null;
+  const carLapObservationsFailure = (() => {
+    if (carLapAttemptKeyValues.length === 0) return null;
+    if (carLapAttemptKeyValues.length !== 1) {
+      return {
+        kind: "unavailable" as const,
+        reason: "car_lap_attempt_key_repeated",
+      };
+    }
+    if (carLapObservationScopeRepeated) {
+      return {
+        kind: "unavailable" as const,
+        reason: "car_lap_observation_scope_repeated",
+      };
+    }
+    if (!carLapObservationScopeUnambiguous) {
+      return {
+        kind: "unavailable" as const,
+        reason: "car_lap_observation_scope_incomplete",
+      };
+    }
+    if (!carLapAttemptKeyIsValid) {
+      return {
+        kind: "unavailable" as const,
+        reason: "car_lap_attempt_key_mismatch",
+      };
+    }
+    if (carLapObservationOffset === null) {
+      return {
+        kind: "unavailable" as const,
+        reason: "car_lap_observation_offset_invalid",
+      };
+    }
+    if (!shouldLoadCarLapObservations) return null;
+    if (carLapObservationResponse === null) {
+      return { kind: "request_failed" as const, reason: null };
+    }
+    if (
+      carLapObservationResponse.status !== "ok" ||
+      !carLapObservationResponse.data ||
+      carLapObservations === null
+    ) {
+      return {
+        kind: "unavailable" as const,
+        reason:
+          carLapObservationResponse.reason ??
+          "car_lap_observation_response_mismatch",
+      };
+    }
+    return null;
+  })();
   const runsFailure = archiveFilterRequest?.failure
     ? "archive_filter_request_invalid"
     : runsResponse === null
@@ -305,6 +440,12 @@ export default async function SessionsRunEvidence({
         observationInventoryFailure={inventoryFailure}
         observationPreviewFailure={previewFailure}
         carLapInventoryFailure={carLapInventoryFailure}
+        carLapObservations={carLapObservations}
+        carLapAttemptKeyParam={carLapAttemptKeyParam}
+        carLapAttemptKeyRepeated={carLapAttemptKeyValues.length > 1}
+        carLapObservationOffset={carLapObservationOffset}
+        carLapObservationOffsetParam={carLapObservationOffsetParam ?? null}
+        carLapObservationsFailure={carLapObservationsFailure}
         runId={runId}
         runUnavailable={requestedRunUnavailable}
         runOffset={runOffset}
@@ -622,6 +763,10 @@ function archiveFiltersEqual(
 
 function firstParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function parameterValues(value: string | string[] | undefined) {
+  return value === undefined ? [] : Array.isArray(value) ? value : [value];
 }
 
 function singleParam(value: string | string[] | undefined) {

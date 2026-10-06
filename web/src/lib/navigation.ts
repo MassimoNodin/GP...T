@@ -48,6 +48,8 @@ const retainedKeys = [
   "observation_car_index",
   "observation_offset",
   "car_lap_offset",
+  "car_lap_attempt_key",
+  "car_lap_observation_offset",
   "engineer_intent",
   "engineer_region_identifier",
   "live_source",

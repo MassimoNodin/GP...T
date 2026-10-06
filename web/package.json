@@ -9,6 +9,7 @@
     "test:live-chart": "node --test scripts/live-chart.test.mjs",
     "test:live-session-history": "node --test scripts/live-session-history.test.mjs",
     "test:car-lap-inventory": "node --test scripts/car-lap-inventory.test.mjs",
+    "test:car-lap-observations": "node --test scripts/car-lap-observations.test.mjs",
     "test:recording-catalog": "node --test scripts/recording-catalog.test.mjs",
     "test:recording-download-proxy": "node --test scripts/recording-download-proxy.test.mjs",
     "test:recording-upload-proxy": "node --test scripts/recording-upload-proxy.test.mjs",

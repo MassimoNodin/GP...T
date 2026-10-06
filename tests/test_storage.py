@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import json
+import hashlib
 from io import BytesIO
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from f1_engineer.storage.query import (
     list_car_observation_inventory,
     load_car_observation_preview,
     load_car_lap_inventory_page,
+    load_car_lap_observation_page,
     load_reference_inventory,
 )
 from f1_engineer.storage.parquet import (
@@ -661,7 +663,9 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
             )
 
 
-def test_non_player_lap_inventory_is_imported_and_queryable_separately(tmp_path) -> None:
+def test_non_player_lap_inventory_is_imported_and_queryable_separately(
+    tmp_path, monkeypatch
+) -> None:
     capture_path = tmp_path / "opponent-lap.f1ecap"
     database_path = tmp_path / "state" / "f1.sqlite3"
     session_body = SESSION_FIXTURE.read_bytes()[29:]
@@ -673,17 +677,18 @@ def test_non_player_lap_inventory_is_imported_and_queryable_separately(tmp_path)
             body=session_body,
             sequence=0,
         ),
+        _lap_datagram(9, 1, -15.0, active_car_index=1),
         make_datagram(
             packet_id=4,
             session_uid=SESSION_UID,
             frame=10,
             body=_participants_body(active_count=2),
-            sequence=1,
+            sequence=2,
         ),
-        _lap_datagram(10, 2, -5.0, active_car_index=1),
-        _lap_datagram(11, 3, 10.0, active_car_index=1),
+        _lap_datagram(10, 3, -5.0, active_car_index=1),
+        _lap_datagram(11, 4, 10.0, active_car_index=1),
         _lap_datagram(
-            12, 4, 15.0, active_car_index=1, lap_number=2, last_lap_ms=90_000
+            12, 5, 15.0, active_car_index=1, lap_number=2, last_lap_ms=90_000
         ),
     ]
     with CaptureWriter(capture_path, {"fixture": "car-lap-inventory"}) as writer:
@@ -711,6 +716,182 @@ def test_non_player_lap_inventory_is_imported_and_queryable_separately(tmp_path)
     assert completed["coaching_eligible"] is False
     assert completed["tenure"]["participant_frame_identifier"] == 10
     assert list_laps(database_path) == []
+    lap_observations = load_car_lap_observation_page(
+        database_path,
+        imported.run_id,
+        SESSION_UID,
+        1,
+        completed["attempt_key"],
+        limit=100,
+    )
+    assert lap_observations is not None
+    assert lap_observations["schema_version"] == 1
+    assert lap_observations["opponent_eligibility"] == "not_assessed"
+    assert lap_observations["attempt"]["sample_count"] == completed["sample_count"]
+    assert lap_observations["observations"]["verified_row_count"] == lap_observations["observations"]["total"]
+    assert lap_observations["observations"]["returned"] == lap_observations["observations"]["total"]
+    assert lap_observations["observations"]["total"] > 0
+    assert all(
+        completed["source_frame_ordinals"]["start"]
+        <= row["frame_ordinal"]
+        <= completed["source_frame_ordinals"]["end"]
+        and row["frame_ordinal"]
+        != completed["source_frame_ordinals"]["completion"]
+        for row in lap_observations["observations"]["items"]
+    )
+    assert len(lap_observations["source_chunks"]) == 1
+    next_page = load_car_lap_observation_page(
+        database_path,
+        imported.run_id,
+        SESSION_UID,
+        1,
+        completed["attempt_key"],
+        limit=1,
+        offset=1,
+    )
+    assert next_page is not None
+    assert next_page["observations"]["total"] == lap_observations["observations"]["total"]
+    assert next_page["observations"]["returned"] == max(
+        0, lap_observations["observations"]["total"] - 1
+    )
+    next_lap_observations = load_car_lap_observation_page(
+        database_path,
+        imported.run_id,
+        SESSION_UID,
+        1,
+        next(
+            item["attempt_key"]
+            for item in inventory["attempts"]["items"]
+            if item["disposition"] == "partial"
+        ),
+    )
+    assert next_lap_observations is not None
+    assert next_lap_observations["observations"]["total"] == 1
+    assert next_lap_observations["observations"]["items"][0]["frame_identifier"] == 12
+    assert (
+        next_lap_observations["observations"]["items"][0]["frame_ordinal"]
+        == completed["source_frame_ordinals"]["completion"]
+    )
+    assert (
+        load_car_lap_observation_page(
+            database_path,
+            "f" * 64,
+            SESSION_UID,
+            1,
+            completed["attempt_key"],
+        )
+        is None
+    )
+    assert (
+        load_car_lap_observation_page(
+            database_path,
+            imported.run_id,
+            SESSION_UID + 1,
+            1,
+            completed["attempt_key"],
+        )
+        is None
+    )
+    with Database(database_path, read_only=True) as db:
+        chunk = db.connection.execute(
+            "SELECT chunk_key, relative_path, quality_json, sha256 FROM car_observation_chunks"
+        ).fetchone()
+    original_quality_json = chunk["quality_json"]
+    forged_quality = json.loads(original_quality_json)
+    forged_quality["first_frame_ordinal"] -= 1
+    with Database(database_path) as db:
+        db.connection.execute(
+            "UPDATE car_observation_chunks SET quality_json=? WHERE chunk_key=?",
+            (json.dumps(forged_quality), chunk["chunk_key"]),
+        )
+        db.connection.commit()
+    try:
+        with pytest.raises(ValueError, match="observation_preview_manifest_frame_bounds_mismatch"):
+            load_car_lap_observation_page(
+                database_path,
+                imported.run_id,
+                SESSION_UID,
+                1,
+                completed["attempt_key"],
+            )
+    finally:
+        with Database(database_path) as db:
+            db.connection.execute(
+                "UPDATE car_observation_chunks SET quality_json=? WHERE chunk_key=?",
+                (original_quality_json, chunk["chunk_key"]),
+            )
+            db.connection.commit()
+    chunk_path = (database_path.parent / chunk["relative_path"]).resolve()
+    original_chunk_bytes = chunk_path.read_bytes()
+    original_chunk_sha256 = chunk["sha256"]
+    table = pq.read_table(BytesIO(original_chunk_bytes))
+    session_uid_column = table.schema.get_field_index("session_uid")
+    row_scope = table.to_pylist()
+    forged_row_index = next(
+        index
+        for index, row in enumerate(row_scope)
+        if row["car_index"] == 1
+        and completed["source_frame_ordinals"]["start"]
+        <= row["frame_ordinal"]
+        <= completed["source_frame_ordinals"]["end"]
+    )
+    row_scope[forged_row_index]["session_uid"] = "999999999"
+    forged_table = table.set_column(
+        session_uid_column,
+        table.schema.field(session_uid_column),
+        pa.array(
+            [row["session_uid"] for row in row_scope],
+            type=table.schema.field(session_uid_column).type,
+        ),
+    )
+    pq.write_table(forged_table, chunk_path)
+    forged_chunk_sha256 = hashlib.sha256(chunk_path.read_bytes()).hexdigest()
+    with Database(database_path) as db:
+        db.connection.execute(
+            "UPDATE car_observation_chunks SET sha256=? WHERE chunk_key=?",
+            (forged_chunk_sha256, chunk["chunk_key"]),
+        )
+        db.connection.commit()
+    try:
+        with pytest.raises(
+            ValueError,
+            match="car_lap_observation_chunk_scope_invalid",
+        ):
+            load_car_lap_observation_page(
+                database_path,
+                imported.run_id,
+                SESSION_UID,
+                1,
+                completed["attempt_key"],
+            )
+    finally:
+        chunk_path.write_bytes(original_chunk_bytes)
+        with Database(database_path) as db:
+            db.connection.execute(
+                "UPDATE car_observation_chunks SET sha256=? WHERE chunk_key=?",
+                (original_chunk_sha256, chunk["chunk_key"]),
+            )
+            db.connection.commit()
+    with monkeypatch.context() as bounds:
+        bounds.setattr(query_module, "MAX_OBSERVATION_PREVIEW_CHUNK_BYTES", 1)
+        with pytest.raises(ValueError, match="observation_preview_chunk_bytes_limit_exceeded"):
+            load_car_lap_observation_page(
+                database_path,
+                imported.run_id,
+                SESSION_UID,
+                1,
+                completed["attempt_key"],
+            )
+    with monkeypatch.context() as bounds:
+        bounds.setattr(query_module, "MAX_CAR_LAP_OBSERVATION_RESPONSE_BYTES", 1)
+        with pytest.raises(ValueError, match="car_lap_observation_response_limit_exceeded"):
+            load_car_lap_observation_page(
+                database_path,
+                imported.run_id,
+                SESSION_UID,
+                1,
+                completed["attempt_key"],
+            )
 
     context_metadata_cases = (
         ("\"" + ("x" * (256 * 1024)) + "\"", "attempt_metadata_limit_exceeded"),

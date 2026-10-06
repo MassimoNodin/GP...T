@@ -1427,6 +1427,67 @@ export interface CarLapInventory {
   }>;
 }
 
+export interface CarLapObservationPage {
+  schema_version: 1;
+  run_id: string;
+  session_uid: string;
+  car_index: number;
+  status: "available";
+  verification_scope: "exact_admitted_slot_lap_observations";
+  opponent_eligibility: "not_assessed";
+  reference_eligible: false;
+  coaching_eligible: false;
+  attempt: {
+    attempt_key: string;
+    packet_format: 2025 | 2026;
+    lifecycle_epoch: number;
+    car_index: number;
+    tenure_ordinal: number;
+    attempt_number: number;
+    lap_number: number;
+    disposition: "completed" | "partial" | "abandoned";
+    lap_time_ms: number | null;
+    game_valid: boolean | null;
+    start_observed: boolean;
+    pit_encountered: boolean;
+    sample_count: number;
+    reference_eligible: false;
+    coaching_eligible: false;
+    exclusion_reasons: string[];
+    start_frame_ordinal: number;
+    end_frame_ordinal: number;
+    completion_frame_ordinal: number | null;
+    tenure: ObservedCarLapAttempt["tenure"];
+  };
+  capture: {
+    archive_status: "available";
+    complete: boolean;
+    footer_status: string | null;
+    replay_quality: {
+      late_packets_ignored: number | null;
+      frame_overflow_packets_dropped: number | null;
+      conflicting_observation_frames: number | null;
+    };
+  };
+  source_chunks: Array<{
+    packet_format: number;
+    lifecycle_epoch: number;
+    chunk_ordinal: number;
+    row_count: number;
+    sha256: string;
+    schema_version: number;
+  }>;
+  observations: {
+    limit: number;
+    offset: number;
+    total: number;
+    returned: number;
+    verified_row_count: number;
+    source_chunks_read: number;
+    items: Array<CarObservationPreviewItem & { session_uid: string }>;
+  };
+}
+
 export interface AttemptQualityReport {
   report_version: number;
   analysis_version: string;

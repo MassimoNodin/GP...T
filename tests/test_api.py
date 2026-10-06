@@ -440,6 +440,30 @@ def test_car_observation_api_exposes_bounded_inventory_and_preview(
             "attempts": {"limit": limit, "offset": offset, "total": 0, "returned": 0, "items": []},
         },
     )
+    attempt_key = f"{run_id}:car-lap:18446744073709550001:2025:0:23:1:1"
+    monkeypatch.setattr(
+        api_module,
+        "load_car_lap_observation_page",
+        lambda _database, requested_run, session_uid, car_index, requested_attempt, *, limit, offset: calls.update(
+            lap_observations=(
+                requested_run,
+                session_uid,
+                car_index,
+                requested_attempt,
+                limit,
+                offset,
+            )
+        )
+        or {
+            "schema_version": 1,
+            "run_id": requested_run,
+            "session_uid": session_uid,
+            "car_index": car_index,
+            "status": "available",
+            "verification_scope": "exact_admitted_slot_lap_observations",
+            "opponent_eligibility": "not_assessed",
+        },
+    )
     app = create_app(tmp_path / "unused.sqlite3")
 
     inventory = _get(
@@ -461,6 +485,11 @@ def test_car_observation_api_exposes_bounded_inventory_and_preview(
         f"/api/v1/processing-runs/{run_id}/sessions/18446744073709550001/cars/23/lap-inventory",
         params={"limit": "100", "offset": "100000"},
     )
+    lap_observations = _get(
+        app,
+        f"/api/v1/processing-runs/{run_id}/sessions/18446744073709550001/cars/23/lap-attempts/{attempt_key}/observations",
+        params={"limit": "50", "offset": "100"},
+    )
 
     assert inventory.status_code == 200
     assert inventory.json()["data"]["session_uid"] == "18446744073709550001"
@@ -469,10 +498,20 @@ def test_car_observation_api_exposes_bounded_inventory_and_preview(
     assert preview.json()["data"]["car_index"] == 23
     assert lap_inventory.status_code == 200
     assert lap_inventory.json()["data"]["coaching_eligible"] is False
+    assert lap_observations.status_code == 200
+    assert lap_observations.json()["data"]["opponent_eligibility"] == "not_assessed"
     assert calls == {
         "inventory": (run_id, "18446744073709550001", 24, 0),
         "preview": (run_id, "18446744073709550001", 23, 120, 40),
         "lap_inventory": (run_id, "18446744073709550001", 23, 100, 100000),
+        "lap_observations": (
+            run_id,
+            "18446744073709550001",
+            23,
+            attempt_key,
+            50,
+            100,
+        ),
     }
 
     def preview_limit(_database, _run, _session, _car, *, limit, offset):
@@ -494,7 +533,13 @@ def test_car_observation_api_exposes_bounded_inventory_and_preview(
         f"/api/v1/processing-runs/{run_id}/sessions/18446744073709550001/cars/23/lap-inventory",
         params={"limit": "101", "offset": "0"},
     )
+    invalid_lap_observation_page = _get(
+        app,
+        f"/api/v1/processing-runs/{run_id}/sessions/18446744073709550001/cars/23/lap-attempts/{attempt_key}/observations",
+        params={"limit": "101", "offset": "0"},
+    )
     assert invalid_lap_page.status_code == 422
+    assert invalid_lap_observation_page.status_code == 422
     assert invalid_preview.status_code == 422
 
 

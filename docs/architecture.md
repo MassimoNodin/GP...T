@@ -1313,6 +1313,22 @@ Expose only explicit run/session/slot-scoped pagination in the CLI, local API, a
 
 Acceptance uses the recovered Shanghai capture plus synthetic F1 25 and 2026 streams. Shanghai reconciliation must preserve the capture's incomplete-footer and lifecycle warnings, match only admitted non-player lap transitions and roster intervals, and leave zero-padded or unresolved slots without fabricated attempts. Synthetic coverage includes roster replacement, sparse/missing/conflicting/reordered roster packets, inactivity, frame wrap, flashback, format change, duplicate completion, partial finalization, capacity limits, and crash recovery. Player attempts, traces, reference exclusions, and current comparison results must remain identical. If safe tenure cannot be established for a slot, abstain for that slot.
 
+## Decision 0084: inspect archived observations for one exact slot lap
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Add a read-only, bounded inspection page for observations owned by one explicitly selected D0083 non-player lap attempt. Resolve the exact attempt key only under the requested run, session UID, and car slot, join its stored tenure, and read only checksummed archived observation chunks for that packet format and lifecycle epoch. A missing or mismatched identity, tenure, archive, or ownership bound is unavailable; never choose a replacement attempt.
+
+Select observations by the exact session UID, packet format, lifecycle epoch, and slot, then require `start_frame_ordinal <= row.frame_ordinal <= end_frame_ordinal` and membership in the owning tenure's half-open frame interval. The observed end is inclusive. `completion_frame_ordinal` records the transition: for a completed attempt it belongs to the incoming lap and must not be returned with the outgoing lap. The incoming lap may include that same observation when its own attempt range begins there. Verify the row scope independently of manifest counts and claims, including the session UID stored in the Parquet row.
+
+Derive the attempt and tenure bounds from SQLite in one read snapshot. Read the bounded source bytes once, verify their SHA-256, and parse those same bytes. Filter by ownership before pagination and scan the complete bounded source scope before reporting an exact matched-row total; if the existing manifest, chunk, byte, row-group, decoded-row, or response-size limits are exceeded, return an explicit unavailable result. Keep the reported Lap Data `sample_count` separate from the verified archive-row count. Preserve null channel values, row validity flags, capture/footer and replay qualifications, source chunk checksums/schema versions, and roster fingerprint provenance.
+
+Expose a separate read-only API and an explicit Sessions “Inspect observations” selection with a default page size of 50, maximum 100 rows, and offset at most 100,000. Bind the response to the exact attempt, run/session/slot, format/epoch, tenure fingerprint, and source frame bounds; the browser checks that envelope and every row before display. Cap the serialized response at 512 KiB. Do not add opponent traces or alter importer identity, database schema, player attempt APIs, comparison, reference selection, ranking, geometry, strategy, coaching, or AI evidence routing. Historical runs without the archive remain unavailable.
+
+Acceptance requires: recovered Shanghai observations matching an independent exact `(session_uid, packet_format, lifecycle_epoch, car_index, start..end)` selection; the completed lap excludes its completion-transition observation while the incoming lap includes it when in range; partial and abandoned attempts remain inspectable only within recorded bounds; wrong/off-page identities never fall back; replaced tenure, rewind/wrap, and format boundaries stay separate; checksum drift, missing or malformed chunks, forged manifest counts/scope, missing bounds, and all work/response limits fail closed; and player APIs and coaching admission remain unchanged.
+
 ## Data flow
 
 ```text
