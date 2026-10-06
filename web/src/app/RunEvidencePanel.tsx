@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type {
+  CarLapInventory,
   CarObservationInventory,
   CarObservationPreview,
   ProcessingRunAttempt,
@@ -31,6 +32,7 @@ type ObservationUrlState = {
   sessionUid: string | null;
   carIndexParam: string | null;
   offsetParam: string | null;
+  carLapOffsetParam?: string | null;
 };
 
 export default function RunEvidencePanel({
@@ -44,6 +46,9 @@ export default function RunEvidencePanel({
   artifactKind,
   observationInventory,
   observationPreview,
+  carLapInventory,
+  carLapInventoryOffset,
+  carLapInventoryOffsetParam,
   observationSessionUid,
   observationCarIndexParam,
   observationCarIndex,
@@ -51,6 +56,7 @@ export default function RunEvidencePanel({
   observationOffsetParam,
   observationInventoryFailure,
   observationPreviewFailure,
+  carLapInventoryFailure,
   runId,
   runOffset,
   sessionOffset,
@@ -71,6 +77,9 @@ export default function RunEvidencePanel({
   artifactKind: "all" | ProcessingRunArtifactKind;
   observationInventory: CarObservationInventory | null;
   observationPreview: CarObservationPreview | null;
+  carLapInventory: CarLapInventory | null;
+  carLapInventoryOffset: number | null;
+  carLapInventoryOffsetParam: string | null;
   observationSessionUid: string | null;
   observationCarIndexParam: string | null;
   observationCarIndex: number | null;
@@ -78,6 +87,7 @@ export default function RunEvidencePanel({
   observationOffsetParam: string | null;
   observationInventoryFailure: ObservationRequestFailure | null;
   observationPreviewFailure: ObservationRequestFailure | null;
+  carLapInventoryFailure: ObservationRequestFailure | null;
   runId: string | null;
   runOffset: number;
   sessionOffset: number;
@@ -187,6 +197,7 @@ export default function RunEvidencePanel({
                     sessionUid: observationSessionUid,
                     carIndexParam: observationCarIndexParam,
                     offsetParam: observationOffsetParam,
+                    carLapOffsetParam: carLapInventoryOffsetParam,
                   })
                 : runUrl(screen, preservedQuery, null, offset, 0, 0)
             }
@@ -211,6 +222,9 @@ export default function RunEvidencePanel({
           detail={detail}
           observationInventory={observationInventory}
           observationPreview={observationPreview}
+          carLapInventory={carLapInventory}
+          carLapInventoryOffset={carLapInventoryOffset}
+          carLapInventoryOffsetParam={carLapInventoryOffsetParam}
           observationSessionUid={observationSessionUid}
           observationCarIndexParam={observationCarIndexParam}
           observationCarIndex={observationCarIndex}
@@ -218,10 +232,12 @@ export default function RunEvidencePanel({
           observationOffsetParam={observationOffsetParam}
           observationInventoryFailure={observationInventoryFailure}
           observationPreviewFailure={observationPreviewFailure}
+          carLapInventoryFailure={carLapInventoryFailure}
           observationUrlState={{
             sessionUid: observationSessionUid,
             carIndexParam: observationCarIndexParam,
             offsetParam: observationOffsetParam,
+            carLapOffsetParam: carLapInventoryOffsetParam,
           }}
           runOffset={runOffset}
           sessionOffset={sessionOffset}
@@ -363,6 +379,9 @@ function RunDetail({
   detail,
   observationInventory,
   observationPreview,
+  carLapInventory,
+  carLapInventoryOffset,
+  carLapInventoryOffsetParam,
   observationSessionUid,
   observationCarIndexParam,
   observationCarIndex,
@@ -370,6 +389,7 @@ function RunDetail({
   observationOffsetParam,
   observationInventoryFailure,
   observationPreviewFailure,
+  carLapInventoryFailure,
   observationUrlState,
   runOffset,
   sessionOffset,
@@ -382,6 +402,9 @@ function RunDetail({
   detail: ProcessingRunDetail;
   observationInventory: CarObservationInventory | null;
   observationPreview: CarObservationPreview | null;
+  carLapInventory: CarLapInventory | null;
+  carLapInventoryOffset: number | null;
+  carLapInventoryOffsetParam: string | null;
   observationSessionUid: string | null;
   observationCarIndexParam: string | null;
   observationCarIndex: number | null;
@@ -389,6 +412,7 @@ function RunDetail({
   observationOffsetParam: string | null;
   observationInventoryFailure: ObservationRequestFailure | null;
   observationPreviewFailure: ObservationRequestFailure | null;
+  carLapInventoryFailure: ObservationRequestFailure | null;
   observationUrlState: ObservationUrlState;
   runOffset: number;
   sessionOffset: number;
@@ -432,6 +456,7 @@ function RunDetail({
             "observation_session_uid",
             "observation_car_index",
             "observation_offset",
+            "car_lap_offset",
             "artifact_kind",
             "artifact_offset",
           ]) ?? undefined}
@@ -522,6 +547,9 @@ function RunDetail({
       <CarObservationArchive
         inventory={observationInventory}
         preview={observationPreview}
+        lapInventory={carLapInventory}
+        lapInventoryOffset={carLapInventoryOffset}
+        lapInventoryOffsetParam={carLapInventoryOffsetParam}
         selectedSessionUid={observationSessionUid}
         selectedCarIndexParam={observationCarIndexParam}
         selectedCarIndex={observationCarIndex}
@@ -529,6 +557,7 @@ function RunDetail({
         offsetParam={observationOffsetParam}
         inventoryFailure={observationInventoryFailure}
         previewFailure={observationPreviewFailure}
+        lapInventoryFailure={carLapInventoryFailure}
         sessions={sessions.items}
         runId={summary.run_id}
         runOffset={runOffset}
@@ -769,6 +798,9 @@ function RunDetail({
 function CarObservationArchive({
   inventory,
   preview,
+  lapInventory,
+  lapInventoryOffset,
+  lapInventoryOffsetParam,
   selectedSessionUid,
   selectedCarIndexParam,
   selectedCarIndex,
@@ -776,6 +808,7 @@ function CarObservationArchive({
   offsetParam,
   inventoryFailure,
   previewFailure,
+  lapInventoryFailure,
   sessions,
   runId,
   runOffset,
@@ -787,6 +820,9 @@ function CarObservationArchive({
 }: {
   inventory: CarObservationInventory | null;
   preview: CarObservationPreview | null;
+  lapInventory: CarLapInventory | null;
+  lapInventoryOffset: number | null;
+  lapInventoryOffsetParam: string | null;
   selectedSessionUid: string | null;
   selectedCarIndexParam: string | null;
   selectedCarIndex: number | null;
@@ -794,6 +830,7 @@ function CarObservationArchive({
   offsetParam: string | null;
   inventoryFailure: ObservationRequestFailure | null;
   previewFailure: ObservationRequestFailure | null;
+  lapInventoryFailure: ObservationRequestFailure | null;
   sessions: ProcessingRunDetail["sessions"]["items"];
   runId: string;
   runOffset: number;
@@ -816,6 +853,7 @@ function CarObservationArchive({
     "observation_session_uid",
     "observation_car_index",
     "observation_offset",
+    "car_lap_offset",
   ]);
 
   return (
@@ -957,7 +995,7 @@ function CarObservationArchive({
           {inventory.archive_status === "available" && selectedCarIndex !== null && selectedCarIndexParam !== null && inventory.slots.items.some((slot) => slot.car_index === selectedCarIndex) && offset === null ? (
             <p className="run-evidence-error" role="status">
               Observation offset “{offsetParam}” is invalid or exceeds the 100,000-row request bound. The selected session and slot are preserved.
-              <a href={observationPageUrl(screen, preservedQuery, runId, runOffset, sessionOffset, attemptOffset, lifecycleEventOffset, inventory.session_uid, selectedCarIndex, 0)}>Open the first page</a>.
+              <a href={observationPageUrl(screen, preservedQuery, runId, runOffset, sessionOffset, attemptOffset, lifecycleEventOffset, inventory.session_uid, selectedCarIndex, 0, lapInventoryOffsetParam)}>Open the first page</a>.
             </p>
           ) : null}
           {inventory.archive_status === "available" && selectedCarIndex !== null && previewFailure ? (
@@ -994,6 +1032,7 @@ function CarObservationArchive({
                       preview.session_uid,
                       preview.car_index,
                       previousObservationOffset(preview.observations.offset, preview.observations.total, preview.observations.limit),
+                      lapInventoryOffsetParam,
                     )}>Previous page</a>
                   ) : null}
                   {preview.observations.offset + preview.observations.limit <= 100_000 &&
@@ -1009,6 +1048,7 @@ function CarObservationArchive({
                       preview.session_uid,
                       preview.car_index,
                       preview.observations.offset + preview.observations.limit,
+                      lapInventoryOffsetParam,
                     )}>Next page</a>
                   ) : null}
                 </div>
@@ -1067,6 +1107,173 @@ function CarObservationArchive({
               <p className="run-evidence-empty">The selected slot reports archive state {humanize(preview.archive_status)}; no observation rows were substituted.</p>
             )
           ) : null) : null}
+          <CarLapInventorySection
+            inventory={lapInventory}
+            offset={lapInventoryOffset}
+            offsetParam={lapInventoryOffsetParam}
+            failure={lapInventoryFailure}
+            selectedSessionUid={selectedSessionUid}
+            selectedCarIndex={selectedCarIndex}
+            selectedCarIndexParam={selectedCarIndexParam}
+            observationOffset={offset}
+            observationOffsetParam={offsetParam}
+            runId={runId}
+            runOffset={runOffset}
+            sessionOffset={sessionOffset}
+            attemptOffset={attemptOffset}
+            lifecycleEventOffset={lifecycleEventOffset}
+            screen={screen}
+            preservedQuery={preservedQuery}
+          />
+        </>
+      )}
+    </section>
+  );
+}
+
+function CarLapInventorySection({
+  inventory,
+  offset,
+  offsetParam,
+  failure,
+  selectedSessionUid,
+  selectedCarIndex,
+  selectedCarIndexParam,
+  observationOffset,
+  observationOffsetParam,
+  runId,
+  runOffset,
+  sessionOffset,
+  attemptOffset,
+  lifecycleEventOffset,
+  screen,
+  preservedQuery,
+}: {
+  inventory: CarLapInventory | null;
+  offset: number | null;
+  offsetParam: string | null;
+  failure: ObservationRequestFailure | null;
+  selectedSessionUid: string | null;
+  selectedCarIndex: number | null;
+  selectedCarIndexParam: string | null;
+  observationOffset: number | null;
+  observationOffsetParam: string | null;
+  runId: string;
+  runOffset: number;
+  sessionOffset: number;
+  attemptOffset: number;
+  lifecycleEventOffset: number;
+  screen: AppScreen;
+  preservedQuery: string;
+}) {
+  const sessionUid = inventory?.session_uid ?? selectedSessionUid;
+  const carIndex = inventory?.car_index ?? selectedCarIndex;
+  const pageHref = (nextOffset: number) =>
+    sessionUid !== null && carIndex !== null
+      ? carLapPageUrl(
+          screen,
+          preservedQuery,
+          runId,
+          runOffset,
+          sessionOffset,
+          attemptOffset,
+          lifecycleEventOffset,
+          sessionUid,
+          carIndex,
+          nextOffset,
+          observationOffsetParam,
+        )
+      : null;
+
+  return (
+    <section className="run-page-group" aria-labelledby="car-lap-inventory-title">
+      <div className="run-page-heading">
+        <div>
+          <h4 id="car-lap-inventory-title">Slot lap inventory</h4>
+          <p>
+            Lap Data attempts associated with an admitted participant roster tenure. This is diagnostic timing evidence only; slot identity can change, and these laps cannot be selected as references or used for coaching.
+          </p>
+        </div>
+      </div>
+      {selectedSessionUid === null || selectedCarIndexParam === null ? (
+        <p className="run-evidence-empty">Choose a session and car slot above to inspect its lap inventory.</p>
+      ) : selectedCarIndex === null ? (
+        <p className="run-evidence-error" role="status">The selected slot is invalid; no other slot was loaded.</p>
+      ) : offset === null ? (
+        <p className="run-evidence-error" role="status">
+          Lap page offset “{offsetParam}” is invalid or exceeds the 100,000-row request bound. <a href={pageHref(0) ?? undefined}>Open the first page</a>.
+        </p>
+      ) : failure ? (
+        <p className="run-evidence-error" role="status">
+          {observationRequestFailureText("lap inventory", failure)}
+        </p>
+      ) : !inventory ? (
+        <p className="run-evidence-empty">Lap inventory is unavailable for the selected session and slot.</p>
+      ) : inventory.status === "not_assessed" ? (
+        <p className="run-evidence-empty">This processing run predates slot-scoped lap inventory. No lap attempts were assessed.</p>
+      ) : (
+        <>
+          <p className="run-evidence-empty">
+            Session {inventory.session_uid} · slot {inventory.car_index} · {inventory.tenure_count?.toLocaleString() ?? "unknown"} roster tenures · {inventory.attempts.total.toLocaleString()} observed attempts · coverage {humanize(inventory.coverage_status ?? "unknown")}
+          </p>
+          {inventory.status === "truncated" ? (
+            <p className="run-evidence-error" role="status">The bounded inventory reached a retention limit; some diagnostic records may be missing.</p>
+          ) : null}
+          {inventory.unassociated_lap_observation_counts.length > 0 ? (
+            <p className="run-evidence-empty">
+              Some slot lap observations could not be tied to an admitted tenure: {inventory.unassociated_lap_observation_counts.map((item) => `${humanize(item.reason)} (${item.count.toLocaleString()})`).join(" · ")}.
+            </p>
+          ) : null}
+          <nav className="run-page-navigation" aria-label="Slot lap attempt pages">
+            <span>
+              {inventory.attempts.returned.toLocaleString()} displayed · {inventory.attempts.total.toLocaleString()} total
+              {inventory.attempts.returned > 0
+                ? ` · rows ${inventory.attempts.offset + 1}–${inventory.attempts.offset + inventory.attempts.returned}`
+                : ` · no rows at offset ${inventory.attempts.offset.toLocaleString()}`}
+            </span>
+            <div>
+              {inventory.attempts.offset > 0 ? (
+                <a href={pageHref(previousObservationOffset(inventory.attempts.offset, inventory.attempts.total, inventory.attempts.limit)) ?? undefined}>Previous page</a>
+              ) : null}
+              {inventory.attempts.offset + inventory.attempts.limit <= 100_000 &&
+              inventory.attempts.offset + inventory.attempts.returned < inventory.attempts.total ? (
+                <a href={pageHref(inventory.attempts.offset + inventory.attempts.limit) ?? undefined}>Next page</a>
+              ) : null}
+            </div>
+          </nav>
+          {inventory.attempts.offset >= inventory.attempts.total && inventory.attempts.total > 0 ? (
+            <p className="run-evidence-empty">This page is past the end of the attempt list. Use Previous page to return to the final available page.</p>
+          ) : null}
+          <div className="run-observation-table-wrap">
+            <table className="run-observation-table">
+              <thead>
+                <tr>
+                  <th scope="col">Attempt</th>
+                  <th scope="col">Lap</th>
+                  <th scope="col">Reported time</th>
+                  <th scope="col">Game validity</th>
+                  <th scope="col">Samples</th>
+                  <th scope="col">Source frame ordinals</th>
+                  <th scope="col">Roster tenure</th>
+                  <th scope="col">Evidence limits</th>
+                </tr>
+              </thead>
+              <tbody>
+                {inventory.attempts.items.map((attempt) => (
+                  <tr key={attempt.attempt_key}>
+                    <th scope="row">{attempt.attempt_number} · {humanize(attempt.disposition)}</th>
+                    <td>{attempt.lap_number}</td>
+                    <td>{formatLapTime(attempt.lap_time_ms)}</td>
+                    <td>{attempt.game_valid === true ? "valid" : attempt.game_valid === false ? "invalid" : "unknown"}</td>
+                    <td>{attempt.sample_count.toLocaleString()}</td>
+                    <td>{attempt.source_frame_ordinals.start}–{attempt.source_frame_ordinals.end ?? "open"} · complete {attempt.source_frame_ordinals.completion ?? "—"}</td>
+                    <td>{attempt.tenure.ordinal} · {attempt.tenure.start_frame_ordinal}–{attempt.tenure.end_frame_ordinal_exclusive} · {humanize(attempt.tenure.close_reason)}</td>
+                    <td>{attempt.exclusion_reasons.length ? attempt.exclusion_reasons.map(humanize).join(" · ") : "No timing exclusions reported; still diagnostic only"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
     </section>
@@ -1244,6 +1451,7 @@ function runUrl(
       observation_session_uid: observationState?.sessionUid ?? "",
       observation_car_index: observationState?.carIndexParam ?? "",
       observation_offset: observationState?.offsetParam ?? (observationState ? "0" : ""),
+      car_lap_offset: observationState?.carLapOffsetParam ?? (observationState ? "0" : ""),
     },
     runId ? [] : ["run_id"],
   );
@@ -1260,6 +1468,7 @@ function observationPageUrl(
   sessionUid: string,
   carIndex: number,
   observationOffset: number,
+  carLapOffsetParam: string | null = null,
 ) {
   return runUrl(
     screen,
@@ -1273,6 +1482,37 @@ function observationPageUrl(
       sessionUid,
       carIndexParam: String(carIndex),
       offsetParam: String(observationOffset),
+      carLapOffsetParam,
+    },
+  ) ?? undefined;
+}
+
+function carLapPageUrl(
+  screen: AppScreen,
+  preservedQuery: string,
+  runId: string,
+  runOffset: number,
+  sessionOffset: number,
+  attemptOffset: number,
+  lifecycleEventOffset: number,
+  sessionUid: string,
+  carIndex: number,
+  carLapOffset: number,
+  observationOffsetParam: string | null,
+) {
+  return runUrl(
+    screen,
+    preservedQuery,
+    runId,
+    runOffset,
+    sessionOffset,
+    attemptOffset,
+    lifecycleEventOffset,
+    {
+      sessionUid,
+      carIndexParam: String(carIndex),
+      offsetParam: observationOffsetParam ?? "0",
+      carLapOffsetParam: String(carLapOffset),
     },
   ) ?? undefined;
 }
@@ -1471,7 +1711,7 @@ function previousObservationOffset(offset: number, total: number, limit: number)
 }
 
 function observationRequestFailureText(
-  resource: "inventory" | "preview",
+  resource: "inventory" | "preview" | "lap inventory",
   failure: ObservationRequestFailure,
 ) {
   if (failure.kind === "request_failed") {

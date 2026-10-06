@@ -47,6 +47,7 @@ const retainedKeys = [
   "observation_session_uid",
   "observation_car_index",
   "observation_offset",
+  "car_lap_offset",
   "engineer_intent",
   "engineer_region_identifier",
   "live_source",

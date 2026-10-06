@@ -23,6 +23,7 @@ from f1_engineer.storage.query import (
     load_attempt_trace,
     list_car_observation_inventory,
     load_car_observation_preview,
+    load_car_lap_inventory_page,
     load_reference_inventory,
 )
 from f1_engineer.storage.parquet import (
@@ -40,7 +41,7 @@ from tests.test_lap_tracking import SESSION_UID, _lap_body
 SESSION_FIXTURE = Path(__file__).parent / "fixtures" / "f1_25_session_packet_v1.bin"
 
 
-def _participants_body() -> bytes:
+def _participants_body(*, active_count: int = 1) -> bytes:
     records = []
     for index in range(22):
         name = b"Driver One" if index == 0 else b""
@@ -48,7 +49,7 @@ def _participants_body() -> bytes:
             0, 7, 0, 3, 1, 44, 8, name.ljust(32, b"\0"), 1, 1, 99, 0, 3
         ) + (0,) * 12
         records.append(_PARTICIPANT_PREFIX.pack(*fields))
-    return bytes((1,)) + b"".join(records)
+    return bytes((active_count,)) + b"".join(records)
 
 
 def _telemetry_body() -> bytes:
@@ -64,13 +65,27 @@ def _telemetry_body() -> bytes:
     return car * 22 + bytes((2, 255, 6))
 
 
-def _lap_datagram(frame: int, sequence: int, distance: float):
+def _lap_datagram(
+    frame: int,
+    sequence: int,
+    distance: float,
+    *,
+    active_car_index: int = 0,
+    lap_number: int = 1,
+    last_lap_ms: int = 0,
+):
     return make_datagram(
         packet_id=2,
         session_uid=SESSION_UID,
         frame=frame,
         session_time=frame / 60,
-        body=_lap_body(lap_number=1, distance_m=distance, current_lap_time_ms=frame * 10),
+        body=_lap_body(
+            lap_number=lap_number,
+            distance_m=distance,
+            current_lap_time_ms=frame * 10,
+            last_lap_time_ms=last_lap_ms,
+            active_car_index=active_car_index,
+        ),
         sequence=sequence,
     )
 
@@ -643,6 +658,75 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
         ):
             load_attempt_capture_quality_evidence(
                 database_path, laps[0]["attempt_key"]
+            )
+
+
+def test_non_player_lap_inventory_is_imported_and_queryable_separately(tmp_path) -> None:
+    capture_path = tmp_path / "opponent-lap.f1ecap"
+    database_path = tmp_path / "state" / "f1.sqlite3"
+    session_body = SESSION_FIXTURE.read_bytes()[29:]
+    packets = [
+        make_datagram(
+            packet_id=1,
+            session_uid=SESSION_UID,
+            frame=10,
+            body=session_body,
+            sequence=0,
+        ),
+        make_datagram(
+            packet_id=4,
+            session_uid=SESSION_UID,
+            frame=10,
+            body=_participants_body(active_count=2),
+            sequence=1,
+        ),
+        _lap_datagram(10, 2, -5.0, active_car_index=1),
+        _lap_datagram(11, 3, 10.0, active_car_index=1),
+        _lap_datagram(
+            12, 4, 15.0, active_car_index=1, lap_number=2, last_lap_ms=90_000
+        ),
+    ]
+    with CaptureWriter(capture_path, {"fixture": "car-lap-inventory"}) as writer:
+        for packet in packets:
+            writer.write(packet)
+
+    imported = import_capture(capture_path, database_path)
+    inventory = load_car_lap_inventory_page(
+        database_path, imported.run_id, SESSION_UID, 1, limit=10
+    )
+
+    assert imported.status == "complete"
+    assert inventory is not None
+    assert inventory["status"] == "assessed"
+    assert inventory["coaching_eligible"] is False
+    assert inventory["attempts"]["total"] >= 1
+    completed = next(
+        item
+        for item in inventory["attempts"]["items"]
+        if item["disposition"] == "completed"
+    )
+    assert completed["lap_time_ms"] == 90_000
+    assert completed["exclusion_reasons"] == []
+    assert completed["reference_eligible"] is False
+    assert completed["coaching_eligible"] is False
+    assert completed["tenure"]["participant_frame_identifier"] == 10
+    assert list_laps(database_path) == []
+
+    context_metadata_cases = (
+        ("\"" + ("x" * (256 * 1024)) + "\"", "attempt_metadata_limit_exceeded"),
+        (("[" * 1_200) + "0" + ("]" * 1_200), "context_invalid"),
+        (("9" * 5_000), "attempt_json_invalid"),
+    )
+    for context_json, error_code in context_metadata_cases:
+        with Database(database_path) as db:
+            db.connection.execute(
+                "UPDATE observed_car_lap_attempts SET context_segments_json=? WHERE attempt_key=?",
+                (context_json, completed["attempt_key"]),
+            )
+            db.connection.commit()
+        with pytest.raises(ValueError, match=f"car_lap_inventory_{error_code}"):
+            load_car_lap_inventory_page(
+                database_path, imported.run_id, SESSION_UID, 1, limit=10
             )
 
 

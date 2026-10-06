@@ -1368,6 +1368,65 @@ export interface CarObservationPreview {
   };
 }
 
+export interface ObservedCarLapAttempt {
+  attempt_key: string;
+  packet_format: number;
+  lifecycle_epoch: number;
+  car_index: number;
+  tenure_ordinal: number;
+  attempt_number: number;
+  lap_number: number;
+  disposition: "completed" | "partial" | "abandoned" | string;
+  lap_time_ms: number | null;
+  game_valid: boolean | null;
+  start_observed: boolean;
+  pit_encountered: boolean;
+  sample_count: number;
+  source_frame_ordinals: {
+    start: number;
+    end: number | null;
+    completion: number | null;
+  };
+  tenure: {
+    ordinal: number;
+    start_frame_ordinal: number;
+    end_frame_ordinal_exclusive: number;
+    participant_frame_identifier: number;
+    participant_packet_fingerprint: string;
+    close_reason: string;
+  };
+  exclusion_reasons: string[];
+  context_segments: Array<{
+    from_frame_identifier: number;
+    context: Record<string, unknown> | null;
+  }>;
+  reference_eligible: false;
+  coaching_eligible: false;
+}
+
+export interface CarLapInventory {
+  run_id: string;
+  session_uid: string;
+  car_index: number;
+  status: "not_assessed" | "assessed" | "truncated";
+  coverage_status?: "partial" | "bounded";
+  verification_scope: "admitted_participants_and_lap_data";
+  reference_eligibility: "not_assessed";
+  coaching_eligible?: false;
+  tenure_count?: number;
+  attempts: {
+    limit: number;
+    offset: number;
+    total: number;
+    returned: number;
+    items: ObservedCarLapAttempt[];
+  };
+  unassociated_lap_observation_counts: Array<{
+    reason: string;
+    count: number;
+  }>;
+}
+
 export interface AttemptQualityReport {
   report_version: number;
   analysis_version: string;

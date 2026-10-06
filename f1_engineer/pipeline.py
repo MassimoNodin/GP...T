@@ -11,6 +11,11 @@ from .sessions.lap_tracker import (
     SessionContextSegment,
 )
 from .sessions.lifecycle import LifecycleEvent
+from .sessions.car_lap_inventory import (
+    CarLapInventoryTracker,
+    CarSlotTenure,
+    ObservedCarLapAttempt,
+)
 from .sessions.session_history import SessionHistoryObservation
 from .sessions.participant_context import PlayerParticipantObservation
 from .sessions.setup_context import PlayerCarSetupObservation
@@ -73,6 +78,8 @@ class PipelineResult:
     player_participant_observations: tuple[PlayerParticipantObservation, ...] = ()
     player_car_setup_observations: tuple[PlayerCarSetupObservation, ...] = ()
     car_setup_decode_errors: tuple[str, ...] = ()
+    car_slot_tenures: tuple[CarSlotTenure, ...] = ()
+    observed_car_lap_attempts: tuple[ObservedCarLapAttempt, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +96,8 @@ class PipelineFlushResult:
     player_participant_observations: tuple[PlayerParticipantObservation, ...] = ()
     player_car_setup_observations: tuple[PlayerCarSetupObservation, ...] = ()
     car_setup_decode_errors: tuple[str, ...] = ()
+    car_slot_tenures: tuple[CarSlotTenure, ...] = ()
+    observed_car_lap_attempts: tuple[ObservedCarLapAttempt, ...] = ()
 
 
 class TelemetryPipeline:
@@ -114,6 +123,7 @@ class TelemetryPipeline:
         self.event_decoder = EventDecoder()
         self.session_history_decoder = SessionHistoryDecoder()
         self.laps = LapTracker()
+        self.car_lap_inventory = CarLapInventoryTracker()
         self._frame_ordinal_by_uid: dict[int, int] = {}
         self._event_ordinal_by_uid: dict[int, int] = {}
         self._last_session_time_by_uid: dict[int, float] = {}
@@ -290,6 +300,24 @@ class TelemetryPipeline:
             if frame.session_uid == 0:
                 continue
             if quarantine_lap_data:
+                player_slots = {packet.header.player_car_index for packet in frame.packets}
+                packet_formats = {int(packet.packet_format) for packet in frame.packets}
+                self.car_lap_inventory.observe_frame(
+                    session_uid=frame.session_uid,
+                    frame_ordinal=frame_ordinal,
+                    packet_format=next(iter(packet_formats), 0),
+                    lifecycle_epoch=association_epoch,
+                    player_car_index=(next(iter(player_slots)) if len(player_slots) == 1 else None),
+                    session_time_s=frame.packets[0].header.session_time,
+                    frame_identifier=frame.overall_frame_identifier,
+                    packets=frame.packets,
+                    lap_data=None,
+                    lap_data_conflicted=False,
+                    association_scope_assessable=association_scope_assessable,
+                    context=None,
+                    timeline_provider=lambda _start, _end: (),
+                    boundary_reason="post_lifecycle_lap_quarantine",
+                )
                 continue
             observation_lap_data: list[tuple[DecodedPacket, object]] = []
             for packet in frame.packets:
@@ -519,12 +547,65 @@ class TelemetryPipeline:
                                 motion_unavailable_reason=motion_reason,
                             )
                         )
+            lap_data_signatures = {
+                (
+                    int(candidate.packet_format),
+                    candidate.header.player_car_index,
+                    candidate.header.session_time,
+                    candidate_lap_data,
+                )
+                for candidate, candidate_lap_data in observation_lap_data
+            }
+            lap_data_conflicted = len(lap_data_signatures) > 1
             if frame_observation_conflicted:
                 self.car_observation_conflict_frames += 1
                 if len(self.car_observation_conflict_examples) < 128:
                     self.car_observation_conflict_examples.append(
                         (frame.session_uid, frame.overall_frame_identifier)
                     )
+            packet_formats = {int(packet.packet_format) for packet in frame.packets}
+            player_slots = {packet.header.player_car_index for packet in frame.packets}
+            selected_lap = observation_lap_data[-1] if observation_lap_data and not lap_data_conflicted else None
+            inventory_packet_format = (
+                int(selected_lap[0].packet_format)
+                if selected_lap is not None
+                else next(iter(packet_formats), 0)
+            )
+            inventory_player_index = (
+                selected_lap[0].header.player_car_index
+                if selected_lap is not None
+                else (next(iter(player_slots)) if len(player_slots) == 1 else None)
+            )
+            inventory_session_time = (
+                selected_lap[0].header.session_time
+                if selected_lap is not None
+                else frame.packets[0].header.session_time
+            )
+            inventory_context, _ = self.sessions.context_at(
+                frame.overall_frame_identifier, session_uid=frame.session_uid
+            )
+            raw_lap_data_packets = any(
+                packet.packet_kind is PacketId.LAP_DATA for packet in frame.packets
+            )
+            lap_data_unavailable = raw_lap_data_packets and not observation_lap_data
+            self.car_lap_inventory.observe_frame(
+                session_uid=frame.session_uid,
+                frame_ordinal=frame_ordinal,
+                packet_format=inventory_packet_format,
+                lifecycle_epoch=association_epoch,
+                player_car_index=inventory_player_index,
+                session_time_s=inventory_session_time,
+                frame_identifier=frame.overall_frame_identifier,
+                packets=frame.packets,
+                lap_data=(selected_lap[1].cars if selected_lap is not None else None),
+                lap_data_conflicted=lap_data_conflicted or lap_data_unavailable,
+                association_scope_assessable=association_scope_assessable,
+                context=inventory_context,
+                timeline_provider=lambda start, end, uid=frame.session_uid: self.sessions.context_timeline(
+                    start, end, session_uid=uid
+                ),
+                boundary_reason=("lifecycle_boundary" if lifecycle_boundary else None),
+            )
             if missing_telemetry_for_frame:
                 self.missing_car_telemetry_frame_count += 1
                 if len(self.missing_car_telemetry_frame_examples) < 128:
@@ -1386,8 +1467,12 @@ class TelemetryPipeline:
                 car_observations.extend(observations)
                 car_telemetry_errors.extend(telemetry_errors)
                 lap_attempts.extend(self.laps.end_session(event.session_uid))
+                self.car_lap_inventory.end_session(
+                    event.session_uid, reason="session_ended"
+                )
             elif event.kind == "session_started":
                 self.laps.start_session(event.session_uid)
+                self.car_lap_inventory.start_session(event.session_uid)
                 self._association_epoch_by_uid[event.session_uid] = 0
                 self._association_scope_assessable_by_uid[event.session_uid] = True
                 self._last_association_format_by_uid[event.session_uid] = int(
@@ -1410,6 +1495,10 @@ class TelemetryPipeline:
                         event.session_uid, reason="packet_format_changed"
                     )
                 )
+                self.car_lap_inventory.end_session(
+                    event.session_uid, reason="packet_format_changed"
+                )
+                self.car_lap_inventory.start_session(event.session_uid)
                 self._association_epoch_by_uid[event.session_uid] = (
                     self._association_epoch_by_uid.get(event.session_uid, 0) + 1
                 )
@@ -1434,6 +1523,7 @@ class TelemetryPipeline:
             car_samples.extend(samples)
             car_observations.extend(observations)
             car_telemetry_errors.extend(telemetry_errors)
+        car_slot_tenures, observed_car_lap_attempts = self.car_lap_inventory.drain()
         return PipelineResult(
             packet=packet,
             session_events=session_events,
@@ -1454,6 +1544,8 @@ class TelemetryPipeline:
             player_participant_observations=self.drain_player_participant_observations(),
             player_car_setup_observations=self.drain_player_car_setup_observations(),
             car_setup_decode_errors=self.drain_car_setups_decode_errors(),
+            car_slot_tenures=car_slot_tenures,
+            observed_car_lap_attempts=observed_car_lap_attempts,
         )
 
     def finish(self) -> tuple[PacketFrame, ...]:
@@ -1465,6 +1557,8 @@ class TelemetryPipeline:
         start_attempt_count = len(self.laps.attempts)
         self.laps.finish()
         attempts = (*attempts, *self.laps.attempts[start_attempt_count:])
+        self.car_lap_inventory.finish()
+        car_slot_tenures, observed_car_lap_attempts = self.car_lap_inventory.drain()
         return PipelineFlushResult(
             completed_frames=frames,
             lap_attempts=tuple(attempts),
@@ -1478,6 +1572,8 @@ class TelemetryPipeline:
             player_participant_observations=self.drain_player_participant_observations(),
             player_car_setup_observations=self.drain_player_car_setup_observations(),
             car_setup_decode_errors=self.drain_car_setups_decode_errors(),
+            car_slot_tenures=car_slot_tenures,
+            observed_car_lap_attempts=observed_car_lap_attempts,
         )
 
 

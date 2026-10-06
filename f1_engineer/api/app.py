@@ -55,6 +55,7 @@ from ..storage.importer import (
     list_sessions,
 )
 from ..storage.query import (
+    load_car_lap_inventory_page,
     list_car_observation_inventory,
     load_attempt_timing_evidence,
     load_car_observation_preview,
@@ -1264,6 +1265,40 @@ def create_app(
         if result is None:
             return APIResponse[dict[str, Any]](
                 status="unavailable", reason="car_observation_preview_unavailable"
+            )
+        return APIResponse[dict[str, Any]](data=_stringify_session_uids(result))
+
+    @app.get(
+        "/api/v1/processing-runs/{run_id}/sessions/{session_uid}/cars/{car_index}/lap-inventory",
+        response_model=APIResponse[dict[str, Any]],
+    )
+    def car_lap_inventory(
+        run_id: str,
+        session_uid: str,
+        car_index: int = ApiPath(ge=0, le=23),
+        limit: int = Query(default=50, ge=1, le=100),
+        offset: int = Query(default=0, ge=0, le=100_000),
+    ) -> APIResponse[dict[str, Any]]:
+        try:
+            result = load_car_lap_inventory_page(
+                configured_database_path,
+                run_id,
+                session_uid,
+                car_index,
+                limit=limit,
+                offset=offset,
+            )
+        except ValueError as exc:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason=str(exc)
+            )
+        except OSError:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="car_lap_inventory_unavailable"
+            )
+        if result is None:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason="car_lap_inventory_unavailable"
             )
         return APIResponse[dict[str, Any]](data=_stringify_session_uids(result))
 

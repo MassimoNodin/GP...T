@@ -423,6 +423,23 @@ def test_car_observation_api_exposes_bounded_inventory_and_preview(
             "opponent_eligibility": "not_assessed",
         },
     )
+    monkeypatch.setattr(
+        api_module,
+        "load_car_lap_inventory_page",
+        lambda _database, requested_run, session_uid, car_index, *, limit, offset: calls.update(
+            lap_inventory=(requested_run, session_uid, car_index, limit, offset)
+        )
+        or {
+            "run_id": requested_run,
+            "session_uid": session_uid,
+            "car_index": car_index,
+            "status": "assessed",
+            "verification_scope": "admitted_participants_and_lap_data",
+            "reference_eligibility": "not_assessed",
+            "coaching_eligible": False,
+            "attempts": {"limit": limit, "offset": offset, "total": 0, "returned": 0, "items": []},
+        },
+    )
     app = create_app(tmp_path / "unused.sqlite3")
 
     inventory = _get(
@@ -439,15 +456,23 @@ def test_car_observation_api_exposes_bounded_inventory_and_preview(
         app,
         f"/api/v1/processing-runs/{run_id}/sessions/18446744073709550001/cars/24/observations",
     )
+    lap_inventory = _get(
+        app,
+        f"/api/v1/processing-runs/{run_id}/sessions/18446744073709550001/cars/23/lap-inventory",
+        params={"limit": "100", "offset": "100000"},
+    )
 
     assert inventory.status_code == 200
     assert inventory.json()["data"]["session_uid"] == "18446744073709550001"
     assert inventory.json()["data"]["opponent_eligibility"] == "not_assessed"
     assert preview.status_code == 200
     assert preview.json()["data"]["car_index"] == 23
+    assert lap_inventory.status_code == 200
+    assert lap_inventory.json()["data"]["coaching_eligible"] is False
     assert calls == {
         "inventory": (run_id, "18446744073709550001", 24, 0),
         "preview": (run_id, "18446744073709550001", 23, 120, 40),
+        "lap_inventory": (run_id, "18446744073709550001", 23, 100, 100000),
     }
 
     def preview_limit(_database, _run, _session, _car, *, limit, offset):
@@ -464,6 +489,12 @@ def test_car_observation_api_exposes_bounded_inventory_and_preview(
         "reason": "observation_preview_source_bytes_limit_exceeded",
         "data": None,
     }
+    invalid_lap_page = _get(
+        app,
+        f"/api/v1/processing-runs/{run_id}/sessions/18446744073709550001/cars/23/lap-inventory",
+        params={"limit": "101", "offset": "0"},
+    )
+    assert invalid_lap_page.status_code == 422
     assert invalid_preview.status_code == 422
 
 

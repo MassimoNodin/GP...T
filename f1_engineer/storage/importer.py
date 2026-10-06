@@ -33,7 +33,7 @@ from .parquet import (
 )
 
 
-PIPELINE_VERSION = "player-traces-v17-player-car-setups"
+PIPELINE_VERSION = "player-traces-v18-car-lap-inventory"
 MAX_STORED_LIFECYCLE_EVENTS = 100_000
 MAX_STORED_PLAYER_PARTICIPANT_OBSERVATIONS = 100_000
 MAX_STORED_PLAYER_PARTICIPANT_TRUNCATION_FENCES = 256
@@ -47,6 +47,7 @@ MAX_OPEN_OBSERVATION_WRITERS = 4
 MAX_OBSERVATION_CHUNKS_PER_IMPORT = 4096
 MAX_OBSERVATIONS_PER_CHUNK = MAX_OBSERVATION_CHUNK_ROWS
 MAX_LAP_ATTEMPT_PAGE_OFFSET = 100_000
+MAX_STORED_CAR_LAP_INVENTORY_ROWS = 100_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +71,9 @@ class ImportSummary:
     samples: int = 0
     car_observations: int = 0
     car_observation_chunks: int = 0
+    car_slot_tenures: int = 0
+    observed_car_lap_attempts: int = 0
+    car_lap_inventory_rows_dropped: int = 0
     missing_car_telemetry_samples: int = 0
     lap_data_packets: int = 0
     missing_car_telemetry_frames: tuple[tuple[int, int], ...] = ()
@@ -242,6 +246,116 @@ class _ObservationChunkResult:
     row_count: int
     sha256: str
     quality: dict[str, Any]
+
+
+class _CarLapInventoryWriter:
+    def __init__(self) -> None:
+        self.tenures: list[Any] = []
+        self.attempts: list[Any] = []
+        self.tenures_dropped = 0
+        self.attempts_dropped = 0
+
+    def consume(self, tenures: tuple[Any, ...], attempts: tuple[Any, ...]) -> None:
+        for tenure in tenures:
+            if len(self.tenures) < MAX_STORED_CAR_LAP_INVENTORY_ROWS:
+                self.tenures.append(tenure)
+            else:
+                self.tenures_dropped += 1
+        for attempt in attempts:
+            if len(self.attempts) < MAX_STORED_CAR_LAP_INVENTORY_ROWS:
+                self.attempts.append(attempt)
+            else:
+                self.attempts_dropped += 1
+
+    def retain_referentially_complete_attempts(self) -> None:
+        tenure_keys = {
+            (item.session_uid, item.packet_format, item.lifecycle_epoch,
+             item.car_index, item.tenure_ordinal)
+            for item in self.tenures
+        }
+        retained = []
+        for item in self.attempts:
+            key = (item.session_uid, item.packet_format, item.lifecycle_epoch,
+                   item.car_index, item.tenure_ordinal)
+            if key in tenure_keys:
+                retained.append(item)
+            else:
+                self.attempts_dropped += 1
+        self.attempts = retained
+
+    @property
+    def dropped_count(self) -> int:
+        return self.tenures_dropped + self.attempts_dropped
+
+    def persist(self, connection, run_id: str) -> None:
+        tenure_rows = [
+            (
+                f"{run_id}:{item.session_uid}",
+                item.packet_format,
+                item.lifecycle_epoch,
+                item.car_index,
+                item.tenure_ordinal,
+                item.start_frame_ordinal,
+                item.end_frame_ordinal_exclusive,
+                item.participant_frame_identifier,
+                item.participant_wire_fingerprint,
+                item.participant_identity_fingerprint,
+                item.close_reason,
+            )
+            for item in self.tenures
+        ]
+        for offset in range(0, len(tenure_rows), 256):
+            connection.executemany(
+                """INSERT INTO car_slot_tenures(session_key,packet_format,
+                          lifecycle_epoch,car_index,tenure_ordinal,start_frame_ordinal,
+                          end_frame_ordinal_exclusive,participant_frame_identifier,
+                          participant_wire_fingerprint,participant_identity_fingerprint,
+                          close_reason) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                tenure_rows[offset : offset + 256],
+            )
+        attempt_rows = []
+        for item in self.attempts:
+            attempt = item.attempt
+            attempt_key = (
+                f"{run_id}:car-lap:{item.session_uid}:{item.packet_format}:"
+                f"{item.lifecycle_epoch}:{item.car_index}:{item.tenure_ordinal}:"
+                f"{attempt.attempt_number}"
+            )
+            attempt_rows.append(
+                (
+                    attempt_key,
+                    f"{run_id}:{item.session_uid}",
+                    item.packet_format,
+                    item.lifecycle_epoch,
+                    item.car_index,
+                    item.tenure_ordinal,
+                    attempt.attempt_number,
+                    attempt.lap_number,
+                    attempt.disposition.value,
+                    attempt.lap_time_ms,
+                    None if attempt.game_valid is None else int(attempt.game_valid),
+                    int(attempt.start_observed),
+                    int(attempt.pit_encountered),
+                    attempt.sample_count,
+                    attempt.start_frame_ordinal,
+                    attempt.end_frame_ordinal,
+                    attempt.completion_frame_ordinal,
+                    _json(attempt.exclusion_reasons),
+                    _json([segment.to_dict() for segment in attempt.context_segments]),
+                    1,
+                )
+            )
+        for offset in range(0, len(attempt_rows), 256):
+            connection.executemany(
+                """INSERT INTO observed_car_lap_attempts(attempt_key,session_key,
+                          packet_format,lifecycle_epoch,car_index,tenure_ordinal,
+                          attempt_number,lap_number,disposition,lap_time_ms,game_valid,
+                          start_observed,pit_encountered,sample_count,start_frame_ordinal,
+                          end_frame_ordinal,completion_frame_ordinal,exclusion_reasons_json,
+                          context_segments_json,diagnostic_only)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                attempt_rows[offset : offset + 256],
+            )
 
 
 class _ObservationWriterManager:
@@ -692,6 +806,7 @@ def import_capture(
             player_car_setup_observation_writer = _PlayerCarSetupObservationWriter(
                 db.connection, run_id
             )
+            car_lap_inventory_writer = _CarLapInventoryWriter()
             pipeline = TelemetryPipeline(**IMPORT_CONFIG)
             session_history = SessionHistoryAccumulator()
             sessions: dict[int, int] = {}
@@ -742,6 +857,10 @@ def import_capture(
                     )
                     player_car_setup_observation_writer.consume(
                         result.player_car_setup_observations
+                    )
+                    car_lap_inventory_writer.consume(
+                        result.car_slot_tenures,
+                        result.observed_car_lap_attempts,
                     )
                     if result.packet.packet_kind is PacketId.CAR_DAMAGE:
                         raw_car_damage_packet_count += 1
@@ -839,6 +958,10 @@ def import_capture(
                 player_car_setup_observation_writer.consume(
                     flushed.player_car_setup_observations
                 )
+                car_lap_inventory_writer.consume(
+                    flushed.car_slot_tenures,
+                    flushed.observed_car_lap_attempts,
+                )
                 player_car_setup_observation_writer.flush()
                 attempts.extend(flushed.lap_attempts)
                 trace_manager.consume(flushed.car_samples, flushed.lap_attempts)
@@ -927,6 +1050,24 @@ def import_capture(
                 for result in trace_results.values()
             )
             car_observation_count = sum(chunk.row_count for chunk in observation_chunks)
+            car_lap_inventory_writer.retain_referentially_complete_attempts()
+            car_lap_coverage_counts = [
+                {
+                    "session_uid": str(session_uid),
+                    "car_index": car_index,
+                    "reason": reason,
+                    "count": count,
+                }
+                for (session_uid, car_index, reason), count in sorted(
+                    pipeline.car_lap_inventory.coverage_counts.items()
+                )
+            ]
+            car_lap_inventory_status = (
+                "truncated"
+                if car_lap_inventory_writer.dropped_count
+                or pipeline.car_lap_inventory.overflowed
+                else "assessed"
+            )
 
             missing_capture_frames = tuple(pipeline.missing_car_telemetry_frame_examples)
             capture_quality = {
@@ -934,6 +1075,16 @@ def import_capture(
                 "car_telemetry_packets_decoded": pipeline.car_telemetry_packets_decoded,
                 "car_observation_count": car_observation_count,
                 "car_observation_chunk_count": len(observation_chunks),
+                "car_lap_inventory": {
+                    "version": 1,
+                    "status": car_lap_inventory_status,
+                    "tenure_count": len(car_lap_inventory_writer.tenures),
+                    "attempt_count": len(car_lap_inventory_writer.attempts),
+                    "tenures_dropped": car_lap_inventory_writer.tenures_dropped,
+                    "attempts_dropped": car_lap_inventory_writer.attempts_dropped,
+                    "coverage_count_overflowed": pipeline.car_lap_inventory.overflowed,
+                    "unassociated_lap_observation_counts": car_lap_coverage_counts,
+                },
                 "car_observation_conflict_count": pipeline.car_observation_conflict_frames,
                 "car_observation_conflict_examples": [
                     list(frame) for frame in pipeline.car_observation_conflict_examples
@@ -1033,6 +1184,9 @@ def import_capture(
                 samples=sample_count,
                 car_observations=car_observation_count,
                 car_observation_chunks=len(observation_chunks),
+                car_slot_tenures=len(car_lap_inventory_writer.tenures),
+                observed_car_lap_attempts=len(car_lap_inventory_writer.attempts),
+                car_lap_inventory_rows_dropped=car_lap_inventory_writer.dropped_count,
                 missing_car_telemetry_samples=missing_samples,
                 lap_data_packets=pipeline.lap_data_packets_decoded,
                 missing_car_telemetry_frames=missing_capture_frames,
@@ -1138,6 +1292,7 @@ def import_capture(
                             _json(latest_contexts[uid]) if uid in latest_contexts else None,
                         ),
                     )
+                car_lap_inventory_writer.persist(connection, run_id)
                 for chunk in observation_chunks:
                     session_key = f"{run_id}:{chunk.session_uid}"
                     chunk_key = (

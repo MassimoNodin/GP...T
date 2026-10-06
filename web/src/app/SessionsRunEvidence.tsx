@@ -1,4 +1,5 @@
 import {
+  CarLapInventory,
   LapAttemptPage,
   CarObservationInventory,
   CarObservationPreview,
@@ -13,6 +14,7 @@ import {
   requestApi,
 } from "@/lib/api";
 import { attemptInventoryUrl } from "@/lib/attempt-inventory";
+import { isMatchingCarLapInventory } from "@/lib/car-lap-inventory.mjs";
 import {
   isSelectionTransferBlocked,
   preservedAppStateQuery,
@@ -162,6 +164,8 @@ export default async function SessionsRunEvidence({
   const observationCarIndex = parseCarIndex(observationCarIndexParam);
   const observationOffsetParam = firstParam(params.observation_offset);
   const observationOffset = parseObservationOffset(observationOffsetParam);
+  const carLapInventoryOffsetParam = firstParam(params.car_lap_offset);
+  const carLapInventoryOffset = parseObservationOffset(carLapInventoryOffsetParam);
   const selectedObservationSlot =
     observationCarIndex === null
       ? null
@@ -183,6 +187,34 @@ export default async function SessionsRunEvidence({
       : null;
   const preview =
     previewResponse?.status === "ok" ? previewResponse.data : null;
+  const shouldLoadCarLapInventory = Boolean(
+    runId &&
+    observationSession &&
+    selectedObservationSlot &&
+    inventory?.archive_status === "available" &&
+    carLapInventoryOffset !== null,
+  );
+  const carLapInventoryResponse =
+    shouldLoadCarLapInventory && runId && observationSession && selectedObservationSlot
+      ? await requestApi<CarLapInventory>(
+          `/api/v1/processing-runs/${encodeURIComponent(runId)}/sessions/${encodeURIComponent(observationSession.session_uid)}/cars/${selectedObservationSlot.car_index}/lap-inventory?limit=50&offset=${carLapInventoryOffset}`,
+        )
+      : null;
+  const carLapInventory =
+    carLapInventoryResponse?.status === "ok" &&
+    runId &&
+    observationSession &&
+    selectedObservationSlot &&
+    carLapInventoryOffset !== null &&
+    isMatchingCarLapInventory(
+      carLapInventoryResponse.data,
+      runId,
+      observationSession.session_uid,
+      selectedObservationSlot.car_index,
+      carLapInventoryOffset,
+    )
+      ? carLapInventoryResponse.data
+      : null;
   const inventoryFailure = observationSession
     ? inventoryResponse === null
       ? { kind: "request_failed" as const, reason: null }
@@ -198,6 +230,18 @@ export default async function SessionsRunEvidence({
       ? { kind: "request_failed" as const, reason: null }
       : previewResponse.status !== "ok" || !previewResponse.data
         ? { kind: "unavailable" as const, reason: previewResponse.reason }
+        : null
+    : null;
+  const carLapInventoryFailure = shouldLoadCarLapInventory
+    ? carLapInventoryResponse === null
+      ? { kind: "request_failed" as const, reason: null }
+      : carLapInventoryResponse.status !== "ok" ||
+          !carLapInventoryResponse.data ||
+          carLapInventory === null
+        ? {
+            kind: "unavailable" as const,
+            reason: carLapInventoryResponse.reason ?? "car_lap_inventory_response_mismatch",
+          }
         : null
     : null;
   const archivePageMatchesRequest =
@@ -250,6 +294,9 @@ export default async function SessionsRunEvidence({
         artifactKind={artifactRequest.kind}
         observationInventory={inventory}
         observationPreview={preview}
+        carLapInventory={carLapInventory}
+        carLapInventoryOffset={carLapInventoryOffset}
+        carLapInventoryOffsetParam={carLapInventoryOffsetParam ?? null}
         observationSessionUid={observationSessionUid}
         observationCarIndexParam={observationCarIndexParam}
         observationCarIndex={observationCarIndex}
@@ -257,6 +304,7 @@ export default async function SessionsRunEvidence({
         observationOffsetParam={observationOffsetParam ?? null}
         observationInventoryFailure={inventoryFailure}
         observationPreviewFailure={previewFailure}
+        carLapInventoryFailure={carLapInventoryFailure}
         runId={runId}
         runUnavailable={requestedRunUnavailable}
         runOffset={runOffset}

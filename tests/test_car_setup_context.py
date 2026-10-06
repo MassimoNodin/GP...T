@@ -306,5 +306,5 @@ def test_schema_11_migrates_player_car_setup_observation_storage(tmp_path):
             "AND name='player_car_setup_observations'"
         ).fetchone()
 
-    assert version == 13
+    assert version == 14
     assert table is not None

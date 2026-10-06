@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 class DatabaseSchemaError(ValueError):
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS schema_info (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     version INTEGER NOT NULL
 );
-INSERT OR IGNORE INTO schema_info(singleton, version) VALUES (1, 13);
+INSERT OR IGNORE INTO schema_info(singleton, version) VALUES (1, 14);
 
 CREATE TABLE IF NOT EXISTS captures (
     capture_sha256 TEXT PRIMARY KEY,
@@ -219,6 +219,52 @@ CREATE TABLE IF NOT EXISTS car_observation_slots (
     PRIMARY KEY(session_key, packet_format, lifecycle_epoch, car_index)
 );
 
+CREATE TABLE IF NOT EXISTS car_slot_tenures (
+    session_key TEXT NOT NULL REFERENCES sessions(session_key) ON DELETE CASCADE,
+    packet_format INTEGER NOT NULL,
+    lifecycle_epoch INTEGER NOT NULL,
+    car_index INTEGER NOT NULL CHECK (car_index BETWEEN 0 AND 23),
+    tenure_ordinal INTEGER NOT NULL CHECK (tenure_ordinal > 0),
+    start_frame_ordinal INTEGER NOT NULL CHECK (start_frame_ordinal > 0),
+    end_frame_ordinal_exclusive INTEGER NOT NULL
+        CHECK (end_frame_ordinal_exclusive > start_frame_ordinal),
+    participant_frame_identifier INTEGER NOT NULL,
+    participant_wire_fingerprint TEXT NOT NULL
+        CHECK (length(participant_wire_fingerprint) = 64),
+    participant_identity_fingerprint TEXT NOT NULL
+        CHECK (length(participant_identity_fingerprint) = 64),
+    close_reason TEXT NOT NULL,
+    PRIMARY KEY(session_key, packet_format, lifecycle_epoch, car_index, tenure_ordinal)
+);
+
+CREATE TABLE IF NOT EXISTS observed_car_lap_attempts (
+    attempt_key TEXT PRIMARY KEY,
+    session_key TEXT NOT NULL,
+    packet_format INTEGER NOT NULL,
+    lifecycle_epoch INTEGER NOT NULL,
+    car_index INTEGER NOT NULL CHECK (car_index BETWEEN 0 AND 23),
+    tenure_ordinal INTEGER NOT NULL,
+    attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+    lap_number INTEGER NOT NULL CHECK (lap_number >= 0),
+    disposition TEXT NOT NULL CHECK (disposition IN ('completed', 'partial', 'abandoned')),
+    lap_time_ms INTEGER,
+    game_valid INTEGER CHECK (game_valid IN (0, 1) OR game_valid IS NULL),
+    start_observed INTEGER NOT NULL CHECK (start_observed IN (0, 1)),
+    pit_encountered INTEGER NOT NULL CHECK (pit_encountered IN (0, 1)),
+    sample_count INTEGER NOT NULL CHECK (sample_count >= 0),
+    start_frame_ordinal INTEGER NOT NULL CHECK (start_frame_ordinal > 0),
+    end_frame_ordinal INTEGER,
+    completion_frame_ordinal INTEGER,
+    exclusion_reasons_json TEXT NOT NULL,
+    context_segments_json TEXT NOT NULL,
+    diagnostic_only INTEGER NOT NULL CHECK (diagnostic_only = 1),
+    FOREIGN KEY(session_key, packet_format, lifecycle_epoch, car_index, tenure_ordinal)
+        REFERENCES car_slot_tenures(
+            session_key, packet_format, lifecycle_epoch, car_index, tenure_ordinal
+        ) ON DELETE CASCADE,
+    UNIQUE(session_key, packet_format, lifecycle_epoch, car_index, tenure_ordinal, attempt_number)
+);
+
 CREATE TABLE IF NOT EXISTS attempt_timing_evidence (
     attempt_key TEXT PRIMARY KEY REFERENCES lap_attempts(attempt_key) ON DELETE CASCADE,
     status TEXT NOT NULL CHECK (status IN ('matched', 'ambiguous', 'conflicting', 'unavailable', 'truncated')),
@@ -327,6 +373,10 @@ CREATE INDEX IF NOT EXISTS idx_car_observation_chunks_session
     ON car_observation_chunks(session_key, packet_format, lifecycle_epoch);
 CREATE INDEX IF NOT EXISTS idx_car_observation_slots_session
     ON car_observation_slots(session_key, car_index);
+CREATE INDEX IF NOT EXISTS idx_car_slot_tenures_slot
+    ON car_slot_tenures(session_key, car_index, start_frame_ordinal);
+CREATE INDEX IF NOT EXISTS idx_observed_car_lap_attempts_slot
+    ON observed_car_lap_attempts(session_key, car_index, start_frame_ordinal);
 CREATE INDEX IF NOT EXISTS idx_player_participant_observations_scope
     ON player_participant_observations(
         run_id, session_uid, packet_format, association_epoch, frame_ordinal
@@ -610,6 +660,62 @@ class Database:
             )
             self.connection.commit()
             version = 13
+        if version == 13:
+            self.connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS car_slot_tenures (
+                    session_key TEXT NOT NULL REFERENCES sessions(session_key) ON DELETE CASCADE,
+                    packet_format INTEGER NOT NULL,
+                    lifecycle_epoch INTEGER NOT NULL,
+                    car_index INTEGER NOT NULL CHECK (car_index BETWEEN 0 AND 23),
+                    tenure_ordinal INTEGER NOT NULL CHECK (tenure_ordinal > 0),
+                    start_frame_ordinal INTEGER NOT NULL CHECK (start_frame_ordinal > 0),
+                    end_frame_ordinal_exclusive INTEGER NOT NULL
+                        CHECK (end_frame_ordinal_exclusive > start_frame_ordinal),
+                    participant_frame_identifier INTEGER NOT NULL,
+                    participant_wire_fingerprint TEXT NOT NULL
+                        CHECK (length(participant_wire_fingerprint) = 64),
+                    participant_identity_fingerprint TEXT NOT NULL
+                        CHECK (length(participant_identity_fingerprint) = 64),
+                    close_reason TEXT NOT NULL,
+                    PRIMARY KEY(session_key, packet_format, lifecycle_epoch, car_index, tenure_ordinal)
+                );
+                CREATE TABLE IF NOT EXISTS observed_car_lap_attempts (
+                    attempt_key TEXT PRIMARY KEY,
+                    session_key TEXT NOT NULL,
+                    packet_format INTEGER NOT NULL,
+                    lifecycle_epoch INTEGER NOT NULL,
+                    car_index INTEGER NOT NULL CHECK (car_index BETWEEN 0 AND 23),
+                    tenure_ordinal INTEGER NOT NULL,
+                    attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+                    lap_number INTEGER NOT NULL CHECK (lap_number >= 0),
+                    disposition TEXT NOT NULL CHECK (disposition IN ('completed', 'partial', 'abandoned')),
+                    lap_time_ms INTEGER,
+                    game_valid INTEGER CHECK (game_valid IN (0, 1) OR game_valid IS NULL),
+                    start_observed INTEGER NOT NULL CHECK (start_observed IN (0, 1)),
+                    pit_encountered INTEGER NOT NULL CHECK (pit_encountered IN (0, 1)),
+                    sample_count INTEGER NOT NULL CHECK (sample_count >= 0),
+                    start_frame_ordinal INTEGER NOT NULL CHECK (start_frame_ordinal > 0),
+                    end_frame_ordinal INTEGER,
+                    completion_frame_ordinal INTEGER,
+                    exclusion_reasons_json TEXT NOT NULL,
+                    context_segments_json TEXT NOT NULL,
+                    diagnostic_only INTEGER NOT NULL CHECK (diagnostic_only = 1),
+                    FOREIGN KEY(session_key, packet_format, lifecycle_epoch, car_index, tenure_ordinal)
+                        REFERENCES car_slot_tenures(
+                            session_key, packet_format, lifecycle_epoch, car_index, tenure_ordinal
+                        ) ON DELETE CASCADE,
+                    UNIQUE(session_key, packet_format, lifecycle_epoch, car_index, tenure_ordinal, attempt_number)
+                );
+                CREATE INDEX IF NOT EXISTS idx_car_slot_tenures_slot
+                    ON car_slot_tenures(session_key, car_index, start_frame_ordinal);
+                CREATE INDEX IF NOT EXISTS idx_observed_car_lap_attempts_slot
+                    ON observed_car_lap_attempts(session_key, car_index, start_frame_ordinal);
+                UPDATE schema_info SET version = 14 WHERE singleton = 1;
+                """
+            )
+            self.connection.commit()
+            version = 14
         if version != SCHEMA_VERSION:
             self.connection.close()
             raise ValueError(f"database schema {version} is not supported")

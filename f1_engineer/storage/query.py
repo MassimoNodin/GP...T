@@ -37,6 +37,8 @@ MAX_OBSERVATION_PREVIEW_CHUNKS = 256
 MAX_OBSERVATION_PREVIEW_MANIFEST_BYTES = 16 * 1024
 MAX_OBSERVATION_PREVIEW_MANIFEST_TOTAL_BYTES = 4 * 1024 * 1024
 MAX_OBSERVATION_SESSION_METRICS_BYTES = 1024 * 1024
+MAX_CAR_LAP_REASONS_JSON_BYTES = 32 * 1024
+MAX_CAR_LAP_CONTEXT_JSON_BYTES = 256 * 1024
 MAX_OBSERVATION_CAPTURE_COMPLETION_BYTES = 64 * 1024
 MAX_OBSERVATION_PREVIEW_CHUNK_BYTES = 16 * 1024 * 1024
 MAX_OBSERVATION_PREVIEW_SOURCE_BYTES = 64 * 1024 * 1024
@@ -1404,6 +1406,257 @@ def list_car_observation_inventory(
                 for row in rows
             ],
         },
+    }
+
+
+def load_car_lap_inventory_page(
+    database_path: str | Path,
+    run_id: str,
+    session_uid: str | int,
+    car_index: int,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, object] | None:
+    """Return diagnostic lap attempts for one exact imported session slot."""
+    if not 0 <= car_index <= 23:
+        raise ValueError("car index is out of range")
+    if not 1 <= limit <= 100 or not 0 <= offset <= 100_000:
+        raise ValueError("car lap inventory page is out of range")
+    with Database(Path(database_path), read_only=True) as db:
+        db.connection.execute("BEGIN")
+        session = db.connection.execute(
+            """SELECT s.session_key, s.session_uid, r.status,
+                      CASE WHEN length(CAST(r.metrics_json AS BLOB)) <= ?
+                           THEN r.metrics_json ELSE NULL END AS metrics_json,
+                      length(CAST(r.metrics_json AS BLOB)) AS metrics_json_bytes
+                 FROM sessions s JOIN processing_runs r USING(run_id)
+                WHERE s.run_id=? AND s.session_uid=?""",
+            (MAX_OBSERVATION_SESSION_METRICS_BYTES, run_id, str(session_uid)),
+        ).fetchone()
+        if session is None or session["status"] != "complete":
+            return None
+        if (
+            session["metrics_json_bytes"] is not None
+            and session["metrics_json_bytes"] > MAX_OBSERVATION_SESSION_METRICS_BYTES
+        ):
+            raise ValueError("car_lap_inventory_metrics_limit_exceeded")
+        try:
+            metrics = json.loads(session["metrics_json"]) if session["metrics_json"] else {}
+        except (json.JSONDecodeError, TypeError, RecursionError, ValueError) as exc:
+            raise ValueError("car_lap_inventory_metrics_invalid") from exc
+        quality = metrics.get("capture_quality") if isinstance(metrics, dict) else None
+        inventory = quality.get("car_lap_inventory") if isinstance(quality, dict) else None
+        if (
+            not isinstance(inventory, dict)
+            or type(inventory.get("version")) is not int
+            or inventory["version"] != 1
+        ):
+            return {
+                "run_id": run_id,
+                "session_uid": str(session["session_uid"]),
+                "car_index": car_index,
+                "status": "not_assessed",
+                "verification_scope": "admitted_participants_and_lap_data",
+                "reference_eligibility": "not_assessed",
+                "attempts": {"limit": limit, "offset": offset, "total": 0, "returned": 0, "items": []},
+                "unassociated_lap_observation_counts": [],
+            }
+        if inventory.get("status") not in ("assessed", "truncated"):
+            raise ValueError("car_lap_inventory_status_invalid")
+        if (
+            type(inventory.get("tenure_count")) is not int
+            or inventory["tenure_count"] < 0
+            or type(inventory.get("attempt_count")) is not int
+            or inventory["attempt_count"] < 0
+            or type(inventory.get("tenures_dropped")) is not int
+            or inventory["tenures_dropped"] < 0
+            or type(inventory.get("attempts_dropped")) is not int
+            or inventory["attempts_dropped"] < 0
+            or type(inventory.get("coverage_count_overflowed")) is not bool
+        ):
+            raise ValueError("car_lap_inventory_counts_invalid")
+        raw_coverage = inventory.get("unassociated_lap_observation_counts", [])
+        if not isinstance(raw_coverage, list) or len(raw_coverage) > 64 * 24 * 8:
+            raise ValueError("car_lap_inventory_coverage_invalid")
+        coverage = []
+        for item in raw_coverage:
+            if (
+                not isinstance(item, dict)
+                or not isinstance(item.get("session_uid"), str)
+                or len(item["session_uid"]) > 20
+                or type(item.get("car_index")) is not int
+                or not 0 <= item["car_index"] <= 23
+                or not isinstance(item.get("reason"), str)
+                or len(item["reason"]) > 96
+                or type(item.get("count")) is not int
+                or item["count"] < 0
+            ):
+                raise ValueError("car_lap_inventory_coverage_invalid")
+            if (
+                item["session_uid"] == str(session["session_uid"])
+                and item["car_index"] == car_index
+            ):
+                coverage.append({"reason": item["reason"], "count": item["count"]})
+
+        total = int(
+            db.connection.execute(
+                """SELECT COUNT(*) FROM observed_car_lap_attempts
+                     WHERE session_key=? AND car_index=?""",
+                (session["session_key"], car_index),
+            ).fetchone()[0]
+        )
+        tenure_total = int(
+            db.connection.execute(
+                """SELECT COUNT(*) FROM car_slot_tenures
+                     WHERE session_key=? AND car_index=?""",
+                (session["session_key"], car_index),
+            ).fetchone()[0]
+        )
+        rows = db.connection.execute(
+            """SELECT a.attempt_key, a.packet_format, a.lifecycle_epoch,
+                      a.car_index, a.tenure_ordinal, a.attempt_number, a.lap_number,
+                      a.disposition, a.lap_time_ms, a.game_valid, a.start_observed,
+                      a.pit_encountered, a.sample_count, a.start_frame_ordinal,
+                      a.end_frame_ordinal, a.completion_frame_ordinal,
+                      CASE WHEN length(CAST(a.exclusion_reasons_json AS BLOB)) <= ?
+                           THEN a.exclusion_reasons_json ELSE NULL END AS exclusion_reasons_json,
+                      CASE WHEN length(CAST(a.context_segments_json AS BLOB)) <= ?
+                           THEN a.context_segments_json ELSE NULL END AS context_segments_json,
+                      length(CAST(a.exclusion_reasons_json AS BLOB)) AS exclusion_reasons_bytes,
+                      length(CAST(a.context_segments_json AS BLOB)) AS context_segments_bytes,
+                      a.diagnostic_only, t.start_frame_ordinal AS tenure_start_frame_ordinal,
+                      t.end_frame_ordinal_exclusive AS tenure_end_frame_ordinal_exclusive,
+                      t.participant_frame_identifier, t.participant_wire_fingerprint,
+                      t.close_reason AS tenure_close_reason
+                 FROM observed_car_lap_attempts a
+                 JOIN car_slot_tenures t
+                   ON t.session_key=a.session_key
+                  AND t.packet_format=a.packet_format
+                  AND t.lifecycle_epoch=a.lifecycle_epoch
+                  AND t.car_index=a.car_index
+                  AND t.tenure_ordinal=a.tenure_ordinal
+                WHERE a.session_key=? AND a.car_index=?
+                ORDER BY a.start_frame_ordinal, a.attempt_number LIMIT ? OFFSET ?""",
+            (
+                MAX_CAR_LAP_REASONS_JSON_BYTES,
+                MAX_CAR_LAP_CONTEXT_JSON_BYTES,
+                session["session_key"],
+                car_index,
+                limit,
+                offset,
+            ),
+        ).fetchall()
+
+    items = []
+    for row in rows:
+        if (
+            row["exclusion_reasons_bytes"] is None
+            or row["exclusion_reasons_bytes"] > MAX_CAR_LAP_REASONS_JSON_BYTES
+            or row["context_segments_bytes"] is None
+            or row["context_segments_bytes"] > MAX_CAR_LAP_CONTEXT_JSON_BYTES
+        ):
+            raise ValueError("car_lap_inventory_attempt_metadata_limit_exceeded")
+        try:
+            reasons = json.loads(row["exclusion_reasons_json"])
+            contexts = json.loads(row["context_segments_json"])
+        except (json.JSONDecodeError, TypeError, RecursionError, ValueError) as exc:
+            raise ValueError("car_lap_inventory_attempt_json_invalid") from exc
+        if (
+            not isinstance(reasons, list)
+            or len(reasons) > 64
+            or any(not isinstance(reason, str) or len(reason) > 96 for reason in reasons)
+            or not isinstance(contexts, list)
+            or len(contexts) > 64
+            or row["diagnostic_only"] != 1
+        ):
+            raise ValueError("car_lap_inventory_attempt_metadata_invalid")
+        context_keys = {
+            "session_uid", "packet_format", "packet_version", "weather_id",
+            "weather_name", "track_temperature_c", "air_temperature_c",
+            "total_laps", "track_length_m", "session_type_id", "session_type",
+            "track_id", "track_name", "formula_id", "network_game_id",
+            "game_mode_id", "game_mode", "rule_set_id", "rule_set",
+            "steering_assist_id", "braking_assist_id", "gearbox_assist_id",
+            "equal_car_performance_id",
+        }
+        projected_contexts = []
+        for segment in contexts:
+            if (
+                not isinstance(segment, dict)
+                or set(segment) != {"from_frame_identifier", "context"}
+                or type(segment.get("from_frame_identifier")) is not int
+                or segment["from_frame_identifier"] < 0
+            ):
+                raise ValueError("car_lap_inventory_context_invalid")
+            context = segment["context"]
+            if context is not None:
+                if not isinstance(context, dict) or set(context) != context_keys:
+                    raise ValueError("car_lap_inventory_context_invalid")
+                for key, value in context.items():
+                    if key in {"weather_name", "session_type", "track_name", "game_mode", "rule_set"}:
+                        if value is not None and (not isinstance(value, str) or len(value) > 128):
+                            raise ValueError("car_lap_inventory_context_invalid")
+                    elif type(value) is not int:
+                        raise ValueError("car_lap_inventory_context_invalid")
+            projected_contexts.append(
+                {
+                    "from_frame_identifier": segment["from_frame_identifier"],
+                    "context": None if context is None else {key: context[key] for key in context_keys},
+                }
+            )
+        items.append(
+            {
+                "attempt_key": str(row["attempt_key"]),
+                "packet_format": int(row["packet_format"]),
+                "lifecycle_epoch": int(row["lifecycle_epoch"]),
+                "car_index": int(row["car_index"]),
+                "tenure_ordinal": int(row["tenure_ordinal"]),
+                "attempt_number": int(row["attempt_number"]),
+                "lap_number": int(row["lap_number"]),
+                "disposition": str(row["disposition"]),
+                "lap_time_ms": row["lap_time_ms"],
+                "game_valid": None if row["game_valid"] is None else bool(row["game_valid"]),
+                "start_observed": bool(row["start_observed"]),
+                "pit_encountered": bool(row["pit_encountered"]),
+                "sample_count": int(row["sample_count"]),
+                "source_frame_ordinals": {
+                    "start": int(row["start_frame_ordinal"]),
+                    "end": row["end_frame_ordinal"],
+                    "completion": row["completion_frame_ordinal"],
+                },
+                "tenure": {
+                    "ordinal": int(row["tenure_ordinal"]),
+                    "start_frame_ordinal": int(row["tenure_start_frame_ordinal"]),
+                    "end_frame_ordinal_exclusive": int(
+                        row["tenure_end_frame_ordinal_exclusive"]
+                    ),
+                    "participant_frame_identifier": int(
+                        row["participant_frame_identifier"]
+                    ),
+                    "participant_packet_fingerprint": str(
+                        row["participant_wire_fingerprint"]
+                    ),
+                    "close_reason": str(row["tenure_close_reason"]),
+                },
+                "exclusion_reasons": reasons,
+                "context_segments": projected_contexts,
+                "reference_eligible": False,
+                "coaching_eligible": False,
+            }
+        )
+    return {
+        "run_id": run_id,
+        "session_uid": str(session["session_uid"]),
+        "car_index": car_index,
+        "status": "truncated" if inventory.get("status") == "truncated" else "assessed",
+        "coverage_status": "partial" if coverage or inventory.get("status") == "truncated" else "bounded",
+        "verification_scope": "admitted_participants_and_lap_data",
+        "reference_eligibility": "not_assessed",
+        "coaching_eligible": False,
+        "tenure_count": tenure_total,
+        "attempts": {"limit": limit, "offset": offset, "total": total, "returned": len(items), "items": items},
+        "unassociated_lap_observation_counts": coverage,
     }
 
 

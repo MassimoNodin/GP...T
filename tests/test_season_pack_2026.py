@@ -15,6 +15,7 @@ from f1_engineer.recording.capture import CaptureWriter
 from f1_engineer.recording.service import _AcquisitionObserver
 from f1_engineer.sessions.context import GameMode, RuleSet, SessionType
 from f1_engineer.sessions.lap_tracker import LapDisposition
+import f1_engineer.storage.importer as importer_module
 from f1_engineer.storage.importer import import_capture, list_laps, list_sessions
 from f1_engineer.storage.query import (
     TRAJECTORY_TRACE_COLUMNS,
@@ -780,7 +781,7 @@ def test_2026_import_persists_motion_and_wide_participant_snapshot(tmp_path) -> 
     assert imported.player_motion_samples == 2
     assert imported.missing_player_motion_samples == 0
     sessions = list_sessions(database_path)
-    assert sessions[0]["pipeline_version"] == "player-traces-v17-player-car-setups"
+    assert sessions[0]["pipeline_version"] == importer_module.PIPELINE_VERSION
     attempts = list_laps(database_path)
     complete = next(attempt for attempt in attempts if attempt["disposition"] == "completed")
     participant_context = complete["player_participant_context"]
@@ -930,7 +931,7 @@ def test_2026_capture_import_query_and_reimport_are_stable(tmp_path) -> None:
     session = list_sessions(database_path)[0]
     assert session["packet_format"] == 2026
     assert session["context"]["track_name"] == "Madrid"
-    assert session["pipeline_version"] == "player-traces-v17-player-car-setups"
+    assert session["pipeline_version"] == importer_module.PIPELINE_VERSION
     attempts = list_laps(database_path)
     complete = next(
         attempt for attempt in attempts if attempt["disposition"] == "completed"

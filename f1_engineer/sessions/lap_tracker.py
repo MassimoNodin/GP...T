@@ -198,6 +198,21 @@ class LapTracker:
         self._previous.clear()
         return tuple(self.attempts[start:])
 
+    def close_car(
+        self,
+        car_index: int,
+        *,
+        reason: str,
+        disposition: LapDisposition = LapDisposition.ABANDONED,
+    ) -> tuple[LapAttempt, ...]:
+        """Close one car's segment without resetting other cars in the session."""
+        start = len(self.attempts)
+        if car_index in self._active:
+            self._finalize(car_index, disposition, reason=reason)
+        self._previous.pop(car_index, None)
+        self._post_boundary_recovery_cars.discard(car_index)
+        return tuple(self.attempts[start:])
+
     def close_lifecycle_boundary(
         self, session_uid: int, *, reason: str
     ) -> tuple[LapAttempt, ...]:

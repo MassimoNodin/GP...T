@@ -212,6 +212,14 @@ def test_car_observation_cli_commands_forward_bounded_selection(
         )
         or {"status": "available", "observations": {"total": 0, "items": []}},
     )
+    monkeypatch.setattr(
+        cli,
+        "load_car_lap_inventory_page",
+        lambda database, run_id, session_uid, car_index, *, limit, offset: calls.update(
+            lap_inventory=(database, run_id, session_uid, car_index, limit, offset)
+        )
+        or {"status": "assessed", "attempts": {"total": 0, "items": []}},
+    )
     cars_args = cli.build_parser().parse_args(
         [
             "cars",
@@ -242,6 +250,23 @@ def test_car_observation_cli_commands_forward_bounded_selection(
             "40",
         ]
     )
+    car_laps_args = cli.build_parser().parse_args(
+        [
+            "car-laps",
+            "--database",
+            "state.sqlite3",
+            "--run-id",
+            "r" * 64,
+            "--session-uid",
+            "18446744073709550001",
+            "--car-index",
+            "23",
+            "--limit",
+            "100",
+            "--offset",
+            "100000",
+        ]
+    )
 
     assert cli._cars(cars_args) == 0
     inventory_output = json.loads(capsys.readouterr().out)
@@ -249,6 +274,9 @@ def test_car_observation_cli_commands_forward_bounded_selection(
     assert cli._car_observations(preview_args) == 0
     preview_output = json.loads(capsys.readouterr().out)
     assert preview_output["observations"]["total"] == 0
+    assert cli._car_laps(car_laps_args) == 0
+    car_laps_output = json.loads(capsys.readouterr().out)
+    assert car_laps_output["attempts"]["total"] == 0
     assert calls == {
         "inventory": (
             "state.sqlite3",
@@ -264,6 +292,14 @@ def test_car_observation_cli_commands_forward_bounded_selection(
             23,
             120,
             40,
+        ),
+        "lap_inventory": (
+            "state.sqlite3",
+            "r" * 64,
+            "18446744073709550001",
+            23,
+            100,
+            100000,
         ),
     }
 

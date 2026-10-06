@@ -1297,6 +1297,22 @@ The stop helper verifies the marked PID, executable, command line, port, and pro
 
 **Rationale:** deterministic telemetry and comparison services already provide the evidence and accepted mode policies, while `/engineer` still lacks natural-language routing. A single small local-model call can map bounded prose to a fixed evidence view without exposing raw telemetry to the model or letting it invent numbers. The exact full-digest pin, loopback-only transport, requested no-cloud setting, remote-model rejection, and absence of cloud fallback bound the model authority; current daemon cloud configuration remains unverified. The existing services remain the sole source of facts and coaching admission.
 
+## Decision 0083: add a diagnostic session-slot lap inventory
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Add a separate, bounded inventory of observed non-player lap attempts during import. The current pipeline sends only the header-designated player car through `LapTracker`; admitted all-car Lap Data remains in the session observation archive and has no lap ownership. This closes the initial all-car lap inventory gap in the development plan without changing player attempt semantics.
+
+Derive slot attempts only from ordered, admitted Lap Data while that slot has an admitted Participants tenure in the same session, packet format, and lifecycle epoch. A tenure begins at the first accepted roster frame and applies forward from that frame; never backfill earlier observations. Its identity is an observed game-slot interval, not a persistent person or named rival. Use a stable, bounded fingerprint of identity-bearing participant fields and retain the source roster frame ordinal and packet provenance. An unrelated slot's roster change must not invalidate an unchanged slot. An inactive transition, identity change, session/format/rewind boundary, conflicting roster, or untrusted association closes the affected tenure and any active lap. Conflicting, malformed, truncated, or not-yet-observed roster evidence leaves affected slots unknown until a new valid roster is admitted. Never infer roster tenure from the legacy `driver_snapshots` count-only table.
+
+Persist roster tenures and observed car lap attempts in separate additive SQLite tables. Scope identities by processing run, session UID, packet format, lifecycle epoch, car slot, tenure ordinal, and lap attempt ordinal. Store bounded lifecycle metadata, source frame-ordinal ranges, reported timing, latched game-validity and pit evidence, dispositions, and explicit exclusions. Reference the existing checksummed all-car observation chunks through exact ordinal ranges; do not write opponent-specific Parquet traces in this increment. Bump importer identity so existing captures can be reprocessed deterministically. Existing imported runs report this inventory as not assessed until re-imported.
+
+Expose only explicit run/session/slot-scoped pagination in the CLI, local API, and Sessions observation browser. Use the existing page bounds (at most 100 rows and offset 100,000), reject ambiguous or malformed identities, and never select a latest slot or attempt. Keep these rows out of player lap APIs, reference selection, comparison, ranking, coaching, and AI evidence routing. Keep Race laps diagnostic; this decision does not accept opponent references, stable rival identity, race strategy, or coaching.
+
+Acceptance uses the recovered Shanghai capture plus synthetic F1 25 and 2026 streams. Shanghai reconciliation must preserve the capture's incomplete-footer and lifecycle warnings, match only admitted non-player lap transitions and roster intervals, and leave zero-padded or unresolved slots without fabricated attempts. Synthetic coverage includes roster replacement, sparse/missing/conflicting/reordered roster packets, inactivity, frame wrap, flashback, format change, duplicate completion, partial finalization, capacity limits, and crash recovery. Player attempts, traces, reference exclusions, and current comparison results must remain identical. If safe tenure cannot be established for a slot, abstain for that slot.
+
 ## Data flow
 
 ```text
