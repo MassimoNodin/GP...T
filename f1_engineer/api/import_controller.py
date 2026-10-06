@@ -139,7 +139,7 @@ class ImportController:
     def reserve_operation(self, operation: str) -> bool:
         """Reserve the local controller for one exclusive local operation."""
         self._ensure_ready()
-        if operation not in {"import", "recording", "replay"}:
+        if operation not in {"import", "recording", "replay", "upload"}:
             raise ValueError("unsupported_local_operation")
         with self._operation_lock:
             if self._active_operation is not None:

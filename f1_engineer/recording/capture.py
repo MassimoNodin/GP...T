@@ -35,6 +35,26 @@ def _read_exact(stream: BinaryIO, length: int, *, allow_eof: bool = False) -> by
     return bytes(chunks)
 
 
+def read_capture_metadata(stream: BinaryIO) -> dict[str, object]:
+    """Validate and read only the bounded F1ECAP file header metadata."""
+    magic = _read_exact(stream, len(_MAGIC))
+    if magic != _MAGIC:
+        raise CaptureFormatError("not an F1 Engineer capture or unsupported capture version")
+    prefix = _read_exact(stream, _FILE_PREFIX.size)
+    assert prefix is not None
+    metadata_length = _FILE_PREFIX.unpack(prefix)[0]
+    if metadata_length > _MAX_METADATA_BYTES:
+        raise CaptureFormatError("capture metadata length exceeds the safety limit")
+    metadata_bytes = _read_exact(stream, metadata_length)
+    assert metadata_bytes is not None
+    metadata = json.loads(metadata_bytes.decode("utf-8"))
+    if not isinstance(metadata, dict):
+        raise CaptureFormatError("capture metadata must be a JSON object")
+    if metadata.get("schema_version") != 1:
+        raise CaptureFormatError("unsupported capture schema version")
+    return metadata
+
+
 class CaptureWriter:
     def __init__(
         self,
@@ -130,21 +150,7 @@ class CaptureReader:
         self.completion: dict[str, object] | None = None
         self.complete = False
         try:
-            magic = _read_exact(self._stream, len(_MAGIC))
-            if magic != _MAGIC:
-                raise CaptureFormatError("not an F1 Engineer capture or unsupported capture version")
-            prefix = _read_exact(self._stream, _FILE_PREFIX.size)
-            assert prefix is not None
-            metadata_length = _FILE_PREFIX.unpack(prefix)[0]
-            if metadata_length > _MAX_METADATA_BYTES:
-                raise CaptureFormatError("capture metadata length exceeds the safety limit")
-            metadata_bytes = _read_exact(self._stream, metadata_length)
-            assert metadata_bytes is not None
-            self.metadata = json.loads(metadata_bytes.decode("utf-8"))
-            if not isinstance(self.metadata, dict):
-                raise CaptureFormatError("capture metadata must be a JSON object")
-            if self.metadata.get("schema_version") != 1:
-                raise CaptureFormatError("unsupported capture schema version")
+            self.metadata = read_capture_metadata(self._stream)
         except Exception:
             self._stream.close()
             raise

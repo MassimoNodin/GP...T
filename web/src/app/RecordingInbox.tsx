@@ -8,6 +8,7 @@ import type {
 import ImportJobStatus from "./ImportJobStatus";
 import ReplayControls from "./ReplayControls";
 import RecordingControls from "./RecordingControls";
+import RecordingUploadPanel from "./RecordingUploadPanel";
 import {
   appScreenHref,
   isSelectionTransferBlocked,
@@ -106,8 +107,8 @@ export default function RecordingInbox({
           <div className="eyebrow">LOCAL RECORDING INBOX</div>
           <h2>Add a capture to the archive</h2>
           <p>
-            Copy a finished <code>.f1ecap</code> recording into the configured
-            recordings folder, then refresh this page.
+            Upload a finished <code>.f1ecap</code> file into the local inbox, or
+            start a UDP capture here.
           </p>
         </div>
         <span className="count-pill">
@@ -115,6 +116,7 @@ export default function RecordingInbox({
         </span>
       </div>
 
+      <RecordingUploadPanel preservedQuery={preservedQuery} />
       <RecordingControls
         initialRecording={recordingResponse?.data ?? null}
         initialGroup={groupResponse?.data ?? null}

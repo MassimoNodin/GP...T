@@ -45,6 +45,7 @@ from .storage.importer import (
     list_sessions,
 )
 from .storage.recording_download import DEFAULT_MAX_RECORDING_DOWNLOAD_BYTES
+from .storage.recording_upload import DEFAULT_MAX_RECORDING_UPLOAD_BYTES
 from .storage.query import (
     list_car_observation_inventory,
     load_car_observation_preview,
@@ -547,6 +548,7 @@ def _api(args: argparse.Namespace) -> int:
             recording_port=args.udp_port,
             recording_queue_size=args.udp_queue_size,
             max_recording_download_bytes=args.max_recording_download_bytes,
+            max_recording_upload_bytes=args.max_recording_upload_bytes,
             track_models_root=args.track_models_root,
             reviewed_track_models_root=args.reviewed_track_models_root,
         ),
@@ -1024,6 +1026,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_MAX_RECORDING_DOWNLOAD_BYTES,
         help="maximum size in bytes for one capture download (default: 16 GiB)",
+    )
+    api.add_argument(
+        "--max-recording-upload-bytes",
+        type=int,
+        default=DEFAULT_MAX_RECORDING_UPLOAD_BYTES,
+        help="maximum size in bytes for one capture upload (default: 16 GiB)",
     )
     api.add_argument("--port", type=int, default=8765, help="loopback port (default: 8765)")
     api.set_defaults(handler=_api)

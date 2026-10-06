@@ -39,12 +39,195 @@ class RecordingCatalogUnavailable(RuntimeError):
 
 
 def _root_namespace(root: Path) -> str:
-    return hashlib.sha256(str(root.resolve()).encode("utf-8")).hexdigest()
+    stable_path = _absolute_recordings_root(root)
+    return hashlib.sha256(str(stable_path).encode("utf-8")).hexdigest()
+
+
+def _absolute_recordings_root(root: str | Path) -> Path:
+    """Normalize a configured path without following later symlink/reparse swaps."""
+    expanded = Path(root).expanduser()
+    return Path(os.path.abspath(expanded))
+
+
+def _open_recordings_root(root: Path) -> tuple[int | None, os.stat_result]:
+    """Open or inspect every root component without accepting reparse points."""
+    reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    if os.name == "nt":
+        if root.drive.startswith("\\\\"):
+            raise RecordingCatalogUnavailable("recording_catalog_root_unavailable")
+        current = Path(root.anchor)
+        root_stat = current.stat(follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(root_stat.st_mode)
+            or getattr(root_stat, "st_file_attributes", 0) & reparse_attribute
+        ):
+            raise RecordingCatalogUnavailable("recording_catalog_root_unavailable")
+        for component in root.parts[1:]:
+            current /= component
+            root_stat = current.stat(follow_symlinks=False)
+            if (
+                not stat.S_ISDIR(root_stat.st_mode)
+                or getattr(root_stat, "st_file_attributes", 0) & reparse_attribute
+            ):
+                raise RecordingCatalogUnavailable("recording_catalog_root_unavailable")
+        return None, root_stat
+
+    required = ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK")
+    if any(not hasattr(os, name) for name in required) or not root.is_absolute():
+        raise RecordingCatalogUnavailable("recording_catalog_root_unavailable")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    descriptor = os.open(root.anchor, flags)
+    try:
+        for component in root.parts[1:]:
+            child = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        root_stat = os.fstat(descriptor)
+        if not stat.S_ISDIR(root_stat.st_mode) or not root_stat.st_ino:
+            raise RecordingCatalogUnavailable("recording_catalog_root_unavailable")
+        return descriptor, root_stat
+    except Exception:
+        os.close(descriptor)
+        raise
 
 
 def recording_root_namespace(root: Path) -> str:
     """Return the stable namespace used by registrations for a configured root."""
     return _root_namespace(root)
+
+
+def register_recording_source(
+    database_path: str | Path,
+    recordings_root: str | Path,
+    relative_path: str,
+    *,
+    byte_size: int,
+    modified_ns: int,
+    expected_root_identity: tuple[int, int] | None = None,
+    expected_file_identity: tuple[int, int] | None = None,
+) -> str:
+    """Register one newly published direct-child capture and return its identity."""
+    if (
+        not isinstance(relative_path, str)
+        or not relative_path
+        or len(relative_path) > 512
+        or Path(relative_path).name != relative_path
+        or "/" in relative_path
+        or "\\" in relative_path
+        or Path(relative_path).suffix.lower() != ".f1ecap"
+        or isinstance(byte_size, bool)
+        or not isinstance(byte_size, int)
+        or byte_size < 0
+        or isinstance(modified_ns, bool)
+        or not isinstance(modified_ns, int)
+        or modified_ns < 0
+    ):
+        raise RecordingCatalogUnavailable("recording_catalog_registration_invalid")
+    root = _absolute_recordings_root(recordings_root)
+
+    def verify_published_identity() -> None:
+        root_fd: int | None = None
+        try:
+            root_fd, root_stat = _open_recordings_root(root)
+            if root_fd is None:
+                candidate = root / relative_path
+                file_stat = candidate.stat(follow_symlinks=False)
+            else:
+                file_stat = os.stat(relative_path, dir_fd=root_fd, follow_symlinks=False)
+            if (
+                not stat.S_ISDIR(root_stat.st_mode)
+                or getattr(root_stat, "st_file_attributes", 0) & getattr(
+                    stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400
+                )
+                or (
+                    expected_root_identity is not None
+                    and (root_stat.st_dev, root_stat.st_ino) != expected_root_identity
+                )
+                or not stat.S_ISREG(file_stat.st_mode)
+                or getattr(file_stat, "st_file_attributes", 0) & getattr(
+                    stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400
+                )
+                or file_stat.st_size != byte_size
+                or file_stat.st_mtime_ns != modified_ns
+                or (
+                    expected_file_identity is not None
+                    and (file_stat.st_dev, file_stat.st_ino) != expected_file_identity
+                )
+            ):
+                raise RecordingCatalogUnavailable(
+                    "recording_catalog_registration_invalid"
+                )
+        except OSError as exc:
+            raise RecordingCatalogUnavailable(
+                "recording_catalog_registration_invalid"
+            ) from exc
+        finally:
+            if root_fd is not None:
+                os.close(root_fd)
+
+    if (expected_root_identity is None) != (expected_file_identity is None):
+        raise RecordingCatalogUnavailable("recording_catalog_registration_invalid")
+    verify_published_identity()
+
+    namespace = _root_namespace(root)
+    try:
+        with Database(database_path) as db:
+            connection = db.connection
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                """SELECT capture_id FROM recording_sources
+                     WHERE root_namespace=? AND relative_path=?""",
+                (namespace, relative_path),
+            ).fetchone()
+            if existing is not None:
+                capture_id = existing["capture_id"]
+                if (
+                    not isinstance(capture_id, str)
+                    or re.fullmatch(r"[a-f0-9]{32}", capture_id) is None
+                ):
+                    connection.rollback()
+                    raise RecordingCatalogUnavailable(
+                        "recording_catalog_registration_invalid"
+                    )
+                verify_published_identity()
+                connection.commit()
+                return capture_id
+
+            registered_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM recording_sources WHERE root_namespace=?",
+                    (namespace,),
+                ).fetchone()[0]
+            )
+            if registered_count >= MAX_RECORDING_CATALOG_REGISTERED_SOURCES:
+                connection.rollback()
+                raise RecordingCatalogUnavailable(
+                    "recording_catalog_registered_source_limit"
+                )
+            capture_id = uuid.uuid4().hex
+            connection.execute(
+                """INSERT INTO recording_sources(
+                       capture_id, root_namespace, relative_path, display_name,
+                       byte_size, modified_ns)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    capture_id,
+                    namespace,
+                    relative_path,
+                    relative_path,
+                    byte_size,
+                    modified_ns,
+                ),
+            )
+            verify_published_identity()
+            connection.commit()
+            return capture_id
+    except RecordingCatalogUnavailable:
+        raise
+    except Exception as exc:
+        raise RecordingCatalogUnavailable(
+            "recording_catalog_registration_failed"
+        ) from exc
 
 
 def recording_download_version(
@@ -70,24 +253,9 @@ def _utc_now() -> str:
 def list_recording_sources(
     database_path: str | Path, recordings_root: str | Path
 ) -> list[dict[str, Any]]:
-    root = Path(recordings_root).expanduser().resolve()
-    root.mkdir(parents=True, exist_ok=True)
+    root = _absolute_recordings_root(recordings_root)
     namespace = _root_namespace(root)
-    discovered: list[tuple[str, str, int, int]] = []
-    for candidate in sorted(root.iterdir(), key=lambda path: path.name.casefold()):
-        if candidate.suffix.lower() != ".f1ecap" or candidate.is_symlink():
-            continue
-        try:
-            resolved = candidate.resolve(strict=True)
-            if not resolved.is_relative_to(root) or not resolved.is_file():
-                continue
-            stat = resolved.stat()
-        except OSError:
-            continue
-        relative_path = resolved.relative_to(root).as_posix()
-        discovered.append(
-            (relative_path, candidate.name, stat.st_mtime_ns, stat.st_size)
-        )
+    discovered = _bounded_recording_source_discovery(root)
 
     with Database(database_path) as db:
         connection = db.connection
@@ -215,7 +383,7 @@ def list_recording_sources_page(
     ):
         raise RecordingCatalogUnavailable("recording_catalog_query_invalid")
 
-    root = Path(recordings_root).expanduser().resolve()
+    root = _absolute_recordings_root(recordings_root)
     discovered = _bounded_recording_source_discovery(root)
     discovered_paths = {relative_path for relative_path, *_ in discovered}
     namespace = _root_namespace(root)
@@ -419,55 +587,67 @@ def _bounded_recording_source_discovery(
     root: Path,
 ) -> list[tuple[str, str, int, int]]:
     try:
-        root.mkdir(parents=True, exist_ok=True)
-        if not root.is_dir():
-            raise RecordingCatalogUnavailable("recording_catalog_root_unavailable")
+        root = _absolute_recordings_root(root)
+        root_fd, _root_stat_value = _open_recordings_root(root)
         discovered: list[tuple[str, str, int, int]] = []
         entry_count = 0
         reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
-        with os.scandir(root) as entries:
-            for entry in entries:
-                entry_count += 1
-                if entry_count > MAX_RECORDING_CATALOG_DIRECTORY_ENTRIES:
-                    raise RecordingCatalogUnavailable(
-                        "recording_catalog_directory_entry_limit"
+        scan_target: int | Path = root_fd if root_fd is not None else root
+        try:
+            with os.scandir(scan_target) as entries:
+                for entry in entries:
+                    entry_count += 1
+                    if entry_count > MAX_RECORDING_CATALOG_DIRECTORY_ENTRIES:
+                        raise RecordingCatalogUnavailable(
+                            "recording_catalog_directory_entry_limit"
+                        )
+                    if Path(entry.name).suffix.lower() != ".f1ecap":
+                        continue
+                    entry_stat = (
+                        os.stat(entry.name, dir_fd=root_fd, follow_symlinks=False)
+                        if root_fd is not None
+                        else entry.stat(follow_symlinks=False)
                     )
-                if Path(entry.name).suffix.lower() != ".f1ecap":
-                    continue
-                entry_stat = entry.stat(follow_symlinks=False)
-                if (
-                    stat.S_ISLNK(entry_stat.st_mode)
-                    or getattr(entry_stat, "st_file_attributes", 0) & reparse_attribute
-                    or not stat.S_ISREG(entry_stat.st_mode)
-                ):
-                    continue
-                candidate = Path(entry.path)
-                resolved = candidate.resolve(strict=True)
-                if not resolved.is_relative_to(root):
-                    continue
-                file_stat = resolved.stat()
-                if not stat.S_ISREG(file_stat.st_mode):
-                    continue
-                relative_path = resolved.relative_to(root).as_posix()
-                if (
-                    not relative_path
-                    or len(relative_path) > 4_096
-                    or not entry.name
-                    or len(entry.name) > 512
-                    or file_stat.st_size < 0
-                    or file_stat.st_mtime_ns < 0
-                ):
-                    raise RecordingCatalogUnavailable(
-                        "recording_catalog_registration_invalid"
+                    if (
+                        stat.S_ISLNK(entry_stat.st_mode)
+                        or getattr(entry_stat, "st_file_attributes", 0) & reparse_attribute
+                        or not stat.S_ISREG(entry_stat.st_mode)
+                    ):
+                        continue
+                    if root_fd is not None:
+                        file_stat = entry_stat
+                        relative_path = entry.name
+                    else:
+                        candidate = Path(entry.path)
+                        resolved = candidate.resolve(strict=True)
+                        if not resolved.is_relative_to(root):
+                            continue
+                        file_stat = resolved.stat()
+                        if not stat.S_ISREG(file_stat.st_mode):
+                            continue
+                        relative_path = resolved.relative_to(root).as_posix()
+                    if (
+                        not relative_path
+                        or len(relative_path) > 4_096
+                        or not entry.name
+                        or len(entry.name) > 512
+                        or file_stat.st_size < 0
+                        or file_stat.st_mtime_ns < 0
+                    ):
+                        raise RecordingCatalogUnavailable(
+                            "recording_catalog_registration_invalid"
+                        )
+                    discovered.append(
+                        (
+                            relative_path,
+                            entry.name,
+                            file_stat.st_mtime_ns,
+                            file_stat.st_size,
+                        )
                     )
-                discovered.append(
-                    (
-                        relative_path,
-                        entry.name,
-                        file_stat.st_mtime_ns,
-                        file_stat.st_size,
-                    )
-                )
+        finally:
+            if root_fd is not None:
+                os.close(root_fd)
         return sorted(discovered, key=lambda item: (item[1].casefold(), item[1], item[0]))
     except RecordingCatalogUnavailable:
         raise
@@ -570,8 +750,13 @@ def resolve_recording_source(
     recordings_root: str | Path,
     capture_id: str,
 ) -> Path | None:
-    root = Path(recordings_root).expanduser().resolve()
+    root = _absolute_recordings_root(recordings_root)
+    root_fd: int | None = None
     try:
+        root_fd, _root_stat = _open_recordings_root(root)
+        if root_fd is not None:
+            os.close(root_fd)
+            root_fd = None
         with Database(database_path, read_only=True) as db:
             row = db.connection.execute(
                 """SELECT relative_path FROM recording_sources
@@ -580,6 +765,11 @@ def resolve_recording_source(
             ).fetchone()
     except (FileNotFoundError, ValueError):
         return None
+    except RecordingCatalogUnavailable:
+        return None
+    finally:
+        if root_fd is not None:
+            os.close(root_fd)
     if row is None:
         return None
     relative_path = Path(row["relative_path"])

@@ -10,6 +10,7 @@
     "test:live-session-history": "node --test scripts/live-session-history.test.mjs",
     "test:recording-catalog": "node --test scripts/recording-catalog.test.mjs",
     "test:recording-download-proxy": "node --test scripts/recording-download-proxy.test.mjs",
+    "test:recording-upload-proxy": "node --test scripts/recording-upload-proxy.test.mjs",
     "test:recording-hud": "node --test scripts/recording-hud.test.mjs",
     "test:hud-preferences": "node --test scripts/hud-preferences.test.mjs",
     "test:pinned-live-poller": "node --test scripts/pinned-live-poller.test.mjs",

@@ -3637,6 +3637,85 @@ h1 span {
   padding: 23px 27px;
   margin-bottom: 22px;
 }
+.recording-upload {
+  display: grid;
+  gap: 11px;
+  margin-top: 17px;
+  padding: 14px;
+  border: 1px solid #293532;
+  background: rgba(11, 17, 16, 0.48);
+}
+.recording-upload h3 {
+  margin: 0 0 4px;
+  color: #d8e4dd;
+  font-size: 12px;
+}
+.recording-upload p {
+  margin: 0;
+  color: #929e9b;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.recording-upload code {
+  color: #b1d4c9;
+  font-family: var(--font-mono);
+}
+.recording-upload form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 9px;
+}
+.recording-upload form > label {
+  display: grid;
+  flex: 1 1 280px;
+  gap: 6px;
+  color: #9aa7a2;
+  font: 8px var(--font-mono);
+  letter-spacing: 0.045em;
+}
+.recording-upload input[type="file"] {
+  width: 100%;
+  min-height: 35px;
+  padding: 5px;
+  border: 1px solid #34413e;
+  background: rgba(6, 11, 10, 0.75);
+  color: #b8c5bf;
+  font: 10px var(--font-sans);
+}
+.recording-upload-selected {
+  flex: 1 0 100%;
+}
+.recording-upload-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.recording-upload-note,
+.recording-upload-message,
+.recording-upload-receipt {
+  flex: 1 0 100%;
+}
+.recording-upload-message {
+  color: #edb59a !important;
+}
+.recording-upload-receipt {
+  display: grid;
+  gap: 5px;
+  padding-top: 10px;
+  border-top: 1px solid #293532;
+  color: #aab8b0;
+  font-size: 9px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.recording-upload-receipt strong {
+  color: #d8e4dd;
+}
+.recording-upload-receipt a {
+  width: fit-content;
+  color: #e7b978;
+}
 .recording-controls {
   display: flex;
   flex-wrap: wrap;

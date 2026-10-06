@@ -80,6 +80,11 @@ from ..storage.recording_download import (
     RecordingDownloadError,
     RecordingDownloadService,
 )
+from ..storage.recording_upload import (
+    DEFAULT_MAX_RECORDING_UPLOAD_BYTES,
+    RecordingUploadError,
+    RecordingUploadService,
+)
 from ..storage.database import DatabaseSchemaError
 from ..tracks.model import TrackModel
 from ..tracks.registry import (
@@ -94,6 +99,7 @@ from .recording_download import (
     RecordingDownloadResponse,
     recording_download_content_disposition,
 )
+from .recording_upload import RecordingUploadTransferError, receive_recording_upload
 
 REPLAY_CONTROL_CONFLICT_REASONS = {
     "replay_not_playing",
@@ -924,6 +930,7 @@ def create_app(
     recording_port: int = 20777,
     recording_queue_size: int = 8192,
     max_recording_download_bytes: int = DEFAULT_MAX_RECORDING_DOWNLOAD_BYTES,
+    max_recording_upload_bytes: int = DEFAULT_MAX_RECORDING_UPLOAD_BYTES,
     track_models_root: str | Path | None = None,
     reviewed_track_models_root: str | Path | None = None,
 ) -> FastAPI:
@@ -964,18 +971,27 @@ def create_app(
         configured_recordings_root,
         max_download_bytes=max_recording_download_bytes,
     )
+    recording_upload_service = RecordingUploadService(
+        configured_database_path,
+        configured_recordings_root,
+        import_controller,
+        max_upload_bytes=max_recording_upload_bytes,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         import_controller.start()
+        recording_upload_service.start()
         recording_controller.start()
         replay_controller.start()
         app.state.import_controller = import_controller
         app.state.recording_controller = recording_controller
         app.state.replay_controller = replay_controller
+        app.state.recording_upload_service = recording_upload_service
         try:
             yield
         finally:
+            await run_in_threadpool(recording_upload_service.close)
             replay_controller.close()
             recording_controller.close()
             import_controller.close()
@@ -1568,6 +1584,80 @@ def create_app(
                 status="unavailable", reason="recording_catalog_unavailable"
             )
         return APIResponse[RecordingSourcePageRecord](data=page)
+
+    @app.post("/api/v1/recording-sources/upload")
+    async def upload_recording_source(
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> Response:
+        def error(status_code: int, reason: str) -> JSONResponse:
+            return JSONResponse(
+                status_code=status_code,
+                content={
+                    "api_version": "v1",
+                    "status": "unavailable",
+                    "data": None,
+                    "reason": reason,
+                },
+                headers={
+                    "Cache-Control": "no-store",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+
+        if not _authorized(authorization, control_token):
+            return error(401, "local_control_unauthorized")
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/octet-stream":
+            return error(415, "recording_upload_content_type_invalid")
+        if request.headers.get("content-encoding", "identity").lower() != "identity":
+            return error(415, "recording_upload_content_encoding_unsupported")
+
+        declared_length: int | None = None
+        raw_length = request.headers.get("content-length")
+        if raw_length is not None:
+            if not raw_length.isascii() or not raw_length.isdigit() or len(raw_length) > 20:
+                return error(400, "recording_upload_length_invalid")
+            declared_length = int(raw_length)
+            if declared_length < 1:
+                return error(400, "recording_upload_length_invalid")
+            if declared_length > recording_upload_service.max_upload_bytes:
+                return error(413, "recording_upload_size_limit")
+
+        encoded_filename = request.headers.get("x-capture-upload-filename")
+        if encoded_filename is None:
+            return error(422, "recording_upload_filename_invalid")
+        try:
+            opened = await run_in_threadpool(
+                recording_upload_service.begin_upload,
+                encoded_filename,
+                expected_bytes=declared_length,
+            )
+        except RecordingUploadError as exc:
+            return error(exc.status_code, exc.reason)
+        except (OSError, ValueError):
+            return error(503, "recording_upload_service_unavailable")
+
+        try:
+            data = await receive_recording_upload(request, opened)
+            return JSONResponse(
+                status_code=201,
+                content={
+                    "api_version": "v1",
+                    "status": "ok",
+                    "data": data,
+                    "reason": None,
+                },
+                headers={
+                    "Cache-Control": "no-store",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+        except RecordingUploadError as exc:
+            return error(exc.status_code, exc.reason)
+        except RecordingUploadTransferError as exc:
+            return error(exc.status_code, exc.reason)
+        except Exception:
+            return error(503, "recording_upload_transfer_failed")
 
     @app.get("/api/v1/recording-sources/{capture_id}/download")
     def download_recording_source(
