@@ -17,9 +17,6 @@ if (
   throw "The private runtime marker is malformed; no process was stopped."
 }
 $ProcessId = [int]$Marker.process_id
-if ($Marker.process_start_utc -isnot [string] -or $Marker.process_start_utc.Length -gt 64) {
-  throw "The private runtime marker has no valid process creation time; no process was stopped."
-}
 $Process = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
 if (-not $Process) {
   Remove-Item -LiteralPath $PidPath -Force
@@ -29,9 +26,29 @@ if (-not $Process) {
 
 $ExpectedExecutable = [System.IO.Path]::GetFullPath([string]$Marker.executable)
 $ActualExecutable = [System.IO.Path]::GetFullPath([string]$Process.ExecutablePath)
-$ExpectedStart = [DateTimeOffset]::Parse([string]$Marker.process_start_utc).UtcDateTime
-$ActualStart = $Process.CreationDate.ToUniversalTime()
-$StartDifferenceMs = [Math]::Abs(($ExpectedStart - $ActualStart).TotalMilliseconds)
+$ExpectedStartTicks = $null
+if ($Marker.PSObject.Properties.Name -contains "process_start_utc_ticks") {
+  if (
+    ($Marker.process_start_utc_ticks -is [int] -or $Marker.process_start_utc_ticks -is [long]) -and
+    $Marker.process_start_utc_ticks -gt [DateTime]::MinValue.Ticks -and
+    $Marker.process_start_utc_ticks -le [DateTime]::MaxValue.Ticks
+  ) {
+    $ExpectedStartTicks = [long]$Marker.process_start_utc_ticks
+  }
+} elseif ($Marker.process_start_utc -is [DateTime]) {
+  $ExpectedStartTicks = $Marker.process_start_utc.ToUniversalTime().Ticks
+} elseif ($Marker.process_start_utc -is [string] -and $Marker.process_start_utc.Length -le 64) {
+  try {
+    $ExpectedStartTicks = [DateTimeOffset]::Parse([string]$Marker.process_start_utc).UtcDateTime.Ticks
+  } catch {
+    $ExpectedStartTicks = $null
+  }
+}
+if ($null -eq $ExpectedStartTicks) {
+  throw "The private runtime marker has no valid process creation time; no process was stopped."
+}
+$ActualStartTicks = $Process.CreationDate.ToUniversalTime().Ticks
+$StartDifferenceMs = [Math]::Abs(($ExpectedStartTicks - $ActualStartTicks) / 10000.0)
 $OwnsPrivatePort = Get-NetTCPConnection -LocalPort 11435 -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.OwningProcess -eq $Process.ProcessId }
 if ($ExpectedExecutable -cne $ActualExecutable -or $StartDifferenceMs -gt 20 -or $Process.CommandLine -notmatch "\bserve\b" -or -not $OwnsPrivatePort) {
   throw "The recorded process no longer matches the private service. No process was stopped."

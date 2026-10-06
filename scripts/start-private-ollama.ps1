@@ -2,6 +2,7 @@
 param(
   [switch] $InstallModel,
   [switch] $AcceptModelUpdate,
+  [string] $OllamaExecutable = "",
   [string] $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
   [string] $DatabasePath = (Join-Path (Join-Path $PSScriptRoot "..") "data\f1-engineer.sqlite3")
 )
@@ -19,11 +20,20 @@ $ResolvedDatabasePath = if ([System.IO.Path]::IsPathRooted($DatabasePath)) { $Da
 $DataRoot = Split-Path -Parent $ResolvedDatabasePath
 $PinPath = Join-Path $DataRoot ".f1-engineer-ollama-model.json"
 
-$OllamaCommand = Get-Command ollama -ErrorAction SilentlyContinue
-if (-not $OllamaCommand -or -not $OllamaCommand.Source) {
-  throw "Install Ollama before starting the private GP...T runtime."
+$OllamaPath = $null
+if (-not [string]::IsNullOrWhiteSpace($OllamaExecutable)) {
+  $OllamaItem = Get-Item -LiteralPath $OllamaExecutable -ErrorAction SilentlyContinue
+  if (-not $OllamaItem -or $OllamaItem.PSIsContainer -or $OllamaItem.Name -cne "ollama.exe") {
+    throw "OllamaExecutable must point to an existing ollama.exe."
+  }
+  $OllamaPath = $OllamaItem.FullName
+} else {
+  $OllamaCommand = Get-Command ollama -ErrorAction SilentlyContinue
+  if (-not $OllamaCommand -or -not $OllamaCommand.Source) {
+    throw "Install Ollama before starting the private GP...T runtime."
+  }
+  $OllamaPath = $OllamaCommand.Source
 }
-$OllamaPath = $OllamaCommand.Source
 
 $ExistingListener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
 if ($ExistingListener) {
@@ -45,7 +55,7 @@ $env:OLLAMA_KEEP_ALIVE = "0"
 
 $Server = $null
 try {
-  $Server = Start-Process -FilePath $OllamaPath -ArgumentList @("serve") -WindowStyle Hidden -PassThru -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath
+  $Server = Start-Process -FilePath $OllamaPath -ArgumentList @("serve") -WorkingDirectory ([System.IO.Path]::GetDirectoryName($OllamaPath)) -WindowStyle Hidden -PassThru -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath
 
   $Ready = $false
   $Deadline = (Get-Date).AddSeconds(60)
@@ -115,7 +125,7 @@ try {
 
   $ProcessMarker = [ordered]@{
     process_id = $Server.Id
-    process_start_utc = (Get-Process -Id $Server.Id).StartTime.ToUniversalTime().ToString("o")
+    process_start_utc_ticks = (Get-Process -Id $Server.Id).StartTime.ToUniversalTime().Ticks
     executable = [System.IO.Path]::GetFullPath($OllamaPath)
     port = $Port
     profile = $ProfileName
