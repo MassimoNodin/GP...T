@@ -51,6 +51,8 @@ MAX_CAR_LAP_OBSERVATION_ATTEMPT_KEY_BYTES = 512
 MAX_CAR_LAP_OBSERVATION_RESPONSE_BYTES = 512 * 1024
 MAX_CAR_LAP_OBSERVATION_PAGE_ROWS = 100
 MAX_CAR_LAP_OBSERVATION_CONTEXT_BYTES = 16 * 1024
+MAX_CAR_LAP_ANALYSIS_ROWS = 100_000
+MAX_ATTEMPT_ASSOCIATION_SCOPE_BYTES = 256 * 1024
 
 
 ANALYSIS_TRACE_COLUMNS = [
@@ -174,6 +176,7 @@ class StoredAttemptTrace:
     source_sample_count: int | None = None
     player_participant_context: Mapping[str, object] | None = None
     player_car_setup_context: Mapping[str, object] | None = None
+    source_bytes_read: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -589,7 +592,69 @@ def load_attempt_trace(
         source_sample_count=int(row["row_count"]),
         player_participant_context=player_participant_context,
         player_car_setup_context=player_car_setup_context,
+        source_bytes_read=len(trace_snapshot),
     )
+
+
+def load_attempt_association_scope(
+    database_path: str | Path, attempt_key: str
+) -> dict[str, object] | None:
+    """Read the exact packet-format/lifecycle scope retained with a player lap."""
+    with Database(database_path, read_only=True) as db:
+        row = db.connection.execute(
+            """SELECT l.attempt_json, s.run_id, s.session_uid
+                 FROM lap_attempts l JOIN sessions s USING(session_key)
+                 JOIN processing_runs r USING(run_id)
+                WHERE l.attempt_key=? AND r.status='complete'""",
+            (attempt_key,),
+        ).fetchone()
+    if row is None:
+        return None
+    raw = row["attempt_json"]
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_ATTEMPT_ASSOCIATION_SCOPE_BYTES:
+        raise ValueError("player_attempt_scope_metadata_limit_exceeded")
+    try:
+        attempt = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, RecursionError, ValueError) as exc:
+        raise ValueError("player_attempt_scope_metadata_invalid") from exc
+    if not isinstance(attempt, dict):
+        raise ValueError("player_attempt_scope_metadata_invalid")
+    association_epoch = attempt.get("association_epoch")
+    start_epoch = attempt.get("start_association_epoch")
+    packet_format = attempt.get("association_packet_format")
+    start_packet_format = attempt.get("start_association_packet_format")
+    scope_assessable = attempt.get("association_scope_assessable")
+    start_frame = attempt.get("start_frame_ordinal")
+    end_frame = attempt.get("end_frame_ordinal")
+    completion_frame = attempt.get("completion_frame_ordinal")
+    if (
+        type(association_epoch) is not int
+        or association_epoch < 0
+        or type(start_epoch) is not int
+        or start_epoch != association_epoch
+        or type(packet_format) is not int
+        or packet_format not in (2025, 2026)
+        or type(start_packet_format) is not int
+        or start_packet_format != packet_format
+        or scope_assessable is not True
+        or type(start_frame) is not int
+        or type(end_frame) is not int
+        or start_frame <= 0
+        or end_frame < start_frame
+        or type(completion_frame) is not int
+        or completion_frame <= end_frame
+    ):
+        return None
+    return {
+        "run_id": str(row["run_id"]),
+        "session_uid": str(row["session_uid"]),
+        "association_epoch": association_epoch,
+        "packet_format": packet_format,
+        "start_frame_ordinal": start_frame,
+        "end_frame_ordinal": end_frame,
+        "completion_frame_ordinal": completion_frame,
+        "association_scope_assessable": True,
+    }
 
 
 def load_attempt_trace_resource_estimates(
@@ -1707,6 +1772,37 @@ def load_car_lap_observation_page(
     )
 
 
+def load_car_lap_observation_source(
+    database_path: str | Path,
+    run_id: str,
+    session_uid: str | int,
+    car_index: int,
+    attempt_key: str,
+    *,
+    source_bytes_limit: int,
+    retained_row_limit: int,
+) -> dict[str, object] | None:
+    """Read all verified, owned rows for analysis under shared caller budgets."""
+    if (
+        type(source_bytes_limit) is not int
+        or not 1 <= source_bytes_limit <= MAX_OBSERVATION_PREVIEW_SOURCE_BYTES
+        or type(retained_row_limit) is not int
+        or not 1 <= retained_row_limit <= MAX_CAR_LAP_ANALYSIS_ROWS
+    ):
+        raise ValueError("car_lap_analysis_source_limit_invalid")
+    return _load_car_observation_page(
+        database_path,
+        run_id,
+        session_uid,
+        car_index,
+        limit=retained_row_limit,
+        offset=0,
+        lap_attempt_key=attempt_key,
+        read_all_lap_rows=True,
+        source_bytes_limit=source_bytes_limit,
+    )
+
+
 def _load_car_observation_page(
     database_path: str | Path,
     run_id: str,
@@ -1716,12 +1812,24 @@ def _load_car_observation_page(
     limit: int,
     offset: int,
     lap_attempt_key: str | None,
+    read_all_lap_rows: bool = False,
+    source_bytes_limit: int = MAX_OBSERVATION_PREVIEW_SOURCE_BYTES,
 ) -> dict[str, object] | None:
     if not 0 <= car_index <= 23:
         raise ValueError("car index is out of range")
-    max_limit = 500 if lap_attempt_key is None else MAX_CAR_LAP_OBSERVATION_PAGE_ROWS
+    max_limit = (
+        MAX_CAR_LAP_ANALYSIS_ROWS
+        if read_all_lap_rows
+        else 500
+        if lap_attempt_key is None
+        else MAX_CAR_LAP_OBSERVATION_PAGE_ROWS
+    )
     if not 1 <= limit <= max_limit or not 0 <= offset <= 100_000:
         raise ValueError("car observation preview page is out of range")
+    if type(read_all_lap_rows) is not bool or (
+        read_all_lap_rows and lap_attempt_key is None
+    ):
+        raise ValueError("car_lap_analysis_source_scope_invalid")
     if lap_attempt_key is not None and (
         not isinstance(lap_attempt_key, str)
         or not lap_attempt_key
@@ -1774,6 +1882,9 @@ def _load_car_observation_page(
                           CASE WHEN length(CAST(a.exclusion_reasons_json AS BLOB)) <= ?
                                THEN a.exclusion_reasons_json ELSE NULL END AS exclusion_reasons_json,
                           length(CAST(a.exclusion_reasons_json AS BLOB)) AS exclusion_reasons_bytes,
+                          CASE WHEN length(CAST(a.context_segments_json AS BLOB)) <= ?
+                               THEN a.context_segments_json ELSE NULL END AS context_segments_json,
+                          length(CAST(a.context_segments_json AS BLOB)) AS context_segments_bytes,
                           t.start_frame_ordinal AS tenure_start_frame_ordinal,
                           t.end_frame_ordinal_exclusive AS tenure_end_frame_ordinal_exclusive,
                           t.participant_frame_identifier,
@@ -1792,6 +1903,7 @@ def _load_car_observation_page(
                       AND s.session_key=? AND a.car_index=? AND a.attempt_key=?""",
                 (
                     MAX_CAR_LAP_REASONS_JSON_BYTES,
+                    MAX_CAR_LAP_CONTEXT_JSON_BYTES,
                     run_id,
                     str(session_uid),
                     session["session_key"],
@@ -1805,10 +1917,14 @@ def _load_car_observation_page(
                 attempt_row["exclusion_reasons_bytes"] is None
                 or attempt_row["exclusion_reasons_bytes"]
                 > MAX_CAR_LAP_REASONS_JSON_BYTES
+                or attempt_row["context_segments_bytes"] is None
+                or attempt_row["context_segments_bytes"]
+                > MAX_CAR_LAP_CONTEXT_JSON_BYTES
             ):
                 raise ValueError("car_lap_observation_attempt_metadata_limit_exceeded")
             try:
                 exclusion_reasons = json.loads(attempt_row["exclusion_reasons_json"])
+                raw_context_segments = json.loads(attempt_row["context_segments_json"])
             except (json.JSONDecodeError, TypeError, RecursionError, ValueError) as exc:
                 raise ValueError("car_lap_observation_attempt_metadata_invalid") from exc
             if (
@@ -1820,6 +1936,46 @@ def _load_car_observation_page(
                 )
             ):
                 raise ValueError("car_lap_observation_attempt_metadata_invalid")
+            context_keys = {
+                "session_uid", "packet_format", "packet_version", "weather_id",
+                "weather_name", "track_temperature_c", "air_temperature_c",
+                "total_laps", "track_length_m", "session_type_id", "session_type",
+                "track_id", "track_name", "formula_id", "network_game_id",
+                "game_mode_id", "game_mode", "rule_set_id", "rule_set",
+                "steering_assist_id", "braking_assist_id", "gearbox_assist_id",
+                "equal_car_performance_id",
+            }
+            if not isinstance(raw_context_segments, list) or len(raw_context_segments) > 64:
+                raise ValueError("car_lap_observation_context_invalid")
+            context_segments: list[dict[str, object]] = []
+            for segment in raw_context_segments:
+                if (
+                    not isinstance(segment, dict)
+                    or set(segment) != {"from_frame_identifier", "context"}
+                    or type(segment.get("from_frame_identifier")) is not int
+                    or segment["from_frame_identifier"] < 0
+                ):
+                    raise ValueError("car_lap_observation_context_invalid")
+                context = segment["context"]
+                if context is not None:
+                    if not isinstance(context, dict) or set(context) != context_keys:
+                        raise ValueError("car_lap_observation_context_invalid")
+                    for name, value in context.items():
+                        if name in {
+                            "weather_name", "session_type", "track_name", "game_mode", "rule_set"
+                        }:
+                            if value is not None and (
+                                not isinstance(value, str) or len(value) > 128
+                            ):
+                                raise ValueError("car_lap_observation_context_invalid")
+                        elif type(value) is not int:
+                            raise ValueError("car_lap_observation_context_invalid")
+                context_segments.append(
+                    {
+                        "from_frame_identifier": segment["from_frame_identifier"],
+                        "context": context,
+                    }
+                )
             start = attempt_row["start_frame_ordinal"]
             end = attempt_row["end_frame_ordinal"]
             tenure_start = attempt_row["tenure_start_frame_ordinal"]
@@ -1917,6 +2073,7 @@ def _load_car_observation_page(
                 "reference_eligible": False,
                 "coaching_eligible": False,
                 "exclusion_reasons": exclusion_reasons,
+                "context_segments": context_segments,
                 "start_frame_ordinal": start,
                 "end_frame_ordinal": end,
                 "completion_frame_ordinal": completion_frame,
@@ -2103,7 +2260,7 @@ def _load_car_observation_page(
                 source_size = os.fstat(stream.fileno()).st_size
                 if source_size > MAX_OBSERVATION_PREVIEW_CHUNK_BYTES:
                     raise ValueError("observation_preview_chunk_bytes_limit_exceeded")
-                if source_bytes_read + source_size > MAX_OBSERVATION_PREVIEW_SOURCE_BYTES:
+                if source_bytes_read + source_size > source_bytes_limit:
                     raise ValueError("observation_preview_source_bytes_limit_exceeded")
                 source_bytes = stream.read(MAX_OBSERVATION_PREVIEW_CHUNK_BYTES + 1)
         except OSError:
@@ -2288,11 +2445,15 @@ def _load_car_observation_page(
                         raise ValueError("car_lap_observation_row_scope_invalid")
                     if (
                         previous_matched_frame_ordinal is not None
-                        and frame_ordinal < previous_matched_frame_ordinal
+                        and frame_ordinal <= previous_matched_frame_ordinal
                     ):
                         raise ValueError("car_lap_observation_frame_order_invalid")
                     previous_matched_frame_ordinal = frame_ordinal
-                    if offset <= matched_total < offset + limit:
+                    if read_all_lap_rows:
+                        if len(selected_rows) >= limit:
+                            raise ValueError("car_lap_analysis_rows_limit_exceeded")
+                        selected_rows.append(row)
+                    elif offset <= matched_total < offset + limit:
                         selected_rows.append(row)
                     matched_total += 1
                 continue
@@ -2396,17 +2557,20 @@ def _load_car_observation_page(
             "items": selected_rows,
         },
     }
-    try:
-        serialized_size = len(
-            json.dumps(
-                result,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                allow_nan=False,
-            ).encode("utf-8")
-        )
-    except (TypeError, ValueError, RecursionError) as exc:
-        raise ValueError("car_lap_observation_response_invalid") from exc
-    if serialized_size > MAX_CAR_LAP_OBSERVATION_RESPONSE_BYTES:
-        raise ValueError("car_lap_observation_response_limit_exceeded")
+    if read_all_lap_rows:
+        result["source_bytes_read"] = source_bytes_read
+    if not read_all_lap_rows:
+        try:
+            serialized_size = len(
+                json.dumps(
+                    result,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode("utf-8")
+            )
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise ValueError("car_lap_observation_response_invalid") from exc
+        if serialized_size > MAX_CAR_LAP_OBSERVATION_RESPONSE_BYTES:
+            raise ValueError("car_lap_observation_response_limit_exceeded")
     return result
