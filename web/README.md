@@ -1,5 +1,9 @@
 # Historical dashboard
 
+## API-fed test data
+
+Click **Test data** in the header, or open `/settings?test_data=populated`, to populate all eight pages from `GET /api/test-data`. Choose populated, empty, partial, stale or unavailable scenarios; select synthetic sessions/laps and play, pause, step or reset the feed. The Next API works without the Python service or game. Synthetic data is labelled and isolated from real recordings and preferences. See [usage and contract](../docs/api-test-data.md).
+
 This Next.js app renders the local F1 Engineer archive and calls the FastAPI
 service from the server. The API binds to loopback; its UDP telemetry listener
 uses the configured bind address and defaults to `0.0.0.0:20777`. The database

@@ -13,6 +13,10 @@ export type ImportReturnScreen = "dashboard" | "recordings";
 export type AppSearchParams = Record<string, string | string[] | undefined>;
 
 const retainedKeys = [
+  "test_data",
+  "test_session",
+  "test_target",
+  "test_reference",
   "session_key",
   "target_attempt_key",
   "reference_choice",
@@ -61,11 +65,34 @@ const maximumStateQueryLength = 4096;
 const maximumValueLength = 512;
 const maximumValuesPerKey = 8;
 const blockedTransferQuery = "selection_transfer=blocked";
+const testStateKeys = [
+  "test_data",
+  "test_session",
+  "test_target",
+  "test_reference",
+] as const;
+
+function testStateQuery(values: AppSearchParams): string {
+  const query = new URLSearchParams();
+  for (const key of testStateKeys) {
+    const value = values[key];
+    if (value === undefined) continue;
+    if (typeof value !== "string" || value.length > 64)
+      return "test_data=invalid";
+    query.set(key, value);
+  }
+  return query.toString();
+}
 
 export function preservedAppStateQuery(values: AppSearchParams): string {
+  // Synthetic routes never carry production evidence or operation identities.
+  if (values.test_data !== undefined) {
+    return testStateQuery(values);
+  }
   if (values.selection_transfer !== undefined) return blockedTransferQuery;
   const query = new URLSearchParams();
   for (const key of retainedKeys) {
+    if (testStateKeys.some((entry) => entry === key)) continue;
     const value = values[key];
     const entries =
       value === undefined ? [] : Array.isArray(value) ? value : [value];
@@ -87,8 +114,18 @@ export function sanitizeAppStateQuery(value: string | null): string {
     value.startsWith("?") ? value.slice(1) : value,
   );
   if (incoming.has("selection_transfer")) return blockedTransferQuery;
+  if (incoming.has("test_data")) {
+    const values: AppSearchParams = {};
+    for (const key of testStateKeys) {
+      const entries = incoming.getAll(key);
+      if (entries.length > 1) return "test_data=invalid";
+      if (entries.length) values[key] = entries[0];
+    }
+    return testStateQuery(values);
+  }
   const query = new URLSearchParams();
   for (const key of retainedKeys) {
+    if (testStateKeys.some((entry) => entry === key)) continue;
     const entries = incoming.getAll(key);
     if (entries.length > maximumValuesPerKey) return blockedTransferQuery;
     for (const entry of entries) {
@@ -130,6 +167,8 @@ export function appScreenHref(
 ): string | null {
   const query = new URLSearchParams(sanitizeAppStateQuery(stateQuery));
   for (const [key, value] of Object.entries(overrides)) {
+    if (query.has("test_data") && !testStateKeys.some((entry) => entry === key))
+      return null;
     if (!retainedKeySet.has(key) || typeof value !== "string") return null;
     if (value.length > maximumValueLength) return null;
     query.set(key, value);
@@ -140,7 +179,7 @@ export function appScreenHref(
   if (Object.hasOwn(overrides, "import_error")) {
     query.delete("import_job_id");
   }
-  const encoded = query.toString();
+  const encoded = sanitizeAppStateQuery(query.toString());
   if (encoded.length > maximumStateQueryLength) return null;
   return encoded
     ? `${appScreenPath(screen)}?${encoded}`

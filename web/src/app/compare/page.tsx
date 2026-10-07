@@ -20,6 +20,13 @@ import {
   lapAttemptPageMatchesScope,
 } from "@/lib/attempt-inventory";
 import AppHeader from "../AppHeader";
+import { testDataRoute } from "../TestDataRoute";
+import LapComparisonScreen from "../LapComparisonScreen";
+import {
+  regionsFromComparison,
+  shapeFromTrajectory,
+  tracesFromComparison,
+} from "@/lib/analysis-display";
 import CompareResultPanel from "../CompareResultPanel";
 import PairedRegionPanel from "../PairedRegionPanel";
 import TrajectoryComparisonPanel from "../TrajectoryComparisonPanel";
@@ -58,6 +65,8 @@ export default async function ComparePage({
   searchParams: Promise<AppSearchParams>;
 }) {
   const params = await searchParams;
+  const syntheticPage = testDataRoute("compare", params);
+  if (syntheticPage) return syntheticPage;
   const preservedQuery = preservedAppStateQuery(params);
   const blocked = isSelectionTransferBlocked(preservedQuery);
   const raw = {
@@ -624,10 +633,80 @@ export default async function ComparePage({
     <div className="app-shell">
       <AppHeader active="compare" preservedQuery={preservedQuery} />
       <main
-        className="page-content compare-page-content"
+        className="page-content reference-page-content"
         id="main-content"
         tabIndex={-1}
       >
+        <LapComparisonScreen
+          key={JSON.stringify([
+            resolvedTarget?.attempt_key,
+            resolvedTarget?.trace_sha256,
+            resolvedReference?.attempt_key,
+            resolvedReference?.trace_sha256,
+            policy,
+            selectedModel?.model_id,
+            selectedModel?.revision,
+            selectedModel?.content_sha256,
+            window,
+          ])}
+          initialInput={{
+            version: 1,
+            comparison: comparison
+              ? tracesFromComparison(
+                  comparison,
+                  `Target · attempt ${resolvedTarget?.attempt_number}`,
+                  `Reference · attempt ${resolvedReference?.attempt_number}`,
+                )
+              : undefined,
+            track: shapeFromTrajectory(
+              trajectoryReport,
+              comparison?.track.track_name ?? "No track selected",
+              comparison?.track.track_length_m ?? 0,
+              regionsFromComparison(pairedRegionReport, comparison),
+            ),
+          }}
+          summary={
+            comparison
+              ? {
+                  targetTimeMs: comparison.target.lap_time_ms,
+                  referenceTimeMs: comparison.reference.lap_time_ms,
+                  officialDeltaS: comparison.official_lap_time_difference_s,
+                  sectors: ["sector1", "sector2", "sector3"].map(
+                    (key, index) => {
+                      const sector =
+                        comparison.sector_timing_difference_ms.sectors[key];
+                      return {
+                        label: `Sector ${index + 1}`,
+                        targetMs: sector?.target_valid
+                          ? sector.target_time_ms
+                          : null,
+                        referenceMs: sector?.reference_valid
+                          ? sector.reference_time_ms
+                          : null,
+                        deltaS:
+                          sector?.target_valid &&
+                          sector?.reference_valid &&
+                          sector.target_minus_reference_ms != null
+                            ? sector.target_minus_reference_ms / 1000
+                            : null,
+                      };
+                    },
+                  ),
+                }
+              : null
+          }
+          windowM={window}
+          trackHref={
+            blocked
+              ? null
+              : appScreenHref("track", preservedQuery, {
+                  reference_choice: resolvedReference?.attempt_key ?? undefined,
+                })
+          }
+        />
+        <details className="ref-workflow-details" id="comparison-workflow">
+          <summary>Open exact lap and comparison controls</summary>
+          <div className="ref-workflow-content">
         <section className="compare-page-intro">
           <div className="eyebrow">COMPARE / RECORDED ATTEMPTS</div>
           <h1>
@@ -1285,6 +1364,8 @@ export default async function ComparePage({
           {dashboardHref && <a href={dashboardHref}>Back to dashboard</a>}
           {resetHref && <a href={resetHref}>Clear comparison selections</a>}
         </div>
+          </div>
+        </details>
       </main>
       <footer className="footer-bar">
         <span>

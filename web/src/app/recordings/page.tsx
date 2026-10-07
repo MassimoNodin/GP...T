@@ -9,7 +9,9 @@ import { preservedAppStateQuery, type AppSearchParams } from "@/lib/navigation";
 import { requestApi } from "@/lib/api";
 import { readRecordingSourcePage } from "@/lib/recording-catalog";
 import AppHeader from "../AppHeader";
+import { testDataRoute } from "../TestDataRoute";
 import RecordingInbox from "../RecordingInbox";
+import ReferenceScreen from "../ReferenceScreens";
 
 export default async function RecordingsPage({
   searchParams,
@@ -17,6 +19,8 @@ export default async function RecordingsPage({
   searchParams: Promise<AppSearchParams>;
 }) {
   const params = await searchParams;
+  const syntheticPage = testDataRoute("recordings", params);
+  if (syntheticPage) return syntheticPage;
   const preservedQuery = preservedAppStateQuery(params);
   const importJobId = firstParam(params.import_job_id);
   const requestedJob = Boolean(importJobId);
@@ -61,7 +65,11 @@ export default async function RecordingsPage({
   return (
     <div className="app-shell">
       <AppHeader active="recordings" preservedQuery={preservedQuery} />
-      <main className="page-content" id="main-content" tabIndex={-1}>
+      <main className="page-content reference-page-content" id="main-content" tabIndex={-1}>
+        <ReferenceScreen screen="recordings" preservedQuery={preservedQuery} />
+        <details className="ref-workflow-details" id="recording-workflow">
+          <summary id="recording-controls-trigger">Open recording, import, and replay controls</summary>
+          <div className="ref-workflow-content">
         <section className="recordings-page-intro">
           <div className="eyebrow">RECORDINGS / CAPTURE AND REPLAY</div>
           <h1>
@@ -85,6 +93,8 @@ export default async function RecordingsPage({
           returnTo="recordings"
           preservedQuery={preservedQuery}
         />
+          </div>
+        </details>
       </main>
       <footer className="footer-bar">
         <span>

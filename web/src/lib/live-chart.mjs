@@ -79,7 +79,8 @@ export function collectBrowserTelemetryPoint(previous, monitor, sourceState) {
   }
 
   const retained = history.points.filter(
-    (item) => point.sessionTimeS - item.sessionTimeS <= LIVE_CHART_WINDOW_SECONDS,
+    (item) =>
+      point.sessionTimeS - item.sessionTimeS <= LIVE_CHART_WINDOW_SECONDS,
   );
   return {
     ...history,
@@ -123,7 +124,11 @@ function readPoint(monitor) {
   const speedKph = bounded(monitor.speed_kph, 0, 500);
   const throttle = bounded(monitor.throttle, 0, 1);
   const brake = bounded(monitor.brake, 0, 1);
-  if (speedKph === null && throttle === null && brake === null) return null;
+  const gear = Number.isInteger(monitor.gear)
+    ? bounded(monitor.gear, -1, 8)
+    : null;
+  if (speedKph === null && throttle === null && brake === null && gear === null)
+    return null;
 
   return {
     epoch,
@@ -135,6 +140,7 @@ function readPoint(monitor) {
     speedKph,
     throttle,
     brake,
+    gear,
   };
 }
 

@@ -23,6 +23,8 @@ import {
   requestApiPost,
 } from "@/lib/api";
 import AppHeader from "./AppHeader";
+import { testDataRoute } from "./TestDataRoute";
+import ReferenceScreen from "./ReferenceScreens";
 import AttemptQualityPanel from "./AttemptQualityPanel";
 import PlayerParticipantContextPanel from "./PlayerParticipantContextPanel";
 import PlayerCarSetupContextPanel from "./PlayerCarSetupContextPanel";
@@ -73,6 +75,8 @@ export default async function Home({
   searchParams: Promise<SearchParams>;
 }) {
   const rawParams = await searchParams;
+  const syntheticPage = testDataRoute("dashboard", rawParams);
+  if (syntheticPage) return syntheticPage;
   const preservedQuery = preservedAppStateQuery(rawParams);
   const selectionTransferBlocked =
     isSelectionTransferBlocked(preservedQuery);
@@ -723,7 +727,11 @@ export default async function Home({
   return (
     <div className="app-shell">
       <AppHeader active="dashboard" preservedQuery={preservedQuery} />
-      <main className="page-content" id="main-content" tabIndex={-1}>
+      <main className="page-content reference-page-content" id="main-content" tabIndex={-1}>
+        <ReferenceScreen screen="dashboard" preservedQuery={preservedQuery} />
+        <details className="ref-workflow-details" id="dashboard-workflow">
+          <summary>Open the recorded-lap analysis workspace</summary>
+          <div className="ref-workflow-content">
         <section className="intro-row">
           <div>
             <div className="eyebrow">PERSONAL AI RACE ENGINEER / SESSION REVIEW</div>
@@ -1635,7 +1643,6 @@ export default async function Home({
             </div>
           </>
         )}
-      </main>
       <EngineerQueryPanel
         report={engineerQueryReport}
         requestState={engineerQueryRequestState}
@@ -1669,6 +1676,9 @@ export default async function Home({
             : null
         }
       />
+          </div>
+        </details>
+      </main>
       <footer className="footer-bar">
         <span>
           GP...T <b>·</b> LOCAL FIRST

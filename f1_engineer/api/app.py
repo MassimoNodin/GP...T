@@ -39,6 +39,7 @@ from ..analysis.paired_region_service import (
 from ..analysis.quality import inspect_attempt_quality_web
 from ..analysis.region_service import RegionReportUnavailable, load_attempt_region_report
 from ..analysis.service import compare_attempts
+from ..analysis.car_slot_comparison import compare_player_slot_window
 from ..analysis.trajectory import TrajectoryPreviewUnavailable
 from ..analysis.trajectory_comparison import TrajectoryComparisonUnavailable
 from ..analysis.trajectory_comparison_service import compare_observed_trajectories
@@ -2482,6 +2483,43 @@ def create_app(
                 reason=str(exc),
             )
         return APIResponse[dict[str, Any]](data=_stringify_session_uids(result))
+
+    @app.get(
+        "/api/v1/compare/player-slot-window",
+        response_model=APIResponse[dict[str, Any]],
+    )
+    def compare_player_slot_window_api(
+        target_attempt_key: str = Query(min_length=1, max_length=512),
+        slot_car_index: int = Query(ge=0, le=23),
+        slot_attempt_key: str = Query(min_length=1, max_length=512),
+        window_start_m: float = Query(),
+        window_end_m: float = Query(),
+    ) -> APIResponse[dict[str, Any]]:
+        try:
+            window = optional_distance_window(window_start_m, window_end_m)
+            if window is None:
+                raise ValueError("player_slot_comparison_window_required")
+            result = compare_player_slot_window(
+                configured_database_path,
+                target_attempt_key,
+                slot_car_index,
+                slot_attempt_key,
+                window,
+            )
+        except DatabaseSchemaError:
+            raise
+        except OSError:
+            return APIResponse[dict[str, Any]](
+                status="unavailable",
+                reason="player_slot_comparison_source_unavailable",
+            )
+        except ValueError as exc:
+            return APIResponse[dict[str, Any]](
+                status="unavailable", reason=str(exc)
+            )
+        return APIResponse[dict[str, Any]](
+            data=_stringify_session_uids(result)
+        )
 
     @app.get("/api/v1/compare/regions", response_model=APIResponse[dict[str, Any]])
     def compare_regions(

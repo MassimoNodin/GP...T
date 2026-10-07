@@ -1369,6 +1369,68 @@ Return recognized text as an explicitly unverified English draft. Preserve the c
 
 **Rationale:** The browser can add a convenient voice path while the existing D0082 selection and deterministic evidence checks remain authoritative. A fixed local recognizer preserves the local-first data boundary, and an editable draft prevents recognition errors from silently becoming questions or changing an evidence selection. The shared AI gate bounds CPU use and stays held through work that outlives a cancelled request.
 
+## Decision 0087: compare a player lap with one recorded car-slot lap
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Add a separate diagnostic service using policy `pq-player-slot-window-diagnostic-v1`. A request selects exactly one existing player attempt, one exact D0083 slot-lap attempt, and one finite numeric distance window. Keep player-to-player comparison, Time Trial reference selection, ranking, and their APIs unchanged.
+
+The two attempts must belong to the same completed processing run and session UID, use the same packet format and assessable lifecycle epoch, and have stable compatible Practice/Qualifying context over their complete attempts. The slot attempt must retain its exact D0083 tenure and frame ownership. Reject Race and unknown contexts. Admit only completed attempts with an observed start, known game validity, and no recorded pit encounter. A slot index identifies a car only for that exact recorded tenure; do not infer a driver or substitute the current occupant, fastest lap, latest lap, P2, or any other attempt.
+
+Reuse the D0084 bounded checksummed chunk reader, extracted as a shared internal source reader for both exact-lap observation pages and analysis. The analysis source consists of every verified owned row in the attempt bounds; never join preview pages or infer continuity between pages. Verify the chunk checksum, manifest, Parquet version/row counts, session, packet format, epoch, slot, tenure, and inclusive frame bounds. Exclude the completion-transition observation. Preserve source-row order and reject duplicates or regressions.
+
+Use the existing `TraceSample`, distance resampling, interval delta evaluator, channel masks, and event-threshold uncertainty rules. Missing channel values remain missing; gaps in either lap remain unsupported, and neither time nor channel metrics bridge source discontinuities. The analysis window is half-open `[start_m, end_m)`, within the track bounds, no wider than 2,000 m, on a fixed 1 m grid. Return target-minus-slot measurements and support masks. Opponent fuel, tyre and damage conditions are not present in the all-car archive and must be labelled unassessed.
+
+Retain the D0084 limits of 256 chunks, 16 MiB per chunk, 64 MiB source bytes, 1,024 row groups, and 4,194,304 decoded rows. Apply one shared 64 MiB source-read budget and 100,000 retained-analysis-row ceiling across both attempts; cap the grid at 100,000 points and total analysis work at 32 million units, in addition to the existing interval work limit. Reject over-limit requests or results without partial measurements. Limit each selected key to 512 bytes; serialize no more than five measured facts or 2 MiB. Bind every returned chart and measurement to both attempt keys, their run/session identities, the slot tenure, checksums, schemas, policy, and exact distance window. No client-supplied file paths are accepted.
+
+Expose an explicit recorded-slot lap selector and numeric-window comparison in `/compare`, with a link from the exact slot-lap view in Sessions. Require the browser to validate both source identities, tenure provenance, policy and window before displaying any nested measurements; stale or mismatched optional data is unavailable. Capture-footer, replay, missing-condition and lifecycle qualifications remain visible. The result is diagnostic only: `reference_eligible`, `ranking_eligible`, and `coaching_eligible` are always false. Do not add named-driver identity, automatic rival references, Race comparison, geometry, strategy, coaching, or an AI route.
+
+**Acceptance:** re-import the recovered Shanghai capture with the current importer and reconcile selected D0083 attempt admission, tenure bounds, and owned rows against the checksummed archive. Admit at least one real Practice/Qualifying pair with supported measurements and demonstrate windows that abstain where interval-time support is missing. If the current importer cannot admit a complete real pair, preserve the gates and report that evidence gap; do not weaken ownership or support rules. Synthetic coverage includes roster replacement/inactivity, wrong tenure/epoch/format/run/session, rewind/wrap, absent roster/channel/clock data, zero-padded slots, completion-transition ownership, corrupt checksums/manifests, unsafe paths, request/source/work/result limits, and forged selections. Existing comparison behavior remains unchanged.
+
+**Rationale:** D0083/D0084 preserve all-car observations with exact per-slot tenure ownership and a checksummed archive. The Shanghai Practice capture contains paired player/rival telemetry and the existing distance/clock/channel evaluator can measure connected windows. A separately named same-session diagnostic policy allows the MVP's opponent comparison without pretending a slot is a persistent driver identity or granting a rival lap reference or coaching authority.
+
+## Decision 0088: compose the eight reference screens around existing evidence workflows
+
+**Status:** accepted
+
+**Date:** 2026-10-06
+
+Rebuild the presentation of the existing Next.js routes around the eight `mock-images/` references. Map image 1 to Dashboard (`/`), 2 to Live Telemetry (`/live`), 3 to AI Engineer (`/engineer`), 4 to Lap Comparison (`/compare`), 5 to Settings (`/settings`), 6 to Recordings (`/recordings`), 7 to Track Analysis (`/track`), and 8 to Sessions (`/sessions`). Keep the current Python services, same-origin mutation proxies, bounded selection URLs, source identity validation, and client operation controllers authoritative. This presentation change requires no new backend contract or database schema.
+
+Use one shared application shell and a small set of visual primitives for SVG icons, panel headings, metric cells, status badges, compact tables, chart frames, and unavailable values. Keep the shell in the existing page composition so each server page can pass its validated preserved query to navigation; do not move query-dependent selection into the root layout or introduce a second global selection store. The HUD remains its separate existing route. The reference desktop geometry is 1672 by 941 pixels: a 226-pixel navigation rail, approximately 60-pixel top bar, 16-pixel content inset, and 10–12-pixel panel gaps. Define those dimensions once, then use named screen grids with explicit column proportions and row sizing. Reflow the grids on narrower viewports; do not scale a screenshot, use screenshot backgrounds, or hide controls through viewport clipping.
+
+Each screen owns its layout rather than inheriting the old sidebar-and-analysis-stack structure. Dashboard and Live use three-column summaries above a two-column table/chart row; Engineer uses a full-width intent strip above conversation and context/evidence columns; Compare uses selection/metrics strips above chart and map/reference columns; Settings uses a section rail alongside paired configuration cards; Recordings uses a full-width capture strip above catalog/replay and jobs/details columns; Track uses a configuration strip above map/region/chart/observation panels; Sessions uses filters above archive, run/attempt, and summary/inventory columns. Put screen geometry in scoped presentation styles loaded after the legacy evidence styles. Avoid another broad global recoloring layer: existing diagnostics must retain legible statuses, charts, and forms.
+
+Adapt existing components into compact summaries and detailed views while retaining their loading, validation, freshness, polling, and action logic. In particular, keep the pinned live poller used by `LiveTelemetryScreen`, the dashboard live card, and the browser HUD, plus recording/replay/import controllers, `SessionsRunEvidence`'s exact run and attempt resolution, comparison response matchers, and Engineer question/speech controllers. Detailed provenance, exclusion reasons, inventories, authoring forms, and advanced diagnostic panels remain accessible through labelled expandable sections or existing deep links. Do not remove workflow controls or reuse an entire long evidence panel inside a small fixed-height reference card.
+
+Render missing values as explicit placeholders inside the same reference geometry. Empty tables retain headers and a bounded empty state; unavailable charts retain their frame, units, and reason without fabricated curves; unavailable map/region and AI evidence states do not invent results. Recording activity, freshness, eligible best laps, tyre/fuel units, storage capacity, local-model readiness, and findings derive only from their existing supported sources. Unsupported reference features have disabled controls with a concise reason. Track images or decorative maps never establish selected track identity, calibrated boundaries, or regional performance. Browser-inapplicable window buttons must not imply operating-system control.
+
+**Rationale:** The application already implements substantial capture, import, replay, selection, comparison, and evidence workflows. A bounded presentation layer can reproduce the reference hierarchy and density without duplicating those controllers or weakening their source checks. Stable card geometry with explicit missing-data states makes visual parity achievable even when the local workspace lacks the reference's illustrative data. Separate screen grids reduce CSS coupling; compact/detail component views preserve the growing diagnostic surface without overwhelming the initial composition.
+
+## Decision 0089: render dynamic analysis through explicit input evidence
+
+**Status:** accepted
+
+**Date:** 2026-10-07
+
+Reuse the selected attempt/reference/model matchers and API reports for the main Track Analysis and Lap Comparison views. Reusable client components receive arbitrary distance-anchored path segments, named regions, supported local timing and aligned masked lap channels. Preserve path and signal gaps, equal map scale, half-open region windows and original cursor samples. Browser-local JSON accepts the same bounded contract for supplied shapes and traces. Mock references set styling and layout; supplied classifications and observed geometry keep their source labels.
+
+**Rationale:** This makes the reference UI operate on real or explicitly supplied inputs without another analysis service or hardcoded circuits. The specialist architecture/code audit verified the evidence boundary, exact pair selection and continuity handling. [Input contract, integration and verification](dynamic-ui-analysis.md) record the details. The follow-up [parity audit](ui-parity-audit-2026-10-07.md) verified that the reference image files are 1672×941; use those exact dimensions for future acceptance captures.
+
+## Decision 0090: populate pages through an isolated synthetic API
+
+**Status:** accepted, 2026-10-07. Architecture decision and code review by the required `gpt-6.1-sol` specialist.
+
+Add a read-only Next `GET /api/test-data` namespace with deterministic, bounded populated/empty/partial/stale/unavailable scenarios and a separately versioned synthetic UI snapshot. Each of the eight pages branches immediately after resolving URL parameters, before production API reads or controller/poller mounts. The header has the same boundary and identifies the synthetic mode. Settings and Engineer fixtures are presentation examples without writes, hardware access or inference.
+
+Reuse the map/trace presentation components with API-generated `AnalysisInput`; use a standalone synthetic telemetry presentation instead of the production pinned poller. Preserve missing samples and geometry segments. Responses carry synthetic provenance and diagnostic-only, coaching-ineligible and ranking-ineligible flags; test IDs stay outside real operation identities. Validate exact supplied selections and clear values on failed responses without substitutes.
+
+Keep only bounded synthetic scenario/session/target/reference state across navigation. Playback advances after completed API reads, avoiding overlapping tick requests and cancellation starvation, and stops on failure. Exit/reset discard synthetic state. Production SQLite, capture storage, UDP, imports/replays, runtime/speech and preference contracts remain authoritative in real-data mode.
+
+**Rationale:** An actual same-origin API can populate all pages without requiring the game or Python service. A separate namespace and page branch let realistic UI examples coexist with strict recorded-evidence admission without counterfeit reports or seeded production records. Accepted audit corrections preserve chosen laps across pages, consistent lifecycle information and slow-request behavior. [Usage, scenarios and contract](api-test-data.md) document the implementation.
+
 ## Data flow
 
 ```text
