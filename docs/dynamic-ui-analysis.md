@@ -64,7 +64,9 @@ Choose a target, reference, comparison policy and track model using Lap Comparis
 
 ## Verification, 2026-10-07
 
-TypeScript and production build pass. Input/adapters, comparison identity, trajectory identity, browser live-history and pinned-poller checks pass. Browser checks at the mock's 1672×943 viewport cover local JSON loading, named region selection, original shared cursor readings, half-open windows, empty windows, gear selection and zoom/reset. Live panel rows size to their content without overlapping. The recent best timing is explicitly limited to available history rows.
+TypeScript and production build pass. Input/adapters, comparison identity, trajectory identity, browser live-history and pinned-poller checks pass. Browser checks at a 1672×943 viewport cover local JSON loading, named region selection, original shared cursor readings, half-open windows, empty windows, gear selection and zoom/reset. Live panel rows size to their content without overlapping. The recent best timing is explicitly limited to available history rows.
+
+The follow-up [remaining-page parity audit](ui-parity-audit-2026-10-07.md) verified the actual mocks as 1672×941. Earlier preview filenames describe the requested viewport; their browser JPEG exports were downsampled to 1657×935. The final audit exports were visually inspected and match the mocks' full dimensions.
 
 The local telemetry API was offline during browser verification. Running recording/replay data could not be exercised; live unavailable-state rendering was checked. The analysis screenshots use the labelled synthetic example input, not a recorded session.
 

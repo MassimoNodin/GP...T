@@ -1417,7 +1417,7 @@ Render missing values as explicit placeholders inside the same reference geometr
 
 Reuse the selected attempt/reference/model matchers and API reports for the main Track Analysis and Lap Comparison views. Reusable client components receive arbitrary distance-anchored path segments, named regions, supported local timing and aligned masked lap channels. Preserve path and signal gaps, equal map scale, half-open region windows and original cursor samples. Browser-local JSON accepts the same bounded contract for supplied shapes and traces. Mock references set styling and layout; supplied classifications and observed geometry keep their source labels.
 
-**Rationale:** This makes the reference UI operate on real or explicitly supplied inputs without another analysis service or hardcoded circuits. The specialist architecture/code audit verified the evidence boundary, exact pair selection and continuity handling. [Input contract, integration and verification](dynamic-ui-analysis.md) record the details. Browser previews use the image files' actual 1672×943 dimensions.
+**Rationale:** This makes the reference UI operate on real or explicitly supplied inputs without another analysis service or hardcoded circuits. The specialist architecture/code audit verified the evidence boundary, exact pair selection and continuity handling. [Input contract, integration and verification](dynamic-ui-analysis.md) record the details. The follow-up [parity audit](ui-parity-audit-2026-10-07.md) verified that the reference image files are 1672×941; use those exact dimensions for future acceptance captures.
 
 ## Data flow
 
