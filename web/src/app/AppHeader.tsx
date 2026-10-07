@@ -3,7 +3,8 @@ import {
   isSelectionTransferBlocked,
   type AppScreen,
 } from "@/lib/navigation";
-import { requestApi, type RecordingJobRecord } from "@/lib/api";
+import { requestApi } from "@/lib/api";
+import { recordingHeaderEvidence } from "@/lib/header-evidence";
 
 function NavIcon({ screen, active }: { screen: AppScreen; active: boolean }) {
   switch (screen) {
@@ -92,9 +93,12 @@ export default async function AppHeader({
   preservedQuery: string;
 }) {
   const testMode = new URLSearchParams(preservedQuery).has("test_data");
-  const recordingResponse = testMode ? null : await requestApi<RecordingJobRecord>("/api/v1/recordings/current");
-  const recordingActive = recordingResponse?.status === "ok" && ["starting", "recording", "stopping"].includes(recordingResponse.data?.status ?? "");
-  const recordingLabel = testMode ? "Synthetic API test data" : recordingResponse?.status !== "ok" ? "UDP status unavailable" : recordingActive ? "UDP Recording Active" : "UDP Recording Inactive";
+  const recordingResponse = testMode
+    ? null
+    : await requestApi<unknown>("/api/v1/recordings/current").catch(() => null);
+  const recordingEvidence = recordingHeaderEvidence(recordingResponse);
+  const recordingActive = !testMode && recordingEvidence.active;
+  const recordingLabel = testMode ? "Synthetic example data" : recordingEvidence.label;
   const navigation = links.map((item) => ({
     ...item,
     href: appScreenHref(item.screen, preservedQuery),
@@ -196,23 +200,30 @@ export default async function AppHeader({
             <div className="rail-footnote-top">
               <strong>Storage</strong>
             </div>
-            <div className="rail-storage-track" aria-hidden="true">
-              <i style={{ width: testMode ? "0%" : "21.3%" }} />
-            </div>
-            <small>{testMode ? "In-memory examples · no disk use" : "42.6 GB / 200 GB"}</small>
+            {testMode ? (
+              <small>Synthetic examples; storage not measured</small>
+            ) : transferBlocked || !settingsHref ? (
+              <small aria-disabled="true">Storage details in Settings</small>
+            ) : (
+              <small><a href={`${settingsHref}#storage`}>Storage details in Settings</a></small>
+            )}
           </div>
         </div>
       </aside>
       <header className="topbar">
         <div className="topbar-context">
-          <span className="local-status-dot" aria-hidden="true" />
+          <span className="local-status-dot" style={{ background: "#94a3b8", boxShadow: "none" }} aria-hidden="true" />
           <div className="topbar-text">
-            <strong>{testMode ? "Test Data Mode" : "Local Mode"}</strong>
-            <small>{testMode ? "Synthetic examples from the API" : "All data stays on your computer"}</small>
+            <strong>{testMode ? "Test Data Mode" : "Local-first design"}</strong>
+            <small>{testMode ? "Synthetic examples; no live acquisition" : "Check runtime capabilities in Settings"}</small>
           </div>
         </div>
         <div className="topbar-right">
-          {!testMode ? <a className="ref-button" href="/settings?test_data=populated">Test data</a> : null}
+          {!testMode ? transferBlocked ? (
+            <span className="ref-button is-disabled" aria-disabled="true">Test data</span>
+          ) : (
+            <a className="ref-button" href={appScreenHref("settings", "test_data=populated") ?? undefined}>Test data</a>
+          ) : null}
           <span className="topbar-udp-badge">
             <span className="topbar-dot-green" style={recordingActive ? undefined : { background: "#94a3b8" }} aria-hidden="true" />
             {recordingLabel}
