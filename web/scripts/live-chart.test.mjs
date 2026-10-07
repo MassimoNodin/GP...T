@@ -17,6 +17,7 @@ function sample(overrides = {}) {
     player_car_index: 0,
     session_time_s: 10,
     speed_kph: 200,
+    gear: 7,
     throttle: 0.7,
     brake: 0,
     ...overrides,
@@ -30,6 +31,7 @@ test("deduplicates repeated and stale snapshots, including paused replay polls",
     "playing",
   );
   assert.equal(first.points.length, 1);
+  assert.equal(first.points[0].gear, 7);
   assert.equal(collectBrowserTelemetryPoint(first, sample(), "playing"), first);
   assert.equal(
     collectBrowserTelemetryPoint(

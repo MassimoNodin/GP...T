@@ -14,8 +14,7 @@ import {
   type AppSearchParams,
 } from "@/lib/navigation";
 import AppHeader from "../AppHeader";
-import LiveTelemetryView from "../LiveTelemetryView";
-import ReferenceScreen from "../ReferenceScreens";
+import LiveTelemetryScreen from "../LiveTelemetryScreen";
 
 type InitialStatus = PinnedLiveRead["status"] | "unselected" | "invalid";
 
@@ -54,26 +53,13 @@ export default async function LivePage({
   return (
     <div className="app-shell">
       <AppHeader active="live" preservedQuery={preservedQuery} />
-      <main className="page-content reference-page-content" id="main-content" tabIndex={-1}>
-        <ReferenceScreen screen="live" preservedQuery={preservedQuery} />
-        <details className="ref-workflow-details">
-          <summary>Open the pinned live telemetry workflow</summary>
-          <div className="ref-workflow-content">
-        <section className="live-page-intro">
-          <div className="eyebrow">LIVE / PINNED TELEMETRY SOURCE</div>
-          <h1>
-            Stay with the
-            <br />
-            <span>same operation.</span>
-          </h1>
-          <p>
-            Live monitoring is read-only. This view stays attached to the
-            recording or replay selected from its controls and will never switch
-            to a newer operation by itself.
-          </p>
-        </section>
-        <LiveTelemetryView
-          key={JSON.stringify([source, operationId, status, snapshot])}
+      <main
+        className="page-content reference-page-content"
+        id="main-content"
+        tabIndex={-1}
+      >
+        <LiveTelemetryScreen
+          key={JSON.stringify([source, operationId])}
           initialStatus={status}
           initialSnapshot={snapshot}
           source={source}
@@ -81,8 +67,31 @@ export default async function LivePage({
           recordingsHref={
             blocked ? null : appScreenHref("recordings", preservedQuery)
           }
-          hudHref={blocked ? null : appScreenHref("hud", preservedQuery)}
         />
+        <details className="ref-workflow-details">
+          <summary>Open the pinned live telemetry workflow</summary>
+          <div className="ref-workflow-content">
+            <section className="live-page-intro">
+              <div className="eyebrow">LIVE / PINNED TELEMETRY SOURCE</div>
+              <h1>
+                Stay with the
+                <br />
+                <span>same operation.</span>
+              </h1>
+              <p>
+                Live monitoring is read-only. This view stays attached to the
+                recording or replay selected from its controls and will never
+                switch to a newer operation by itself.
+              </p>
+            </section>
+            <a
+              className="ref-button"
+              href={
+                appScreenHref("recordings", preservedQuery) ?? "/recordings"
+              }
+            >
+              Recording and replay controls
+            </a>
           </div>
         </details>
       </main>

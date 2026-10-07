@@ -10,6 +10,7 @@ export interface BrowserTelemetryPoint {
   speedKph: number | null;
   throttle: number | null;
   brake: number | null;
+  gear: number | null;
 }
 
 export interface BrowserTelemetryHistory {

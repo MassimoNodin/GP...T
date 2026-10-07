@@ -3,6 +3,8 @@ import type {
   AttemptQualityReport,
   AttemptTraceChartReport,
   AttemptTrajectoryPreview,
+  Comparison,
+  PairedRegionReport,
   LapAttemptPage,
   LapRecord,
   TrackModelRecord,
@@ -17,7 +19,15 @@ import {
   lapAttemptPageMatchesScope,
 } from "@/lib/attempt-inventory";
 import AppHeader from "../AppHeader";
-import ReferenceScreen from "../ReferenceScreens";
+import TrackAnalysisScreen from "../TrackAnalysisScreen";
+import {
+  regionsFromAttempt,
+  regionsFromComparison,
+  shapeFromTrajectory,
+  tracesFromComparison,
+} from "@/lib/analysis-display";
+import { comparisonReportMatchesAttempts } from "@/lib/comparison-report-match";
+import { pairedRegionReportMatchesSelection } from "@/lib/engineer-query-match";
 import TrackDiagnosticEvidencePanels from "../TrackDiagnosticEvidencePanels";
 import DraftTrackModelPanel from "../DraftTrackModelPanel";
 import AttemptTraceCharts from "../AttemptTraceCharts";
@@ -36,6 +46,8 @@ const selectionKeys = [
   "attempt_offset",
   "track_model_key",
   "engineer_region_identifier",
+  "reference_choice",
+  "comparison_policy",
 ];
 
 export default async function TrackPage({
@@ -53,6 +65,8 @@ export default async function TrackPage({
     attemptOffset: one(params.attempt_offset),
     modelKey: one(params.track_model_key),
     regionId: one(params.engineer_region_identifier),
+    referenceKey: one(params.reference_choice),
+    policy: one(params.comparison_policy),
   };
   const duplicateSelection = selectionKeys.some((key) => hasDuplicate(params[key]));
   const sessionMatch = raw.sessionKey
@@ -84,6 +98,7 @@ export default async function TrackPage({
             sessionUid,
             offset: attemptOffset ?? 0,
             targetAttemptKey: attemptKeyValid ? raw.attemptKey : undefined,
+            referenceAttemptKey: validAttemptKey(raw.referenceKey) ? raw.referenceKey : undefined,
           }),
         )
       : Promise.resolve(null),
@@ -218,6 +233,60 @@ export default async function TrackPage({
           ? "track_model_catalog_unavailable"
           : "choose_a_catalog_model_revision_to_request_region_observations";
 
+  const reference =
+    runId && sessionUid && validAttemptKey(raw.referenceKey)
+      ? exactLapAttempt(attemptPage, raw.referenceKey, runId, sessionUid)
+      : null;
+  const policy =
+    raw.policy === "time_trial" || raw.policy === "practice_qualifying"
+      ? raw.policy
+      : null;
+  const pairReady = Boolean(
+    !selectionInvalid && attempt && reference && policy,
+  );
+  const pairQuery = new URLSearchParams({
+    target_attempt_key: attempt?.attempt_key ?? "",
+    reference_attempt_key: reference?.attempt_key ?? "",
+    comparison_policy: policy ?? "",
+  });
+  const [pairResponse, pairedRegionsResponse] = await Promise.all([
+    pairReady
+      ? requestApi<Comparison>(`/api/v1/compare/laps?${pairQuery}`)
+      : Promise.resolve(null),
+    pairReady && selectedModel
+      ? requestApi<PairedRegionReport>(
+          `/api/v1/compare/regions?${pairQuery}&${new URLSearchParams({ track_model_id: selectedModel.model_id, track_model_revision: String(selectedModel.revision) })}`,
+        )
+      : Promise.resolve(null),
+  ]);
+  const pairCandidate =
+    pairResponse?.status === "ok" ? pairResponse.data : null;
+  const comparison =
+    pairCandidate &&
+    attempt &&
+    reference &&
+    pairCandidate.comparison_policy === policy &&
+    comparisonReportMatchesAttempts(pairCandidate, attempt, reference)
+      ? pairCandidate
+      : null;
+  const pairedCandidate =
+    pairedRegionsResponse?.status === "ok" ? pairedRegionsResponse.data : null;
+  const pairedRegions =
+    comparison &&
+    pairedCandidate &&
+    attempt &&
+    reference &&
+    selectedModel &&
+    policy &&
+    pairedRegionReportMatchesSelection(pairedCandidate, {
+      target: attempt,
+      reference,
+      model: selectedModel,
+      comparisonPolicy: policy,
+    })
+      ? pairedCandidate
+      : null;
+
   const requestedRegionExists = Boolean(
     raw.regionId && regionReport?.regions.some((region) => region.identifier === raw.regionId),
   );
@@ -256,7 +325,45 @@ export default async function TrackPage({
     <div className="app-shell">
       <AppHeader active="track" preservedQuery={preservedQuery} />
       <main className="page-content reference-page-content" id="main-content" tabIndex={-1}>
-        <ReferenceScreen screen="track" preservedQuery={preservedQuery} />
+        <TrackAnalysisScreen
+          key={JSON.stringify([
+            attempt?.attempt_key,
+            attempt?.trace_sha256,
+            reference?.attempt_key,
+            reference?.trace_sha256,
+            policy,
+            selectedModel?.model_id,
+            selectedModel?.revision,
+            selectedModel?.content_sha256,
+            selectedRegionId,
+          ])}
+          initialInput={{
+            version: 1,
+            track: shapeFromTrajectory(
+              trajectoryReport,
+              attempt?.context?.track_name ??
+                selectedModel?.track_name ??
+                "No track selected",
+              selectedModel?.track_length_m ??
+                attempt?.context?.track_length_m ??
+                0,
+              comparison
+                ? regionsFromComparison(pairedRegions, comparison)
+                : regionsFromAttempt(regionReport),
+            ),
+            comparison: comparison
+              ? tracesFromComparison(
+                  comparison,
+                  `Target · attempt ${attempt?.attempt_number}`,
+                  `Reference · attempt ${reference?.attempt_number}`,
+                )
+              : undefined,
+          }}
+          initialRegionId={selectedRegionId}
+          selectionHref={
+            blocked ? null : appScreenHref("compare", preservedQuery)
+          }
+        />
         <details className="ref-workflow-details" id="track-evidence">
           <summary id="track-evidence-trigger">Open observed path and region evidence</summary>
           <div className="ref-workflow-content">

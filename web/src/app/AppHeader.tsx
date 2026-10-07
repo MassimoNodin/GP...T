@@ -3,6 +3,7 @@ import {
   isSelectionTransferBlocked,
   type AppScreen,
 } from "@/lib/navigation";
+import { requestApi, type RecordingJobRecord } from "@/lib/api";
 
 function NavIcon({ screen, active }: { screen: AppScreen; active: boolean }) {
   switch (screen) {
@@ -83,13 +84,16 @@ const links = [
   { screen: "settings" as const, label: "Settings" },
 ];
 
-export default function AppHeader({
+export default async function AppHeader({
   active,
   preservedQuery,
 }: {
   active: AppScreen;
   preservedQuery: string;
 }) {
+  const recordingResponse = await requestApi<RecordingJobRecord>("/api/v1/recordings/current");
+  const recordingActive = recordingResponse?.status === "ok" && ["starting", "recording", "stopping"].includes(recordingResponse.data?.status ?? "");
+  const recordingLabel = recordingResponse?.status !== "ok" ? "UDP status unavailable" : recordingActive ? "UDP Recording Active" : "UDP Recording Inactive";
   const navigation = links.map((item) => ({
     ...item,
     href: appScreenHref(item.screen, preservedQuery),
@@ -156,7 +160,7 @@ export default function AppHeader({
                 <span className="nav-icon" aria-hidden="true">
                   <NavIcon screen={item.screen} active={isCurrent} />
                 </span>
-                <span>{item.label}</span>
+                <span className="nav-label">{item.label}</span>
               </span>
             ) : (
               <a
@@ -167,7 +171,7 @@ export default function AppHeader({
                 <span className="nav-icon" aria-hidden="true">
                   <NavIcon screen={item.screen} active={isCurrent} />
                 </span>
-                <span>{item.label}</span>
+                <span className="nav-label">{item.label}</span>
               </a>
             );
           })}
@@ -208,18 +212,18 @@ export default function AppHeader({
         </div>
         <div className="topbar-right">
           <span className="topbar-udp-badge">
-            <span className="topbar-dot-green" aria-hidden="true" />
-            UDP Recording Active
+            <span className="topbar-dot-green" style={recordingActive ? undefined : { background: "#94a3b8" }} aria-hidden="true" />
+            {recordingLabel}
           </span>
           {transferBlocked || !recordingsHref ? (
             <span className="topbar-stop-btn is-disabled" aria-disabled="true">
               <span className="stop-square" aria-hidden="true" />
-              Stop Recording
+              Recording Controls
             </span>
           ) : (
             <a className="topbar-stop-btn" href={recordingsHref}>
               <span className="stop-square" aria-hidden="true" />
-              Stop Recording
+              Recording Controls
             </a>
           )}
           {transferBlocked || !settingsHref ? (

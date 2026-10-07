@@ -8,11 +8,44 @@ import {
   type BrowserTelemetryPoint,
 } from "@/lib/live-chart.mjs";
 
-const chart = { left: 82, right: 790, top: 24, bottom: 210 };
+const chart = { left: 82, right: 790, top: 16, bottom: 234 };
 const lanes = [
-  { key: "speedKph", label: "SPEED", unit: "km/h", min: 0, max: 500, y: 58, color: "#e2b15c" },
-  { key: "throttle", label: "THROTTLE", unit: "%", min: 0, max: 1, y: 122, color: "#74c7b5" },
-  { key: "brake", label: "BRAKE", unit: "%", min: 0, max: 1, y: 186, color: "#e68670" },
+  {
+    key: "speedKph",
+    label: "SPEED",
+    unit: "km/h",
+    min: 0,
+    max: 500,
+    y: 48,
+    color: "#0068ff",
+  },
+  {
+    key: "throttle",
+    label: "THROTTLE",
+    unit: "%",
+    min: 0,
+    max: 1,
+    y: 102,
+    color: "#00bd60",
+  },
+  {
+    key: "brake",
+    label: "BRAKE",
+    unit: "%",
+    min: 0,
+    max: 1,
+    y: 156,
+    color: "#ff172b",
+  },
+  {
+    key: "gear",
+    label: "GEAR",
+    unit: "",
+    min: -1,
+    max: 8,
+    y: 210,
+    color: "#ffa000",
+  },
 ] as const;
 
 export default function LiveTelemetryChart({
@@ -36,12 +69,14 @@ export default function LiveTelemetryChart({
   const domainSpan = Math.min(60, Math.max(1, domainEnd));
   const domainStart = Math.max(0, domainEnd - domainSpan);
   const xFor = (time: number) =>
-    chart.left + ((time - domainStart) / domainSpan) * (chart.right - chart.left);
+    chart.left +
+    ((time - domainStart) / domainSpan) * (chart.right - chart.left);
   const summary = latest
-    ? `Latest browser-observed values: speed ${format(latest.speedKph, 0)} kilometres per hour, throttle ${formatPercent(latest.throttle)}, brake ${formatPercent(latest.brake)}.`
+    ? `Latest browser-observed values: speed ${format(latest.speedKph, 0)} kilometres per hour, throttle ${formatPercent(latest.throttle)}, brake ${formatPercent(latest.brake)}, gear ${formatGear(latest.gear)}.`
     : "Waiting for a fresh telemetry frame with valid source identity.";
   const epochAvailable =
-    typeof telemetry.source_epoch === "string" && telemetry.source_epoch.length > 0;
+    typeof telemetry.source_epoch === "string" &&
+    telemetry.source_epoch.length > 0;
   const observationState =
     sourceState === "paused"
       ? "PAUSED"
@@ -57,17 +92,20 @@ export default function LiveTelemetryChart({
         <div>
           <h3 id="live-chart-title">Browser-observed telemetry</h3>
           <p>
-            Speed, throttle and brake samples seen by this page. Polling runs about
-            twice per second, so intermediate acquisition frames are skipped.
+            Speed, throttle, brake and gear samples seen by this page. Polling
+            runs about twice per second, so intermediate acquisition frames are
+            skipped.
           </p>
         </div>
-        <span>{observationState} · {points.length} POINTS</span>
+        <span>
+          {observationState} · {points.length} POINTS
+        </span>
       </div>
 
       {!epochAvailable ? (
         <p className="live-chart-empty" role="status">
-          Chart unavailable because this source response has no continuity identity.
-          The live monitor remains available above.
+          Chart unavailable because this source response has no continuity
+          identity. The live monitor remains available above.
         </p>
       ) : points.length === 0 ? (
         <p className="live-chart-empty" role="status">
@@ -77,23 +115,42 @@ export default function LiveTelemetryChart({
               ? "The latest telemetry is stale. No new chart point was added."
               : history.awaitingMonotonicResume
                 ? "Source time moved backward. History is clear while the chart waits for a later monotonic sample."
-              : "Waiting for a fresh telemetry frame with valid source identity."}
+                : "Waiting for a fresh telemetry frame with valid source identity."}
         </p>
       ) : (
         <>
           <svg
             className="live-chart-svg"
-            viewBox="0 0 820 250"
+            viewBox="0 0 820 270"
             role="img"
             aria-label={`${summary} Points are separate observations with no line between them.`}
           >
             {[0, 0.5, 1].map((fraction) => {
               const x = chart.left + fraction * (chart.right - chart.left);
-              const label = fraction === 1 ? "LATEST SAMPLE" : `−${Math.round((1 - fraction) * domainSpan)}s`;
+              const label =
+                fraction === 1
+                  ? "LATEST SAMPLE"
+                  : `−${Math.round((1 - fraction) * domainSpan)}s`;
               return (
                 <g key={fraction}>
-                  <line x1={x} x2={x} y1={chart.top} y2={chart.bottom} className="live-chart-grid" />
-                  <text x={x} y="232" textAnchor={fraction === 0 ? "start" : fraction === 1 ? "end" : "middle"}>
+                  <line
+                    x1={x}
+                    x2={x}
+                    y1={chart.top}
+                    y2={chart.bottom}
+                    className="live-chart-grid"
+                  />
+                  <text
+                    x={x}
+                    y="255"
+                    textAnchor={
+                      fraction === 0
+                        ? "start"
+                        : fraction === 1
+                          ? "end"
+                          : "middle"
+                    }
+                  >
                     {label}
                   </text>
                 </g>
@@ -114,10 +171,18 @@ export default function LiveTelemetryChart({
                     {lane.label}
                   </text>
                   <text x={chart.left - 6} y={lane.y - 13} textAnchor="end">
-                    {lane.key === "speedKph" ? "500" : "100%"}
+                    {lane.key === "speedKph"
+                      ? "500"
+                      : lane.key === "gear"
+                        ? "8"
+                        : "100%"}
                   </text>
                   <text x={chart.left - 6} y={lane.y + 25} textAnchor="end">
-                    {lane.key === "speedKph" ? "0" : "0%"}
+                    {lane.key === "speedKph"
+                      ? "0"
+                      : lane.key === "gear"
+                        ? "R"
+                        : "0%"}
                   </text>
                   {points.map((point) => {
                     const value = point[field];
@@ -133,7 +198,7 @@ export default function LiveTelemetryChart({
                         fill={lane.color}
                       >
                         <title>
-                          {`${lane.label.toLowerCase()} ${lane.key === "speedKph" ? `${Math.round(value)} km/h` : formatPercent(value)} at source time ${point.sessionTimeS.toFixed(2)} s`}
+                          {`${lane.label.toLowerCase()} ${lane.key === "speedKph" ? `${Math.round(value)} km/h` : lane.key === "gear" ? formatGear(value) : formatPercent(value)} at source time ${point.sessionTimeS.toFixed(2)} s`}
                         </title>
                       </circle>
                     );
@@ -146,13 +211,14 @@ export default function LiveTelemetryChart({
             {lanes.map((lane) => (
               <span key={lane.key}>
                 <i style={{ background: lane.color }} />
-                {lane.label} {lane.key === "speedKph" ? `(${lane.unit})` : "(%)"}
+                {lane.label} {lane.unit ? `(${lane.unit})` : ""}
               </span>
             ))}
           </div>
           <p className="live-chart-axis">
-            Horizontal axis: source session time, last 60 seconds. Each dot is an
-            admitted telemetry snapshot; no line implies coverage between dots.
+            Horizontal axis: source session time, last 60 seconds. Each dot is
+            an admitted telemetry snapshot; no line implies coverage between
+            dots.
             {sourceState === "paused"
               ? " Replay is paused; the chart holds its existing points."
               : telemetry.status === "stale"
@@ -172,4 +238,14 @@ function format(value: number | null, decimals: number) {
 
 function formatPercent(value: number | null) {
   return value === null ? "unavailable" : `${Math.round(value * 100)}%`;
+}
+
+function formatGear(value: number | null) {
+  return value === null
+    ? "unavailable"
+    : value === -1
+      ? "R"
+      : value === 0
+        ? "N"
+        : String(value);
 }

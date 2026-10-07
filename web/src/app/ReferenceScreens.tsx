@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import DashboardLiveTelemetry from "./DashboardLiveTelemetry";
 import {
   appScreenHref,
   isSelectionTransferBlocked,
@@ -280,91 +281,7 @@ function Dashboard({ preservedQuery }: { preservedQuery: string }) {
           </div>
         </Panel>
 
-        {/* Panel 2: Live Telemetry */}
-        <Panel
-          title="Live Telemetry"
-          icon={
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#0260e8" strokeWidth="2">
-              <path d="M2 12h4l2.5-7 4 14 3-9 2.5 5 2-3H22" />
-            </svg>
-          }
-          action={
-            <div className="ref-live-tags">
-              <Badge tone="good"><span className="dot-green" /> Live</Badge>
-              <span className="ref-tag-sub">Car On Track</span>
-              <span className="ref-tag-sub">Lap 12</span>
-            </div>
-          }
-        >
-          {/* Speed Arc Gauge */}
-          <div className="ref-speedo-gauge">
-            <svg viewBox="0 0 240 100" className="gauge-arc-svg">
-              <path
-                d="M 25 90 A 95 95 0 0 1 215 90"
-                fill="none"
-                stroke="#e2e8f0"
-                strokeWidth="10"
-                strokeLinecap="round"
-                strokeDasharray="4 8"
-              />
-              <path
-                d="M 25 90 A 95 95 0 0 1 185 45"
-                fill="none"
-                stroke="url(#speedoGrad)"
-                strokeWidth="10"
-                strokeLinecap="round"
-                strokeDasharray="4 8"
-              />
-              <defs>
-                <linearGradient id="speedoGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#0284c7" />
-                  <stop offset="60%" stopColor="#22c55e" />
-                  <stop offset="90%" stopColor="#ef4444" />
-                </linearGradient>
-              </defs>
-            </svg>
-            <div className="gauge-readout-row">
-              <div className="gauge-main">
-                <span className="gauge-num">312</span>
-                <span className="gauge-unit">KM/H</span>
-              </div>
-              <div className="gauge-sub">
-                <span className="gauge-label">Gear</span>
-                <span className="gauge-gear">8</span>
-              </div>
-              <div className="gauge-sub">
-                <span className="gauge-rpm">11,842</span>
-                <span className="gauge-label">RPM</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Telemetry Input Bars */}
-          <div className="ref-telemetry-bars">
-            <div className="ref-bar-row">
-              <span>Throttle</span>
-              <div className="bar-track"><div className="bar-fill fill-green" style={{ width: "87%" }} /></div>
-              <strong>87%</strong>
-            </div>
-            <div className="ref-bar-row">
-              <span>Brake</span>
-              <div className="bar-track"><div className="bar-fill fill-red" style={{ width: "0%" }} /></div>
-              <strong>0%</strong>
-            </div>
-            <div className="ref-bar-row">
-              <span>DRS</span>
-              <div className="bar-track"><div className="bar-fill fill-blue" style={{ width: "100%" }} /></div>
-              <strong className="text-blue">Open</strong>
-            </div>
-          </div>
-
-          {/* Bottom quick stats */}
-          <div className="ref-dash-quick-stats">
-            <div><span>Tyres</span> <strong><span className="badge-tyre-m">M</span> 63%</strong></div>
-            <div><span>Fuel</span> <strong><FuelIcon size={12} style={{ marginRight: 3 }} /> 22.4 L</strong></div>
-            <div><span>ERS</span> <strong><ZapIcon size={12} style={{ marginRight: 3 }} /> 78%</strong></div>
-          </div>
-        </Panel>
+        <DashboardLiveTelemetry preservedQuery={preservedQuery} />
 
         {/* Panel 3: AI Race Engineer */}
         <Panel
