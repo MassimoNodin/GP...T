@@ -14,3 +14,7 @@ dist/
 .env
 .env.*
 !.env.example
+
+# Agent worktrees must not live inside the package.
+.kilo/
+.kilocode/
