@@ -140,6 +140,18 @@ def _decode_lap_data_v1(
 
 
 def _decode_car(fields: tuple[object, ...]) -> CarLapData:
+    pit_lane_timer_active = int(fields[27])
+    if pit_lane_timer_active not in (0, 1):
+        raise ValueError(
+            "Lap Data pit_lane_timer_active must be 0 or 1, "
+            f"got {pit_lane_timer_active}"
+        )
+    pit_stop_should_serve_penalty = int(fields[30])
+    if pit_stop_should_serve_penalty not in (0, 1):
+        raise ValueError(
+            "Lap Data pit_stop_should_serve_penalty must be 0 or 1, "
+            f"got {pit_stop_should_serve_penalty}"
+        )
     sector1_ms = int(fields[2]) + int(fields[3]) * 60_000
     sector2_ms = int(fields[4]) + int(fields[5]) * 60_000
     delta_front_ms = int(fields[6]) + int(fields[7]) * 60_000
@@ -169,10 +181,10 @@ def _decode_car(fields: tuple[object, ...]) -> CarLapData:
         grid_position=flags[11],
         driver_status_id=flags[12],
         result_status_id=flags[13],
-        pit_lane_timer_active=bool(flags[14]),
+        pit_lane_timer_active=bool(pit_lane_timer_active),
         pit_lane_time_ms=int(fields[28]),
         pit_stop_timer_ms=int(fields[29]),
-        pit_stop_should_serve_penalty=bool(fields[30]),
+        pit_stop_should_serve_penalty=bool(pit_stop_should_serve_penalty),
         speed_trap_fastest_speed_kph=float(fields[31]),
         speed_trap_fastest_lap_number=int(fields[32]),
     )
