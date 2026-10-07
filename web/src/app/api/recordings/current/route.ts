@@ -9,6 +9,7 @@ export async function GET() {
   } catch {
     return NextResponse.json(
       {
+        api_version: "v1",
         status: "unavailable",
         data: null,
         reason: "recording_service_unavailable",

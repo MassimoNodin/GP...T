@@ -1,3 +1,8 @@
+import {
+  assertLoopbackHttpUrl,
+  JSON_API_DEADLINE_MS,
+} from "./local-api-transport";
+
 export interface ApiResponse<T> {
   api_version: "v1";
   status: "ok" | "unavailable";
@@ -2795,19 +2800,147 @@ export interface ComparisonWindowAttempt {
   };
 }
 
-export async function requestApi<T>(
-  path: string,
-): Promise<ApiResponse<T> | null> {
+function resolveJsonApiUrl(path: string) {
   const base = (
     process.env.F1_ENGINEER_API_URL ?? "http://127.0.0.1:8765"
   ).replace(/\/+$/, "");
+  assertLoopbackHttpUrl(base);
+  const url = `${base}${path}`;
+  assertLoopbackHttpUrl(url);
+  return url;
+}
+
+function httpStatusEnvelope<T>(status: number): ApiResponse<T> {
+  return {
+    api_version: "v1",
+    status: "unavailable",
+    data: null,
+    reason: `http_status_${status}`,
+  };
+}
+
+function isRedirectResponse(response: Response) {
+  return (
+    response.type === "opaqueredirect" ||
+    (response.status >= 300 && response.status < 400)
+  );
+}
+
+async function readResponseJson(response: Response, signal: AbortSignal) {
+  if (signal.aborted) throw signal.reason ?? new Error("aborted");
+  const reader = response.body?.getReader();
+  if (!reader) return response.json();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  let onAbort: (() => void) | undefined;
   try {
-    const response = await fetch(`${base}${path}`, { cache: "no-store" });
-    const body: unknown = await response.json();
-    return isApiResponseEnvelope(body) ? (body as ApiResponse<T>) : null;
-  } catch {
+    while (!signal.aborted) {
+      const readResult = await new Promise<
+        ReadableStreamReadResult<Uint8Array>
+      >((resolve, reject) => {
+        onAbort = () => {
+          signal.removeEventListener("abort", onAbort!);
+          onAbort = undefined;
+          void reader.cancel().catch(() => undefined);
+          reject(signal.reason ?? new Error("aborted"));
+        };
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        signal.addEventListener("abort", onAbort, { once: true });
+        reader.read().then(
+          (value) => {
+            if (onAbort) signal.removeEventListener("abort", onAbort);
+            onAbort = undefined;
+            resolve(value);
+          },
+          (error: unknown) => {
+            if (onAbort) signal.removeEventListener("abort", onAbort);
+            onAbort = undefined;
+            reject(error);
+          },
+        );
+      });
+      if (readResult.done) break;
+      const value = readResult.value;
+      size += value.byteLength;
+      chunks.push(value);
+    }
+    if (signal.aborted) throw signal.reason ?? new Error("aborted");
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+    try {
+      reader.releaseLock();
+    } catch {
+      // The reader is already released after a cancel.
+    }
+  }
+  const buffer = new ArrayBuffer(size);
+  const bytes = new Uint8Array(buffer);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new Response(buffer).json();
+}
+
+async function readApiEnvelope<T>(
+  response: Response,
+  signal: AbortSignal,
+  synthesizeHttpError: boolean,
+): Promise<ApiResponse<T> | null> {
+  if (isRedirectResponse(response)) {
+    await response.body?.cancel().catch(() => undefined);
     return null;
   }
+  let body: unknown;
+  try {
+    body = await readResponseJson(response, signal);
+  } catch {
+    if (signal.aborted) return null;
+    return synthesizeHttpError && !response.ok
+      ? httpStatusEnvelope(response.status)
+      : null;
+  }
+  if (isApiResponseEnvelope(body)) return body as ApiResponse<T>;
+  if (synthesizeHttpError && !response.ok) return httpStatusEnvelope(response.status);
+  return null;
+}
+
+async function requestJsonApi<T>(
+  path: string,
+  postBody?: object,
+): Promise<ApiResponse<T> | null> {
+  const controller = new AbortController();
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const url = resolveJsonApiUrl(path);
+    deadline = setTimeout(() => controller.abort(), JSON_API_DEADLINE_MS);
+    const response = await fetch(url, {
+      method: postBody === undefined ? "GET" : "POST",
+      headers:
+        postBody === undefined
+          ? undefined
+          : { "content-type": "application/json" },
+      body: postBody === undefined ? undefined : JSON.stringify(postBody),
+      cache: "no-store",
+      redirect: "error",
+      signal: controller.signal,
+    });
+    return await readApiEnvelope(response, controller.signal, postBody !== undefined);
+  } catch {
+    return null;
+  } finally {
+    if (deadline !== undefined) clearTimeout(deadline);
+  }
+}
+
+export async function requestApi<T>(
+  path: string,
+): Promise<ApiResponse<T> | null> {
+  return requestJsonApi(path);
 }
 
 function isApiResponseEnvelope(value: unknown): value is ApiResponse<unknown> {
@@ -2825,33 +2958,5 @@ export async function requestApiPost<T>(
   path: string,
   body: object,
 ): Promise<ApiResponse<T> | null> {
-  const base = (
-    process.env.F1_ENGINEER_API_URL ?? "http://127.0.0.1:8765"
-  ).replace(/\/+$/, "");
-  try {
-    const response = await fetch(`${base}${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      return {
-        api_version: "v1",
-        status: "unavailable",
-        data: null,
-        reason: `http_status_${response.status}`,
-      };
-    }
-    const result = (await response.json()) as ApiResponse<T>;
-    if (
-      result.api_version !== "v1" ||
-      (result.status !== "ok" && result.status !== "unavailable")
-    ) {
-      return null;
-    }
-    return result;
-  } catch {
-    return null;
-  }
+  return requestJsonApi(path, body);
 }
