@@ -28,8 +28,9 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000). Use the recording panel to
 start and stop UDP capture. Finalized `.f1ecap` files appear in the inbox; import
 them explicitly for historical analysis. The API creates the local control
 token file; the Next server reads it for same-origin recording and import
-actions. The token is not sent to the browser. For data import, supported
-analysis, and privacy details, see the repository [README](../README.md).
+actions. The token is not sent to the browser. For the short start path, see
+the repository [README](../README.md). Command details, capture limits, and
+analysis behavior are in [docs/usage.md](../docs/usage.md).
 
 The dashboard loads a model catalog from `GET /api/v1/track-models`. Select a
 registered ID and revision in the comparison form to include local diagnostic
