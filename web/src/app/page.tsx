@@ -23,6 +23,7 @@ import {
   requestApiPost,
 } from "@/lib/api";
 import AppHeader from "./AppHeader";
+import { testDataRoute } from "./TestDataRoute";
 import ReferenceScreen from "./ReferenceScreens";
 import AttemptQualityPanel from "./AttemptQualityPanel";
 import PlayerParticipantContextPanel from "./PlayerParticipantContextPanel";
@@ -74,6 +75,8 @@ export default async function Home({
   searchParams: Promise<SearchParams>;
 }) {
   const rawParams = await searchParams;
+  const syntheticPage = testDataRoute("dashboard", rawParams);
+  if (syntheticPage) return syntheticPage;
   const preservedQuery = preservedAppStateQuery(rawParams);
   const selectionTransferBlocked =
     isSelectionTransferBlocked(preservedQuery);

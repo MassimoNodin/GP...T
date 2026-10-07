@@ -1,6 +1,7 @@
 import type { AppSearchParams } from "@/lib/navigation";
 import { preservedAppStateQuery } from "@/lib/navigation";
 import AppHeader from "../AppHeader";
+import { testDataRoute } from "../TestDataRoute";
 import SessionsRunEvidence from "../SessionsRunEvidence";
 import ReferenceScreen from "../ReferenceScreens";
 
@@ -10,6 +11,8 @@ export default async function SessionsPage({
   searchParams: Promise<AppSearchParams>;
 }) {
   const params = await searchParams;
+  const syntheticPage = testDataRoute("sessions", params);
+  if (syntheticPage) return syntheticPage;
   const preservedQuery = preservedAppStateQuery(params);
 
   return (

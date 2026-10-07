@@ -19,6 +19,7 @@ import {
   lapAttemptPageMatchesScope,
 } from "@/lib/attempt-inventory";
 import AppHeader from "../AppHeader";
+import { testDataRoute } from "../TestDataRoute";
 import TrackAnalysisScreen from "../TrackAnalysisScreen";
 import {
   regionsFromAttempt,
@@ -56,6 +57,8 @@ export default async function TrackPage({
   searchParams: Promise<AppSearchParams>;
 }) {
   const params = await searchParams;
+  const syntheticPage = testDataRoute("track", params);
+  if (syntheticPage) return syntheticPage;
   const preservedQuery = preservedAppStateQuery(params);
   const blocked = isSelectionTransferBlocked(preservedQuery);
   const raw = {

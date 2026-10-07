@@ -1419,6 +1419,18 @@ Reuse the selected attempt/reference/model matchers and API reports for the main
 
 **Rationale:** This makes the reference UI operate on real or explicitly supplied inputs without another analysis service or hardcoded circuits. The specialist architecture/code audit verified the evidence boundary, exact pair selection and continuity handling. [Input contract, integration and verification](dynamic-ui-analysis.md) record the details. The follow-up [parity audit](ui-parity-audit-2026-10-07.md) verified that the reference image files are 1672×941; use those exact dimensions for future acceptance captures.
 
+## Decision 0090: populate pages through an isolated synthetic API
+
+**Status:** accepted, 2026-10-07. Architecture decision and code review by the required `gpt-6.1-sol` specialist.
+
+Add a read-only Next `GET /api/test-data` namespace with deterministic, bounded populated/empty/partial/stale/unavailable scenarios and a separately versioned synthetic UI snapshot. Each of the eight pages branches immediately after resolving URL parameters, before production API reads or controller/poller mounts. The header has the same boundary and identifies the synthetic mode. Settings and Engineer fixtures are presentation examples without writes, hardware access or inference.
+
+Reuse the map/trace presentation components with API-generated `AnalysisInput`; use a standalone synthetic telemetry presentation instead of the production pinned poller. Preserve missing samples and geometry segments. Responses carry synthetic provenance and diagnostic-only, coaching-ineligible and ranking-ineligible flags; test IDs stay outside real operation identities. Validate exact supplied selections and clear values on failed responses without substitutes.
+
+Keep only bounded synthetic scenario/session/target/reference state across navigation. Playback advances after completed API reads, avoiding overlapping tick requests and cancellation starvation, and stops on failure. Exit/reset discard synthetic state. Production SQLite, capture storage, UDP, imports/replays, runtime/speech and preference contracts remain authoritative in real-data mode.
+
+**Rationale:** An actual same-origin API can populate all pages without requiring the game or Python service. A separate namespace and page branch let realistic UI examples coexist with strict recorded-evidence admission without counterfeit reports or seeded production records. Accepted audit corrections preserve chosen laps across pages, consistent lifecycle information and slow-request behavior. [Usage, scenarios and contract](api-test-data.md) document the implementation.
+
 ## Data flow
 
 ```text

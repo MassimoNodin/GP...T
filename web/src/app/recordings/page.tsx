@@ -9,6 +9,7 @@ import { preservedAppStateQuery, type AppSearchParams } from "@/lib/navigation";
 import { requestApi } from "@/lib/api";
 import { readRecordingSourcePage } from "@/lib/recording-catalog";
 import AppHeader from "../AppHeader";
+import { testDataRoute } from "../TestDataRoute";
 import RecordingInbox from "../RecordingInbox";
 import ReferenceScreen from "../ReferenceScreens";
 
@@ -18,6 +19,8 @@ export default async function RecordingsPage({
   searchParams: Promise<AppSearchParams>;
 }) {
   const params = await searchParams;
+  const syntheticPage = testDataRoute("recordings", params);
+  if (syntheticPage) return syntheticPage;
   const preservedQuery = preservedAppStateQuery(params);
   const importJobId = firstParam(params.import_job_id);
   const requestedJob = Boolean(importJobId);

@@ -1,6 +1,7 @@
 import type { AppSearchParams } from "@/lib/navigation";
 import { preservedAppStateQuery } from "@/lib/navigation";
 import AppHeader from "../AppHeader";
+import { testDataRoute } from "../TestDataRoute";
 import SettingsVoicePreferences from "../SettingsVoicePreferences";
 import SettingsStorageUsage from "../SettingsStorageUsage";
 import SettingsHudPreferences from "../SettingsHudPreferences";
@@ -24,6 +25,8 @@ export default async function SettingsPage({
   searchParams: Promise<AppSearchParams>;
 }) {
   const params = await searchParams;
+  const syntheticPage = testDataRoute("settings", params);
+  if (syntheticPage) return syntheticPage;
   const preservedQuery = preservedAppStateQuery(params);
 
   return (

@@ -18,6 +18,7 @@ import {
   type EngineerQueryRequestIdentity,
 } from "@/lib/engineer-query-match";
 import AppHeader from "../AppHeader";
+import { testDataRoute } from "../TestDataRoute";
 import EngineerQueryPanel from "../EngineerQueryPanel";
 import EngineerQuestionComposer from "../EngineerQuestionComposer";
 import ReferenceScreen from "../ReferenceScreens";
@@ -34,6 +35,8 @@ export default async function EngineerPage({
   searchParams: Promise<AppSearchParams>;
 }) {
   const params = await searchParams;
+  const syntheticPage = testDataRoute("engineer", params);
+  if (syntheticPage) return syntheticPage;
   const preservedQuery = preservedAppStateQuery(params);
   const selectionTransferBlocked = isSelectionTransferBlocked(preservedQuery);
   const requestedAttempt = singleParam(params.target_attempt_key);

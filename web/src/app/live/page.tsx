@@ -14,6 +14,7 @@ import {
   type AppSearchParams,
 } from "@/lib/navigation";
 import AppHeader from "../AppHeader";
+import { testDataRoute } from "../TestDataRoute";
 import LiveTelemetryScreen from "../LiveTelemetryScreen";
 
 type InitialStatus = PinnedLiveRead["status"] | "unselected" | "invalid";
@@ -24,6 +25,8 @@ export default async function LivePage({
   searchParams: Promise<AppSearchParams>;
 }) {
   const params = await searchParams;
+  const syntheticPage = testDataRoute("live", params);
+  if (syntheticPage) return syntheticPage;
   const preservedQuery = preservedAppStateQuery(params);
   const blocked = isSelectionTransferBlocked(preservedQuery);
   const selection = readPinnedLiveSelection(params, blocked);

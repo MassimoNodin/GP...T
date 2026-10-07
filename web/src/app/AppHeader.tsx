@@ -91,9 +91,10 @@ export default async function AppHeader({
   active: AppScreen;
   preservedQuery: string;
 }) {
-  const recordingResponse = await requestApi<RecordingJobRecord>("/api/v1/recordings/current");
+  const testMode = new URLSearchParams(preservedQuery).has("test_data");
+  const recordingResponse = testMode ? null : await requestApi<RecordingJobRecord>("/api/v1/recordings/current");
   const recordingActive = recordingResponse?.status === "ok" && ["starting", "recording", "stopping"].includes(recordingResponse.data?.status ?? "");
-  const recordingLabel = recordingResponse?.status !== "ok" ? "UDP status unavailable" : recordingActive ? "UDP Recording Active" : "UDP Recording Inactive";
+  const recordingLabel = testMode ? "Synthetic API test data" : recordingResponse?.status !== "ok" ? "UDP status unavailable" : recordingActive ? "UDP Recording Active" : "UDP Recording Inactive";
   const navigation = links.map((item) => ({
     ...item,
     href: appScreenHref(item.screen, preservedQuery),
@@ -196,9 +197,9 @@ export default async function AppHeader({
               <strong>Storage</strong>
             </div>
             <div className="rail-storage-track" aria-hidden="true">
-              <i style={{ width: "21.3%" }} />
+              <i style={{ width: testMode ? "0%" : "21.3%" }} />
             </div>
-            <small>42.6 GB / 200 GB</small>
+            <small>{testMode ? "In-memory examples · no disk use" : "42.6 GB / 200 GB"}</small>
           </div>
         </div>
       </aside>
@@ -206,11 +207,12 @@ export default async function AppHeader({
         <div className="topbar-context">
           <span className="local-status-dot" aria-hidden="true" />
           <div className="topbar-text">
-            <strong>Local Mode</strong>
-            <small>All data stays on your computer</small>
+            <strong>{testMode ? "Test Data Mode" : "Local Mode"}</strong>
+            <small>{testMode ? "Synthetic examples from the API" : "All data stays on your computer"}</small>
           </div>
         </div>
         <div className="topbar-right">
+          {!testMode ? <a className="ref-button" href="/settings?test_data=populated">Test data</a> : null}
           <span className="topbar-udp-badge">
             <span className="topbar-dot-green" style={recordingActive ? undefined : { background: "#94a3b8" }} aria-hidden="true" />
             {recordingLabel}
@@ -218,12 +220,12 @@ export default async function AppHeader({
           {transferBlocked || !recordingsHref ? (
             <span className="topbar-stop-btn is-disabled" aria-disabled="true">
               <span className="stop-square" aria-hidden="true" />
-              Recording Controls
+              {testMode ? "Test capture preview" : "Recording Controls"}
             </span>
           ) : (
             <a className="topbar-stop-btn" href={recordingsHref}>
               <span className="stop-square" aria-hidden="true" />
-              Recording Controls
+              {testMode ? "Test capture preview" : "Recording Controls"}
             </a>
           )}
           {transferBlocked || !settingsHref ? (

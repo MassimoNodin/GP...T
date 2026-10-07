@@ -20,6 +20,7 @@ import {
   lapAttemptPageMatchesScope,
 } from "@/lib/attempt-inventory";
 import AppHeader from "../AppHeader";
+import { testDataRoute } from "../TestDataRoute";
 import LapComparisonScreen from "../LapComparisonScreen";
 import {
   regionsFromComparison,
@@ -64,6 +65,8 @@ export default async function ComparePage({
   searchParams: Promise<AppSearchParams>;
 }) {
   const params = await searchParams;
+  const syntheticPage = testDataRoute("compare", params);
+  if (syntheticPage) return syntheticPage;
   const preservedQuery = preservedAppStateQuery(params);
   const blocked = isSelectionTransferBlocked(preservedQuery);
   const raw = {
