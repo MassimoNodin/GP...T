@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { assertLoopbackHttpUrl } from "./local-api-transport";
 
 export function isTrustedLocalMutation(request: Request) {
   const configuredOrigin = process.env.F1_ENGINEER_WEB_ORIGIN;
@@ -65,15 +66,11 @@ export async function forwardLocalRequest(
   init: RequestInit = {},
   needsControlToken = false,
 ) {
-  const apiBase = process.env.F1_ENGINEER_API_URL ?? "http://127.0.0.1:8765";
-  const parsed = new URL(apiBase);
-  const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
-  if (
-    parsed.protocol !== "http:" ||
-    !["127.0.0.1", "localhost", "::1"].includes(hostname)
-  ) {
-    throw new Error("The local proxy only accepts a loopback API URL.");
-  }
+  const parsed = assertLoopbackHttpUrl(
+    process.env.F1_ENGINEER_API_URL ?? "http://127.0.0.1:8765",
+  );
+  const url = `${parsed.origin}${path}`;
+  assertLoopbackHttpUrl(url);
   const headers = new Headers(init.headers);
   if (needsControlToken) {
     const tokenPath =
@@ -86,9 +83,10 @@ export async function forwardLocalRequest(
       throw new Error("Local recording control is unavailable.");
     headers.set("authorization", `Bearer ${token}`);
   }
-  return fetch(`${parsed.origin}${path}`, {
+  return fetch(url, {
     ...init,
     headers,
     cache: "no-store",
+    redirect: "error",
   });
 }
