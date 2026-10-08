@@ -64,6 +64,7 @@ class PipelineResult:
     completed_frames: tuple[PacketFrame, ...]
     session_context: SessionContext | None = None
     session_context_error: str | None = None
+    session_progress: dict[str, int] | None = None
     lap_attempts: tuple[LapAttempt, ...] = ()
     lap_data_errors: tuple[str, ...] = ()
     car_samples: tuple[CarSample, ...] = ()
@@ -101,16 +102,38 @@ class PipelineFlushResult:
 
 
 class TelemetryPipeline:
+    def frame_ordinal(self, session_uid: int) -> int:
+        return self._frame_ordinal_by_uid.get(session_uid, 0)
+
+    def release_consumed_history(self) -> None:
+        """Opt-in streaming retention; archived import keeps its historical defaults."""
+        self.laps.drain_attempts()
+        self.sessions.bound_context_history(512)
+        self.laps.bound_context_history(64)
+        self.car_lap_inventory.lap_tracker.bound_context_history(64)
+        for name in ("lap_data_decode_errors", "car_telemetry_decode_errors", "motion_decode_errors",
+                     "car_status_decode_errors", "car_damage_decode_errors", "participants_decode_errors"):
+            values = getattr(self, name)
+            del values[:-64]
+        for name in ("_frame_ordinal_by_uid", "_event_ordinal_by_uid", "_last_session_time_by_uid",
+                     "_association_epoch_by_uid", "_association_scope_assessable_by_uid",
+                     "_last_association_player_by_uid", "_last_association_format_by_uid"):
+            values = getattr(self, name)
+            while len(values) > 128:
+                values.pop(next(iter(values)))
+
     def __init__(
         self,
         max_open_frames: int = 256,
         reorder_window_frames: int = 3,
+        max_pending_packets: int = 8192,
     ) -> None:
         self.decoder = PacketDecoder()
         self.session_context_decoder = SessionContextDecoder()
         self.sessions = SessionTracker(reorder_window_frames=reorder_window_frames)
         self.frames = FrameAssembler(
             max_open_frames=max_open_frames,
+            max_pending_packets=max_pending_packets,
             reorder_window_frames=reorder_window_frames,
         )
         self.lap_data_decoder = LapDataDecoder()
@@ -1530,6 +1553,8 @@ class TelemetryPipeline:
             completed_frames=tuple(completed_frames),
             session_context=updated_context,
             session_context_error=context_result.error,
+            session_progress=(context_result.progress if packet.header.session_uid == self.sessions.current_session_uid
+                              and packet.header.overall_frame_identifier == self.sessions.latest_context_frame else None),
             lap_attempts=tuple(lap_attempts),
             lap_data_errors=tuple(lap_data_errors),
             car_samples=tuple(car_samples),
@@ -1551,13 +1576,21 @@ class TelemetryPipeline:
     def finish(self) -> tuple[PacketFrame, ...]:
         return self.finish_with_outputs().completed_frames
 
-    def finish_with_outputs(self) -> PipelineFlushResult:
+    def finish_with_outputs(self, *, interruption_reason: str | None = None) -> PipelineFlushResult:
         frames = self.frames.flush()
         attempts, errors, samples, observations, telemetry_errors = self._process_frames(frames)
         start_attempt_count = len(self.laps.attempts)
-        self.laps.finish()
+        if interruption_reason is None:
+            self.laps.finish()
+        elif self.sessions.current_session_uid is not None:
+            self.laps.close_lifecycle_boundary(self.sessions.current_session_uid, reason=interruption_reason)
         attempts = (*attempts, *self.laps.attempts[start_attempt_count:])
-        self.car_lap_inventory.finish()
+        if interruption_reason is None:
+            self.car_lap_inventory.finish()
+        elif self.sessions.current_session_uid is not None:
+            uid = self.sessions.current_session_uid
+            self.car_lap_inventory.interrupt(self._frame_ordinal_by_uid.get(uid, 0) + 1, interruption_reason)
+            self._association_epoch_by_uid[uid] = self._association_epoch_by_uid.get(uid, 0) + 1
         car_slot_tenures, observed_car_lap_attempts = self.car_lap_inventory.drain()
         return PipelineFlushResult(
             completed_frames=frames,

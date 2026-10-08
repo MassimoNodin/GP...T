@@ -132,6 +132,14 @@ class _ActiveLap:
 class LapTracker:
     """Track player lap attempts without assuming every observed lap is usable."""
 
+    def bound_context_history(self, limit: int) -> None:
+        for active in self._active.values():
+            if len(active.context_segments) > limit:
+                active.context_segments[:] = [
+                    SessionContextSegment(active.start_frame_identifier, None),
+                    *active.context_segments[-(limit - 1):],
+                ]
+
     def __init__(self) -> None:
         self.current_session_uid: int | None = None
         self.attempts: list[LapAttempt] = []

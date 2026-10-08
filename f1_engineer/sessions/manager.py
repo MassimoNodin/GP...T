@@ -20,6 +20,15 @@ class ContextHistoryChange:
 
 
 class SessionTracker:
+    @property
+    def latest_context_frame(self) -> int | None:
+        return self._current_context_frame_identifier
+
+    def bound_context_history(self, limit: int) -> None:
+        for history in self._context_history_by_uid.values():
+            if len(history) > limit:
+                history[:] = [(history[0][0], None), *history[-(limit - 1):]]
+
     def __init__(
         self,
         reorder_window_frames: int = 3,

@@ -62,6 +62,11 @@ def test_session_context_decoder_reads_the_real_recorded_packet() -> None:
     assert result.context.track_name == "Melbourne"
     assert result.context.track_length_m == 5276
     assert result.context.total_laps == 1
+    assert result.progress is not None
+    assert result.progress["total_laps"] == result.context.total_laps
+    assert result.progress["session_type_id"] == 18
+    assert result.progress["remaining_time_s"] >= 0
+    assert result.progress["duration_s"] >= 0
     assert result.context.weather_name == "clear"
 
 

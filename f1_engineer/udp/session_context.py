@@ -117,6 +117,7 @@ _SEASON_PACK_2026_TRACK_NAMES = {
 class SessionContextDecodeResult:
     context: SessionContext | None = None
     error: str | None = None
+    progress: dict[str, int] | None = None
 
 
 SessionParser = Callable[[DecodedPacket], SessionContext]
@@ -153,7 +154,12 @@ class SessionContextDecoder:
                 )
             )
         try:
-            return SessionContextDecodeResult(context=parser(packet))
+            context = parser(packet)
+            fields = _F1_25_SESSION_PREFIX.unpack_from(packet.body)
+            return SessionContextDecodeResult(context=context, progress={
+                "remaining_time_s": fields[8], "duration_s": fields[9],
+                "total_laps": fields[3], "session_type_id": fields[5],
+            })
         except ValueError as exc:
             return SessionContextDecodeResult(error=str(exc))
 
