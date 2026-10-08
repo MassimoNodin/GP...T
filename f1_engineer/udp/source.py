@@ -68,12 +68,24 @@ class UDPSource:
             def error_received(self, exc: OSError) -> None:
                 source.stats.socket_errors += 1
 
-        transport, _ = await loop.create_datagram_endpoint(
-            Receiver,
-            local_addr=(self.host, self.port),
-            family=socket.AF_INET6 if ":" in self.host else socket.AF_INET,
-        )
+        udp_socket = socket.socket(socket.AF_INET6 if ":" in self.host else socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            udp_socket.bind((self.host, self.port))
+            udp_socket.setblocking(False)
+            transport, _ = await loop.create_datagram_endpoint(Receiver, sock=udp_socket)
+        except BaseException:
+            udp_socket.close()
+            raise
         self._transport = transport
+
+    @property
+    def pending_count(self) -> int:
+        return self._queue.qsize()
+
+    async def receive(self) -> RawDatagram:
+        return await self._queue.get()
 
     async def packets(self) -> AsyncIterator[RawDatagram]:
         if self._transport is None:
