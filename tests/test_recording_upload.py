@@ -52,6 +52,7 @@ def _app(tmp_path, *, max_bytes=None):
     kwargs = {"max_recording_upload_bytes": max_bytes} if max_bytes else {}
     return database, root, create_app(
         database,
+        automatic_acquisition=False,
         recordings_root=root,
         control_token=TOKEN,
         recording_port=port,

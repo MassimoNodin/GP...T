@@ -564,6 +564,7 @@ def _api(args: argparse.Namespace) -> int:
             recording_host=args.udp_host,
             recording_port=args.udp_port,
             recording_queue_size=args.udp_queue_size,
+            automatic_acquisition=not getattr(args, "manual_acquisition", False),
             max_recording_download_bytes=args.max_recording_download_bytes,
             max_recording_upload_bytes=args.max_recording_upload_bytes,
             track_models_root=args.track_models_root,
@@ -1032,6 +1033,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(Path("data") / ".f1-engineer-control-token"),
         help="server-only authorization token file for local import actions",
     )
+    api.add_argument("--manual-acquisition", action="store_true",
+                     help="disable automatic session evidence for legacy manual capture diagnostics")
     api.add_argument(
         "--udp-host",
         default="0.0.0.0",

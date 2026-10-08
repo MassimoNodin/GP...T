@@ -1747,6 +1747,7 @@ def test_managed_recording_exposes_freshness_and_hides_finished_live_state(
         port = int(probe.getsockname()[1])
     app = create_app(
         database,
+        automatic_acquisition=False,
         recordings_root=recordings_root,
         control_token=_CONTROL_TOKEN,
         recording_host="127.0.0.1",

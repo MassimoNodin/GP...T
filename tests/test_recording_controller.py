@@ -53,6 +53,7 @@ def test_recording_start_stop_is_idempotent_and_publishes_to_inbox(tmp_path):
         pass
     app = create_app(
         database,
+        automatic_acquisition=False,
         recordings_root=root,
         control_token=TOKEN,
         recording_host="127.0.0.1",
@@ -198,6 +199,7 @@ def test_recording_start_is_rejected_while_import_is_running(tmp_path, monkeypat
     port = _free_udp_port()
     app = create_app(
         database,
+        automatic_acquisition=False,
         recordings_root=root,
         control_token=TOKEN,
         recording_host="127.0.0.1",
@@ -281,7 +283,7 @@ def test_completed_import_keeps_reservation_until_worker_releases_it(
         pass
     with CaptureWriter(root / "second.f1ecap"):
         pass
-    app = create_app(database, recordings_root=root, control_token=TOKEN)
+    app = create_app(database, recordings_root=root, control_token=TOKEN, automatic_acquisition=False)
 
     async def exercise():
         async with app.router.lifespan_context(app):
@@ -336,6 +338,7 @@ def test_stop_while_waiting_finalizes_an_empty_capture(tmp_path):
     port = _free_udp_port()
     app = create_app(
         database,
+        automatic_acquisition=False,
         recordings_root=root,
         control_token=TOKEN,
         recording_host="127.0.0.1",
@@ -389,6 +392,7 @@ def test_stop_waits_for_in_progress_disk_write_before_publication(tmp_path, monk
     port = _free_udp_port()
     app = create_app(
         database,
+        automatic_acquisition=False,
         recordings_root=root,
         control_token=TOKEN,
         recording_host="127.0.0.1",
@@ -448,6 +452,7 @@ def test_publication_collision_never_replaces_an_existing_capture(tmp_path):
     port = _free_udp_port()
     app = create_app(
         database,
+        automatic_acquisition=False,
         recordings_root=root,
         control_token=TOKEN,
         recording_host="127.0.0.1",
@@ -508,6 +513,7 @@ def test_staging_cleanup_failure_keeps_published_capture_complete(
     port = _free_udp_port()
     app = create_app(
         database,
+        automatic_acquisition=False,
         recordings_root=root,
         control_token=TOKEN,
         recording_host="127.0.0.1",
@@ -571,6 +577,7 @@ def test_background_reconciler_settles_post_publication_database_failure(
     port = _free_udp_port()
     app = create_app(
         database,
+        automatic_acquisition=False,
         recordings_root=root,
         control_token=TOKEN,
         recording_host="127.0.0.1",
@@ -656,6 +663,7 @@ def test_delayed_pause_settlement_rechecks_group_after_resume_finishes(
     port = _free_udp_port()
     app = create_app(
         database,
+        automatic_acquisition=False,
         recordings_root=root,
         control_token=TOKEN,
         recording_host="127.0.0.1",
@@ -809,7 +817,7 @@ def test_restart_marks_recording_interrupted_and_preserves_staging(tmp_path):
     assert created
     update_recording_job(database, job["recording_id"], status="recording", starting=True)
 
-    app = create_app(database, recordings_root=root, control_token=TOKEN)
+    app = create_app(database, recordings_root=root, control_token=TOKEN, automatic_acquisition=False)
 
     async def recover():
         async with app.router.lifespan_context(app):
@@ -831,6 +839,7 @@ def test_recording_group_pause_resume_creates_independent_segments(tmp_path):
     port = _free_udp_port()
     app = create_app(
         database,
+        automatic_acquisition=False,
         recordings_root=root,
         control_token=TOKEN,
         recording_host="127.0.0.1",
@@ -1047,6 +1056,7 @@ def test_stopping_paused_group_keeps_reservation_until_worker_exits(
     port = _free_udp_port()
     app = create_app(
         database,
+        automatic_acquisition=False,
         recordings_root=root,
         control_token=TOKEN,
         recording_host="127.0.0.1",

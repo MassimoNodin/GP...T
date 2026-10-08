@@ -6,6 +6,7 @@ import hmac
 import os
 import re
 import sqlite3
+import threading
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -18,6 +19,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, select_reference
+from ..analysis.session_comparison import compare_session_laps
+from ..processing.evidence import EvidenceStore, EvidenceUnavailable
+from ..processing.legacy import archived_session_page
+from ..processing.runtime import LiveSessionRuntime
 from ..analysis.ai_admission import AIGateLease, PROCESS_ENGINEER_AI_GATE
 from ..analysis.local_speech import (
     LocalSpeechRuntime,
@@ -996,9 +1001,15 @@ def create_app(
     track_models_root: str | Path | None = None,
     reviewed_track_models_root: str | Path | None = None,
     engineer_runtime: OllamaRuntime | None = None,
+    automatic_acquisition: bool = True,
+    evidence_database_path: str | Path | None = None,
 ) -> FastAPI:
     """Create a local API bound to operator-configured storage and recording roots."""
     configured_database_path = Path(database_path).expanduser().resolve()
+    evidence_store = EvidenceStore(evidence_database_path or configured_database_path.with_name(configured_database_path.stem + "-evidence.sqlite3"))
+    live_runtime = LiveSessionRuntime(evidence_store, host=recording_host, port=recording_port,
+                                     queue_size=min(recording_queue_size, 1024)) if automatic_acquisition else None
+    comparison_admission = threading.BoundedSemaphore(2)
     configured_recordings_root = Path(recordings_root).expanduser().resolve()
     selected_track_models_root = (
         track_models_root
@@ -1055,6 +1066,8 @@ def create_app(
         recording_upload_service.start()
         recording_controller.start()
         replay_controller.start()
+        if live_runtime:
+            await run_in_threadpool(live_runtime.start)
         import_controller.enable_dispatch()
         await run_in_threadpool(local_speech_runtime.cleanup_stale_temporary_files)
         app.state.import_controller = import_controller
@@ -1063,9 +1076,13 @@ def create_app(
         app.state.recording_upload_service = recording_upload_service
         app.state.ollama_runtime = ollama_runtime
         app.state.local_speech_runtime = local_speech_runtime
+        app.state.live_session_runtime = live_runtime
+        app.state.evidence_store = evidence_store
         try:
             yield
         finally:
+            if live_runtime:
+                await run_in_threadpool(live_runtime.close)
             import_controller.stop_dispatch()
             await run_in_threadpool(recording_upload_service.close)
             replay_controller.close()
@@ -1078,6 +1095,55 @@ def create_app(
         description="Local telemetry recording, historical analysis, and explicit capture imports.",
         lifespan=lifespan,
     )
+
+    @app.get("/api/v2/session-evidence/status")
+    def session_evidence_status():
+        return live_runtime.status() if live_runtime else {"state": "disabled"}
+
+    @app.get("/api/v2/session-evidence/sessions")
+    def evidence_sessions(limit: int = Query(default=100, ge=1, le=100), after: str = Query(default="", max_length=128)):
+        return {"data": evidence_store.sessions(limit=limit, after=after)}
+
+    @app.get("/api/v2/session-evidence/legacy-sessions")
+    def legacy_evidence_sessions(limit: int = Query(default=100, ge=1, le=100), after: str = Query(default="", max_length=128)):
+        return {"data": archived_session_page(configured_database_path, limit=limit, after=after)}
+
+    @app.get("/api/v2/session-evidence/sessions/{session_id}/attempts")
+    def evidence_attempts(session_id: str, limit: int = Query(default=100, ge=1, le=100), after: str = Query(default="", max_length=128)):
+        return {"data": evidence_store.attempts(session_id, limit=limit, after=after)}
+
+    @app.post("/api/v2/session-evidence/sessions/{session_id}/compare")
+    def evidence_comparison(session_id: str, target: str = Query(max_length=128), reference: str = Query(max_length=128),
+                            authorization: str | None = Header(default=None)):
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "comparison_control_not_authorized")
+        if not comparison_admission.acquire(blocking=False):
+            return _api_error(409, "comparison_read_budget_busy")
+        try:
+            return {"data": compare_session_laps(evidence_store, session_id, target, reference)}
+        except EvidenceUnavailable as exception:
+            return _api_error(422, str(exception))
+        finally:
+            comparison_admission.release()
+
+    @app.get("/api/v2/session-evidence/sessions/{session_id}/attempts/{revision_id}")
+    def evidence_trace(session_id: str, revision_id: str):
+        if not comparison_admission.acquire(blocking=False):
+            return _api_error(409, "comparison_read_budget_busy")
+        try:
+            metadata, samples = evidence_store.evidence(revision_id, session=session_id)
+            return {"data": {"attempt": metadata, "samples": samples}}
+        except EvidenceUnavailable as exception:
+            return _api_error(422, str(exception))
+        finally:
+            comparison_admission.release()
+
+    @app.get("/api/v2/session-evidence/comparisons/{comparison_id}")
+    def evidence_comparison_history(comparison_id: str):
+        try:
+            return {"data": evidence_store.report(comparison_id)}
+        except EvidenceUnavailable as exception:
+            return _api_error(404, str(exception))
 
     @app.exception_handler(FileNotFoundError)
     @app.exception_handler(DatabaseSchemaError)
@@ -1945,6 +2011,8 @@ def create_app(
     ) -> APIResponse[RecordingGroupRecord] | JSONResponse:
         if not _authorized(authorization, control_token):
             return _api_error(403, "recording_control_not_authorized")
+        if live_runtime and live_runtime.state not in {"failed", "stopped"}:
+            return _api_error(409, "automatic_session_acquisition_owns_udp")
         try:
             group = recording_controller.start_recording_group()
         except ValueError as exc:
@@ -2124,6 +2192,8 @@ def create_app(
     ) -> APIResponse[RecordingJobRecord] | JSONResponse:
         if not _authorized(authorization, control_token):
             return _api_error(403, "recording_control_not_authorized")
+        if live_runtime and live_runtime.state not in {"failed", "stopped"}:
+            return _api_error(409, "automatic_session_acquisition_owns_udp")
         try:
             job = recording_controller.start_recording()
         except ValueError as exc:
