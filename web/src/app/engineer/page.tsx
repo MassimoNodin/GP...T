@@ -21,7 +21,6 @@ import AppHeader from "../AppHeader";
 import { testDataRoute } from "../TestDataRoute";
 import EngineerQueryPanel from "../EngineerQueryPanel";
 import EngineerQuestionComposer from "../EngineerQuestionComposer";
-import ReferenceScreen from "../ReferenceScreens";
 import {
   appScreenHref,
   isSelectionTransferBlocked,
@@ -267,18 +266,10 @@ export default async function EngineerPage({
   return (
     <div className="app-shell">
       <AppHeader active="engineer" preservedQuery={preservedQuery} />
-      <main
-        className="page-content reference-page-content"
-        id="main-content"
-        tabIndex={-1}
-      >
-        <ReferenceScreen screen="engineer" preservedQuery={preservedQuery} />
-        <details className="ref-workflow-details" id="engineer-workflow">
-          <summary>Open the recorded-evidence engineer workflow</summary>
-          <div className="ref-workflow-content">
+      <main className="page-content" id="main-content" tabIndex={-1}>
         <section className="engineer-page-intro">
           <div className="eyebrow">ENGINEER / RECORDED EVIDENCE</div>
-          <h1>
+          <h1 id="engineer-workflow">
             {regionIntent ? "One region." : "One attempt."}
             <br />
             <span>
@@ -394,8 +385,6 @@ export default async function EngineerPage({
             ) : null}
           </>
         )}
-          </div>
-        </details>
       </main>
       <footer className="footer-bar">
         <span>

@@ -24,7 +24,6 @@ import {
 } from "@/lib/api";
 import AppHeader from "./AppHeader";
 import { testDataRoute } from "./TestDataRoute";
-import ReferenceScreen from "./ReferenceScreens";
 import AttemptQualityPanel from "./AttemptQualityPanel";
 import PlayerParticipantContextPanel from "./PlayerParticipantContextPanel";
 import PlayerCarSetupContextPanel from "./PlayerCarSetupContextPanel";
@@ -78,8 +77,7 @@ export default async function Home({
   const syntheticPage = testDataRoute("dashboard", rawParams);
   if (syntheticPage) return syntheticPage;
   const preservedQuery = preservedAppStateQuery(rawParams);
-  const selectionTransferBlocked =
-    isSelectionTransferBlocked(preservedQuery);
+  const selectionTransferBlocked = isSelectionTransferBlocked(preservedQuery);
   const legacyRunEvidenceRequested = [
     "run_id",
     "run_offset",
@@ -102,11 +100,14 @@ export default async function Home({
     position_probe_m: firstParam(rawParams.position_probe_m),
     run_id: firstParam(rawParams.run_id),
     engineer_intent: firstParam(rawParams.engineer_intent),
-    engineer_region_identifier: firstParam(rawParams.engineer_region_identifier),
+    engineer_region_identifier: firstParam(
+      rawParams.engineer_region_identifier,
+    ),
   };
-  const selectedRunId = !selectionTransferBlocked && /^[a-f0-9]{64}$/.test(params.run_id ?? "")
-    ? params.run_id!
-    : null;
+  const selectedRunId =
+    !selectionTransferBlocked && /^[a-f0-9]{64}$/.test(params.run_id ?? "")
+      ? params.run_id!
+      : null;
   const [sessionResponse, trackModelsResponse] = await Promise.all([
     selectionTransferBlocked
       ? Promise.resolve(null)
@@ -152,19 +153,21 @@ export default async function Home({
   const requestedSession =
     selectionTransferBlocked || params.session_key === undefined
       ? null
-      : importedSessions.find((item) => item.session_key === params.session_key) ?? null;
+      : (importedSessions.find(
+          (item) => item.session_key === params.session_key,
+        ) ?? null);
   const sessionUnavailable =
     !selectionTransferBlocked &&
     params.session_key !== undefined &&
     requestedSession === null;
-  const session =
-    selectionTransferBlocked
-      ? null
-      : params.session_key === undefined
-      ? sessions.at(-1) ?? null
+  const session = selectionTransferBlocked
+    ? null
+    : params.session_key === undefined
+      ? (sessions.at(-1) ?? null)
       : requestedSession;
   const selectableSessions =
-    session && !sessions.some((item) => item.session_key === session.session_key)
+    session &&
+    !sessions.some((item) => item.session_key === session.session_key)
       ? [...sessions, session]
       : sessions;
   const isTimeTrial = session?.context?.session_type === "time_trial";
@@ -189,12 +192,13 @@ export default async function Home({
   const requestedTarget =
     params.target_attempt_key === undefined
       ? null
-      : laps.find((lap) => lap.attempt_key === params.target_attempt_key) ?? null;
+      : (laps.find((lap) => lap.attempt_key === params.target_attempt_key) ??
+        null);
   const targetAttemptUnavailable =
     params.target_attempt_key !== undefined && requestedTarget === null;
   const target =
     params.target_attempt_key === undefined
-      ? laps.at(-1) ?? null
+      ? (laps.at(-1) ?? null)
       : requestedTarget;
   const observationSetQuery = new URLSearchParams();
   for (const attemptKey of params.observation_attempt_keys) {
@@ -222,29 +226,33 @@ export default async function Home({
   const referenceChoice =
     requestedReferenceChoice === "session_best" &&
     comparisonPolicy === "practice_qualifying"
-      ? defaultReference?.attempt_key ?? ""
-      : (requestedReferenceChoice ?? defaultReference?.attempt_key ?? "session_best");
+      ? (defaultReference?.attempt_key ?? "")
+      : (requestedReferenceChoice ??
+        defaultReference?.attempt_key ??
+        "session_best");
   const autoReference =
     comparisonPolicy === "time_trial" && referenceChoice === "session_best";
 
   const manualReference = autoReference
     ? null
     : (completed.find((lap) => lap.attempt_key === referenceChoice) ?? null);
-  const selectionRequest = target && comparisonPolicy === "time_trial"
-    ? requestApi<ReferenceSelection>(
-        `/api/v1/references/session-best?${new URLSearchParams({ target_attempt_key: target.attempt_key })}`,
-      )
-    : Promise.resolve(null);
+  const selectionRequest =
+    target && comparisonPolicy === "time_trial"
+      ? requestApi<ReferenceSelection>(
+          `/api/v1/references/session-best?${new URLSearchParams({ target_attempt_key: target.attempt_key })}`,
+        )
+      : Promise.resolve(null);
   const sessionBestAnchorSelected = Boolean(
     target &&
-      params.target_attempt_key &&
-      target.attempt_key === params.target_attempt_key,
+    params.target_attempt_key &&
+    target.attempt_key === params.target_attempt_key,
   );
-  const sessionBestRequest = sessionBestAnchorSelected && target
-    ? requestApi<SessionBestOverview>(
-        `/api/v1/analysis/session-best?${new URLSearchParams({ anchor_attempt_key: target.attempt_key })}`,
-      )
-    : Promise.resolve(null);
+  const sessionBestRequest =
+    sessionBestAnchorSelected && target
+      ? requestApi<SessionBestOverview>(
+          `/api/v1/analysis/session-best?${new URLSearchParams({ anchor_attempt_key: target.attempt_key })}`,
+        )
+      : Promise.resolve(null);
   const attemptQualityRequest = target
     ? requestApi<AttemptQualityReport>(
         `/api/v1/attempts/${encodeURIComponent(target.attempt_key)}/quality`,
@@ -260,14 +268,17 @@ export default async function Home({
         `/api/v1/attempts/${encodeURIComponent(target.attempt_key)}/trajectory`,
       )
     : Promise.resolve(null);
-  const regionRequest = target && selectedModel
-    ? requestApi<AttemptRegionReport>(
-        `/api/v1/attempts/${encodeURIComponent(target.attempt_key)}/regions?${new URLSearchParams({
-          track_model_id: selectedModel.model_id,
-          track_model_revision: String(selectedModel.revision),
-        })}`,
-      )
-    : Promise.resolve(null);
+  const regionRequest =
+    target && selectedModel
+      ? requestApi<AttemptRegionReport>(
+          `/api/v1/attempts/${encodeURIComponent(target.attempt_key)}/regions?${new URLSearchParams(
+            {
+              track_model_id: selectedModel.model_id,
+              track_model_revision: String(selectedModel.revision),
+            },
+          )}`,
+        )
+      : Promise.resolve(null);
   const manualComparisonRequest =
     target && manualReference
       ? requestApi<Comparison>(
@@ -276,10 +287,10 @@ export default async function Home({
       : Promise.resolve(null);
   const pairedRegionSelectionReady = Boolean(
     target &&
-      manualReference &&
-      params.reference_choice &&
-      params.reference_choice !== "session_best" &&
-      selectedModel,
+    manualReference &&
+    params.reference_choice &&
+    params.reference_choice !== "session_best" &&
+    selectedModel,
   );
   const engineerIntent = params.engineer_intent;
   const pairedRegionRequest =
@@ -288,16 +299,16 @@ export default async function Home({
     manualReference &&
     selectedModel &&
     engineerIntent !== "region_comparison"
-    ? requestApi<PairedRegionReport>(
-        `/api/v1/compare/regions?${new URLSearchParams({
-          target_attempt_key: target.attempt_key,
-          reference_attempt_key: manualReference.attempt_key,
-          comparison_policy: comparisonPolicy,
-          track_model_id: selectedModel.model_id,
-          track_model_revision: String(selectedModel.revision),
-        })}`,
-      )
-    : Promise.resolve(null);
+      ? requestApi<PairedRegionReport>(
+          `/api/v1/compare/regions?${new URLSearchParams({
+            target_attempt_key: target.attempt_key,
+            reference_attempt_key: manualReference.attempt_key,
+            comparison_policy: comparisonPolicy,
+            track_model_id: selectedModel.model_id,
+            track_model_revision: String(selectedModel.revision),
+          })}`,
+        )
+      : Promise.resolve(null);
   const engineerQueryBody =
     engineerIntent === "attempt_summary" &&
     params.target_attempt_key &&
@@ -329,7 +340,18 @@ export default async function Home({
         engineerQueryBody,
       )
     : Promise.resolve(null);
-  const [selectionResponse, sessionBestResponse, manualComparisonResponse, qualityResponse, traceChartResponse, trajectoryResponse, regionResponse, observationSetResponse, pairedRegionResponse, engineerQueryResponse] = await Promise.all([
+  const [
+    selectionResponse,
+    sessionBestResponse,
+    manualComparisonResponse,
+    qualityResponse,
+    traceChartResponse,
+    trajectoryResponse,
+    regionResponse,
+    observationSetResponse,
+    pairedRegionResponse,
+    engineerQueryResponse,
+  ] = await Promise.all([
     selectionRequest,
     sessionBestRequest,
     manualComparisonRequest,
@@ -344,12 +366,14 @@ export default async function Home({
   const qualityCandidate =
     qualityResponse?.status === "ok" ? qualityResponse.data : null;
   const qualityIdentityMismatch = Boolean(
-    qualityCandidate && target &&
-      !attemptQualityReportMatchesSelection(qualityCandidate, target),
+    qualityCandidate &&
+    target &&
+    !attemptQualityReportMatchesSelection(qualityCandidate, target),
   );
-  const attemptQuality = qualityCandidate && target && !qualityIdentityMismatch
-    ? qualityCandidate
-    : null;
+  const attemptQuality =
+    qualityCandidate && target && !qualityIdentityMismatch
+      ? qualityCandidate
+      : null;
   const qualityUnavailableReason = qualityIdentityMismatch
     ? "attempt_quality_provenance_or_shape_mismatch"
     : qualityResponse?.status === "unavailable"
@@ -360,12 +384,14 @@ export default async function Home({
   const traceChartCandidate =
     traceChartResponse?.status === "ok" ? traceChartResponse.data : null;
   const traceChartIdentityMismatch = Boolean(
-    traceChartCandidate && target &&
-      !attemptTraceChartReportMatchesSelection(traceChartCandidate, target),
+    traceChartCandidate &&
+    target &&
+    !attemptTraceChartReportMatchesSelection(traceChartCandidate, target),
   );
-  const traceChartReport = traceChartCandidate && target && !traceChartIdentityMismatch
-    ? traceChartCandidate
-    : null;
+  const traceChartReport =
+    traceChartCandidate && target && !traceChartIdentityMismatch
+      ? traceChartCandidate
+      : null;
   const traceChartUnavailableReason = traceChartIdentityMismatch
     ? "trace_chart_attempt_provenance_or_shape_mismatch"
     : traceChartResponse?.status === "unavailable"
@@ -400,7 +426,9 @@ export default async function Home({
       ? comparisonCandidate
       : null;
   const observationSet =
-    observationSetResponse?.status === "ok" ? observationSetResponse.data : null;
+    observationSetResponse?.status === "ok"
+      ? observationSetResponse.data
+      : null;
   const pairedRegionCandidate =
     pairedRegionResponse?.status === "ok" ? pairedRegionResponse.data : null;
   const pairedRegionReport =
@@ -451,7 +479,8 @@ export default async function Home({
       ? engineerQueryCandidate
       : null;
   const engineerQueryRequestState =
-    engineerIntent !== "attempt_summary" && engineerIntent !== "region_comparison"
+    engineerIntent !== "attempt_summary" &&
+    engineerIntent !== "region_comparison"
       ? "not_requested"
       : !engineerQueryBody
         ? "not_ready"
@@ -460,18 +489,20 @@ export default async function Home({
           : "failed";
   const engineerQueryRequestReason =
     engineerQueryRequestState !== "not_ready"
-      ? engineerQueryResponse?.reason ??
+      ? (engineerQueryResponse?.reason ??
         (engineerQueryCandidate && !engineerQueryReport
           ? "The local API response did not match the exact request and source provenance. No substitute evidence was shown."
-          : null)
+          : null))
       : engineerIntent === "attempt_summary"
         ? params.target_attempt_key
           ? "The requested attempt is not available in the selected recording. Choose an attempt from this session and retry."
           : "Select an attempt from this session before requesting a summary."
         : "Choose an available target attempt, explicit reference, registered model, and region before requesting a comparison.";
   const trajectoryComparisonQuery = new URLSearchParams();
-  if (target) trajectoryComparisonQuery.set("target_attempt_key", target.attempt_key);
-  if (referenceKey) trajectoryComparisonQuery.set("reference_attempt_key", referenceKey);
+  if (target)
+    trajectoryComparisonQuery.set("target_attempt_key", target.attempt_key);
+  if (referenceKey)
+    trajectoryComparisonQuery.set("reference_attempt_key", referenceKey);
   trajectoryComparisonQuery.set(
     "comparison_policy",
     comparison?.comparison_policy ?? comparisonPolicy,
@@ -501,29 +532,40 @@ export default async function Home({
       params.observation_attempt_keys;
   }
   if (session) trajectoryComparisonFormParams.session_key = session.session_key;
-  if (target) trajectoryComparisonFormParams.target_attempt_key = target.attempt_key;
-  if (referenceChoice) trajectoryComparisonFormParams.reference_choice = referenceChoice;
+  if (target)
+    trajectoryComparisonFormParams.target_attempt_key = target.attempt_key;
+  if (referenceChoice)
+    trajectoryComparisonFormParams.reference_choice = referenceChoice;
   if (comparison?.comparison_policy ?? comparisonPolicy) {
     trajectoryComparisonFormParams.comparison_policy =
       comparison?.comparison_policy ?? comparisonPolicy;
   }
-  if (params.window_start_m) trajectoryComparisonFormParams.window_start_m = params.window_start_m;
-  if (params.window_end_m) trajectoryComparisonFormParams.window_end_m = params.window_end_m;
-  if (selectedModel) trajectoryComparisonFormParams.track_model_key = modelKey(selectedModel);
+  if (params.window_start_m)
+    trajectoryComparisonFormParams.window_start_m = params.window_start_m;
+  if (params.window_end_m)
+    trajectoryComparisonFormParams.window_end_m = params.window_end_m;
+  if (selectedModel)
+    trajectoryComparisonFormParams.track_model_key = modelKey(selectedModel);
   const reference = comparisonReference;
   const lifecycleReasonsFor = (
-    ...sources: Array<{
-      exclusion_reasons?: string[];
-      lifecycle_exclusions?: string[];
-      superseded?: boolean | null;
-      lifecycle_assessed?: boolean;
-    } | null | undefined>
+    ...sources: Array<
+      | {
+          exclusion_reasons?: string[];
+          lifecycle_exclusions?: string[];
+          superseded?: boolean | null;
+          lifecycle_assessed?: boolean;
+        }
+      | null
+      | undefined
+    >
   ) => {
     const reasons: string[] = [];
     for (const source of sources) {
       reasons.push(
-        ...(source?.exclusion_reasons ?? []).filter((value) =>
-          value === "superseded_by_flashback" || value === "lifecycle_evidence_unassessed",
+        ...(source?.exclusion_reasons ?? []).filter(
+          (value) =>
+            value === "superseded_by_flashback" ||
+            value === "lifecycle_evidence_unassessed",
         ),
         ...(source?.lifecycle_exclusions ?? []),
       );
@@ -555,35 +597,37 @@ export default async function Home({
   const selectionUnavailable =
     !selectionResponse || selectionResponse.status === "unavailable";
   const selectionState = selection?.status;
-  const policyBadge = comparisonPolicy === "practice_qualifying"
-    ? "MANUAL ONLY"
-    : selectionState === "selected"
-      ? "READY"
-      : selectionState === "no_eligible_reference"
-        ? "ABSTAINED"
-        : selectionState
-          ? label(selectionState)
-          : "UNAVAILABLE";
-  const policyDescription = comparisonPolicy === "practice_qualifying"
-    ? "Choose an explicit same-session reference. Automatic reference selection is only available for Time Trial."
-    : selection?.status === "selected" && selection.selected_reference
-      ? `Attempt ${selection.selected_reference.attempt_number} · ${lapTime(Number(selection.selected_reference.lap_time_ms))} · same run, session and driver`
-      : selection?.reasons.length
-        ? selection.reasons.map(reason).join(" · ")
-        : selection?.status === "no_eligible_reference"
-          ? "No prior lap meets the session-best policy."
-          : selection?.status === "target_not_completed"
-            ? "Automatic reference selection requires a completed target lap."
-            : selection?.status === "target_unavailable"
-              ? "The selected target attempt is unavailable in the local archive."
-              : selection?.status === "unsupported_policy"
-                ? "Automatic session-best selection is not supported for this mode."
-                : !target
-                  ? "Select a recorded attempt to inspect reference eligibility."
-                  : (selectionResponse?.reason ??
-                    (selectionUnavailable
-                      ? "Could not load reference policy evidence from the local API."
-                      : "The API returned no reference policy evidence."));
+  const policyBadge =
+    comparisonPolicy === "practice_qualifying"
+      ? "MANUAL ONLY"
+      : selectionState === "selected"
+        ? "READY"
+        : selectionState === "no_eligible_reference"
+          ? "ABSTAINED"
+          : selectionState
+            ? label(selectionState)
+            : "UNAVAILABLE";
+  const policyDescription =
+    comparisonPolicy === "practice_qualifying"
+      ? "Choose an explicit same-session reference. Automatic reference selection is only available for Time Trial."
+      : selection?.status === "selected" && selection.selected_reference
+        ? `Attempt ${selection.selected_reference.attempt_number} · ${lapTime(Number(selection.selected_reference.lap_time_ms))} · same run, session and driver`
+        : selection?.reasons.length
+          ? selection.reasons.map(reason).join(" · ")
+          : selection?.status === "no_eligible_reference"
+            ? "No prior lap meets the session-best policy."
+            : selection?.status === "target_not_completed"
+              ? "Automatic reference selection requires a completed target lap."
+              : selection?.status === "target_unavailable"
+                ? "The selected target attempt is unavailable in the local archive."
+                : selection?.status === "unsupported_policy"
+                  ? "Automatic session-best selection is not supported for this mode."
+                  : !target
+                    ? "Select a recorded attempt to inspect reference eligibility."
+                    : (selectionResponse?.reason ??
+                      (selectionUnavailable
+                        ? "Could not load reference policy evidence from the local API."
+                        : "The API returned no reference policy evidence."));
   const noComparison = !target
     ? {
         eyebrow: "NO TARGET SELECTED",
@@ -727,957 +771,1046 @@ export default async function Home({
   return (
     <div className="app-shell">
       <AppHeader active="dashboard" preservedQuery={preservedQuery} />
-      <main className="page-content reference-page-content" id="main-content" tabIndex={-1}>
-        <ReferenceScreen screen="dashboard" preservedQuery={preservedQuery} />
-        <details className="ref-workflow-details" id="dashboard-workflow">
-          <summary>Open the recorded-lap analysis workspace</summary>
-          <div className="ref-workflow-content">
-        <section className="intro-row">
-          <div>
-            <div className="eyebrow">PERSONAL AI RACE ENGINEER / SESSION REVIEW</div>
-            <h1>
-              Know the lap.
-              <br />
-              <span>Find the time.</span>
-            </h1>
-            <p className="intro-copy">
-              GP...T is a personal nod to the GP race-engineer call on Max
-              Verstappen’s radio, with T completing the GPT wordplay. Today it
-              compares recorded laps and shows the evidence behind each finding.
-            </p>
-          </div>
-          <div className="lap-stamp">
-            <span className="stamp-ring">
-              F1
-              <br />
-              25
-            </span>
-            <span>
-              DATA-LED
-              <br />
-              BY DESIGN
-            </span>
-          </div>
-        </section>
-
-        {legacyRunEvidenceRequested && !selectionTransferBlocked ? (
-          <SessionsRunEvidence
-            searchParams={Promise.resolve(rawParams)}
-            screen="dashboard"
-          />
-        ) : null}
-
-        {selectionTransferBlocked ? (
-          <section className="connection-state panel" role="status">
-            <span className="state-icon">!</span>
+      <main className="page-content" id="main-content" tabIndex={-1}>
+        <section
+          id="dashboard-workflow"
+          aria-label="Recorded-lap analysis workspace"
+        >
+          <section className="intro-row">
             <div>
-              <h2>Selection transfer is paused</h2>
-              <p>
-                This selection was too large to carry safely between screens.
-                GP...T has not selected a recording or attempt automatically.
-                Return to the previous screen or choose a recording explicitly.
-              </p>
-              <a className="recording-evidence-link" href="/recordings">
-                Open recordings
-              </a>
-            </div>
-          </section>
-        ) : apiUnavailable ? (
-          <section className="connection-state panel">
-            <span className="state-icon">!</span>
-            <div>
-              <h2>Analysis API is offline</h2>
-              <p>Start the local API, then reload this page:</p>
-              <code>
-                uv run --extra app f1-engineer api --database data/dev.sqlite3
-              </code>
-            </div>
-          </section>
-        ) : sessionUnavailable ? (
-          <section className="connection-state panel">
-            <span className="state-icon">!</span>
-            <div>
-              <h2>Session unavailable</h2>
-              <p>
-                The requested session is missing or its processing run is not
-                complete. Choose a completed session from the archive.
-              </p>
-            </div>
-          </section>
-        ) : sessions.length === 0 ? (
-          <section className="empty-state panel">
-            <div className="eyebrow">NO COMPLETED RECORDINGS</div>
-            <h2>Record and import a session to begin.</h2>
-            <p>
-              GP...T keeps recording local and builds a replayable lap archive.
-            </p>
-          </section>
-        ) : lapApiUnavailable ? (
-          <section className="connection-state panel">
-            <span className="state-icon">!</span>
-            <div>
-              <h2>Lap inventory is unavailable</h2>
-              <p>
-                The local API could not load this recording's attempts. Check
-                the API, then reload.
-              </p>
-            </div>
-          </section>
-        ) : (
-          <>
-            {targetAttemptUnavailable ? (
-              <section className="connection-state panel">
-                <span className="state-icon">!</span>
-                <div>
-                  <h2>Attempt unavailable</h2>
-                  <p>
-                    The requested attempt is missing from this completed
-                    session. Choose an available attempt from its inventory.
-                  </p>
-                </div>
-              </section>
-            ) : null}
-            <section className="session-strip panel">
-              <div className="session-main">
-                <span className="strip-label">SELECTED RECORDING</span>
-                <div className="session-title-row">
-                  <h2>{session?.context?.track_name ?? "Unknown circuit"}</h2>
-                  <span className="mode-badge">
-                    {label(session?.context?.session_type)}
-                  </span>
-                </div>
-                <div className="session-meta">
-                  <span>
-                    {session?.context?.weather_name ?? "Conditions unknown"}
-                  </span>
-                  <span className="meta-dot">·</span>
-                  <span>{session?.lap_attempts ?? 0} attempts</span>
-                  <span className="meta-dot">·</span>
-                  <span>Run {session?.run_id.slice(0, 8)}</span>
-                </div>
+              <div className="eyebrow">
+                PERSONAL AI RACE ENGINEER / SESSION REVIEW
               </div>
-              <div className="session-stats">
-                <div>
-                  <strong>{String(laps.length).padStart(2, "0")}</strong>
-                  <span>RECORDED</span>
-                </div>
-                <div>
-                  <strong>{String(completed.length).padStart(2, "0")}</strong>
-                  <span>COMPLETED</span>
-                </div>
-                <div className="stat-mode">
-                  <strong>{label(session?.context?.game_mode)}</strong>
-                  <span>GAME MODE</span>
-                </div>
+              <h1>
+                Know the lap.
+                <br />
+                <span>Find the time.</span>
+              </h1>
+              <p className="intro-copy">
+                GP...T is a personal nod to the GP race-engineer call on Max
+                Verstappen’s radio, with T completing the GPT wordplay. Today it
+                compares recorded laps and shows the evidence behind each
+                finding.
+              </p>
+            </div>
+            <div className="lap-stamp">
+              <span className="stamp-ring">
+                F1
+                <br />
+                25
+              </span>
+              <span>
+                DATA-LED
+                <br />
+                BY DESIGN
+              </span>
+            </div>
+          </section>
+
+          {legacyRunEvidenceRequested && !selectionTransferBlocked ? (
+            <SessionsRunEvidence
+              searchParams={Promise.resolve(rawParams)}
+              screen="dashboard"
+            />
+          ) : null}
+
+          {selectionTransferBlocked ? (
+            <section className="connection-state panel" role="status">
+              <span className="state-icon">!</span>
+              <div>
+                <h2>Selection transfer is paused</h2>
+                <p>
+                  This selection was too large to carry safely between screens.
+                  GP...T has not selected a recording or attempt automatically.
+                  Return to the previous screen or choose a recording
+                  explicitly.
+                </p>
+                <a className="recording-evidence-link" href="/recordings">
+                  Open recordings
+                </a>
               </div>
             </section>
-
-            <div className="workspace-grid">
-              <aside className="sidebar">
-                <section className="panel sidebar-panel">
-                  <div className="section-heading">
-                    <span className="eyebrow">RECORDINGS</span>
-                    <span className="count-pill">{sessions.length}</span>
+          ) : apiUnavailable ? (
+            <section className="connection-state panel">
+              <span className="state-icon">!</span>
+              <div>
+                <h2>Analysis API is offline</h2>
+                <p>Start the local API, then reload this page:</p>
+                <code>
+                  uv run --extra app f1-engineer api --database data/dev.sqlite3
+                </code>
+              </div>
+            </section>
+          ) : sessionUnavailable ? (
+            <section className="connection-state panel">
+              <span className="state-icon">!</span>
+              <div>
+                <h2>Session unavailable</h2>
+                <p>
+                  The requested session is missing or its processing run is not
+                  complete. Choose a completed session from the archive.
+                </p>
+              </div>
+            </section>
+          ) : sessions.length === 0 ? (
+            <section className="empty-state panel">
+              <div className="eyebrow">NO COMPLETED RECORDINGS</div>
+              <h2>Record and import a session to begin.</h2>
+              <p>
+                GP...T keeps recording local and builds a replayable lap
+                archive.
+              </p>
+            </section>
+          ) : lapApiUnavailable ? (
+            <section className="connection-state panel">
+              <span className="state-icon">!</span>
+              <div>
+                <h2>Lap inventory is unavailable</h2>
+                <p>
+                  The local API could not load this recording's attempts. Check
+                  the API, then reload.
+                </p>
+              </div>
+            </section>
+          ) : (
+            <>
+              {targetAttemptUnavailable ? (
+                <section className="connection-state panel">
+                  <span className="state-icon">!</span>
+                  <div>
+                    <h2>Attempt unavailable</h2>
+                    <p>
+                      The requested attempt is missing from this completed
+                      session. Choose an available attempt from its inventory.
+                    </p>
                   </div>
-                  <div className="recording-list">
-                    {[...sessions].reverse().map((item, index) => (
-                      <div className="recording-entry" key={item.session_key}>
+                </section>
+              ) : null}
+              <section className="session-strip panel">
+                <div className="session-main">
+                  <span className="strip-label">SELECTED RECORDING</span>
+                  <div className="session-title-row">
+                    <h2>{session?.context?.track_name ?? "Unknown circuit"}</h2>
+                    <span className="mode-badge">
+                      {label(session?.context?.session_type)}
+                    </span>
+                  </div>
+                  <div className="session-meta">
+                    <span>
+                      {session?.context?.weather_name ?? "Conditions unknown"}
+                    </span>
+                    <span className="meta-dot">·</span>
+                    <span>{session?.lap_attempts ?? 0} attempts</span>
+                    <span className="meta-dot">·</span>
+                    <span>Run {session?.run_id.slice(0, 8)}</span>
+                  </div>
+                </div>
+                <div className="session-stats">
+                  <div>
+                    <strong>{String(laps.length).padStart(2, "0")}</strong>
+                    <span>RECORDED</span>
+                  </div>
+                  <div>
+                    <strong>{String(completed.length).padStart(2, "0")}</strong>
+                    <span>COMPLETED</span>
+                  </div>
+                  <div className="stat-mode">
+                    <strong>{label(session?.context?.game_mode)}</strong>
+                    <span>GAME MODE</span>
+                  </div>
+                </div>
+              </section>
+
+              <div className="workspace-grid">
+                <aside className="sidebar">
+                  <section className="panel sidebar-panel">
+                    <div className="section-heading">
+                      <span className="eyebrow">RECORDINGS</span>
+                      <span className="count-pill">{sessions.length}</span>
+                    </div>
+                    <div className="recording-list">
+                      {[...sessions].reverse().map((item, index) => (
+                        <div className="recording-entry" key={item.session_key}>
+                          <a
+                            className={`recording-item ${item.session_key === session?.session_key ? "selected" : ""}`}
+                            href={urlFor({ session_key: item.session_key })}
+                          >
+                            <span className="recording-index">
+                              {String(index + 1).padStart(2, "0")}
+                            </span>
+                            <span className="recording-copy">
+                              <strong>
+                                {item.context?.track_name ?? "Unknown circuit"}
+                              </strong>
+                              <small>
+                                {label(item.context?.session_type)} ·{" "}
+                                {item.run_id.slice(0, 8)}
+                              </small>
+                            </span>
+                            <span className="recording-chevron">↗</span>
+                          </a>
+                          <a
+                            className="recording-evidence-link"
+                            href={
+                              appScreenHref("sessions", preservedQuery, {
+                                run_id: item.run_id,
+                                session_key: item.session_key,
+                              }) ?? undefined
+                            }
+                            aria-label={`Open run evidence for ${item.context?.track_name ?? "unknown circuit"}`}
+                          >
+                            Evidence
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="archive-note">
+                      <i /> All recordings are stored locally.
+                    </div>
+                  </section>
+                  <section className="panel sidebar-panel">
+                    <div className="section-heading">
+                      <span className="eyebrow">LAP INVENTORY</span>
+                      <span className="count-pill">{laps.length}</span>
+                    </div>
+                    <div className="attempt-list">
+                      {laps.map((lap) => (
                         <a
-                          className={`recording-item ${item.session_key === session?.session_key ? "selected" : ""}`}
-                          href={urlFor({ session_key: item.session_key })}
+                          className={`attempt-item ${lap.attempt_key === target?.attempt_key ? "active" : ""}`}
+                          href={urlFor({
+                            session_key: session!.session_key,
+                            target_attempt_key: lap.attempt_key,
+                          })}
+                          key={lap.attempt_key}
                         >
-                          <span className="recording-index">
-                            {String(index + 1).padStart(2, "0")}
+                          <span className="attempt-number">
+                            {String(lap.attempt_number).padStart(2, "0")}
                           </span>
-                          <span className="recording-copy">
-                            <strong>
-                              {item.context?.track_name ?? "Unknown circuit"}
-                            </strong>
+                          <span className="attempt-copy">
+                            <strong>Attempt {lap.attempt_number}</strong>
                             <small>
-                              {label(item.context?.session_type)} ·{" "}
-                              {item.run_id.slice(0, 8)}
+                              {label(lap.disposition)} ·{" "}
+                              {lapTime(lap.lap_time_ms)}
                             </small>
                           </span>
-                          <span className="recording-chevron">↗</span>
+                          <span
+                            className={`validity ${lap.game_valid === true ? "valid" : lap.game_valid === false ? "invalid" : "partial"}`}
+                          >
+                            {lap.game_valid === true
+                              ? "GAME VALID"
+                              : lap.game_valid === false
+                                ? "GAME INVALID"
+                                : "UNKNOWN"}
+                          </span>
                         </a>
-                        <a
-                          className="recording-evidence-link"
-                          href={appScreenHref("sessions", preservedQuery, {
-                            run_id: item.run_id,
-                            session_key: item.session_key,
-                          }) ?? undefined}
-                          aria-label={`Open run evidence for ${item.context?.track_name ?? "unknown circuit"}`}
-                        >
-                          Evidence
-                        </a>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="archive-note">
-                    <i /> All recordings are stored locally.
-                  </div>
-                </section>
-                <section className="panel sidebar-panel">
-                  <div className="section-heading">
-                    <span className="eyebrow">LAP INVENTORY</span>
-                    <span className="count-pill">{laps.length}</span>
-                  </div>
-                  <div className="attempt-list">
-                    {laps.map((lap) => (
-                      <a
-                        className={`attempt-item ${lap.attempt_key === target?.attempt_key ? "active" : ""}`}
-                        href={urlFor({
-                          session_key: session!.session_key,
-                          target_attempt_key: lap.attempt_key,
-                        })}
-                        key={lap.attempt_key}
-                      >
-                        <span className="attempt-number">
-                          {String(lap.attempt_number).padStart(2, "0")}
-                        </span>
-                        <span className="attempt-copy">
-                          <strong>Attempt {lap.attempt_number}</strong>
-                          <small>
-                            {label(lap.disposition)} ·{" "}
-                            {lapTime(lap.lap_time_ms)}
-                          </small>
-                        </span>
-                        <span
-                          className={`validity ${lap.game_valid === true ? "valid" : lap.game_valid === false ? "invalid" : "partial"}`}
-                        >
-                          {lap.game_valid === true
-                            ? "GAME VALID"
-                            : lap.game_valid === false
-                              ? "GAME INVALID"
-                              : "UNKNOWN"}
-                        </span>
-                      </a>
-                    ))}
-                  </div>
-                </section>
-              </aside>
+                      ))}
+                    </div>
+                  </section>
+                </aside>
 
-              <section className="analysis-column">
-                <SessionBestOverviewPanel
-                  report={sessionBestResponse?.data ?? null}
-                  anchorSelected={sessionBestAnchorSelected}
-                  unavailableReason={
-                    sessionBestResponse?.status === "unavailable"
-                      ? sessionBestResponse.reason
-                      : null
-                  }
-                />
-                <DraftTrackModelPanel
-                  key={
-                    target
-                      ? `${target.run_id}:${target.session_uid}:${target.attempt_key}:${target.trace_sha256}:${target.trace_schema_version}`
-                      : "no-selected-attempt"
-                  }
-                  attempt={target}
-                  explicitlySelected={Boolean(
-                    target &&
+                <section className="analysis-column">
+                  <SessionBestOverviewPanel
+                    report={sessionBestResponse?.data ?? null}
+                    anchorSelected={sessionBestAnchorSelected}
+                    unavailableReason={
+                      sessionBestResponse?.status === "unavailable"
+                        ? sessionBestResponse.reason
+                        : null
+                    }
+                  />
+                  <DraftTrackModelPanel
+                    key={
+                      target
+                        ? `${target.run_id}:${target.session_uid}:${target.attempt_key}:${target.trace_sha256}:${target.trace_schema_version}`
+                        : "no-selected-attempt"
+                    }
+                    attempt={target}
+                    explicitlySelected={Boolean(
+                      target &&
                       params.target_attempt_key &&
                       target.attempt_key === params.target_attempt_key,
-                  )}
-                />
-                {target ? (
-                  <AttemptQualityPanel
-                    report={attemptQuality}
-                    unavailableReason={qualityUnavailableReason}
+                    )}
                   />
-                ) : null}
-                {target && !comparison ? (
-                  <PlayerParticipantContextPanel
-                    target={target.player_participant_context}
-                  />
-                ) : null}
-                {target && !comparison ? (
-                  <PlayerCarSetupContextPanel
-                    target={target.player_car_setup_context}
-                  />
-                ) : null}
-                {target ? (
-                  <AttemptTraceCharts
-                    report={traceChartReport}
-                    unavailableReason={traceChartUnavailableReason}
-                  />
-                ) : null}
-                {target ? (
-                  <DiagnosticEvidencePanels
-                    key={`${target.attempt_key}:${selectedModel ? modelKey(selectedModel) : "no-model"}`}
-                    trajectoryReport={trajectoryPreview}
-                    trajectoryUnavailableReason={
-                      trajectoryResponse?.status === "unavailable"
-                        ? trajectoryResponse.reason
-                        : null
-                    }
-                    regionReport={
-                      regionResponse?.status === "ok"
-                        ? regionResponse.data
-                        : null
-                    }
-                    regionUnavailableReason={
-                      regionResponse?.status === "unavailable"
-                        ? regionResponse.reason
-                        : regionResponse
-                          ? null
-                          : "region_analysis_api_unavailable"
-                    }
-                    showRegionPanel={selectedModel !== null}
-                  />
-                ) : null}
-                <section className="panel compare-panel">
-                  <div className="compare-header">
-                    <div>
-                      <div className="eyebrow">DISTANCE COMPARISON</div>
-                      <h2>Choose your reference</h2>
+                  {target ? (
+                    <AttemptQualityPanel
+                      report={attemptQuality}
+                      unavailableReason={qualityUnavailableReason}
+                    />
+                  ) : null}
+                  {target && !comparison ? (
+                    <PlayerParticipantContextPanel
+                      target={target.player_participant_context}
+                    />
+                  ) : null}
+                  {target && !comparison ? (
+                    <PlayerCarSetupContextPanel
+                      target={target.player_car_setup_context}
+                    />
+                  ) : null}
+                  {target ? (
+                    <AttemptTraceCharts
+                      report={traceChartReport}
+                      unavailableReason={traceChartUnavailableReason}
+                    />
+                  ) : null}
+                  {target ? (
+                    <DiagnosticEvidencePanels
+                      key={`${target.attempt_key}:${selectedModel ? modelKey(selectedModel) : "no-model"}`}
+                      trajectoryReport={trajectoryPreview}
+                      trajectoryUnavailableReason={
+                        trajectoryResponse?.status === "unavailable"
+                          ? trajectoryResponse.reason
+                          : null
+                      }
+                      regionReport={
+                        regionResponse?.status === "ok"
+                          ? regionResponse.data
+                          : null
+                      }
+                      regionUnavailableReason={
+                        regionResponse?.status === "unavailable"
+                          ? regionResponse.reason
+                          : regionResponse
+                            ? null
+                            : "region_analysis_api_unavailable"
+                      }
+                      showRegionPanel={selectedModel !== null}
+                    />
+                  ) : null}
+                  <section className="panel compare-panel">
+                    <div className="compare-header">
+                      <div>
+                        <div className="eyebrow">DISTANCE COMPARISON</div>
+                        <h2>Choose your reference</h2>
+                      </div>
+                      <span className="protocol-tag">1 M RESAMPLE GRID</span>
                     </div>
-                    <span className="protocol-tag">1 M RESAMPLE GRID</span>
-                  </div>
-                  <form className="compare-form" method="get">
-                    <label>
-                      <span>SESSION</span>
-                      <select
-                        name="session_key"
-                        defaultValue={session?.session_key}
-                      >
-                        {selectableSessions
-                          .slice()
-                          .reverse()
-                          .map((item) => (
-                            <option
-                              value={item.session_key}
-                              key={item.session_key}
-                            >
-                              {item.context?.track_name ?? "Unknown"} ·{" "}
-                              {label(item.context?.session_type)} ·{" "}
-                              {item.run_id.slice(0, 8)}
-                            </option>
-                          ))}
-                      </select>
-                    </label>
-                    <label>
-                      <span>TARGET LAP</span>
-                      <select
-                        name="target_attempt_key"
-                        defaultValue={target?.attempt_key}
-                      >
-                        {laps.map((lap) => (
-                          <option value={lap.attempt_key} key={lap.attempt_key}>
-                            Attempt {lap.attempt_number} ·{" "}
-                            {label(lap.disposition)} ·{" "}
-                            {lapTime(lap.lap_time_ms)}
-                            {lap.game_valid === false
-                              ? " · game invalid"
-                              : lap.game_valid === true
-                                ? " · game valid"
-                                : " · validity unknown"}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      <span>COMPARISON POLICY</span>
-                      <select
-                        name="comparison_policy"
-                        defaultValue={comparisonPolicy}
-                      >
-                        <option value="time_trial">
-                          Time Trial compatible
-                        </option>
-                        <option value="practice_qualifying">
-                          Practice / qualifying diagnostic
-                        </option>
-                      </select>
-                    </label>
-                    <label>
-                      <span>REFERENCE</span>
-                      <select
-                        name="reference_choice"
-                        defaultValue={referenceChoice}
-                      >
-                        {comparisonPolicy === "time_trial" ? (
-                          <option value="session_best">
-                            Automatic session best
-                          </option>
-                        ) : null}
-                        {completed
-                          .filter(
-                            (lap) => lap.attempt_key !== target?.attempt_key,
-                          )
-                          .map((lap) => (
+                    <form className="compare-form" method="get">
+                      <label>
+                        <span>SESSION</span>
+                        <select
+                          name="session_key"
+                          defaultValue={session?.session_key}
+                        >
+                          {selectableSessions
+                            .slice()
+                            .reverse()
+                            .map((item) => (
+                              <option
+                                value={item.session_key}
+                                key={item.session_key}
+                              >
+                                {item.context?.track_name ?? "Unknown"} ·{" "}
+                                {label(item.context?.session_type)} ·{" "}
+                                {item.run_id.slice(0, 8)}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>TARGET LAP</span>
+                        <select
+                          name="target_attempt_key"
+                          defaultValue={target?.attempt_key}
+                        >
+                          {laps.map((lap) => (
                             <option
                               value={lap.attempt_key}
                               key={lap.attempt_key}
                             >
                               Attempt {lap.attempt_number} ·{" "}
+                              {label(lap.disposition)} ·{" "}
                               {lapTime(lap.lap_time_ms)}
                               {lap.game_valid === false
-                                ? " · diagnostic only"
-                                : ""}
+                                ? " · game invalid"
+                                : lap.game_valid === true
+                                  ? " · game valid"
+                                  : " · validity unknown"}
                             </option>
                           ))}
-                      </select>
-                    </label>
-                    <label>
-                      <span>DIAGNOSTIC REGION MODEL</span>
-                      <select
-                        name="track_model_key"
-                        defaultValue={
-                          selectedModel ? modelKey(selectedModel) : ""
-                        }
-                        disabled={trackModelCatalogUnavailable}
-                      >
-                        <option value="">No region analysis</option>
-                        {trackModels.map((model) => (
-                          <option value={modelKey(model)} key={modelKey(model)}>
-                            {model.track_name} ·{" "}
-                            {model.origin === "local_draft"
-                              ? "local draft · diagnostic"
-                              : model.origin === "reviewed"
-                                ? "reviewed distance regions"
-                              : model.validation_status}{" "}
-                            · rev{" "}
-                            {model.revision} · {model.region_count ?? 0} regions
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      <span>INTERVAL START · M</span>
-                      <input
-                        name="window_start_m"
-                        type="number"
-                        min="0"
-                        step="0.1"
-                        placeholder="Optional"
-                        defaultValue={params.window_start_m ?? ""}
-                      />
-                    </label>
-                    <label>
-                      <span>INTERVAL END · M</span>
-                      <input
-                        name="window_end_m"
-                        type="number"
-                        min="0"
-                        step="0.1"
-                        placeholder="Optional"
-                        defaultValue={params.window_end_m ?? ""}
-                      />
-                    </label>
-                    <button className="compare-button" type="submit">
-                      Load analysis <span>↗</span>
-                    </button>
-                  </form>
-                  {trackModelCatalogUnavailable ? (
-                    <p className="model-note model-warning">
-                      Track model metadata could not be loaded from the local
-                      API.
-                    </p>
-                  ) : staleModelChoice ? (
-                    <p className="model-note model-warning">
-                      The selected model revision is no longer available. The
-                      regular lap comparison remains available.
-                    </p>
-                  ) : !standaloneRegionModeSupported ? (
-                    <p className="model-note">
-                      Standalone region observations require a stable known
-                      Time Trial or Practice/Qualifying context. Race and
-                      unknown modes return an explicit unavailable result.
-                    </p>
-                  ) : selectedModel ? (
-                    <p className="model-note">
-                      {selectedModel.origin === "local_draft"
-                        ? "Local draft selected for diagnostic inspection on this attempt and in the explicitly selected pair. Results do not authorize ranking or coaching."
-                        : selectedModel.origin === "reviewed"
-                          ? "Reviewed distance regions may support recorded measurements and ranking when every independent reference, capture, lifecycle, and telemetry gate passes. Review does not verify physical geometry or authorize coaching."
-                          : "Explicit revision selected. Draft windows remain diagnostic and do not represent validated circuit corners."}
-                    </p>
-                  ) : (
-                    <p className="model-note">
-                      Select a packaged, reviewed, or configured local draft revision to
-                      inspect this attempt's distance regions.
-                    </p>
-                  )}
-                  {comparisonPolicy === "practice_qualifying" ? (
-                    <p className="model-note">
-                      Manual practice and qualifying comparisons are diagnostic
-                      only. Fuel, tyres, traffic, and cooldown intent are not
-                      controlled; Race comparisons remain unsupported.
-                    </p>
-                  ) : null}
-                  {target?.disposition !== "completed" && target ? (
-                    <div className="diagnostic-banner">
-                      <b>i</b>
-                      <span>
-                        {label(target.disposition)} attempt · comparison
-                        requires a completed lap. The selected attempt is
-                        preserved.
-                      </span>
-                    </div>
-                  ) : comparisonPolicy === "practice_qualifying" ? (
-                    <div className="diagnostic-banner">
-                      <b>i</b>
-                      <span>
-                        Diagnostic comparison only · attempts must come from
-                        the same run, session, and player, with a clean start
-                        and no pit encounter.
-                      </span>
-                    </div>
-                  ) : target?.game_valid === false ||
-                    reference?.game_valid === false ? (
-                    <div className="diagnostic-banner">
-                      <b>i</b>
-                      <span>
-                        Diagnostic comparison · one or both laps are
-                        game-invalid. This describes recorded telemetry and is
-                        not coaching.
-                      </span>
-                    </div>
-                  ) : null}
-                  {lifecycleComparisonStatuses.length ? (
-                    <div className="diagnostic-banner">
-                      <b>i</b>
-                      <span>
-                        Diagnostic comparison only · lifecycle evidence excludes this pair from automatic reference selection: {lifecycleComparisonStatuses.map((item) => `${item.side}: ${item.reasons.map(reason).join(" · ")}`).join("; ")}.
-                      </span>
-                    </div>
-                  ) : null}
-                </section>
-
-                <ObservationSetPanel
-                  laps={laps}
-                  report={observationSet}
-                  unavailableReason={
-                    observationSetResponse?.status === "unavailable"
-                      ? observationSetResponse.reason
-                      : null
-                  }
-                  selectedAttemptKeys={params.observation_attempt_keys}
-                  sessionKey={session?.session_key ?? null}
-                  targetAttemptKey={target?.attempt_key ?? null}
-                  referenceChoice={referenceChoice || null}
-                  comparisonPolicy={comparisonPolicy}
-                  windowStartM={params.window_start_m ?? null}
-                  windowEndM={params.window_end_m ?? null}
-                  trackModelKey={selectedModel ? modelKey(selectedModel) : null}
-                  positionProbeM={params.position_probe_m ?? null}
-                />
-
-                <section className="panel reference-panel">
-                  <div className="reference-icon">PB</div>
-                  <div className="reference-copy">
-                    <div className="eyebrow">
-                      {comparisonPolicy === "practice_qualifying"
-                        ? "REFERENCE POLICY"
-                        : "AUTOMATIC REFERENCE POLICY"}
-                    </div>
-                    <h3>
-                      {comparisonPolicy === "practice_qualifying"
-                        ? "Manual reference required"
-                        : selection?.status === "selected"
-                        ? "Session best identified"
-                        : selection
-                          ? label(selection.status)
-                          : target
-                            ? "Reference policy unavailable"
-                            : "No target selected"}
-                    </h3>
-                    <p>{policyDescription}</p>
-                  </div>
-                  <span
-                    className={`policy-state ${comparisonPolicy === "practice_qualifying" ? "policy-manual" : selection?.status === "selected" ? "policy-ready" : selection?.status === "no_eligible_reference" ? "policy-abstain" : "policy-unavailable"}`}
-                  >
-                    {policyBadge}
-                  </span>
-                </section>
-                {selection?.candidates.length ? (
-                  <details className="candidate-details panel">
-                    <summary>
-                      Reference candidate evidence{" "}
-                      <span>{selection.candidates.length} attempts</span>
-                    </summary>
-                    <div className="candidate-list">
-                      {selection.candidates.map((candidate) => (
-                        <div
-                          className="candidate-row"
-                          key={candidate.attempt_key}
+                        </select>
+                      </label>
+                      <label>
+                        <span>COMPARISON POLICY</span>
+                        <select
+                          name="comparison_policy"
+                          defaultValue={comparisonPolicy}
                         >
-                          <span>Attempt {candidate.attempt_number}</span>
-                          <span>
-                            {candidate.eligible
-                              ? "ELIGIBLE"
-                              : candidate.exclusion_reasons
-                                  .map(reason)
-                                  .join(" · ")}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </details>
-                ) : null}
-
-                {comparisonResponse?.status === "ok" && !comparison ? (
-                  <section className="unavailable-panel panel" role="alert">
-                    <span className="state-icon">!</span>
-                    <div>
-                      <div className="eyebrow">COMPARISON SOURCE MISMATCH</div>
-                      <h3>The returned pair did not match the selected traces.</h3>
-                      <p>Attempt, run, session, car, trace hash, trace schema, or comparison policy differed. No substitute evidence was shown.</p>
-                    </div>
-                  </section>
-                ) : null}
-                {comparisonResponse?.status === "unavailable" ? (
-                  <section className="unavailable-panel panel">
-                    <span className="state-icon">!</span>
-                    <div>
-                      <div className="eyebrow">COMPARISON UNAVAILABLE</div>
-                      <h3>This pair does not support a distance comparison.</h3>
-                      <p>{comparisonResponse.reason}</p>
-                    </div>
-                  </section>
-                ) : comparison ? (
-                  <>
-                    <section className="result-heading">
-                      <div>
-                        <div className="eyebrow">
-                          {comparison.track.track_name} ·{" "}
-                          {label(target?.context?.session_type)}
-                        </div>
-                        <h2>
-                          Lap delta <span>across distance.</span>
-                        </h2>
-                      </div>
-                      <div className="result-distance">
-                        0 <i>—</i>{" "}
-                        {Math.round(
-                          comparison.track.track_length_m,
-                        ).toLocaleString()}
-                        <small>METRES</small>
-                      </div>
-                    </section>
-                    <TrajectoryComparisonPanel
-                      report={
-                        trajectoryComparisonResponse?.status === "ok"
-                          ? trajectoryComparisonResponse.data
-                          : null
-                      }
-                      unavailableReason={
-                        trajectoryComparisonResponse?.status === "unavailable"
-                          ? trajectoryComparisonResponse.reason
-                          : null
-                      }
-                      probeDistanceM={params.position_probe_m ?? ""}
-                      formParams={trajectoryComparisonFormParams}
-                    />
-                    <section className="metric-row">
-                      <Metric
-                        label="OFFICIAL LAP TIME"
-                        value={seconds(
-                          comparison.official_lap_time_difference_s,
-                        )}
-                        detail="Target minus reference"
-                        tone={
-                          comparison.official_lap_time_difference_s != null &&
-                          comparison.official_lap_time_difference_s > 0
-                            ? "warm"
-                            : "cool"
-                        }
-                      />
-                      <Metric
-                        label="OBSERVED-RANGE DELTA"
-                        value={seconds(
-                          comparison.observed_range_delta
-                            .observed_range_change_s,
-                        )}
-                        detail={
-                          comparison.observed_range_delta
-                            .first_supported_distance_m == null
-                            ? "No shared supported span"
-                            : `${Math.round(comparison.observed_range_delta.first_supported_distance_m)}–${Math.round(comparison.observed_range_delta.last_supported_distance_m ?? 0)} m supported`
-                        }
-                        tone="neutral"
-                      />
-                      <Metric
-                        label="DELTA COVERAGE"
-                        value={percent(comparison.quality.delta_time_coverage)}
-                        detail={`${comparison.analysis_version} · ${comparison.config.max_bracket_time_s} s max bracket`}
-                        tone="neutral"
-                      />
-                    </section>
-                    {target && reference ? (
-                      <LapDebriefPanel
-                        comparison={comparison}
-                        target={target}
-                        reference={reference}
-                      />
+                          <option value="time_trial">
+                            Time Trial compatible
+                          </option>
+                          <option value="practice_qualifying">
+                            Practice / qualifying diagnostic
+                          </option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>REFERENCE</span>
+                        <select
+                          name="reference_choice"
+                          defaultValue={referenceChoice}
+                        >
+                          {comparisonPolicy === "time_trial" ? (
+                            <option value="session_best">
+                              Automatic session best
+                            </option>
+                          ) : null}
+                          {completed
+                            .filter(
+                              (lap) => lap.attempt_key !== target?.attempt_key,
+                            )
+                            .map((lap) => (
+                              <option
+                                value={lap.attempt_key}
+                                key={lap.attempt_key}
+                              >
+                                Attempt {lap.attempt_number} ·{" "}
+                                {lapTime(lap.lap_time_ms)}
+                                {lap.game_valid === false
+                                  ? " · diagnostic only"
+                                  : ""}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>DIAGNOSTIC REGION MODEL</span>
+                        <select
+                          name="track_model_key"
+                          defaultValue={
+                            selectedModel ? modelKey(selectedModel) : ""
+                          }
+                          disabled={trackModelCatalogUnavailable}
+                        >
+                          <option value="">No region analysis</option>
+                          {trackModels.map((model) => (
+                            <option
+                              value={modelKey(model)}
+                              key={modelKey(model)}
+                            >
+                              {model.track_name} ·{" "}
+                              {model.origin === "local_draft"
+                                ? "local draft · diagnostic"
+                                : model.origin === "reviewed"
+                                  ? "reviewed distance regions"
+                                  : model.validation_status}{" "}
+                              · rev {model.revision} · {model.region_count ?? 0}{" "}
+                              regions
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>INTERVAL START · M</span>
+                        <input
+                          name="window_start_m"
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          placeholder="Optional"
+                          defaultValue={params.window_start_m ?? ""}
+                        />
+                      </label>
+                      <label>
+                        <span>INTERVAL END · M</span>
+                        <input
+                          name="window_end_m"
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          placeholder="Optional"
+                          defaultValue={params.window_end_m ?? ""}
+                        />
+                      </label>
+                      <button className="compare-button" type="submit">
+                        Load analysis <span>↗</span>
+                      </button>
+                    </form>
+                    {trackModelCatalogUnavailable ? (
+                      <p className="model-note model-warning">
+                        Track model metadata could not be loaded from the local
+                        API.
+                      </p>
+                    ) : staleModelChoice ? (
+                      <p className="model-note model-warning">
+                        The selected model revision is no longer available. The
+                        regular lap comparison remains available.
+                      </p>
+                    ) : !standaloneRegionModeSupported ? (
+                      <p className="model-note">
+                        Standalone region observations require a stable known
+                        Time Trial or Practice/Qualifying context. Race and
+                        unknown modes return an explicit unavailable result.
+                      </p>
+                    ) : selectedModel ? (
+                      <p className="model-note">
+                        {selectedModel.origin === "local_draft"
+                          ? "Local draft selected for diagnostic inspection on this attempt and in the explicitly selected pair. Results do not authorize ranking or coaching."
+                          : selectedModel.origin === "reviewed"
+                            ? "Reviewed distance regions may support recorded measurements and ranking when every independent reference, capture, lifecycle, and telemetry gate passes. Review does not verify physical geometry or authorize coaching."
+                            : "Explicit revision selected. Draft windows remain diagnostic and do not represent validated circuit corners."}
+                      </p>
+                    ) : (
+                      <p className="model-note">
+                        Select a packaged, reviewed, or configured local draft
+                        revision to inspect this attempt's distance regions.
+                      </p>
+                    )}
+                    {comparisonPolicy === "practice_qualifying" ? (
+                      <p className="model-note">
+                        Manual practice and qualifying comparisons are
+                        diagnostic only. Fuel, tyres, traffic, and cooldown
+                        intent are not controlled; Race comparisons remain
+                        unsupported.
+                      </p>
                     ) : null}
-                    <section
-                      className="comparison-brief panel"
-                      aria-label="Deterministic comparison brief"
-                    >
-                      <div className="comparison-brief-heading">
-                        <div>
-                          <span className="eyebrow">DETERMINISTIC BRIEF</span>
-                          <h3>What the selected evidence says</h3>
-                        </div>
-                        <span className="brief-version">
-                          {comparison.comparison_brief.analysis_version}
+                    {target?.disposition !== "completed" && target ? (
+                      <div className="diagnostic-banner">
+                        <b>i</b>
+                        <span>
+                          {label(target.disposition)} attempt · comparison
+                          requires a completed lap. The selected attempt is
+                          preserved.
                         </span>
                       </div>
-                      <p className="comparison-brief-text">
-                        {comparison.comparison_brief.text}
-                      </p>
-                      <details className="comparison-brief-details">
-                        <summary>
-                          {comparison.comparison_brief.facts.length} supported facts · source fields
-                        </summary>
-                        {comparison.comparison_brief.facts.length ? (
-                          <ul>
-                            {comparison.comparison_brief.facts.map((fact, index) => (
-                              <li key={`${fact.kind}-${index}`}>
-                                <strong>{fact.text}</strong>
-                                <small>
-                                  Target {fact.provenance.target.attempt_key ?? "unknown"} ·
-                                  Reference {fact.provenance.reference.attempt_key ?? "unknown"}
-                                  {Object.values(fact.source_fields).length
-                                    ? ` · ${Object.values(fact.source_fields).join(" / ")}`
-                                    : ""}
-                                </small>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p>No facts meet the brief&apos;s support requirements.</p>
-                        )}
-                        {comparison.comparison_brief.limitations.length ? (
-                          <ul className="brief-limitations">
-                            {comparison.comparison_brief.limitations.map((item, index) => (
-                              <li key={`${item.code}-${index}`}>{item.text}</li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </details>
-                    </section>
-                    <section className="quality-row panel" aria-label="Reported lap and sector timing">
-                      <div className="quality-title">
-                        <span className="eyebrow">SESSION HISTORY</span>
-                        <strong>Reported timing</strong>
+                    ) : comparisonPolicy === "practice_qualifying" ? (
+                      <div className="diagnostic-banner">
+                        <b>i</b>
+                        <span>
+                          Diagnostic comparison only · attempts must come from
+                          the same run, session, and player, with a clean start
+                          and no pit encounter.
+                        </span>
                       </div>
-                      {(["sector1", "sector2", "sector3"] as const).map((sector, index) => {
-                        const evidence = comparison.sector_timing_difference_ms;
-                        const item = evidence.sectors[sector];
-                        return (
-                          <div key={sector}>
-                            <span>SECTOR {index + 1} · TARGET − REFERENCE</span>
-                            <strong>{seconds(item?.target_minus_reference_ms == null ? null : item.target_minus_reference_ms / 1000)}</strong>
-                            <small>{item?.target_valid === false || item?.reference_valid === false ? "At least one reported sector is invalid" : item?.status === "matched_values" ? "Reported sector values" : "Timing evidence unavailable"}</small>
+                    ) : target?.game_valid === false ||
+                      reference?.game_valid === false ? (
+                      <div className="diagnostic-banner">
+                        <b>i</b>
+                        <span>
+                          Diagnostic comparison · one or both laps are
+                          game-invalid. This describes recorded telemetry and is
+                          not coaching.
+                        </span>
+                      </div>
+                    ) : null}
+                    {lifecycleComparisonStatuses.length ? (
+                      <div className="diagnostic-banner">
+                        <b>i</b>
+                        <span>
+                          Diagnostic comparison only · lifecycle evidence
+                          excludes this pair from automatic reference selection:{" "}
+                          {lifecycleComparisonStatuses
+                            .map(
+                              (item) =>
+                                `${item.side}: ${item.reasons.map(reason).join(" · ")}`,
+                            )
+                            .join("; ")}
+                          .
+                        </span>
+                      </div>
+                    ) : null}
+                  </section>
+
+                  <ObservationSetPanel
+                    laps={laps}
+                    report={observationSet}
+                    unavailableReason={
+                      observationSetResponse?.status === "unavailable"
+                        ? observationSetResponse.reason
+                        : null
+                    }
+                    selectedAttemptKeys={params.observation_attempt_keys}
+                    sessionKey={session?.session_key ?? null}
+                    targetAttemptKey={target?.attempt_key ?? null}
+                    referenceChoice={referenceChoice || null}
+                    comparisonPolicy={comparisonPolicy}
+                    windowStartM={params.window_start_m ?? null}
+                    windowEndM={params.window_end_m ?? null}
+                    trackModelKey={
+                      selectedModel ? modelKey(selectedModel) : null
+                    }
+                    positionProbeM={params.position_probe_m ?? null}
+                  />
+
+                  <section className="panel reference-panel">
+                    <div className="reference-icon">PB</div>
+                    <div className="reference-copy">
+                      <div className="eyebrow">
+                        {comparisonPolicy === "practice_qualifying"
+                          ? "REFERENCE POLICY"
+                          : "AUTOMATIC REFERENCE POLICY"}
+                      </div>
+                      <h3>
+                        {comparisonPolicy === "practice_qualifying"
+                          ? "Manual reference required"
+                          : selection?.status === "selected"
+                            ? "Session best identified"
+                            : selection
+                              ? label(selection.status)
+                              : target
+                                ? "Reference policy unavailable"
+                                : "No target selected"}
+                      </h3>
+                      <p>{policyDescription}</p>
+                    </div>
+                    <span
+                      className={`policy-state ${comparisonPolicy === "practice_qualifying" ? "policy-manual" : selection?.status === "selected" ? "policy-ready" : selection?.status === "no_eligible_reference" ? "policy-abstain" : "policy-unavailable"}`}
+                    >
+                      {policyBadge}
+                    </span>
+                  </section>
+                  {selection?.candidates.length ? (
+                    <details className="candidate-details panel">
+                      <summary>
+                        Reference candidate evidence{" "}
+                        <span>{selection.candidates.length} attempts</span>
+                      </summary>
+                      <div className="candidate-list">
+                        {selection.candidates.map((candidate) => (
+                          <div
+                            className="candidate-row"
+                            key={candidate.attempt_key}
+                          >
+                            <span>Attempt {candidate.attempt_number}</span>
+                            <span>
+                              {candidate.eligible
+                                ? "ELIGIBLE"
+                                : candidate.exclusion_reasons
+                                    .map(reason)
+                                    .join(" · ")}
+                            </span>
                           </div>
-                        );
-                      })}
+                        ))}
+                      </div>
+                    </details>
+                  ) : null}
+
+                  {comparisonResponse?.status === "ok" && !comparison ? (
+                    <section className="unavailable-panel panel" role="alert">
+                      <span className="state-icon">!</span>
+                      <div>
+                        <div className="eyebrow">
+                          COMPARISON SOURCE MISMATCH
+                        </div>
+                        <h3>
+                          The returned pair did not match the selected traces.
+                        </h3>
+                        <p>
+                          Attempt, run, session, car, trace hash, trace schema,
+                          or comparison policy differed. No substitute evidence
+                          was shown.
+                        </p>
+                      </div>
                     </section>
-                    <ComparisonRunEvidence
-                      target={comparison.processing_run_evidence?.target ?? null}
-                      reference={comparison.processing_run_evidence?.reference ?? null}
-                      hrefForRun={(runId) =>
-                        appScreenHref("sessions", preservedQuery, {
-                          run_id: runId,
-                        })
-                      }
-                    />
-                    <ComparisonConditionsPanel
-                      target={comparison.observed_conditions?.target}
-                      reference={comparison.observed_conditions?.reference}
-                    />
-                    <PlayerParticipantContextPanel
-                      target={target?.player_participant_context}
-                      reference={reference?.player_participant_context}
-                    />
-                    <PlayerCarSetupContextPanel
-                      target={target?.player_car_setup_context}
-                      reference={reference?.player_car_setup_context}
-                    />
-                    {comparison.comparison_window ? (
-                      <ComparisonWindowPanel
-                        comparison={comparison}
-                        report={comparison.comparison_window}
-                        brief={comparison.distance_window_brief ?? null}
-                        target={target}
-                        reference={reference}
-                        window={distanceWindow(
+                  ) : null}
+                  {comparisonResponse?.status === "unavailable" ? (
+                    <section className="unavailable-panel panel">
+                      <span className="state-icon">!</span>
+                      <div>
+                        <div className="eyebrow">COMPARISON UNAVAILABLE</div>
+                        <h3>
+                          This pair does not support a distance comparison.
+                        </h3>
+                        <p>{comparisonResponse.reason}</p>
+                      </div>
+                    </section>
+                  ) : comparison ? (
+                    <>
+                      <section className="result-heading">
+                        <div>
+                          <div className="eyebrow">
+                            {comparison.track.track_name} ·{" "}
+                            {label(target?.context?.session_type)}
+                          </div>
+                          <h2>
+                            Lap delta <span>across distance.</span>
+                          </h2>
+                        </div>
+                        <div className="result-distance">
+                          0 <i>—</i>{" "}
+                          {Math.round(
+                            comparison.track.track_length_m,
+                          ).toLocaleString()}
+                          <small>METRES</small>
+                        </div>
+                      </section>
+                      <TrajectoryComparisonPanel
+                        report={
+                          trajectoryComparisonResponse?.status === "ok"
+                            ? trajectoryComparisonResponse.data
+                            : null
+                        }
+                        unavailableReason={
+                          trajectoryComparisonResponse?.status === "unavailable"
+                            ? trajectoryComparisonResponse.reason
+                            : null
+                        }
+                        probeDistanceM={params.position_probe_m ?? ""}
+                        formParams={trajectoryComparisonFormParams}
+                      />
+                      <section className="metric-row">
+                        <Metric
+                          label="OFFICIAL LAP TIME"
+                          value={seconds(
+                            comparison.official_lap_time_difference_s,
+                          )}
+                          detail="Target minus reference"
+                          tone={
+                            comparison.official_lap_time_difference_s != null &&
+                            comparison.official_lap_time_difference_s > 0
+                              ? "warm"
+                              : "cool"
+                          }
+                        />
+                        <Metric
+                          label="OBSERVED-RANGE DELTA"
+                          value={seconds(
+                            comparison.observed_range_delta
+                              .observed_range_change_s,
+                          )}
+                          detail={
+                            comparison.observed_range_delta
+                              .first_supported_distance_m == null
+                              ? "No shared supported span"
+                              : `${Math.round(comparison.observed_range_delta.first_supported_distance_m)}–${Math.round(comparison.observed_range_delta.last_supported_distance_m ?? 0)} m supported`
+                          }
+                          tone="neutral"
+                        />
+                        <Metric
+                          label="DELTA COVERAGE"
+                          value={percent(
+                            comparison.quality.delta_time_coverage,
+                          )}
+                          detail={`${comparison.analysis_version} · ${comparison.config.max_bracket_time_s} s max bracket`}
+                          tone="neutral"
+                        />
+                      </section>
+                      {target && reference ? (
+                        <LapDebriefPanel
+                          comparison={comparison}
+                          target={target}
+                          reference={reference}
+                        />
+                      ) : null}
+                      <section
+                        className="comparison-brief panel"
+                        aria-label="Deterministic comparison brief"
+                      >
+                        <div className="comparison-brief-heading">
+                          <div>
+                            <span className="eyebrow">DETERMINISTIC BRIEF</span>
+                            <h3>What the selected evidence says</h3>
+                          </div>
+                          <span className="brief-version">
+                            {comparison.comparison_brief.analysis_version}
+                          </span>
+                        </div>
+                        <p className="comparison-brief-text">
+                          {comparison.comparison_brief.text}
+                        </p>
+                        <details className="comparison-brief-details">
+                          <summary>
+                            {comparison.comparison_brief.facts.length} supported
+                            facts · source fields
+                          </summary>
+                          {comparison.comparison_brief.facts.length ? (
+                            <ul>
+                              {comparison.comparison_brief.facts.map(
+                                (fact, index) => (
+                                  <li key={`${fact.kind}-${index}`}>
+                                    <strong>{fact.text}</strong>
+                                    <small>
+                                      Target{" "}
+                                      {fact.provenance.target.attempt_key ??
+                                        "unknown"}{" "}
+                                      · Reference{" "}
+                                      {fact.provenance.reference.attempt_key ??
+                                        "unknown"}
+                                      {Object.values(fact.source_fields).length
+                                        ? ` · ${Object.values(fact.source_fields).join(" / ")}`
+                                        : ""}
+                                    </small>
+                                  </li>
+                                ),
+                              )}
+                            </ul>
+                          ) : (
+                            <p>
+                              No facts meet the brief&apos;s support
+                              requirements.
+                            </p>
+                          )}
+                          {comparison.comparison_brief.limitations.length ? (
+                            <ul className="brief-limitations">
+                              {comparison.comparison_brief.limitations.map(
+                                (item, index) => (
+                                  <li key={`${item.code}-${index}`}>
+                                    {item.text}
+                                  </li>
+                                ),
+                              )}
+                            </ul>
+                          ) : null}
+                        </details>
+                      </section>
+                      <section
+                        className="quality-row panel"
+                        aria-label="Reported lap and sector timing"
+                      >
+                        <div className="quality-title">
+                          <span className="eyebrow">SESSION HISTORY</span>
+                          <strong>Reported timing</strong>
+                        </div>
+                        {(["sector1", "sector2", "sector3"] as const).map(
+                          (sector, index) => {
+                            const evidence =
+                              comparison.sector_timing_difference_ms;
+                            const item = evidence.sectors[sector];
+                            return (
+                              <div key={sector}>
+                                <span>
+                                  SECTOR {index + 1} · TARGET − REFERENCE
+                                </span>
+                                <strong>
+                                  {seconds(
+                                    item?.target_minus_reference_ms == null
+                                      ? null
+                                      : item.target_minus_reference_ms / 1000,
+                                  )}
+                                </strong>
+                                <small>
+                                  {item?.target_valid === false ||
+                                  item?.reference_valid === false
+                                    ? "At least one reported sector is invalid"
+                                    : item?.status === "matched_values"
+                                      ? "Reported sector values"
+                                      : "Timing evidence unavailable"}
+                                </small>
+                              </div>
+                            );
+                          },
+                        )}
+                      </section>
+                      <ComparisonRunEvidence
+                        target={
+                          comparison.processing_run_evidence?.target ?? null
+                        }
+                        reference={
+                          comparison.processing_run_evidence?.reference ?? null
+                        }
+                        hrefForRun={(runId) =>
+                          appScreenHref("sessions", preservedQuery, {
+                            run_id: runId,
+                          })
+                        }
+                      />
+                      <ComparisonConditionsPanel
+                        target={comparison.observed_conditions?.target}
+                        reference={comparison.observed_conditions?.reference}
+                      />
+                      <PlayerParticipantContextPanel
+                        target={target?.player_participant_context}
+                        reference={reference?.player_participant_context}
+                      />
+                      <PlayerCarSetupContextPanel
+                        target={target?.player_car_setup_context}
+                        reference={reference?.player_car_setup_context}
+                      />
+                      {comparison.comparison_window ? (
+                        <ComparisonWindowPanel
+                          comparison={comparison}
+                          report={comparison.comparison_window}
+                          brief={comparison.distance_window_brief ?? null}
+                          target={target}
+                          reference={reference}
+                          window={distanceWindow(
+                            params.window_start_m,
+                            params.window_end_m,
+                          )}
+                        />
+                      ) : null}
+                      <LinkedComparisonCharts
+                        key={JSON.stringify([
+                          target?.attempt_key ?? "",
+                          reference?.attempt_key ?? "",
+                          params.window_start_m ?? "",
+                          params.window_end_m ?? "",
+                        ])}
+                        distance={comparison.distance_m}
+                        initialWindowM={distanceWindow(
                           params.window_start_m,
                           params.window_end_m,
                         )}
+                        charts={buildComparisonCharts(
+                          comparison,
+                          target,
+                          reference,
+                        )}
                       />
-                    ) : null}
-                    <LinkedComparisonCharts
-                      key={JSON.stringify([
-                        target?.attempt_key ?? "",
-                        reference?.attempt_key ?? "",
-                        params.window_start_m ?? "",
-                        params.window_end_m ?? "",
-                      ])}
-                      distance={comparison.distance_m}
-                      initialWindowM={distanceWindow(
-                        params.window_start_m,
-                        params.window_end_m,
-                      )}
-                      charts={buildComparisonCharts(comparison, target, reference)}
-                    />
-                    <section className="quality-row panel">
-                      <div className="quality-title">
-                        <span className="eyebrow">DATA QUALITY</span>
-                        <strong>Coverage and gaps</strong>
-                      </div>
-                      <div>
-                        <span>TARGET SAMPLES</span>
-                        <strong>
-                          {comparison.target_trace.source_sample_count.toLocaleString()}
-                        </strong>
-                      </div>
-                      <div>
-                        <span>REFERENCE SAMPLES</span>
-                        <strong>
-                          {comparison.reference_trace.source_sample_count.toLocaleString()}
-                        </strong>
-                      </div>
-                      <div>
-                        <span>DELTA SUPPORTED</span>
-                        <strong>
-                          {percent(comparison.quality.delta_time_coverage)}
-                        </strong>
-                      </div>
-                      <div>
-                        <span>UNSUPPORTED SPANS</span>
-                        <strong>
-                          {comparison.quality.target_excluded_spans.length +
-                            comparison.quality.reference_excluded_spans.length}
-                        </strong>
-                      </div>
-                    </section>
-                    <p className="chart-footnote">
-                      Lines stop where a channel is unsupported. Missing
-                      telemetry is not interpolated across.
-                    </p>
-                    <CornerLossCandidatesPanel
-                      analysis={comparison.corner_loss_candidates}
-                    />
-                    {comparison.corner_comparison_brief.status === "available" ? (
-                      <CornerComparisonBriefPanel
-                        report={comparison.corner_comparison_brief}
-                      />
-                    ) : null}
-                    <DrivingPatternAssessmentPanel
-                      report={comparison.driving_pattern_assessment}
-                    />
-                    <ThrottlePatternAssessmentPanel
-                      report={comparison.throttle_pattern_assessment}
-                    />
-                    {comparison.corner_analysis ? (
-                      <RegionAnalysisPanel
-                        analysis={comparison.corner_analysis}
-                        comparison={comparison}
-                      />
-                    ) : (
-                      <section className="region-prompt panel">
-                        <div className="eyebrow">
-                          {selectedModel
-                            ? "REGION ANALYSIS UNAVAILABLE"
-                            : trackModelCatalogUnavailable
-                              ? "REGION MODEL CATALOG UNAVAILABLE"
-                              : standaloneRegionModeSupported
-                                ? "NO REGION MODEL SELECTED"
-                                : "REGION POLICY UNSUPPORTED"}
+                      <section className="quality-row panel">
+                        <div className="quality-title">
+                          <span className="eyebrow">DATA QUALITY</span>
+                          <strong>Coverage and gaps</strong>
                         </div>
-                        <h3>
-                          {selectedModel
-                            ? "The selected model returned no region analysis."
-                            : trackModelCatalogUnavailable
-                              ? "Track model metadata could not be loaded."
-                            : standaloneRegionModeSupported
-                                ? "Choose an explicit model to inspect distance regions."
-                              : "Standalone region inspection requires stable Time Trial or Practice/Qualifying context."}
-                        </h3>
-                        <p>
-                          {selectedModel
-                            ? "The API returned the lap comparison without region evidence. Reload or choose another registered revision."
-                            : trackModelCatalogUnavailable
-                              ? "The local API did not provide the model catalog. Reload after the API is available to select a registered revision."
-                              : standaloneRegionModeSupported
-                                ? "No circuit geometry is inferred from session telemetry. Models are versioned and selected explicitly."
-                                : "Race and unknown contexts stay unavailable; no region results are inferred for this session."}
-                        </p>
+                        <div>
+                          <span>TARGET SAMPLES</span>
+                          <strong>
+                            {comparison.target_trace.source_sample_count.toLocaleString()}
+                          </strong>
+                        </div>
+                        <div>
+                          <span>REFERENCE SAMPLES</span>
+                          <strong>
+                            {comparison.reference_trace.source_sample_count.toLocaleString()}
+                          </strong>
+                        </div>
+                        <div>
+                          <span>DELTA SUPPORTED</span>
+                          <strong>
+                            {percent(comparison.quality.delta_time_coverage)}
+                          </strong>
+                        </div>
+                        <div>
+                          <span>UNSUPPORTED SPANS</span>
+                          <strong>
+                            {comparison.quality.target_excluded_spans.length +
+                              comparison.quality.reference_excluded_spans
+                                .length}
+                          </strong>
+                        </div>
                       </section>
-                    )}
-                  </>
-                ) : (
-                  <section className="empty-state panel">
-                    <div className="eyebrow">{noComparison.eyebrow}</div>
-                    <h2>{noComparison.title}</h2>
-                    <p>{noComparison.body}</p>
-                  </section>
-                )}
-                {engineerIntent !== "region_comparison" ? (
-                  <PairedRegionPanel
-                    report={pairedRegionReport}
-                    engineerLinks={engineerRegionLinks}
-                    unavailableReason={
-                      pairedRegionResponse?.status === "unavailable"
-                        ? pairedRegionResponse.reason
-                        : null
-                    }
-                    selectionReady={pairedRegionSelectionReady}
-                    navigation={{
-                      sessionKey: session?.session_key ?? null,
-                      runId: selectedRunId,
-                      runOffset: firstParam(rawParams.run_offset) ?? null,
-                      sessionOffset: firstParam(rawParams.session_offset) ?? null,
-                      attemptOffset: firstParam(rawParams.attempt_offset) ?? null,
-                      lifecycleEventOffset: firstParam(rawParams.lifecycle_event_offset) ?? null,
-                      observationAttemptKeys: params.observation_attempt_keys,
-                      positionProbeM: params.position_probe_m ?? null,
-                    }}
-                  />
-                ) : null}
-              </section>
-            </div>
-          </>
-        )}
-      <EngineerQueryPanel
-        report={engineerQueryReport}
-        requestState={engineerQueryRequestState}
-        intent={
-          engineerIntent === "attempt_summary" || engineerIntent === "region_comparison"
-            ? engineerIntent
-            : null
-        }
-        sessionKey={session?.session_key ?? null}
-        targetAttemptKey={
-          params.target_attempt_key && target?.attempt_key === params.target_attempt_key
-            ? params.target_attempt_key
-            : null
-        }
-        referenceAttemptKey={manualReference?.attempt_key ?? null}
-        referenceChoice={params.reference_choice ?? null}
-        comparisonPolicy={comparisonPolicy}
-        trackModelKey={selectedModel ? modelKey(selectedModel) : null}
-        regions={engineerRegions}
-        targetHref={engineerSourceHref(target?.attempt_key ?? null)}
-        referenceHref={engineerSourceHref(manualReference?.attempt_key ?? null)}
-        comparisonHref={engineerComparisonHref}
-        requestReason={engineerQueryRequestReason}
-        summaryScreenHref={
-          target && session && params.target_attempt_key === target.attempt_key
-            ? appScreenHref("engineer", preservedQuery, {
-                session_key: session.session_key,
-                target_attempt_key: target.attempt_key,
-                engineer_intent: "attempt_summary",
-              })
-            : null
-        }
-      />
-          </div>
-        </details>
+                      <p className="chart-footnote">
+                        Lines stop where a channel is unsupported. Missing
+                        telemetry is not interpolated across.
+                      </p>
+                      <CornerLossCandidatesPanel
+                        analysis={comparison.corner_loss_candidates}
+                      />
+                      {comparison.corner_comparison_brief.status ===
+                      "available" ? (
+                        <CornerComparisonBriefPanel
+                          report={comparison.corner_comparison_brief}
+                        />
+                      ) : null}
+                      <DrivingPatternAssessmentPanel
+                        report={comparison.driving_pattern_assessment}
+                      />
+                      <ThrottlePatternAssessmentPanel
+                        report={comparison.throttle_pattern_assessment}
+                      />
+                      {comparison.corner_analysis ? (
+                        <RegionAnalysisPanel
+                          analysis={comparison.corner_analysis}
+                          comparison={comparison}
+                        />
+                      ) : (
+                        <section className="region-prompt panel">
+                          <div className="eyebrow">
+                            {selectedModel
+                              ? "REGION ANALYSIS UNAVAILABLE"
+                              : trackModelCatalogUnavailable
+                                ? "REGION MODEL CATALOG UNAVAILABLE"
+                                : standaloneRegionModeSupported
+                                  ? "NO REGION MODEL SELECTED"
+                                  : "REGION POLICY UNSUPPORTED"}
+                          </div>
+                          <h3>
+                            {selectedModel
+                              ? "The selected model returned no region analysis."
+                              : trackModelCatalogUnavailable
+                                ? "Track model metadata could not be loaded."
+                                : standaloneRegionModeSupported
+                                  ? "Choose an explicit model to inspect distance regions."
+                                  : "Standalone region inspection requires stable Time Trial or Practice/Qualifying context."}
+                          </h3>
+                          <p>
+                            {selectedModel
+                              ? "The API returned the lap comparison without region evidence. Reload or choose another registered revision."
+                              : trackModelCatalogUnavailable
+                                ? "The local API did not provide the model catalog. Reload after the API is available to select a registered revision."
+                                : standaloneRegionModeSupported
+                                  ? "No circuit geometry is inferred from session telemetry. Models are versioned and selected explicitly."
+                                  : "Race and unknown contexts stay unavailable; no region results are inferred for this session."}
+                          </p>
+                        </section>
+                      )}
+                    </>
+                  ) : (
+                    <section className="empty-state panel">
+                      <div className="eyebrow">{noComparison.eyebrow}</div>
+                      <h2>{noComparison.title}</h2>
+                      <p>{noComparison.body}</p>
+                    </section>
+                  )}
+                  {engineerIntent !== "region_comparison" ? (
+                    <PairedRegionPanel
+                      report={pairedRegionReport}
+                      engineerLinks={engineerRegionLinks}
+                      unavailableReason={
+                        pairedRegionResponse?.status === "unavailable"
+                          ? pairedRegionResponse.reason
+                          : null
+                      }
+                      selectionReady={pairedRegionSelectionReady}
+                      navigation={{
+                        sessionKey: session?.session_key ?? null,
+                        runId: selectedRunId,
+                        runOffset: firstParam(rawParams.run_offset) ?? null,
+                        sessionOffset:
+                          firstParam(rawParams.session_offset) ?? null,
+                        attemptOffset:
+                          firstParam(rawParams.attempt_offset) ?? null,
+                        lifecycleEventOffset:
+                          firstParam(rawParams.lifecycle_event_offset) ?? null,
+                        observationAttemptKeys: params.observation_attempt_keys,
+                        positionProbeM: params.position_probe_m ?? null,
+                      }}
+                    />
+                  ) : null}
+                </section>
+              </div>
+            </>
+          )}
+          <EngineerQueryPanel
+            report={engineerQueryReport}
+            requestState={engineerQueryRequestState}
+            intent={
+              engineerIntent === "attempt_summary" ||
+              engineerIntent === "region_comparison"
+                ? engineerIntent
+                : null
+            }
+            sessionKey={session?.session_key ?? null}
+            targetAttemptKey={
+              params.target_attempt_key &&
+              target?.attempt_key === params.target_attempt_key
+                ? params.target_attempt_key
+                : null
+            }
+            referenceAttemptKey={manualReference?.attempt_key ?? null}
+            referenceChoice={params.reference_choice ?? null}
+            comparisonPolicy={comparisonPolicy}
+            trackModelKey={selectedModel ? modelKey(selectedModel) : null}
+            regions={engineerRegions}
+            targetHref={engineerSourceHref(target?.attempt_key ?? null)}
+            referenceHref={engineerSourceHref(
+              manualReference?.attempt_key ?? null,
+            )}
+            comparisonHref={engineerComparisonHref}
+            requestReason={engineerQueryRequestReason}
+            summaryScreenHref={
+              target &&
+              session &&
+              params.target_attempt_key === target.attempt_key
+                ? appScreenHref("engineer", preservedQuery, {
+                    session_key: session.session_key,
+                    target_attempt_key: target.attempt_key,
+                    engineer_intent: "attempt_summary",
+                  })
+                : null
+            }
+          />
+        </section>
       </main>
       <footer className="footer-bar">
         <span>
@@ -1733,7 +1866,10 @@ function ComparisonRunEvidence({
           <div className="quality-title">
             <span className="eyebrow">{sourceLabel} · CAPTURE EVIDENCE</span>
             <strong>Run {summary.run_id.slice(0, 8)}</strong>
-            <a className="capture-evidence-link" href={hrefForRun(summary.run_id) ?? undefined}>
+            <a
+              className="capture-evidence-link"
+              href={hrefForRun(summary.run_id) ?? undefined}
+            >
               Open run summary ↗
             </a>
           </div>
@@ -1770,8 +1906,7 @@ function ComparisonRunEvidence({
             <span>REPLAY LATE PACKETS</span>
             <strong>
               {formatEvidenceCount(
-                summary.processing.replay_counters
-                  ?.import_late_packets_ignored,
+                summary.processing.replay_counters?.import_late_packets_ignored,
               )}
             </strong>
           </div>
@@ -1862,7 +1997,10 @@ function CornerLossCandidatesPanel({
   const assessments = analysis.region_assessment;
 
   return (
-    <section className="corner-candidates panel" aria-label="Recorded corner time differences">
+    <section
+      className="corner-candidates panel"
+      aria-label="Recorded corner time differences"
+    >
       <header className="region-card-header">
         <div>
           <div className="region-index">RECORDED CORNER-TIME DIFFERENCES</div>
@@ -1878,16 +2016,20 @@ function CornerLossCandidatesPanel({
             cause or give driving advice.
           </p>
         </div>
-        <span className={`region-state ${analysis.status === "ranked" ? "" : "region-state-draft"}`}>
+        <span
+          className={`region-state ${analysis.status === "ranked" ? "" : "region-state-draft"}`}
+        >
           {label(analysis.status)}
         </span>
       </header>
       <div className="corner-candidate-provenance">
         <span>
-          MODEL {model ? `${model.model_id} r${model.revision}` : "NOT SELECTED"}
+          MODEL{" "}
+          {model ? `${model.model_id} r${model.revision}` : "NOT SELECTED"}
         </span>
         <span>
-          SESSION BEST {typeof selectedReference === "string"
+          SESSION BEST{" "}
+          {typeof selectedReference === "string"
             ? selectedReference
             : selection?.status
               ? label(selection.status)
@@ -1902,15 +2044,21 @@ function CornerLossCandidatesPanel({
         <ol className="corner-candidate-list">
           {analysis.ranked_candidates.map((candidate) => (
             <li key={candidate.region_id}>
-              <strong>#{candidate.rank} {candidate.region_label}</strong>
+              <strong>
+                #{candidate.rank} {candidate.region_label}
+              </strong>
               <span>
-                {seconds(candidate.recorded_time_difference_s)} ·{" "}
-                [{candidate.analysis_window_m[0].toFixed(1)}, {candidate.analysis_window_m[1].toFixed(1)}) m
+                {seconds(candidate.recorded_time_difference_s)} · [
+                {candidate.analysis_window_m[0].toFixed(1)},{" "}
+                {candidate.analysis_window_m[1].toFixed(1)}) m
               </span>
               <small>
-                Shared coverage {percent(candidate.connected_support.shared_time_coverage)} ·
-                target {percent(candidate.connected_support.target_time_coverage)} ·
-                reference {percent(candidate.connected_support.reference_time_coverage)}
+                Shared coverage{" "}
+                {percent(candidate.connected_support.shared_time_coverage)} ·
+                target{" "}
+                {percent(candidate.connected_support.target_time_coverage)} ·
+                reference{" "}
+                {percent(candidate.connected_support.reference_time_coverage)}
               </small>
             </li>
           ))}
@@ -1925,7 +2073,10 @@ function CornerLossCandidatesPanel({
               ))}
             </ul>
           ) : (
-            <p>No positive supported difference remained at one-millisecond display precision.</p>
+            <p>
+              No positive supported difference remained at one-millisecond
+              display precision.
+            </p>
           )}
           {analysis.gate_reasons_omitted_count > 0 ? (
             <p>
@@ -1948,7 +2099,10 @@ function CornerComparisonBriefPanel({
   report: CornerComparisonBrief;
 }) {
   return (
-    <section className="corner-comparison-brief panel" aria-label="Recorded corner comparison brief">
+    <section
+      className="corner-comparison-brief panel"
+      aria-label="Recorded corner comparison brief"
+    >
       <header className="region-card-header">
         <div>
           <div className="region-index">RECORDED CONTROL OBSERVATIONS</div>
@@ -1961,8 +2115,13 @@ function CornerComparisonBriefPanel({
         {report.regions.map((region) => (
           <article key={region.region_id}>
             <div className="corner-comparison-brief-region-heading">
-              <strong>#{region.rank} {region.region_label}</strong>
-              <span>[{region.analysis_window_m[0].toFixed(1)}, {region.analysis_window_m[1].toFixed(1)}) m</span>
+              <strong>
+                #{region.rank} {region.region_label}
+              </strong>
+              <span>
+                [{region.analysis_window_m[0].toFixed(1)},{" "}
+                {region.analysis_window_m[1].toFixed(1)}) m
+              </span>
             </div>
             <ul>
               {region.facts.map((fact, index) => (
@@ -1970,7 +2129,8 @@ function CornerComparisonBriefPanel({
                   <strong>{fact.text}</strong>
                   <small>
                     Target {fact.provenance.target.attempt_key ?? "unknown"} ·
-                    Reference {fact.provenance.reference.attempt_key ?? "unknown"} ·
+                    Reference{" "}
+                    {fact.provenance.reference.attempt_key ?? "unknown"} ·
                     {Object.values(fact.source_fields).join(" / ")}
                   </small>
                 </li>
@@ -1978,18 +2138,26 @@ function CornerComparisonBriefPanel({
             </ul>
             {region.omitted_measurement_count > 0 ? (
               <p className="corner-comparison-brief-omissions">
-                {region.omitted_measurement_count} control observation(s) omitted: {region.omitted_measurements.map((item) => `${label(item.metric)} (${label(item.reason)})`).join(" · ")}
+                {region.omitted_measurement_count} control observation(s)
+                omitted:{" "}
+                {region.omitted_measurements
+                  .map(
+                    (item) => `${label(item.metric)} (${label(item.reason)})`,
+                  )
+                  .join(" · ")}
               </p>
             ) : null}
             <small className="corner-comparison-brief-provenance">
-              Model {region.provenance.model.model_id ?? "unknown"} r{region.provenance.model.revision ?? "?"} ·
-              SHA-256 {region.provenance.model.model_content_sha256 ?? "unavailable"}
+              Model {region.provenance.model.model_id ?? "unknown"} r
+              {region.provenance.model.revision ?? "?"} · SHA-256{" "}
+              {region.provenance.model.model_content_sha256 ?? "unavailable"}
             </small>
           </article>
         ))}
       </div>
       <p className="corner-candidate-note">
-        Recorded measurements only. They do not establish a cause or driving advice.
+        Recorded measurements only. They do not establish a cause or driving
+        advice.
       </p>
     </section>
   );
@@ -2542,10 +2710,11 @@ function distanceWindow(start?: string, end?: string): [number, number] | null {
   const first = Number(start);
   const last = Number(end);
   const valid =
-    Number.isFinite(first) && Number.isFinite(last) && first >= 0 && last > first;
-  return valid
-    ? [first, last]
-    : null;
+    Number.isFinite(first) &&
+    Number.isFinite(last) &&
+    first >= 0 &&
+    last > first;
+  return valid ? [first, last] : null;
 }
 function comparisonQuery(
   targetAttemptKey: string,
@@ -2600,8 +2769,7 @@ const reason = (value: string) =>
       "This is not a supported practice or qualifying session",
     practice_qualifying_unknown_context:
       "Practice or qualifying context is missing or unknown",
-    practice_qualifying_unknown_mode:
-      "Gameplay mode is missing or unknown",
+    practice_qualifying_unknown_mode: "Gameplay mode is missing or unknown",
     practice_qualifying_unsupported_mode_or_ruleset:
       "This gameplay mode or ruleset is not supported",
     practice_qualifying_incomplete_context:

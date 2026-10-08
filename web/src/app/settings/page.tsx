@@ -7,7 +7,6 @@ import SettingsStorageUsage from "../SettingsStorageUsage";
 import SettingsHudPreferences from "../SettingsHudPreferences";
 import SettingsTelemetryService from "../SettingsTelemetryService";
 import SettingsAIRuntime from "./SettingsAIRuntime";
-import ReferenceScreen from "../ReferenceScreens";
 
 const sections = [
   { id: "general", label: "General" },
@@ -32,16 +31,11 @@ export default async function SettingsPage({
   return (
     <div className="app-shell">
       <AppHeader active="settings" preservedQuery={preservedQuery} />
-      <main
-        className="page-content reference-page-content"
-        id="main-content"
-        tabIndex={-1}
-      >
-        <ReferenceScreen screen="settings" preservedQuery={preservedQuery} />
-        <details className="ref-workflow-details" id="settings-workflow">
-          <summary>Open configured browser and local-service settings</summary>
-          <div className="ref-workflow-content">
-        <section className="compare-page-intro settings-page-intro">
+      <main className="page-content" id="main-content" tabIndex={-1}>
+        <section
+          className="compare-page-intro settings-page-intro"
+          id="settings-workflow"
+        >
           <div className="eyebrow">SETTINGS / LOCAL PREFERENCES</div>
           <h1>
             Tune your
@@ -152,8 +146,6 @@ export default async function SettingsPage({
             <SettingsStorageUsage />
           </div>
         </div>
-          </div>
-        </details>
       </main>
       <footer className="footer-bar">
         <span>

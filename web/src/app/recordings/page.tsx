@@ -11,7 +11,6 @@ import { readRecordingSourcePage } from "@/lib/recording-catalog";
 import AppHeader from "../AppHeader";
 import { testDataRoute } from "../TestDataRoute";
 import RecordingInbox from "../RecordingInbox";
-import ReferenceScreen from "../ReferenceScreens";
 
 export default async function RecordingsPage({
   searchParams,
@@ -65,14 +64,10 @@ export default async function RecordingsPage({
   return (
     <div className="app-shell">
       <AppHeader active="recordings" preservedQuery={preservedQuery} />
-      <main className="page-content reference-page-content" id="main-content" tabIndex={-1}>
-        <ReferenceScreen screen="recordings" preservedQuery={preservedQuery} />
-        <details className="ref-workflow-details" id="recording-workflow">
-          <summary id="recording-controls-trigger">Open recording, import, and replay controls</summary>
-          <div className="ref-workflow-content">
+      <main className="page-content" id="main-content" tabIndex={-1}>
         <section className="recordings-page-intro">
           <div className="eyebrow">RECORDINGS / CAPTURE AND REPLAY</div>
-          <h1>
+          <h1 id="recording-workflow">
             Capture.
             <br />
             <span>Review the evidence.</span>
@@ -83,18 +78,21 @@ export default async function RecordingsPage({
             local service reservation.
           </p>
         </section>
-        <RecordingInbox
-          sourcesResponse={sourcesResponse}
-          catalogFilters={catalogFilters}
-          recordingResponse={recordingResponse}
-          groupResponse={groupResponse}
-          jobResponse={jobResponse}
-          importError={firstParam(params.import_error)}
-          returnTo="recordings"
-          preservedQuery={preservedQuery}
-        />
-          </div>
-        </details>
+        <section
+          id="recording-controls-trigger"
+          aria-label="Recording, import, and replay controls"
+        >
+          <RecordingInbox
+            sourcesResponse={sourcesResponse}
+            catalogFilters={catalogFilters}
+            recordingResponse={recordingResponse}
+            groupResponse={groupResponse}
+            jobResponse={jobResponse}
+            importError={firstParam(params.import_error)}
+            returnTo="recordings"
+            preservedQuery={preservedQuery}
+          />
+        </section>
       </main>
       <footer className="footer-bar">
         <span>
