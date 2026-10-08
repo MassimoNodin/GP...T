@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from ..errors import ProtocolError
 from ..pipeline import TelemetryPipeline
+from ..processing.output_consumption import consume_trace_outputs
 from ..recording.capture import CaptureReader
 from ..sessions.lifecycle import LifecycleEvent, reconcile_attempt_lifecycle
 from ..sessions.participant_context import PlayerParticipantObservation
@@ -217,14 +218,12 @@ class _TraceWriterManager:
         self.finished_attempt_ids.add(attempt.attempt_id)
 
     def consume(self, samples: tuple[CarSample, ...], attempts: tuple[Any, ...]) -> None:
-        sample_ids = {sample.attempt_id for sample in samples}
-        for attempt in attempts:
-            if attempt.attempt_id not in sample_ids:
-                self.finish_attempt(attempt)
-        for sample in samples:
-            self.write_sample(sample)
-        for attempt in attempts:
-            self.finish_attempt(attempt)
+        consume_trace_outputs(
+            samples,
+            attempts,
+            write_sample=self.write_sample,
+            finish_attempt=self.finish_attempt,
+        )
 
     def finish_all(self, attempts: tuple[Any, ...]) -> None:
         for attempt in attempts:
