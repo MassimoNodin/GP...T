@@ -30,7 +30,7 @@ uv sync --extra app
 uv run --extra app f1-engineer api --database data/f1-engineer.sqlite3 --recordings-root recordings --control-token-file data/.f1-engineer-control-token
 ```
 
-The API listens on `127.0.0.1:8765`. The recorder listens on `0.0.0.0:20777`, which is the address the game can send to.
+The API listens on `127.0.0.1:8765` and automatically acquires telemetry on `0.0.0.0:20777`. The session-evidence foundation retains available all-driver evidence and publishes completed laps while telemetry continues, without stop/import. Its live comparison endpoints and current validation limits are documented in [the foundation runbook](docs/session-engineer-foundation-validation.md); the existing dashboard is still the legacy interface, not the planned radio-first redesign.
 
 In a second terminal, start the dashboard:
 
@@ -42,9 +42,9 @@ npm run dev
 
 Open [http://127.0.0.1:3000](http://127.0.0.1:3000).
 
-In F1 25, set the UDP telemetry destination to this computer and port 20777. On the Recordings screen, start recording before you drive and stop it when the session is over. Stopping writes a `.f1ecap` file into the inbox. Import that file from the same screen.
+In F1 25, set the UDP telemetry destination to this computer and port 20777. Automatic acquisition starts with the API; do not start a second recorder on that port. For the legacy Recordings start/stop/import workflow, add `--manual-acquisition` to the API command. In that diagnostic mode, stopping writes a `.f1ecap` file into the inbox for import from the same screen.
 
-To record, inspect, and import from the command line:
+To record, inspect, and import from the command line (stop automatic acquisition first so the recorder can own the UDP socket):
 
 ```powershell
 uv run --extra app f1-engineer record --output recordings/session.f1ecap

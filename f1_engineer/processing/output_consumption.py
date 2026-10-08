@@ -29,4 +29,3 @@ def consume_trace_outputs(
         write_sample(sample)
     for attempt in attempts:
         finish_attempt(attempt)
-

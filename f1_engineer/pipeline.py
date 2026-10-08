@@ -112,7 +112,8 @@ class TelemetryPipeline:
         self.laps.bound_context_history(64)
         self.car_lap_inventory.lap_tracker.bound_context_history(64)
         for name in ("lap_data_decode_errors", "car_telemetry_decode_errors", "motion_decode_errors",
-                     "car_status_decode_errors", "car_damage_decode_errors", "participants_decode_errors"):
+                     "car_status_decode_errors", "car_damage_decode_errors", "participants_decode_errors",
+                     "session_history_decode_errors", "car_setups_decode_errors"):
             values = getattr(self, name)
             del values[:-64]
         for name in ("_frame_ordinal_by_uid", "_event_ordinal_by_uid", "_last_session_time_by_uid",
