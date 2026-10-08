@@ -29,6 +29,7 @@ class SessionCoordinator:
         self.sequence = 0
         self.gap_epoch = 0
         self._session_ids: OrderedDict[int, str] = OrderedDict()
+        self._staging_counts: OrderedDict[tuple[str, int], int] = OrderedDict()
         self.failed = False
         self.finished = False
         self.before_commit = None
@@ -100,8 +101,12 @@ class SessionCoordinator:
 
     @contextmanager
     def _transaction(self):
-        with self._writer:
-            yield self._writer
+        try:
+            with self._writer:
+                yield self._writer
+        except Exception:
+            self._staging_counts.clear()
+            raise
 
     def close(self) -> None:
         self._writer.close()
@@ -268,7 +273,7 @@ class SessionCoordinator:
             record = observation.to_record()
             record["gap_epoch"] = self.gap_epoch
             record["source_sequences"] = source_ranges.get((observation.session_uid, observation.frame_identifier), [])
-            database.execute("INSERT OR REPLACE INTO staging VALUES (?,?,?,?,?,?,?,?,?)", (
+            self._stage_observation(database, (
                 self.generation, str(observation.session_uid), observation.car_index,
                 observation.frame_ordinal, observation.lifecycle_epoch, observation.packet_format,
                 self.sequence, self.gap_epoch, encode(record),
@@ -294,10 +299,41 @@ class SessionCoordinator:
             if event.event_kind == "session_end_annotation":
                 database.execute("UPDATE sessions SET lifecycle='ended' WHERE id=?", (self._session(event.session_uid),))
         for uid, car in {(row.session_uid, row.car_index) for row in output.car_observations}:
-            database.execute("""DELETE FROM staging WHERE generation=? AND uid=? AND car=? AND frame <
-                COALESCE((SELECT frame FROM staging WHERE generation=? AND uid=? AND car=?
-                ORDER BY frame DESC LIMIT 1 OFFSET ?),-1)""",
-                (self.generation, str(uid), car, self.generation, str(uid), car, MAX_STAGED_ROWS_PER_CAR - 1))
+            self._prune_staging(database, str(uid), car)
+
+    def _staging_count(self, database: sqlite3.Connection, uid: str, car: int) -> int:
+        key = (uid, car)
+        if key not in self._staging_counts:
+            self._staging_counts[key] = database.execute(
+                "SELECT COUNT(*) FROM staging WHERE generation=? AND uid=? AND car=?",
+                (self.generation, uid, car),
+            ).fetchone()[0]
+        self._staging_counts.move_to_end(key)
+        while len(self._staging_counts) > 128:
+            self._staging_counts.popitem(last=False)
+        return self._staging_counts[key]
+
+    def _stage_observation(self, database: sqlite3.Connection, values: tuple[Any, ...]) -> None:
+        generation, uid, car, frame, epoch, packet_format, sequence, gap_epoch, payload = values
+        count = self._staging_count(database, uid, car)
+        inserted = database.execute("""INSERT INTO staging VALUES (?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(generation,uid,car,frame) DO NOTHING""", values).rowcount
+        if inserted:
+            self._staging_counts[(uid, car)] = count + inserted
+        else:
+            database.execute("""UPDATE staging SET epoch=?,format=?,sequence=?,gap_epoch=?,payload=?
+                WHERE generation=? AND uid=? AND car=? AND frame=?""",
+                (epoch, packet_format, sequence, gap_epoch, payload, generation, uid, car, frame))
+
+    def _prune_staging(self, database: sqlite3.Connection, uid: str, car: int) -> None:
+        excess = self._staging_count(database, uid, car) - MAX_STAGED_ROWS_PER_CAR
+        if excess <= 0:
+            return
+        removed = database.execute("""DELETE FROM staging WHERE generation=? AND uid=? AND car=? AND frame <=
+            (SELECT frame FROM staging WHERE generation=? AND uid=? AND car=?
+            ORDER BY frame ASC LIMIT 1 OFFSET ?)""",
+            (self.generation, uid, car, self.generation, uid, car, excess - 1)).rowcount
+        self._staging_counts[(uid, car)] -= removed
 
     def _publish(self, database: sqlite3.Connection, attempt: LapAttempt, role: str,
                  epoch: int | None, packet_format: int | None) -> None:
@@ -357,8 +393,11 @@ class SessionCoordinator:
         database.execute("INSERT INTO dispositions VALUES (?,?,?,?)", (revision, self.sequence, state, reason))
         self._fault("after_manifest_insert")
         if end is not None:
-            database.execute("DELETE FROM staging WHERE generation=? AND uid=? AND car=? AND frame<=?",
+            removed = database.execute("DELETE FROM staging WHERE generation=? AND uid=? AND car=? AND frame<=?",
                              (self.generation, str(attempt.session_uid), attempt.car_index, end))
+            key = (str(attempt.session_uid), attempt.car_index)
+            if key in self._staging_counts:
+                self._staging_counts[key] -= removed.rowcount
 
     def _reconcile(self, database: sqlite3.Connection, event: LifecycleEvent) -> None:
         if event.event_kind not in ("flashback", "session_time_regression", "malformed_or_unsupported"):
