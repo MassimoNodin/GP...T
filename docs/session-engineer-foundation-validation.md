@@ -3,9 +3,11 @@
 Date: 2026-10-08
 
 Status: F1–F5 implementation submitted for review; milestone completion is not
-claimed. Real-game all-driver availability, full-rate performance and process
-crash/power-loss experiments remain pending. The dashboard/radio/task redesign
-is intentionally not part of this change.
+claimed. An initial real-game practice run exposed sustained acquisition
+overload and no comparison-ready laps; see the
+[real-game report](session-engineer-real-game-verification-20261008.md).
+End-to-end real-game acceptance and process crash/power-loss experiments remain
+pending. The dashboard/radio/task redesign is not part of this change.
 
 ## Reproducible validation
 
@@ -174,7 +176,9 @@ Before declaring the milestone complete:
    storage-full errors on a disposable volume. Verify only committed manifests
    were visible, source ownership is reclaimed, and historical reports survive.
 
-No in-game experiment was available in this thread. The assigned Time Trial and
-session-format audit reports were not required, edited, or treated as established
-capabilities. Follow-up must not remove complete-run, checksum, ownership or
-coverage guards to make a demonstration appear successful.
+An initial in-game experiment subsequently exposed throughput failure at the
+observed packet rate. Its admitted journal and a consistent baseline snapshot
+are preserved locally; no completed-lap comparison pass is claimed. The assigned
+Time Trial and session-format audit reports were not required, edited, or treated
+as established capabilities. Follow-up must not remove complete-run, checksum,
+ownership or coverage guards to make a demonstration appear successful.
