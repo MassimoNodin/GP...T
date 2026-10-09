@@ -29,17 +29,26 @@ if ($LASTEXITCODE -ne 0 -or $token -notmatch '^[A-Za-z0-9_-]{32,256}$') {
   throw 'Ubuntu credentials are unavailable. Start the authenticated service first.'
 }
 New-Item -ItemType Directory -Path $data -Force | Out-Null
+if ((Get-Item -LiteralPath $data).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+  throw 'Refusing to store credentials in a redirected data directory.'
+}
 $tokenFile = Join-Path $data '.f1-engineer-ubuntu-control-token'
 if ((Test-Path -LiteralPath $tokenFile) -and
     ((Get-Item -LiteralPath $tokenFile).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
   throw 'Refusing to write credentials through a reparse point.'
 }
-[IO.File]::WriteAllText($tokenFile, $token, [Text.Encoding]::ASCII)
-$permissions = [Security.AccessControl.FileSecurity]::new()
+if (-not (Test-Path -LiteralPath $tokenFile)) {
+  [IO.File]::WriteAllText($tokenFile, '', [Text.Encoding]::ASCII)
+}
+$permissions = [IO.File]::GetAccessControl($tokenFile, [Security.AccessControl.AccessControlSections]::Access)
 $permissions.SetAccessRuleProtection($true, $false)
+foreach ($rule in @($permissions.Access)) {
+  $permissions.RemoveAccessRuleSpecific($rule)
+}
 $permissions.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
   [Security.Principal.WindowsIdentity]::GetCurrent().User, 'FullControl', 'Allow'))
-Set-Acl -LiteralPath $tokenFile -AclObject $permissions
+[IO.File]::SetAccessControl($tokenFile, $permissions)
+[IO.File]::WriteAllText($tokenFile, $token, [Text.Encoding]::ASCII)
 $previous = @{}
 foreach ($name in @('F1_ENGINEER_API_URL', 'F1_ENGINEER_API_TOKEN_FILE', 'F1_ENGINEER_WEB_ORIGIN')) {
   $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')

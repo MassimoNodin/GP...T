@@ -138,35 +138,58 @@ SSH target: `massimo-nodin@192.168.1.115` (host `massi-nodin-dev`). Checkout:
 `/home/massimo-nodin/GP...T`. Ubuntu 24.04.1 LTS, Python 3.12.3 and user-local
 uv 0.12.5. Initial checkout: `e09521933b422c29c8a3cd75ea5d167167c0c285`.
 Lockfile validation, frozen app/dev installation and 54 focused CLI/API tests
-passed on Ubuntu. Model runtimes and Windows-to-Ubuntu connectivity are not
-enabled by this setup. The system Node.js 18 installation was left unchanged
+passed on Ubuntu. Model runtimes were not installed during that initial setup.
+The system Node.js 18 installation was left unchanged
 because this host currently runs backend tests, not the Next.js dashboard.
 
 Full Ubuntu baseline on that commit: **987 passed, 3 failed, 1 skipped** in
 185.38 s. A real temporary API process returned HTTP 200 for evidence status
 and shut down gracefully; it used disposable data and did not start UDP capture.
 This establishes backend startup, not a clean full-suite or live-game acceptance.
-Compatibility failures to resolve before migration acceptance:
+Compatibility failures found in the initial baseline (now resolved):
 
 - `tests/test_import_jobs.py`: the Unicode filename fixture exceeds this
   filesystem's filename byte limit (`ENAMETOOLONG`).
 - `tests/test_recording_download.py`: the POSIX FIFO test shadows its `_source`
   helper with a local assignment and fails before exercising the download.
 - `tests/test_storage.py`: deeply nested completion JSON is accepted where the
-  test expects `invalid_json`; inspect parser bounds and interpreter behavior.
+  test expects `invalid_json`; resolved with explicit JSON shape bounds.
 
-No application or test code was changed to hide these failures. The suite also
-reported a Starlette TestClient/httpx deprecation warning; it is not a test failure.
+Migration implementation `d59e1c5` passes the full Ubuntu suite: **1007 passed,
+1 skipped** in 189.70 s. Windows full regression: **998 passed, 10 skipped** in
+237.11 s. Dashboard checks: **82 passed**, production build and TypeScript passed.
+The Starlette TestClient/httpx deprecation warning remains; it is not a failure.
+
+The Ubuntu user service is installed, enabled and active with user lingering.
+The API remains on loopback: anonymous requests return 403 and authenticated
+requests return 200. The Ubuntu token has mode 0600. The Windows launcher stores
+its token with an owner-only, non-inherited ACL before writing the secret, and
+rejects redirected credential paths. Its SSH tunnel binds only Windows loopback.
+The Windows dashboard at `http://127.0.0.1:3001` successfully reads Ubuntu
+telemetry, model status and filesystem capacity through that tunnel. Browser
+telemetry/model requests return 200 without an authorization response header;
+credentials remain in the server-side transport.
+
+Model status is honestly `model_pin_missing`; Linux transcription/model
+provisioning and a spoken-question round trip are still pending. Windows browser
+speech discovers its local voice; no microphone recording or playback acceptance
+was performed. Game UDP destination should be `192.168.1.115:20777`, not the
+Windows dashboard/tunnel address. No live-game throughput acceptance is claimed.
+Settings still contain local-machine wording and Windows-only model setup hints;
+make those backend/companion-aware during runtime provisioning.
 
 ## Migration milestones
 
 Progress is completed acceptance milestones, not estimated code volume:
-1. Linux compatibility and green backend regression suite.
-2. Authenticated private transport and server-side companion credentials.
-3. Ubuntu service plus Windows dashboard verified across the actual SSH link.
-4. Linux transcription/model provisioning and spoken-question round trip.
-5. Representative live telemetry, eligible analysis and persistence acceptance.
-6. Restart/disconnect/cancellation and long-run resource acceptance.
+1. **Complete:** Linux compatibility and green backend regression suite.
+2. **Complete:** Authenticated private transport and server-side companion credentials.
+3. **Complete:** Ubuntu service plus Windows dashboard verified across the actual SSH link.
+4. **Pending:** Linux transcription/model provisioning and spoken-question round trip.
+5. **Pending:** Representative live telemetry, eligible analysis and persistence acceptance.
+6. **Pending:** Restart/disconnect/cancellation and long-run resource acceptance.
+
+Milestone progress: **3/6 (50%)**. This is not live-game acceptance or an estimate
+of remaining implementation time.
 
 The first implementation slice fixes the filename/FIFO fixtures and applies
 explicit completion-JSON shape bounds rather than relying on Python recursion
