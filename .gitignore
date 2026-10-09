@@ -18,3 +18,7 @@ dist/
 # Agent worktrees must not live inside the package.
 .kilo/
 .kilocode/
+
+# Next.js may regenerate these local agent hints during development.
+/web/AGENTS.md
+/web/CLAUDE.md
