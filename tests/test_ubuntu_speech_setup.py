@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from f1_engineer.analysis.local_speech import LocalSpeechRuntime
-from scripts.setup_ubuntu_speech_runtime import download_model, write_pin
+from scripts.setup_ubuntu_speech_runtime import download_model, restore_generated_version, write_pin
 
 
 def test_pin_matches_runtime_verifier_and_is_repeatable(tmp_path: Path) -> None:
@@ -52,3 +52,20 @@ def test_wrong_existing_model_is_preserved(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="pinned checksum"):
         download_model(model)
     assert model.read_bytes() == b"wrong model"
+
+
+def test_only_expected_generated_version_is_restored(tmp_path: Path) -> None:
+    package = tmp_path / "package.json"
+    original = b'{"version": "1.9.3", "name": "whisper.cpp"}'
+    package.write_bytes(original.replace(b'"1.9.3"', b'"1.9.3-dev"'))
+    restore_generated_version(package, original)
+    assert package.read_bytes() == original
+    restore_generated_version(package, original)
+
+
+def test_unexpected_generated_changes_are_preserved(tmp_path: Path) -> None:
+    package = tmp_path / "package.json"
+    package.write_bytes(b"unexpected edits")
+    with pytest.raises(RuntimeError, match="preserved for review"):
+        restore_generated_version(package, b'{"version": "1.9.3"}')
+    assert package.read_bytes() == b"unexpected edits"

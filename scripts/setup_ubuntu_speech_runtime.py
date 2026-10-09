@@ -92,6 +92,16 @@ def write_pin(pin: Path, executable: Path, model: Path, accept_update: bool) -> 
     return runtime_id
 
 
+def restore_generated_version(path: Path, original: bytes) -> None:
+    current = path.read_bytes()
+    if current == original:
+        return
+    expected = original.replace(b'"version": "1.9.3"', b'"version": "1.9.3-dev"', 1)
+    if current != expected:
+        raise RuntimeError("Unexpected source changes during CMake configuration; preserved for review")
+    path.write_bytes(original)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build and pin the Ubuntu CPU speech runtime without sudo")
     parser.add_argument("--database", type=Path, default=Path("data/f1-engineer.sqlite3"))
@@ -124,12 +134,17 @@ def main() -> None:
     changes = subprocess.check_output(["git", "-C", str(source), "status", "--porcelain", "--untracked-files=all"], text=True).strip()
     if actual != SOURCE_COMMIT or changes:
         raise RuntimeError("Speech source must be the exact pinned commit with a clean checkout")
-    subprocess.run([
-        args.cmake, "-S", str(source), "-B", str(build),
-        "-DWHISPER_BUILD_TESTS=OFF", "-DWHISPER_BUILD_EXAMPLES=ON", "-DWHISPER_FFMPEG=OFF",
-        "-DGGML_NATIVE=OFF", "-DGGML_CUDA=OFF", "-DGGML_OPENCL=OFF", "-DGGML_VULKAN=OFF",
-        "-DGGML_OPENMP=OFF", "-DBUILD_SHARED_LIBS=OFF", "-DCMAKE_BUILD_TYPE=Release",
-    ], check=True)
+    generated_package = source / "bindings/javascript/package.json"
+    original_package = generated_package.read_bytes()
+    try:
+        subprocess.run([
+            args.cmake, "-S", str(source), "-B", str(build),
+            "-DWHISPER_BUILD_TESTS=OFF", "-DWHISPER_BUILD_EXAMPLES=ON", "-DWHISPER_FFMPEG=OFF",
+            "-DGGML_NATIVE=OFF", "-DGGML_CUDA=OFF", "-DGGML_OPENCL=OFF", "-DGGML_VULKAN=OFF",
+            "-DGGML_OPENMP=OFF", "-DBUILD_SHARED_LIBS=OFF", "-DCMAKE_BUILD_TYPE=Release",
+        ], check=True)
+    finally:
+        restore_generated_version(generated_package, original_package)
     subprocess.run([args.cmake, "--build", str(build), "--target", "whisper-cli", "--parallel", str(args.jobs)], check=True)
     executable = build / "bin/whisper-cli"
     model_root.mkdir(exist_ok=True)

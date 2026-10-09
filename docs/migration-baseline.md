@@ -174,7 +174,10 @@ Model status is honestly `model_pin_missing`; Linux Ollama provisioning and a
 spoken-question round trip are still pending. Ubuntu CPU transcription is now
 installed from the exact whisper.cpp 1.9.3 source commit and checksum-verified
 tiny.en model. CMake 3.31.6 is user-local; no sudo or system package changes were
-needed. The provisioning/speech focused suites pass on both hosts: **19 passed**.
+needed. The provisioning/speech focused suites pass on both hosts: **21 passed**.
+Upstream CMake regenerates its tracked JavaScript package version during setup;
+the installer restores only that exact known change and preserves unexpected
+changes for review, keeping subsequent setup runs repeatable.
 A canonical public JFK WAV fixture sent from Windows through the dashboard and
 SSH tunnel was transcribed on Ubuntu correctly in **1.48 s** (one observation,
 not a latency percentile or simultaneous-telemetry acceptance). The browser's
