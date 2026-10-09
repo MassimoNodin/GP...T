@@ -69,3 +69,27 @@ real-game acceptance. Keep captures, databases, model files, credentials and
 measurement artifacts out of Git; `data/` and `recordings/` are ignored. Stop
 writers and take consistent backups before moving persistent data.
 Framework-generated web agent files are ignored, not maintained project docs.
+
+## Ubuntu test host
+
+The checkout is `/home/massimo-nodin/GP...T` on `192.168.1.115`, with user-local
+uv at `/home/massimo-nodin/.local/bin/uv`. Connect from Windows:
+
+```powershell
+ssh -i "$env:USERPROFILE\.ssh\id_ed25519_ubuntu" -o IdentitiesOnly=yes massimo-nodin@192.168.1.115
+```
+
+On Ubuntu:
+
+```bash
+cd ~/GP...T
+git pull --ff-only origin main
+~/.local/bin/uv sync --frozen --extra app --extra dev
+~/.local/bin/uv run --frozen --extra app --extra dev pytest -q
+~/.local/bin/uv run --frozen --extra app f1-engineer api --database data/f1-engineer.sqlite3 --recordings-root recordings --control-token-file data/.f1-engineer-control-token
+```
+
+Windows remains the editing/commit workspace. Push there, pull on Ubuntu and
+verify `git rev-parse HEAD` matches the intended commit before testing. Do not
+overwrite a dirty Ubuntu checkout. Ubuntu currently tests the Python backend;
+Windows companion networking and Linux speech/model setup are still pending.

@@ -82,7 +82,8 @@ their old directives are not inherited by this baseline.
   do not expose the current loopback API unchanged.
 - **Linux runtime:** replace Windows-only model provisioning; review Whisper's
   DLL-oriented pin validation, locks, permissions, explicit data paths and
-  subprocess cleanup. Ubuntu compatibility has not been verified.
+  subprocess cleanup. Backend setup is now verified on the host below; Linux
+  speech/model provisioning remains unverified.
 - **Evidence correctness:** retain checksums, explicit loss gaps, committed-reader
   visibility, association guards and replay equivalence. Never promote gapped
   fragments into eligible laps or fabricate missing channels. Listener shutdown
@@ -124,3 +125,33 @@ at 355/s steady plus a 10 s 530/s burst, then confirm actual target game traffic
 Re-evaluate the proposed 250 ms p95 backlog, one-second burst maximum and 50 ms
 publication p95 goals explicitly; the harness's passed flag does not cover all
 gates. Only consider native acceleration after a demonstrated CPU bottleneck.
+
+## Development and test host
+
+This Windows T3 Code session is the editing/commit workspace. Changes go to
+GitHub, then the Ubuntu checkout pulls the intended commit for testing; no
+parallel source edits or shared databases are required.
+
+SSH target: `massimo-nodin@192.168.1.115` (host `massi-nodin-dev`). Checkout:
+`/home/massimo-nodin/GP...T`. Ubuntu 24.04.1 LTS, Python 3.12.3 and user-local
+uv 0.12.5. Initial checkout: `e09521933b422c29c8a3cd75ea5d167167c0c285`.
+Lockfile validation, frozen app/dev installation and 54 focused CLI/API tests
+passed on Ubuntu. Model runtimes and Windows-to-Ubuntu connectivity are not
+enabled by this setup. The system Node.js 18 installation was left unchanged
+because this host currently runs backend tests, not the Next.js dashboard.
+
+Full Ubuntu baseline on that commit: **987 passed, 3 failed, 1 skipped** in
+185.38 s. A real temporary API process returned HTTP 200 for evidence status
+and shut down gracefully; it used disposable data and did not start UDP capture.
+This establishes backend startup, not a clean full-suite or live-game acceptance.
+Compatibility failures to resolve before migration acceptance:
+
+- `tests/test_import_jobs.py`: the Unicode filename fixture exceeds this
+  filesystem's filename byte limit (`ENAMETOOLONG`).
+- `tests/test_recording_download.py`: the POSIX FIFO test shadows its `_source`
+  helper with a local assignment and fails before exercising the download.
+- `tests/test_storage.py`: deeply nested completion JSON is accepted where the
+  test expects `invalid_json`; inspect parser bounds and interpreter behavior.
+
+No application or test code was changed to hide these failures. The suite also
+reported a Starlette TestClient/httpx deprecation warning; it is not a test failure.
