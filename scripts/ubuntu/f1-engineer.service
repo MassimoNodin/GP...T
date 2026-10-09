@@ -1,0 +1,17 @@
+[Unit]
+Description=GP...T Ubuntu telemetry and analysis service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/GP...T
+ExecStart=%h/GP...T/.venv/bin/f1-engineer api --require-auth --database %h/GP...T/data/f1-engineer.sqlite3 --recordings-root %h/GP...T/recordings --control-token-file %h/GP...T/data/.f1-engineer-control-token
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillSignal=SIGINT
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

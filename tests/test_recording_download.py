@@ -148,7 +148,7 @@ def test_recording_download_does_not_block_if_regular_file_becomes_fifo(
     if os.name == "nt" or not hasattr(os, "mkfifo"):
         pytest.skip("POSIX FIFO replacement is unavailable")
 
-    _database, root, capture, _source = _source(tmp_path)
+    _database, root, capture, source = _source(tmp_path)
     real_open = os.open
     replaced = False
 

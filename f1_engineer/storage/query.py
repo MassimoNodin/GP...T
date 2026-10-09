@@ -331,6 +331,8 @@ def load_attempt_capture_quality_evidence(
     else:
         try:
             completion = json.loads(completion_raw)
+            if not _quality_json_shape_within_bounds(completion):
+                completion = "invalid_json"
         except (TypeError, ValueError, RecursionError):
             completion = "invalid_json"
 

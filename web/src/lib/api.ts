@@ -2,6 +2,7 @@ import {
   assertLoopbackHttpUrl,
   JSON_API_DEADLINE_MS,
 } from "./local-api-transport";
+import { upstreamHeaders } from "./api-authorization";
 
 export interface ApiResponse<T> {
   api_version: "v1";
@@ -2920,10 +2921,9 @@ async function requestJsonApi<T>(
     deadline = setTimeout(() => controller.abort(), JSON_API_DEADLINE_MS);
     const response = await fetch(url, {
       method: postBody === undefined ? "GET" : "POST",
-      headers:
-        postBody === undefined
-          ? undefined
-          : { "content-type": "application/json" },
+      headers: await upstreamHeaders(
+        postBody === undefined ? undefined : { "content-type": "application/json" },
+      ),
       body: postBody === undefined ? undefined : JSON.stringify(postBody),
       cache: "no-store",
       redirect: "error",

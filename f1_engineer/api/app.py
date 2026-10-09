@@ -993,6 +993,7 @@ def create_app(
     *,
     recordings_root: str | Path = "recordings",
     control_token: str | None = None,
+    require_auth: bool = False,
     recording_host: str = "0.0.0.0",
     recording_port: int = 20777,
     recording_queue_size: int = 8192,
@@ -1005,6 +1006,8 @@ def create_app(
     evidence_database_path: str | Path | None = None,
 ) -> FastAPI:
     """Create a local API bound to operator-configured storage and recording roots."""
+    if require_auth and (not control_token or len(control_token) < 32):
+        raise ValueError("authenticated API requires a control token of at least 32 characters")
     configured_database_path = Path(database_path).expanduser().resolve()
     evidence_store = EvidenceStore(evidence_database_path or configured_database_path.with_name(configured_database_path.stem + "-evidence.sqlite3"))
     live_runtime = LiveSessionRuntime(evidence_store, host=recording_host, port=recording_port,
@@ -1095,6 +1098,13 @@ def create_app(
         description="Local telemetry recording, historical analysis, and explicit capture imports.",
         lifespan=lifespan,
     )
+
+    if require_auth:
+        @app.middleware("http")
+        async def authenticate_request(request: Request, call_next):
+            if not _authorized(request.headers.get("authorization"), control_token):
+                return _api_error(403, "api_not_authorized")
+            return await call_next(request)
 
     @app.get("/api/v2/session-evidence/status")
     def session_evidence_status():
@@ -2935,7 +2945,7 @@ def _authorized(authorization: str | None, control_token: str | None) -> bool:
     return bool(
         separator
         and scheme.lower() == "bearer"
-        and hmac.compare_digest(supplied, control_token)
+        and hmac.compare_digest(supplied.encode("utf-8"), control_token.encode("utf-8"))
     )
 
 

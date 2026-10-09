@@ -3,9 +3,10 @@
 A telemetry-backed race engineer for F1 25 and the 2026 Season Pack, with a
 Python processing/API service and a Next.js dashboard.
 
-**Current deployment is single-machine and loopback-only.** Ubuntu processing
-with a Windows microphone/playback companion is the next step, not implemented
-functionality. The [migration baseline](docs/migration-baseline.md) is the single
+The backend can run on Ubuntu while the dashboard, microphone and playback
+remain on Windows. An authenticated SSH tunnel connects them without exposing
+the API on the LAN. Linux model/speech provisioning and live-game acceptance
+remain pending. The [migration baseline](docs/migration-baseline.md) is the single
 project document for direction, measurements, unresolved issues and next steps.
 Historical plans and development mandates have been retired; source and tests
 remain intact.
@@ -35,7 +36,9 @@ Add `--manual-acquisition` for diagnostic recording controls.
 
 The Next.js server reads the control token, not the browser. When overriding
 `F1_ENGINEER_CONTROL_TOKEN_FILE`, use an absolute path. The current
-`F1_ENGINEER_API_URL` accepts only loopback HTTP addresses, not an Ubuntu host.
+`F1_ENGINEER_API_URL` accepts only loopback HTTP addresses. For Ubuntu, the
+companion configures a local SSH-forwarded address and a server-only
+`F1_ENGINEER_API_TOKEN_FILE`; all upstream requests then carry the Ubuntu token.
 
 ## Optional model and voice on Windows
 
@@ -91,5 +94,41 @@ git pull --ff-only origin main
 
 Windows remains the editing/commit workspace. Push there, pull on Ubuntu and
 verify `git rev-parse HEAD` matches the intended commit before testing. Do not
-overwrite a dirty Ubuntu checkout. Ubuntu currently tests the Python backend;
-Windows companion networking and Linux speech/model setup are still pending.
+overwrite a dirty Ubuntu checkout. Linux speech/model setup is still pending.
+
+## Run the split deployment
+
+On Ubuntu, after syncing dependencies, install the user service. Its template
+assumes the checkout is `~/GP...T`; adjust the paths if using another directory.
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp scripts/ubuntu/f1-engineer.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now f1-engineer
+systemctl --user status f1-engineer
+```
+
+The service authenticates every HTTP request on `127.0.0.1:8765` and listens for
+game telemetry on UDP `20777`. Set the game's UDP destination to `192.168.1.115`
+for this host. Ubuntu firewall/network access and real-game throughput must
+still be verified. The existing host has user lingering enabled; another host
+may need its administrator to enable lingering for service operation at logout.
+Inspect logs with `journalctl --user -u f1-engineer`; stop it with
+`systemctl --user stop f1-engineer`. Pulling new code does not restart the service;
+after syncing dependencies, run `systemctl --user restart f1-engineer`.
+
+On Windows, run from the repository root:
+
+```powershell
+.\scripts\start-ubuntu-companion.ps1
+```
+
+The launcher fetches the service credential over SSH into an ignored,
+owner-restricted local file, opens `127.0.0.1:18765` as an SSH tunnel, verifies
+authenticated backend readiness, and starts the Windows dashboard. It does not
+start a Windows Python backend. Keep this terminal open; Ctrl+C closes the
+dashboard/tunnel, not the Ubuntu service. Use `-DashboardPort 3001` if needed.
+An occupied tunnel port or failed credentials abort startup; there is no
+fallback to a Windows backend. Microphone capture and playback remain local;
+transcription will be unavailable until the Ubuntu speech runtime is installed.

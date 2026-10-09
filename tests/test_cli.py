@@ -425,6 +425,23 @@ def test_compare_regions_cli_forwards_explicit_pair_and_catalog_model(monkeypatc
     assert json.loads(capsys.readouterr().out) == document
 
 
+def test_api_cli_enables_authenticated_loopback_mode(monkeypatch, tmp_path) -> None:
+    import uvicorn
+    import f1_engineer.api.app as api_module
+
+    calls = {}
+    monkeypatch.setattr(api_module, "create_app", lambda *args, **kwargs: calls.update(kwargs) or "app")
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: calls.update(server=kwargs))
+    args = cli.build_parser().parse_args([
+        "api", "--require-auth", "--manual-acquisition",
+        "--control-token-file", str(tmp_path / "token"),
+    ])
+    assert cli._api(args) == 0
+    assert calls["require_auth"] is True
+    assert calls["automatic_acquisition"] is False
+    assert calls["server"]["host"] == "127.0.0.1"
+
+
 def test_compare_trajectories_cli_exports_versioned_json(monkeypatch, capsys, tmp_path) -> None:
     output_path = tmp_path / "paired-paths.json"
     calls: dict[str, object] = {}

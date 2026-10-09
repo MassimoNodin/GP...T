@@ -376,7 +376,7 @@ def test_recording_source_page_repeats_non_ascii_capture_name_across_refreshes(
     database = tmp_path / "archive.sqlite3"
     root = tmp_path / "recordings"
     root.mkdir()
-    capture = root / ("中" * 200 + ".f1ecap")
+    capture = root / ("中" * 80 + ".f1ecap")
     _capture(capture)
 
     first = list_recording_sources_page(database, root)

@@ -1,5 +1,4 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { upstreamHeaders } from "./api-authorization";
 import { assertLoopbackHttpUrl } from "./local-api-transport";
 
 export function isTrustedLocalMutation(request: Request) {
@@ -71,18 +70,7 @@ export async function forwardLocalRequest(
   );
   const url = `${parsed.origin}${path}`;
   assertLoopbackHttpUrl(url);
-  const headers = new Headers(init.headers);
-  if (needsControlToken) {
-    const tokenPath =
-      process.env.F1_ENGINEER_CONTROL_TOKEN_FILE ??
-      resolve(process.cwd(), "..", "data", ".f1-engineer-control-token");
-    const token = (
-      await readFile(/*turbopackIgnore: true*/ tokenPath, "utf8")
-    ).trim();
-    if (token.length < 32)
-      throw new Error("Local recording control is unavailable.");
-    headers.set("authorization", `Bearer ${token}`);
-  }
+  const headers = await upstreamHeaders(init.headers, needsControlToken);
   return fetch(url, {
     ...init,
     headers,

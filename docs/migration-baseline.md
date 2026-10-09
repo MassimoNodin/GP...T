@@ -19,8 +19,9 @@ rewrite. Start with one repository and two independently runnable components.
 Current API startup in `f1_engineer/cli.py` binds to loopback. The web server's
 `web/src/lib/local-api-transport.ts` rejects remote URLs and
 `web/src/lib/local-proxy.ts` reads a local control-token file. These are existing
-constraints, not a working two-machine deployment. Browser microphone/playback
-can be reused; a native Windows rewrite is not required initially. Keep model
+constraints retained by the SSH-tunnel deployment rather than relaxed for LAN
+HTTP. Browser microphone/playback are reused; a native Windows rewrite is not
+required initially. Keep model
 endpoints private to Ubuntu and credentials server-side in the companion.
 
 `f1_engineer/processing/runtime.py` and `coordinator.py` run the live pipeline.
@@ -78,8 +79,9 @@ their old directives are not inherited by this baseline.
   silently weaken raw durability or treat a larger queue as a solution.
 - **Remote security:** configure bind address, authenticate reads and writes,
   provision credentials, choose encrypted/private transport and restrict peers.
-  Define timeouts, request IDs, version/health checks and reconnect behavior;
-  do not expose the current loopback API unchanged.
+  The first slice uses SSH encryption and loopback forwarding, plus token
+  authentication for all requests. Request IDs, version negotiation and richer
+  reconnect behavior remain follow-up work; never expose the legacy API unchanged.
 - **Linux runtime:** replace Windows-only model provisioning; review Whisper's
   DLL-oriented pin validation, locks, permissions, explicit data paths and
   subprocess cleanup. Backend setup is now verified on the host below; Linux
@@ -155,3 +157,21 @@ Compatibility failures to resolve before migration acceptance:
 
 No application or test code was changed to hide these failures. The suite also
 reported a Starlette TestClient/httpx deprecation warning; it is not a test failure.
+
+## Migration milestones
+
+Progress is completed acceptance milestones, not estimated code volume:
+1. Linux compatibility and green backend regression suite.
+2. Authenticated private transport and server-side companion credentials.
+3. Ubuntu service plus Windows dashboard verified across the actual SSH link.
+4. Linux transcription/model provisioning and spoken-question round trip.
+5. Representative live telemetry, eligible analysis and persistence acceptance.
+6. Restart/disconnect/cancellation and long-run resource acceptance.
+
+The first implementation slice fixes the filename/FIFO fixtures and applies
+explicit completion-JSON shape bounds rather than relying on Python recursion
+limits. It adds `api --require-auth`, `F1_ENGINEER_API_TOKEN_FILE`, an Ubuntu user
+service template and a Windows companion launcher. Missing credentials fail
+closed; HTTP docs and read routes are protected; existing local mode remains
+compatible. Windows still owns audio devices. No language rewrite, model
+installation, legacy-data move or reduced raw durability is included.

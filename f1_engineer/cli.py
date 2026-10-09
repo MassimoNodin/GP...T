@@ -561,6 +561,7 @@ def _api(args: argparse.Namespace) -> int:
             args.database,
             recordings_root=args.recordings_root,
             control_token=load_or_create_control_token(args.control_token_file),
+            require_auth=args.require_auth,
             recording_host=args.udp_host,
             recording_port=args.udp_port,
             recording_queue_size=args.udp_queue_size,
@@ -1035,6 +1036,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     api.add_argument("--manual-acquisition", action="store_true",
                      help="disable automatic session evidence for legacy manual capture diagnostics")
+    api.add_argument("--require-auth", action="store_true",
+                     help="require the control token for every HTTP request, including reads and API docs")
     api.add_argument(
         "--udp-host",
         default="0.0.0.0",

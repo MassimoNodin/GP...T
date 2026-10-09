@@ -9,6 +9,7 @@ import ts from "typescript";
 const originalFetch = globalThis.fetch;
 const originalApiUrl = process.env.F1_ENGINEER_API_URL;
 const originalTokenFile = process.env.F1_ENGINEER_CONTROL_TOKEN_FILE;
+const originalApiTokenFile = process.env.F1_ENGINEER_API_TOKEN_FILE;
 const missingTokenFile = "D:\\f1-engineer-missing-control-token";
 
 let compiledDir;
@@ -29,6 +30,9 @@ function compile(source) {
     .outputText.replaceAll(
       'from "./local-api-transport"',
       'from "./local-api-transport.mjs"',
+    ).replaceAll(
+      'from "./api-authorization"',
+      'from "./api-authorization.mjs"',
     );
 }
 
@@ -59,7 +63,7 @@ function stalledBody() {
 describe("local JSON API transport", { concurrency: 1 }, () => {
   before(async () => {
     compiledDir = mkdtempSync(join(tmpdir(), "f1-api-transport-"));
-    for (const name of ["local-api-transport.ts", "local-proxy.ts", "api.ts"]) {
+    for (const name of ["local-api-transport.ts", "api-authorization.ts", "local-proxy.ts", "api.ts"]) {
       const source = readFileSync(
         new URL(`../src/lib/${name}`, import.meta.url),
         "utf8",
@@ -117,6 +121,8 @@ describe("local JSON API transport", { concurrency: 1 }, () => {
       process.env.F1_ENGINEER_CONTROL_TOKEN_FILE = originalTokenFile;
     }
     delete globalThis.__recordingCurrentForward;
+    if (originalApiTokenFile === undefined) delete process.env.F1_ENGINEER_API_TOKEN_FILE;
+    else process.env.F1_ENGINEER_API_TOKEN_FILE = originalApiTokenFile;
     try {
       mock.timers.reset();
     } catch {
@@ -448,6 +454,39 @@ describe("local JSON API transport", { concurrency: 1 }, () => {
     assert.equal(new Headers(calls[0].init.headers).get("authorization"), null);
     assert.equal(calls[0].url.includes("secret"), false);
     assert.equal(calls[0].url.includes("/prefix"), false);
+  });
+
+  test("a configured companion token authenticates reads, JSON posts and streams", async () => {
+    process.env.F1_ENGINEER_API_URL = "http://127.0.0.1:18765";
+    const token = "companion-token-" + "x".repeat(32);
+    const tokenFile = join(compiledDir, "companion-token");
+    writeFileSync(tokenFile, token + "\n");
+    process.env.F1_ENGINEER_API_TOKEN_FILE = tokenFile;
+    process.env.F1_ENGINEER_CONTROL_TOKEN_FILE = missingTokenFile;
+    const calls = installFetch(() => Response.json(envelope()));
+    assert.deepEqual(await requestApi("/api/v1/sessions"), envelope());
+    assert.deepEqual(await requestApiPost("/api/v1/engineer/query", {}), envelope());
+    await forwardLocalRequest("/api/v1/recording-sources", {}, false);
+    await forwardLocalRequest("/api/v1/recordings/start", { method: "POST" }, true);
+    assert.equal(calls.length, 4);
+    for (const call of calls) {
+      assert.equal(new Headers(call.init.headers).get("authorization"), `Bearer ${token}`);
+      assert.equal(call.init.redirect, "error");
+      assert.equal(call.url.includes(token), false);
+    }
+  });
+
+  test("missing or malformed companion credentials fail closed", async () => {
+    const calls = installFetch(() => { throw new Error("upstream was called"); });
+    const tokenFile = join(compiledDir, "invalid-companion-token");
+    for (const token of [null, "short", "x".repeat(32) + "\n" + "y".repeat(32)]) {
+      process.env.F1_ENGINEER_API_TOKEN_FILE = token === null ? missingTokenFile : tokenFile;
+      if (token !== null) writeFileSync(tokenFile, token);
+      assert.equal(await requestApi("/api/v1/sessions"), null);
+      assert.equal(await requestApiPost("/api/v1/engineer/query", {}), null);
+      await assert.rejects(() => forwardLocalRequest("/api/v1/recordings/current"));
+    }
+    assert.equal(calls.length, 0);
   });
 
   test("recording current adds api_version only on the unavailable envelope", async () => {

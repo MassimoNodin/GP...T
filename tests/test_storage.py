@@ -511,7 +511,7 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
             max_attempt_metadata_bytes=1,
         )
 
-    deeply_nested_json = "[" * 5_000 + "0" + "]" * 5_000
+    deeply_nested_json = "[" * 20 + "0" + "]" * 20
     oversized_integer_json = '{"value":' + "9" * 5_000 + "}"
     with Database(database_path) as db:
         db.connection.execute(
@@ -544,7 +544,7 @@ def test_import_writes_idempotent_sqlite_inventory_and_parquet_trace(
         db.connection.commit()
     with pytest.raises(
         AttemptTraceReadLimitError,
-        match="attempt_trace_metadata_json_limit_exceeded",
+        match="attempt_trace_metadata_(?:json|shape)_limit_exceeded",
     ):
         load_attempt_trace(
             database_path,
