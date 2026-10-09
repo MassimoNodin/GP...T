@@ -1,9 +1,13 @@
 from argparse import Namespace
 import json
+from collections import deque
 
 import pytest
 
 from scripts import benchmark_split_udp
+from tests.test_session_evidence import admitted_packets
+from tests.test_lap_tracking import LAP_RECORD
+from tests.helpers import HEADER
 
 
 def test_receiver_failure_preserves_samples_and_explicit_failed_result(tmp_path, monkeypatch):
@@ -37,3 +41,22 @@ def test_receiver_failure_preserves_samples_and_explicit_failed_result(tmp_path,
     assert len(json.loads((output / 'samples.json').read_text())) == 1
     assert not (output / 'summary.json').exists()
     assert (output / 'evidence.sqlite3').exists()
+
+
+def test_extended_fixture_uses_requested_lap_length_before_rich_packet_encoding():
+    final = deque(admitted_packets(frames=5101, car_count=1, missing_telemetry=True,
+                                  lap_frames=150), maxlen=1)[0]
+    assert LAP_RECORD.unpack_from(final.payload, HEADER.size)[14] == 35
+
+
+def test_rich_fixture_forwards_its_lap_length(monkeypatch):
+    from scripts import benchmark_session_publication
+    observed = []
+
+    def fixture(**kwargs):
+        observed.append(kwargs)
+        return iter(())
+
+    monkeypatch.setattr(benchmark_session_publication, 'admitted_packets', fixture)
+    assert list(benchmark_session_publication.rich_packets(5101, 150)) == []
+    assert observed == [{'frames': 5101, 'lap_frames': 150}]

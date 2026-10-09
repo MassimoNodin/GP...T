@@ -155,6 +155,8 @@ def main() -> None:
             or not 0 < args.rate <= 2000 or not 0 < args.burst_rate <= 2000
             or args.lap_frames < 2 or args.expected_datagrams < 1):
         parser.error('Invalid bounded benchmark configuration')
+    if math.ceil(args.duration_s * max(args.rate, args.burst_rate) / 7) + 1 > 255 * args.lap_frames:
+        parser.error('Synthetic lap numbers would exceed the protocol byte; increase --lap-frames')
     (send if args.mode == 'send' else receive)(args)
 
 

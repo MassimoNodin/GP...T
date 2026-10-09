@@ -29,21 +29,22 @@ from tests.test_lap_tracking import SESSION_UID, LAP_RECORD, _lap_body
 TELEMETRY = struct.Struct("<HfffBbHBBH4H4B4BH4f4B")
 
 
-def admitted_packets(*, frames: int = 50, car_count: int = 22, missing_telemetry: bool = False):
+def admitted_packets(*, frames: int = 50, car_count: int = 22, missing_telemetry: bool = False,
+                     lap_frames: int = 20):
     sequence = 0
     packet_format = 2026 if car_count == 24 else 2025
     telemetry_struct = struct.Struct("<HfffBbHBBH4H4B4BB4f4B") if packet_format == 2026 else TELEMETRY
     yield make_datagram(packet_format=packet_format, packet_id=4, session_uid=SESSION_UID, frame=1, session_time=0,
                         body=_participants_body(active_count=car_count, slot_count=car_count, packet_format=packet_format), sequence=sequence)
     for frame in range(1, frames + 1):
-        lap_number = 1 + (frame - 1) // 20
-        position = (frame - 1) % 20
+        lap_number = 1 + (frame - 1) // lap_frames
+        position = (frame - 1) % lap_frames
         distance = position * 5.0
         records = []
         for car in range(car_count):
             body = _lap_body(lap_number=lap_number, distance_m=distance,
                              current_lap_time_ms=position * 50,
-                             last_lap_time_ms=1000 + car * 10, active_car_index=0)
+                             last_lap_time_ms=lap_frames * 50 + car * 10, active_car_index=0)
             records.append(body[:LAP_RECORD.size])
         sequence += 1
         yield make_datagram(packet_format=packet_format, packet_id=2, session_uid=SESSION_UID, frame=frame,

@@ -102,7 +102,7 @@ def rich_packets(frames, lap_frames=150):
     additional = [(0, _motion_body()), (7, _status_body()), (10, _damage_body()),
                   (5, setups_body()), (11, history_body(car_index=0))]
     sequence = 0
-    for raw in admitted_packets(frames=frames):
+    for raw in admitted_packets(frames=frames, lap_frames=lap_frames):
         header = HEADER.unpack_from(raw.payload)
         if header[5] == 2:
             position = (header[9] - 1) % lap_frames
