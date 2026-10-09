@@ -151,11 +151,32 @@ class SessionCoordinator:
         return self.admitted_sequence - self.sequence
 
     def journal(self, raw: RawDatagram) -> None:
+        self.journal_batch((raw,))
+
+    def journal_batch(self, packets: Sequence[RawDatagram]) -> None:
         if self.failed:
             raise EvidenceUnavailable("coordinator_requires_recovery")
-        if self.pending_publication >= PUBLICATION_BATCH_ROWS:
+        if self.finished:
+            raise EvidenceUnavailable("generation_finished")
+        if not packets:
+            return
+        if self.pending_publication + len(packets) > PUBLICATION_BATCH_ROWS:
             raise EvidenceUnavailable("publication_batch_budget_exceeded")
-        self._append("datagram", raw.payload, self._raw_metadata(raw))
+        entries = [
+            (self.generation, self.admitted_sequence + index + 1, "datagram", raw.payload,
+             encode({**self._raw_metadata(raw), "payload_sha256": hashlib.sha256(raw.payload).hexdigest()}))
+            for index, raw in enumerate(packets)
+        ]
+        try:
+            started = time.perf_counter()
+            with self._transaction() as database:
+                database.executemany("INSERT INTO journal VALUES (?,?,?,?,?)", entries)
+            self.admitted_sequence += len(packets)
+            self.last_journal_s = time.perf_counter() - started
+            self._fault("after_journal_commit")
+        except Exception:
+            self._mark_failed()
+            raise
 
     def publish_pending(self) -> int:
         if self.failed:

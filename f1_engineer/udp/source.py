@@ -87,6 +87,17 @@ class UDPSource:
     async def receive(self) -> RawDatagram:
         return await self._queue.get()
 
+    async def receive_batch(self, maximum: int) -> tuple[RawDatagram, ...]:
+        if maximum < 1:
+            raise ValueError("receive batch must contain at least one datagram")
+        pending = [await self.receive()]
+        while len(pending) < maximum:
+            try:
+                pending.append(self._queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        return tuple(pending)
+
     async def packets(self) -> AsyncIterator[RawDatagram]:
         if self._transport is None:
             raise RuntimeError("UDPSource.open() must be called before reading packets")

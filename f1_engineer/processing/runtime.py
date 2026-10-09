@@ -126,6 +126,17 @@ class LiveSessionRuntime:
                 started = time.perf_counter()
                 await persist(coordinator.gap, reason)
                 self.last_gap_s = time.perf_counter() - started
+
+            async def journal(packets):
+                nonlocal first_pending_ns, pending_since
+                if not packets:
+                    return
+                if pending_since is None:
+                    pending_since = time.monotonic()
+                    first_pending_ns = packets[0].monotonic_ns
+                await persist(coordinator.journal_batch, packets)
+                self.last_journal_s = coordinator.last_journal_s
+                self.journaled += len(packets)
             try:
                 await source.open()
                 await gap("listener_started_or_reconnected")
@@ -143,7 +154,8 @@ class LiveSessionRuntime:
                         timeout = min(self.publication_interval_s, self.stale_after_s)
                         if pending_since is not None:
                             timeout = min(timeout, max(0.001, self.publication_interval_s - (time.monotonic() - pending_since)))
-                        raw = await asyncio.wait_for(source.receive(), timeout=timeout)
+                        available = self.publication_batch_size - (self.journaled - self.processed)
+                        packets = await asyncio.wait_for(source.receive_batch(available), timeout=timeout)
                     except asyncio.TimeoutError:
                         await publish()
                         if not stale and time.monotonic() - last_received >= self.stale_after_s:
@@ -151,19 +163,19 @@ class LiveSessionRuntime:
                             stale = True
                             self.state = "stale"
                         continue
-                    if raw.sequence != previous_sequence + 1:
-                        await gap("queue_pressure_or_socket_gap")
-                    previous_sequence = raw.sequence
+                    contiguous = []
+                    for raw in packets:
+                        if raw.sequence != previous_sequence + 1:
+                            await journal(contiguous)
+                            contiguous = []
+                            await gap("queue_pressure_or_socket_gap")
+                        contiguous.append(raw)
+                        previous_sequence = raw.sequence
                     last_received = time.monotonic()
                     stale = False
                     self.state = "receiving"
                     self.max_queue_depth = max(self.max_queue_depth, source.pending_count)
-                    if pending_since is None:
-                        pending_since = time.monotonic()
-                        first_pending_ns = raw.monotonic_ns
-                    await persist(coordinator.journal, raw)
-                    self.last_journal_s = coordinator.last_journal_s
-                    self.journaled += 1
+                    await journal(contiguous)
                     if (self.journaled - self.processed >= self.publication_batch_size
                             or time.monotonic() - pending_since >= self.publication_interval_s):
                         await publish()
