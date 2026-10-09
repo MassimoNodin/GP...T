@@ -4,9 +4,11 @@ import json
 import hashlib
 import sqlite3
 import uuid
+import time
 from contextlib import contextmanager
 from dataclasses import asdict
 from collections import OrderedDict
+from collections.abc import Sequence
 from typing import Any
 
 from ..errors import ProtocolError
@@ -19,6 +21,10 @@ from .evidence import CHUNK_ROWS, MAX_STAGED_ROWS_PER_CAR, PROCESSOR_VERSION, Ev
 from .output_consumption import consume_trace_outputs
 
 
+PUBLICATION_BATCH_ROWS = 32
+PUBLICATION_INTERVAL_S = 0.020
+
+
 class SessionCoordinator:
     """One serialized owner for live and replay. Raw admission precedes publication."""
 
@@ -27,6 +33,8 @@ class SessionCoordinator:
         self.source = source
         self.pipeline = TelemetryPipeline(max_open_frames=64, max_pending_packets=512)
         self.sequence = 0
+        self.admitted_sequence = 0
+        self.last_journal_s = 0.0
         self.gap_epoch = 0
         self._session_ids: OrderedDict[int, str] = OrderedDict()
         self._staging_counts: OrderedDict[tuple[str, int], int] = OrderedDict()
@@ -89,13 +97,23 @@ class SessionCoordinator:
             checkpoint = database.execute("SELECT committed_sequence FROM generations WHERE id=?", (self.generation,)).fetchone()[0]
         while True:
             with self.store.connect() as database:
-                batch = database.execute("SELECT * FROM journal WHERE generation=? AND sequence>? ORDER BY sequence LIMIT 100",
+                batch = database.execute("SELECT * FROM journal WHERE generation=? AND sequence>? ORDER BY sequence LIMIT 32",
                                          (self.generation, self.sequence)).fetchall()
             if not batch:
                 break
+            tail = []
             for row in batch:
-                self.sequence = row["sequence"]
-                self._process(row["kind"], bytes(row["payload"]), json.loads(row["metadata"]), persist=self.sequence > checkpoint)
+                self.admitted_sequence = row["sequence"]
+                if row["sequence"] <= checkpoint:
+                    self.sequence = row["sequence"]
+                    self._process(row["kind"], bytes(row["payload"]), json.loads(row["metadata"]), persist=False)
+                else:
+                    tail.append(row)
+                    if len(tail) == PUBLICATION_BATCH_ROWS:
+                        self._publish_entries(tail)
+                        tail = []
+            if tail:
+                self._publish_entries(tail)
         with self.store.connect() as database:
             database.execute("UPDATE generations SET state=? WHERE id=?", ("finished" if self.finished else "running", self.generation))
 
@@ -117,13 +135,51 @@ class SessionCoordinator:
             self.fault_injector(stage)
 
     def ingest(self, raw: RawDatagram) -> None:
+        self._admit("datagram", raw.payload, self._raw_metadata(raw))
+
+    def _raw_metadata(self, raw: RawDatagram) -> dict[str, Any]:
         if len(raw.payload) > 65535 or len(raw.source_host) > 255:
             raise EvidenceUnavailable("source_datagram_budget_exceeded")
-        self._admit("datagram", raw.payload, {
+        return {
             "sequence": raw.sequence, "captured_at_ns": raw.captured_at_ns,
             "monotonic_ns": raw.monotonic_ns, "source_host": raw.source_host,
             "source_port": raw.source_port,
-        })
+        }
+
+    @property
+    def pending_publication(self) -> int:
+        return self.admitted_sequence - self.sequence
+
+    def journal(self, raw: RawDatagram) -> None:
+        if self.failed:
+            raise EvidenceUnavailable("coordinator_requires_recovery")
+        if self.pending_publication >= PUBLICATION_BATCH_ROWS:
+            raise EvidenceUnavailable("publication_batch_budget_exceeded")
+        self._append("datagram", raw.payload, self._raw_metadata(raw))
+
+    def publish_pending(self) -> int:
+        if self.failed:
+            raise EvidenceUnavailable("coordinator_requires_recovery")
+        rows = self._writer.execute("""SELECT * FROM journal WHERE generation=? AND sequence>?
+            ORDER BY sequence LIMIT ?""", (self.generation, self.sequence, PUBLICATION_BATCH_ROWS)).fetchall()
+        if not rows:
+            return 0
+        try:
+            self._publish_entries(rows)
+        except Exception:
+            self._mark_failed()
+            raise
+        return sum(row["kind"] == "datagram" for row in rows)
+
+    def _publish_entries(self, rows: Sequence[sqlite3.Row]) -> None:
+        with self._transaction() as database:
+            database.execute("BEGIN IMMEDIATE")
+            for row in rows:
+                self.sequence = row["sequence"]
+                self._process(row["kind"], bytes(row["payload"]), json.loads(row["metadata"]), database=database)
+            self._fault("before_publication_commit")
+            if self.before_commit:
+                self.before_commit()
 
     def gap(self, reason: str) -> None:
         self._admit("gap", b"", {"reason": reason})
@@ -132,48 +188,88 @@ class SessionCoordinator:
         self._admit("finish", b"", {})
 
     def _admit(self, kind: str, payload: bytes, metadata: dict[str, Any]) -> None:
+        if self.pending_publication:
+            self.publish_pending()
+        metadata = self._append(kind, payload, metadata, synchronous=True)
+        try:
+            self._process(kind, payload, metadata)
+        except Exception:
+            self._mark_failed()
+            raise
+
+    def _mark_failed(self) -> None:
+        self.failed = True
+        try:
+            with self.store.connect() as database:
+                database.execute("UPDATE generations SET state='failed' WHERE id=?", (self.generation,))
+        except sqlite3.Error:
+            pass
+
+    def _append(self, kind: str, payload: bytes, metadata: dict[str, Any], *, synchronous: bool = False) -> dict[str, Any]:
         if self.failed:
             raise EvidenceUnavailable("coordinator_requires_recovery")
         if self.finished:
             raise EvidenceUnavailable("generation_finished")
-        self.sequence += 1
-        if kind == "datagram":
-            try:
-                packet = self.pipeline.decoder.decode(RawDatagram(payload=payload, **metadata))
-                if packet.header.session_uid == 0:
-                    metadata = {**metadata, "retired_input": True}
-                prior = self._writer.execute("SELECT lifecycle FROM sessions WHERE generation=? AND uid=? ORDER BY occurrence DESC LIMIT 1",
-                                             (self.generation, str(packet.header.session_uid))).fetchone()
-                if prior and prior["lifecycle"] == "ended":
-                    event = self.pipeline.event_decoder.decode(packet)
-                    verified_start = (event.error is None and event.code == "SSTA"
-                                      and packet.header.session_uid == self.pipeline.sessions.current_session_uid)
-                    metadata = {**metadata, "restart_occurrence": verified_start, "retired_input": not verified_start}
-            except ProtocolError:
-                pass
+        self.admitted_sequence += 1
+        if synchronous:
+            self.sequence = self.admitted_sequence
         metadata = {**metadata, "payload_sha256": hashlib.sha256(payload).hexdigest()}
         try:
+            started = time.perf_counter()
             with self._transaction() as database:
                 database.execute("INSERT INTO journal VALUES (?,?,?,?,?)",
-                                 (self.generation, self.sequence, kind, payload, encode(metadata)))
+                                 (self.generation, self.admitted_sequence, kind, payload, encode(metadata)))
+            self.last_journal_s = time.perf_counter() - started
             self._fault("after_journal_commit")
-            self._process(kind, payload, metadata)
         except Exception:
-            self.failed = True
-            try:
-                with self.store.connect() as database:
-                    database.execute("UPDATE generations SET state='failed' WHERE id=?", (self.generation,))
-            except sqlite3.Error:
-                pass
+            self._mark_failed()
             raise
+        return metadata
 
-    def _process(self, kind: str, payload: bytes, metadata: dict[str, Any], *, persist: bool = True) -> None:
+    def _input_route(self, payload: bytes, metadata: dict[str, Any], *, persist: bool) -> dict[str, Any]:
+        if "retired_input" in metadata or "restart_occurrence" in metadata:
+            return metadata
+        if not persist:
+            row = self._writer.execute("""SELECT payload FROM metadata WHERE generation=? AND sequence=?
+                AND kind='input_route' AND ordinal=0""", (self.generation, self.sequence)).fetchone()
+            return {**metadata, **json.loads(row[0])} if row else metadata
+        raw_metadata = {key: value for key, value in metadata.items() if key != "payload_sha256"}
+        try:
+            packet = self.pipeline.decoder.decode(RawDatagram(payload=payload, **raw_metadata))
+            if packet.header.session_uid == 0:
+                metadata = {**metadata, "retired_input": True}
+            prior = self._writer.execute("SELECT lifecycle FROM sessions WHERE generation=? AND uid=? ORDER BY occurrence DESC LIMIT 1",
+                                         (self.generation, str(packet.header.session_uid))).fetchone()
+            if prior and prior["lifecycle"] == "ended":
+                event = self.pipeline.event_decoder.decode(packet)
+                verified_start = (event.error is None and event.code == "SSTA"
+                                  and packet.header.session_uid == self.pipeline.sessions.current_session_uid)
+                metadata = {**metadata, "restart_occurrence": verified_start, "retired_input": not verified_start}
+        except ProtocolError:
+            pass
+        return metadata
+
+    def _process(self, kind: str, payload: bytes, metadata: dict[str, Any], *, persist: bool = True,
+                 database: sqlite3.Connection | None = None) -> None:
+        if persist and database is None:
+            with self._transaction() as database:
+                database.execute("BEGIN IMMEDIATE")
+                self._process(kind, payload, metadata, database=database)
+                self._fault("before_publication_commit")
+                if self.before_commit:
+                    self.before_commit()
+            return
         output = None
         error = None
         metadata = dict(metadata)
         expected_hash = metadata.pop("payload_sha256", None)
         if expected_hash != hashlib.sha256(payload).hexdigest():
             raise EvidenceUnavailable("journal_checksum_mismatch")
+        if kind == "datagram":
+            metadata = self._input_route(payload, metadata, persist=persist)
+            if persist and (metadata.get("retired_input") or metadata.get("restart_occurrence")):
+                self._metadata(database, "input_route", [{"retired_input": metadata.get("retired_input", False),
+                                                         "restart_occurrence": metadata.get("restart_occurrence", False)}])
         restart_occurrence = metadata.pop("restart_occurrence", False)
         retired_input = metadata.pop("retired_input", False)
         prior_output = None
@@ -194,8 +290,7 @@ class SessionCoordinator:
         if not persist:
             self.pipeline.release_consumed_history()
             return
-        with self._transaction() as database:
-            database.execute("BEGIN IMMEDIATE")
+        if database is not None:
             if prior_output is not None:
                 self._consume(database, prior_output)
             if output is not None:
@@ -211,9 +306,6 @@ class SessionCoordinator:
                 database.execute("UPDATE sessions SET lifecycle='ended',acquisition='stopped' WHERE generation=?", (self.generation,))
             database.execute("UPDATE generations SET committed_sequence=?,gap_epoch=?,state=? WHERE id=?",
                              (self.sequence, self.gap_epoch, "finished" if kind == "finish" else "running", self.generation))
-            self._fault("before_publication_commit")
-            if self.before_commit:
-                self.before_commit()
         self.pipeline.release_consumed_history()
 
     def _metadata(self, database: sqlite3.Connection, kind: str, values: list[Any]) -> None:

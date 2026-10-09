@@ -6,8 +6,10 @@ import time
 import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
 
+import pytest
+
 from f1_engineer.analysis.session_comparison import compare_session_laps
-from f1_engineer.processing.coordinator import SessionCoordinator
+from f1_engineer.processing.coordinator import PUBLICATION_BATCH_ROWS, SessionCoordinator
 from f1_engineer.processing.evidence import EvidenceStore
 from f1_engineer.pipeline import TelemetryPipeline
 from tests.test_session_evidence import admitted_packets, completed_pair
@@ -70,23 +72,34 @@ def test_streaming_diagnostics_are_bounded_without_changing_archive_defaults():
         assert len(getattr(pipeline, name)) == 64
 
 
-def test_python_state_retention_does_not_scale_with_lap_count(tmp_path):
+@pytest.mark.parametrize("batched", [False, True])
+def test_python_state_retention_does_not_scale_with_lap_count(tmp_path, batched):
     store = EvidenceStore(tmp_path / "memory.sqlite3")
     coordinator = SessionCoordinator(store, "memory")
     tracemalloc.start()
     checkpoints = []
     try:
-        for raw in admitted_packets(frames=600, car_count=24):
-            coordinator.ingest(raw)
-            if coordinator.sequence in (400, 1200):
+        for count, raw in enumerate(admitted_packets(frames=600, car_count=24), start=1):
+            if batched:
+                coordinator.journal(raw)
+                if coordinator.pending_publication == PUBLICATION_BATCH_ROWS:
+                    coordinator.publish_pending()
+            else:
+                coordinator.ingest(raw)
+            assert coordinator.pending_publication <= PUBLICATION_BATCH_ROWS
+            assert len(coordinator.pipeline.laps.attempts) == 0
+            assert coordinator.pipeline.frames._pending_packets <= coordinator.pipeline.frames.max_pending_packets
+            if count in (400, 1200):
+                coordinator.publish_pending()
                 gc.collect()
                 checkpoints.append(tracemalloc.get_traced_memory()[0])
+        coordinator.publish_pending()
         current, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
         coordinator.close()
     assert checkpoints[1] - checkpoints[0] < 2 * 1024 * 1024
     assert peak < 32 * 1024 * 1024
-    print("MEMORY_BUDGET " + json.dumps({"drivers": 24, "frames": 600,
+    print("MEMORY_BUDGET " + json.dumps({"drivers": 24, "frames": 600, "batched": batched,
           "retained_bytes_at_200_frames": checkpoints[0], "retained_bytes_at_600_frames": checkpoints[1],
           "python_peak_bytes": peak}, sort_keys=True))
