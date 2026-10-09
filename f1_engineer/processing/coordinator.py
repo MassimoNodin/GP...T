@@ -480,7 +480,7 @@ class SessionCoordinator:
         gap_epochs: set[int] = set()
         while batch := cursor.fetchmany(CHUNK_ROWS):
             records = [json.loads(row["payload"]) for row in batch]
-            content = encode(records)
+            content = "[" + ",".join(row["payload"] for row in batch) + "]"
             chunk_hash = digest(content)
             byte_count = len(content.encode())
             database.execute("INSERT OR IGNORE INTO chunks VALUES (?,?,?,?)", (chunk_hash, content, len(batch), byte_count))
