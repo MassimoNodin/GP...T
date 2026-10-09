@@ -99,8 +99,16 @@ def receive(args) -> None:
             before_stop = runtime.status()
             if pending is not None:
                 comparison = pending.result(timeout=10)
+        except Exception as exception:
+            failure = {'kind': 'two_host_synthetic_udp', 'passed': False,
+                       'error': f'{type(exception).__name__}: {exception}',
+                       'before_stop': runtime.status(), 'samples': len(samples)}
+            (args.output / 'failure.json').write_text(json.dumps(failure, indent=2))
+            print(json.dumps(failure, indent=2), flush=True)
+            raise
         finally:
             runtime.close()
+            (args.output / 'samples.json').write_text(json.dumps(samples))
     reopened = EvidenceStore(store.path)
     retained = bool(comparison and reopened.report(comparison['report']['id']) == comparison['report'])
     publications = [sample['last_publication_s'] for sample in samples if sample['last_publication_s']]
@@ -125,7 +133,6 @@ def receive(args) -> None:
               'metrics': metrics, 'checks': checks, 'database_bytes': store.path.stat().st_size,
               'comparison_id': comparison['report']['id'] if comparison else None,
               'passed': all(checks.values())}
-    (args.output / 'samples.json').write_text(json.dumps(samples))
     (args.output / 'summary.json').write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2), flush=True)
     if not result['passed']:
