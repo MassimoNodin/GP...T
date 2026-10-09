@@ -1,5 +1,7 @@
 import subprocess
 import sys
+import sqlite3
+from dataclasses import replace
 
 import pytest
 
@@ -52,3 +54,34 @@ raise RuntimeError('crash point was not exercised')
     with reopened.connect() as database:
         assert database.execute("SELECT COUNT(*) FROM attempts").fetchone()[0] == 66
         assert database.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+
+
+def test_sqlite_capacity_failure_does_not_admit_partial_batch(tmp_path):
+    store = EvidenceStore(tmp_path / "capacity.sqlite3")
+    packets = list(admitted_packets())
+    coordinator = SessionCoordinator(store, "capacity-recovery")
+    try:
+        coordinator.journal_batch(packets[:32])
+        coordinator.publish_pending()
+        before = coordinator.admitted_sequence
+        page_count = coordinator._writer.execute("PRAGMA page_count").fetchone()[0]
+        coordinator._writer.execute(f"PRAGMA max_page_count={page_count}")
+        oversized = replace(packets[32], payload=b"x" * 65535)
+        with pytest.raises(sqlite3.OperationalError, match="full") as failure:
+            coordinator.journal_batch((packets[32], oversized))
+        assert failure.value.sqlite_errorcode == sqlite3.SQLITE_FULL
+        assert coordinator.failed
+        assert coordinator.admitted_sequence == before
+        with store.connect() as database:
+            assert database.execute("SELECT COUNT(*) FROM journal").fetchone()[0] == before
+            assert database.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+    finally:
+        coordinator.close()
+    recovered = SessionCoordinator(store, "capacity-recovery")
+    try:
+        assert recovered.sequence == before
+        recovered.journal_batch(packets[32:64])
+        recovered.publish_pending()
+        assert recovered.sequence == 64
+    finally:
+        recovered.close()
