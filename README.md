@@ -5,8 +5,8 @@ Python processing/API service and a Next.js dashboard.
 
 The backend can run on Ubuntu while the dashboard, microphone and playback
 remain on Windows. An authenticated SSH tunnel connects them without exposing
-the API on the LAN. Linux model/speech provisioning and live-game acceptance
-remain pending. The [migration baseline](docs/migration-baseline.md) is the single
+the API on the LAN. Ubuntu speech provisioning is available; Linux Ollama setup
+and live-game acceptance remain pending. The [migration baseline](docs/migration-baseline.md) is the single
 project document for direction, measurements, unresolved issues and next steps.
 Historical plans and development mandates have been retired; source and tests
 remain intact.
@@ -94,7 +94,29 @@ git pull --ff-only origin main
 
 Windows remains the editing/commit workspace. Push there, pull on Ubuntu and
 verify `git rev-parse HEAD` matches the intended commit before testing. Do not
-overwrite a dirty Ubuntu checkout. Linux speech/model setup is still pending.
+overwrite a dirty Ubuntu checkout. Linux Ollama setup is still pending.
+
+### Ubuntu transcription
+
+The setup builds the same pinned whisper.cpp commit and checksum-verified
+tiny.en model used on Windows. It installs only in your home directory and
+does not require sudo. Install Git and a C/C++ compiler first. If CMake is not
+already installed, use the user-local tool below:
+
+```bash
+cd ~/GP...T
+~/.local/bin/uv tool install cmake==3.31.6
+~/.local/bin/uv run --frozen --extra app python -m scripts.setup_ubuntu_speech_runtime --cmake ~/.local/bin/cmake
+```
+
+The default build uses two jobs, CPU-only static whisper/ggml libraries and
+the system C/C++ runtime. Source, build output and model live under
+`~/.local/share/GP...T/speech-runtime/v1.9.3`; the verified pin is beside the
+configured database. Pass `--database` when using a different data directory.
+The API rereads this pin, so installing speech does not require a service
+restart. A changed pin is refused unless you explicitly review and accept it
+with `--accept-runtime-update`. Microphone clips remain bounded to 12 seconds;
+transcripts are editable drafts, not verified telemetry evidence.
 
 ## Run the split deployment
 
@@ -131,4 +153,4 @@ start a Windows Python backend. Keep this terminal open; Ctrl+C closes the
 dashboard/tunnel, not the Ubuntu service. Use `-DashboardPort 3001` if needed.
 An occupied tunnel port or failed credentials abort startup; there is no
 fallback to a Windows backend. Microphone capture and playback remain local;
-transcription will be unavailable until the Ubuntu speech runtime is installed.
+transcription runs on Ubuntu after installing the speech runtime above.

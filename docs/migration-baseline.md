@@ -170,10 +170,18 @@ telemetry, model status and filesystem capacity through that tunnel. Browser
 telemetry/model requests return 200 without an authorization response header;
 credentials remain in the server-side transport.
 
-Model status is honestly `model_pin_missing`; Linux transcription/model
-provisioning and a spoken-question round trip are still pending. Windows browser
-speech discovers its local voice; no microphone recording or playback acceptance
-was performed. Game UDP destination should be `192.168.1.115:20777`, not the
+Model status is honestly `model_pin_missing`; Linux Ollama provisioning and a
+spoken-question round trip are still pending. Ubuntu CPU transcription is now
+installed from the exact whisper.cpp 1.9.3 source commit and checksum-verified
+tiny.en model. CMake 3.31.6 is user-local; no sudo or system package changes were
+needed. The provisioning/speech focused suites pass on both hosts: **19 passed**.
+A canonical public JFK WAV fixture sent from Windows through the dashboard and
+SSH tunnel was transcribed on Ubuntu correctly in **1.48 s** (one observation,
+not a latency percentile or simultaneous-telemetry acceptance). The browser's
+speech-status endpoint reports ready. This is an audio-transport test, not a
+real microphone or spoken-playback test. Runtime pins require explicit acceptance
+before changing; installer failures do not publish an unverified replacement.
+Windows browser speech discovers its local voice. Game UDP destination should be `192.168.1.115:20777`, not the
 Windows dashboard/tunnel address. No live-game throughput acceptance is claimed.
 Settings still contain local-machine wording and Windows-only model setup hints;
 make those backend/companion-aware during runtime provisioning.
@@ -184,7 +192,8 @@ Progress is completed acceptance milestones, not estimated code volume:
 1. **Complete:** Linux compatibility and green backend regression suite.
 2. **Complete:** Authenticated private transport and server-side companion credentials.
 3. **Complete:** Ubuntu service plus Windows dashboard verified across the actual SSH link.
-4. **Pending:** Linux transcription/model provisioning and spoken-question round trip.
+4. **In progress:** Linux transcription installed and fixture transport verified;
+   Ollama provisioning and real microphone/question/playback acceptance pending.
 5. **Pending:** Representative live telemetry, eligible analysis and persistence acceptance.
 6. **Pending:** Restart/disconnect/cancellation and long-run resource acceptance.
 
@@ -196,5 +205,6 @@ explicit completion-JSON shape bounds rather than relying on Python recursion
 limits. It adds `api --require-auth`, `F1_ENGINEER_API_TOKEN_FILE`, an Ubuntu user
 service template and a Windows companion launcher. Missing credentials fail
 closed; HTTP docs and read routes are protected; existing local mode remains
-compatible. Windows still owns audio devices. No language rewrite, model
-installation, legacy-data move or reduced raw durability is included.
+compatible. Windows still owns audio devices. The next slice adds user-local
+Ubuntu transcription provisioning. No language rewrite, legacy-data move or
+reduced raw durability is included.
