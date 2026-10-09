@@ -2,15 +2,79 @@ from __future__ import annotations
 
 import socket
 import time
+from dataclasses import asdict, replace
 
 import pytest
 
 from f1_engineer.analysis.session_comparison import compare_session_laps
+from f1_engineer.pipeline import PipelineResult, TelemetryPipeline
 from f1_engineer.processing.coordinator import PUBLICATION_BATCH_ROWS, SessionCoordinator
-from f1_engineer.processing.evidence import EvidenceStore, EvidenceUnavailable
+from f1_engineer.processing.evidence import EvidenceStore, EvidenceUnavailable, encode
 from f1_engineer.processing.runtime import LiveSessionRuntime
 from tests.helpers import make_datagram
+from tests.test_car_setups import _body as setup_body
+from tests.test_lap_tracking import _session_packet
 from tests.test_session_evidence import SESSION_UID, admitted_packets, completed_pair
+from tests.test_session_history import _body as history_body
+
+
+def test_encode_matches_asdict_bytes_for_actual_pipeline_metadata_and_bindings():
+    pipeline = TelemetryPipeline()
+    packets = [
+        make_datagram(packet_id=1, session_uid=SESSION_UID, frame=1,
+                      body=_session_packet().payload[29:]),
+        make_datagram(packet_id=3, session_uid=SESSION_UID, frame=1,
+                      body=b"SSTA" + bytes(12)),
+        make_datagram(packet_id=5, session_uid=SESSION_UID, frame=1, body=setup_body()),
+        make_datagram(packet_id=11, session_uid=SESSION_UID, frame=1,
+                      body=history_body(car_index=0,
+                                        laps=((79_295, 27_446, 0, 17_987, 0, 33_861, 0, 0x0F),),
+                                        stints=((5, 1, 2), (255, 3, 4)))),
+        *admitted_packets(frames=25),
+        make_datagram(packet_id=3, session_uid=SESSION_UID, frame=26,
+                      body=b"SEND" + bytes(12)),
+    ]
+    names = ("context_history_changes", "lifecycle_events", "session_history",
+             "player_participant_observations", "player_car_setup_observations", "car_slot_tenures")
+    records = {name: [] for name in names}
+    bindings = []
+
+    def collect(output):
+        for name in names:
+            records[name].extend(getattr(output, name, ()))
+        frames = {frame.session_uid: pipeline.frame_ordinal(frame.session_uid)
+                  for frame in output.completed_frames}
+        bindings.extend(pipeline.car_lap_inventory.active_tenures(frames))
+
+    for sequence, packet in enumerate(packets):
+        collect(pipeline.process(replace(packet, sequence=sequence)))
+    collect(pipeline.finish_with_outputs())
+
+    for name, values in records.items():
+        assert values, name
+        expected = [asdict(value) for value in values]
+        assert encode(values).encode("utf-8") == encode(expected).encode("utf-8"), name
+        assert encode((tuple(values),)) == encode((tuple(expected),)), name
+        for value, expected_value in zip(values, expected, strict=True):
+            assert encode(value) == encode(expected_value), name
+    assert bindings
+    for tenure in bindings:
+        assert encode(tenure) == encode(asdict(tenure))
+    history = records["session_history"][0].packet
+    assert isinstance(history.lap_history, tuple) and history.lap_history
+    assert isinstance(history.tyre_stints, tuple) and history.tyre_stints
+
+
+@pytest.mark.parametrize("value", [object(), {1, 2}, PipelineResult])
+def test_encode_rejects_unsupported_types_and_dataclass_classes(value):
+    with pytest.raises(TypeError, match="is not JSON serializable"):
+        encode(value)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_encode_preserves_nonfinite_rejection(value):
+    with pytest.raises(ValueError, match="Out of range float values"):
+        encode({"value": value})
 
 
 def normalized(store):

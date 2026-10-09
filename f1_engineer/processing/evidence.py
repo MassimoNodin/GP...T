@@ -5,6 +5,7 @@ import json
 import sqlite3
 import uuid
 from contextlib import contextmanager
+from dataclasses import fields, is_dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -16,8 +17,14 @@ MAX_READ_BYTES = 16 * 1024 * 1024
 MAX_STAGED_ROWS_PER_CAR = 40_000
 
 
+def _json_default(value: Any) -> dict[str, Any]:
+    if not isinstance(value, type) and is_dataclass(value):
+        return {field.name: getattr(value, field.name) for field in fields(value)}
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 def encode(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False, default=_json_default)
 
 
 def digest(value: str) -> str:

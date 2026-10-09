@@ -6,7 +6,6 @@ import sqlite3
 import uuid
 import time
 from contextlib import contextmanager
-from dataclasses import asdict
 from collections import OrderedDict
 from collections.abc import Sequence
 from typing import Any
@@ -331,7 +330,7 @@ class SessionCoordinator:
                              (self.sequence, self.gap_epoch, "finished" if kind == "finish" else "running", self.generation))
         self.pipeline.release_consumed_history()
 
-    def _metadata(self, database: sqlite3.Connection, kind: str, values: list[Any]) -> None:
+    def _metadata(self, database: sqlite3.Connection, kind: str, values: Sequence[Any]) -> None:
         database.executemany("INSERT OR IGNORE INTO metadata VALUES (?,?,?,?,?)", [
             (self.generation, self.sequence, kind, ordinal, encode(value))
             for ordinal, value in enumerate(values)
@@ -368,7 +367,7 @@ class SessionCoordinator:
             database.execute("UPDATE sessions SET context=? WHERE id=?", (encode(context), self._session(current_uid)))
         for name in ("context_history_changes", "lifecycle_events", "session_history",
                      "player_participant_observations", "player_car_setup_observations", "car_slot_tenures"):
-            self._metadata(database, name, [asdict(value) for value in getattr(output, name, ())])
+            self._metadata(database, name, getattr(output, name, ()))
         frames = {frame.session_uid: self.pipeline.frame_ordinal(frame.session_uid) for frame in output.completed_frames}
         tenures = (*getattr(output, "car_slot_tenures", ()), *self.pipeline.car_lap_inventory.active_tenures(frames))
         for tenure in tenures:
@@ -381,7 +380,7 @@ class SessionCoordinator:
                 payload=CASE WHEN excluded.end_frame>=bindings.end_frame THEN excluded.payload ELSE bindings.payload END""", (
                 driver, session, tenure.lifecycle_epoch, tenure.packet_format, tenure.car_index,
                 tenure.tenure_ordinal, tenure.start_frame_ordinal, tenure.end_frame_ordinal_exclusive,
-                tenure.participant_identity_fingerprint, encode(asdict(tenure)),
+                tenure.participant_identity_fingerprint, encode(tenure),
             ))
             self._binding_payloads[driver] = tenure
             self._binding_payloads.move_to_end(driver)
