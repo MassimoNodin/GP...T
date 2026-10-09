@@ -67,3 +67,19 @@ def test_receive_batch_is_bounded_and_ordered():
         assert source.pending_count == 1
         assert await source.receive_batch(3) == (packets[3],)
     asyncio.run(exercise())
+
+
+def test_unchanged_bindings_are_not_rewritten_and_cache_is_bounded(tmp_path):
+    store = EvidenceStore(tmp_path / "bindings.sqlite3")
+    coordinator = SessionCoordinator(store, "binding-cache")
+    binding_writes = []
+    coordinator._writer.set_trace_callback(
+        lambda statement: binding_writes.append(statement)
+        if statement.startswith("INSERT INTO bindings") else None
+    )
+    packets = list(admitted_packets())
+    for packet in packets:
+        coordinator.ingest(packet)
+    assert len(binding_writes) < len(packets) * 22
+    assert len(coordinator._binding_payloads) <= 512
+    coordinator.close()

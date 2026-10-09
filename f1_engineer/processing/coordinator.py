@@ -38,6 +38,7 @@ class SessionCoordinator:
         self.gap_epoch = 0
         self._session_ids: OrderedDict[int, str] = OrderedDict()
         self._staging_counts: OrderedDict[tuple[str, int], int] = OrderedDict()
+        self._binding_payloads: OrderedDict[str, Any] = OrderedDict()
         self.failed = False
         self.finished = False
         self.before_commit = None
@@ -124,6 +125,7 @@ class SessionCoordinator:
                 yield self._writer
         except Exception:
             self._staging_counts.clear()
+            self._binding_payloads.clear()
             raise
 
     def close(self) -> None:
@@ -372,6 +374,8 @@ class SessionCoordinator:
         for tenure in tenures:
             session = self._session(tenure.session_uid)
             driver = digest(f"{session}:{tenure.lifecycle_epoch}:{tenure.car_index}:{tenure.tenure_ordinal}:{tenure.participant_identity_fingerprint}")
+            if self._binding_payloads.get(driver) == tenure:
+                continue
             database.execute("""INSERT INTO bindings VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id)
                 DO UPDATE SET end_frame=MAX(bindings.end_frame,excluded.end_frame),
                 payload=CASE WHEN excluded.end_frame>=bindings.end_frame THEN excluded.payload ELSE bindings.payload END""", (
@@ -379,6 +383,10 @@ class SessionCoordinator:
                 tenure.tenure_ordinal, tenure.start_frame_ordinal, tenure.end_frame_ordinal_exclusive,
                 tenure.participant_identity_fingerprint, encode(asdict(tenure)),
             ))
+            self._binding_payloads[driver] = tenure
+            self._binding_payloads.move_to_end(driver)
+            while len(self._binding_payloads) > 512:
+                self._binding_payloads.popitem(last=False)
         source_ranges = {(frame.session_uid, frame.overall_frame_identifier):
                          sorted({packet.source_sequence for packet in frame.packets if packet.source_sequence is not None})
                          for frame in output.completed_frames}
@@ -472,7 +480,8 @@ class SessionCoordinator:
         first_sequence = last_sequence = None
         gap_epochs: set[int] = set()
         while batch := cursor.fetchmany(CHUNK_ROWS):
-            content = encode([json.loads(row["payload"]) for row in batch])
+            records = [json.loads(row["payload"]) for row in batch]
+            content = encode(records)
             chunk_hash = digest(content)
             byte_count = len(content.encode())
             database.execute("INSERT OR IGNORE INTO chunks VALUES (?,?,?,?)", (chunk_hash, content, len(batch), byte_count))
@@ -480,7 +489,7 @@ class SessionCoordinator:
             chunks.append(chunk_hash)
             rows += len(batch)
             total_bytes += byte_count
-            sequences = [sequence for row in batch for sequence in json.loads(row["payload"])["source_sequences"]]
+            sequences = [sequence for record in records for sequence in record["source_sequences"]]
             if sequences:
                 first_sequence = min(sequences) if first_sequence is None else min(first_sequence, *sequences)
                 last_sequence = max(sequences) if last_sequence is None else max(last_sequence, *sequences)
