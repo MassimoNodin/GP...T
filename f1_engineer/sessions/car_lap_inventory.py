@@ -95,6 +95,22 @@ def _wire_fingerprint(packet: DecodedPacket) -> str:
 class CarLapInventoryTracker:
     """Track diagnostic lap attempts only inside an admitted participant tenure."""
 
+    def active_tenures(self, frame_ordinals: dict[int, int] | None = None) -> tuple[CarSlotTenure, ...]:
+        return tuple(CarSlotTenure(
+            session_uid=tenure.session_uid, packet_format=tenure.packet_format,
+            lifecycle_epoch=tenure.lifecycle_epoch, car_index=tenure.car_index,
+            tenure_ordinal=tenure.tenure_ordinal, start_frame_ordinal=tenure.start_frame_ordinal,
+            end_frame_ordinal_exclusive=max(tenure.last_frame_ordinal, (frame_ordinals or {}).get(tenure.session_uid, 0)) + 1,
+            participant_frame_identifier=tenure.participant_frame_identifier,
+            participant_wire_fingerprint=tenure.participant_wire_fingerprint,
+            participant_identity_fingerprint=tenure.participant_identity_fingerprint,
+            close_reason="active",
+        ) for tenure in self._open_tenures.values())
+
+    def interrupt(self, frame_ordinal: int, reason: str) -> None:
+        self._close_scope(frame_ordinal=frame_ordinal, reason=reason)
+        self._slot_state = {slot: "unknown" for slot in range(MAX_CAR_SLOTS)}
+
     def __init__(self) -> None:
         self.lap_tracker = LapTracker()
         self.participants_decoder = ParticipantsDecoder()
