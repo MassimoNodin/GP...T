@@ -69,7 +69,7 @@ export default async function SettingsPage({
             <h2>Local status</h2>
             <p>
               Voice preferences stay in this browser. Runtime, telemetry, and
-              storage status are observed from local services.
+              storage status are observed from the configured backend, which may run on Ubuntu.
             </p>
             <ul>
               <li>

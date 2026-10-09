@@ -1,6 +1,6 @@
 # Ubuntu / Windows migration baseline
 
-Updated: 2026-10-09. This is the single project baseline replacing historical
+Updated: 2026-10-10. This is the single project baseline replacing historical
 plans, audits and development-rule documents. Measurements are carried forward
 from recorded investigations, not rerun during this cleanup. They describe
 specific fixtures/hosts, not verified Ubuntu performance.
@@ -170,8 +170,14 @@ telemetry, model status and filesystem capacity through that tunnel. Browser
 telemetry/model requests return 200 without an authorization response header;
 credentials remain in the server-side transport.
 
-Model status is honestly `model_pin_missing`; Linux Ollama provisioning and a
-spoken-question round trip are still pending. Ubuntu CPU transcription is now
+Ubuntu private Ollama 0.40.2 and Qwen3 4B Q4_K_M are installed in user-local
+storage with an enabled private user service. The release archive is checksum
+pinned; model digest is
+`sha256:359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7`.
+An actual selected-attempt question routed to `attempt_summary/lap_time`, with
+Ollama confirming **CPU (0 VRAM)**. Cold inference took **58.063 s**, near the
+60-second application deadline; latency under telemetry load is not accepted.
+Ubuntu CPU transcription is now
 installed from the exact whisper.cpp 1.9.3 source commit and checksum-verified
 tiny.en model. CMake 3.31.6 is user-local; no sudo or system package changes were
 needed. The provisioning/speech focused suites pass on both hosts: **21 passed**.
@@ -186,8 +192,16 @@ real microphone or spoken-playback test. Runtime pins require explicit acceptanc
 before changing; installer failures do not publish an unverified replacement.
 Windows browser speech discovers its local voice. Game UDP destination should be `192.168.1.115:20777`, not the
 Windows dashboard/tunnel address. No live-game throughput acceptance is claimed.
-Settings still contain local-machine wording and Windows-only model setup hints;
-make those backend/companion-aware during runtime provisioning.
+Settings distinguish backend-host model/UDP services from Windows audio and
+include Ubuntu and Windows standalone provisioning commands. Actual microphone
+capture, editable-question submission and audible playback still require an
+operator-driven round trip; fixture transport is not hardware acceptance.
+
+An Ubuntu 90-second synthetic 355/s run with a 10-second 530/s burst before raw
+admission batching failed: 33,700 received, 17,162 processed, 16,538 drops (49.1%),
+sampled oldest-delay p95/max 10.176/11.203 s and no eligible retained comparison.
+This is a failed migration gate, not a completed milestone. Investigate bounded
+FULL-durability raw commit batching; do not hide the failure with a larger queue.
 
 ## Migration milestones
 
@@ -195,8 +209,9 @@ Progress is completed acceptance milestones, not estimated code volume:
 1. **Complete:** Linux compatibility and green backend regression suite.
 2. **Complete:** Authenticated private transport and server-side companion credentials.
 3. **Complete:** Ubuntu service plus Windows dashboard verified across the actual SSH link.
-4. **In progress:** Linux transcription installed and fixture transport verified;
-   Ollama provisioning and real microphone/question/playback acceptance pending.
+4. **In progress:** Linux transcription and Ollama installed; fixture audio
+   transport and real CPU inference verified. Operator microphone/question/
+   playback acceptance and cold-inference latency headroom remain pending.
 5. **Pending:** Representative live telemetry, eligible analysis and persistence acceptance.
 6. **Pending:** Restart/disconnect/cancellation and long-run resource acceptance.
 

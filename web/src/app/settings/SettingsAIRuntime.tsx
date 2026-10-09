@@ -83,8 +83,9 @@ export default function SettingsAIRuntime() {
       </div>
 
       <p className="settings-copy">
-        GP...T uses a pinned Qwen3 4B model on the local Ollama profile at
-        127.0.0.1:11435. It routes your current question to a supported report;
+        GP...T uses a pinned Qwen3 4B model on the backend's private Ollama profile at
+        127.0.0.1:11435 on that backend host, not necessarily this Windows PC.
+        It routes your current question to a supported report;
         stored measurements and report text remain deterministic.
       </p>
 
@@ -151,7 +152,17 @@ export default function SettingsAIRuntime() {
       </p>
 
       <div className="settings-ai-setup">
-        <h3>Set up the private runtime</h3>
+        <h3>Ubuntu backend setup</h3>
+        <p>Run in the Ubuntu repository. This installs a checksum-pinned user-local runtime and private user service.</p>
+        <code className="settings-ai-command">
+          ~/.local/bin/uv run --frozen --extra app python -m scripts.setup_ubuntu_ollama
+        </code>
+        <p>
+          Later starts use <code>systemctl --user start f1-engineer-ollama</code>.
+          Stop it with <code>systemctl --user stop f1-engineer-ollama</code>.
+          Ubuntu also owns transcription; Windows owns microphone capture and browser playback.
+        </p>
+        <h3>Windows standalone setup</h3>
         <ol>
           <li>Install Ollama if it is not already installed.</li>
           <li>

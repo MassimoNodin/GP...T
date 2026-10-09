@@ -100,14 +100,14 @@ export default function SettingsTelemetryService() {
       <div className="settings-section-heading">
         <div>
           <span className="eyebrow">TELEMETRY</span>
-          <h2 id="settings-telemetry-title">Local service</h2>
+          <h2 id="settings-telemetry-title">Backend service</h2>
         </div>
         <span className={`settings-state ${badge === "READY" ? "settings-state-available" : badge === "UNAVAILABLE" || badge === "CONFIG LIMIT" ? "settings-state-unavailable" : ""}`}>
           {badge}
         </span>
       </div>
       <p className="settings-copy settings-telemetry-intro">
-        Read-only status for the configured UDP receiver and the local operation using it.
+        Read-only status for the configured backend UDP receiver and the operation using it.
       </p>
 
       <div className="settings-storage-actions settings-telemetry-actions">
@@ -163,7 +163,7 @@ export default function SettingsTelemetryService() {
 
           {wildcardBind ? (
             <p className="settings-telemetry-note">
-              This wildcard address is where GP...T listens; it is not the destination to enter in F1. Use an address for this PC that the game can reach.
+              This wildcard address is where the backend listens; it is not the destination to enter in F1. Use an address for the backend host that the game can reach. In the Ubuntu split deployment, use the Ubuntu LAN address, not this Windows PC or the SSH tunnel address.
             </p>
           ) : null}
           {!service.controller_ready ? (

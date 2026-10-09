@@ -5,8 +5,8 @@ Python processing/API service and a Next.js dashboard.
 
 The backend can run on Ubuntu while the dashboard, microphone and playback
 remain on Windows. An authenticated SSH tunnel connects them without exposing
-the API on the LAN. Ubuntu speech provisioning is available; Linux Ollama setup
-and live-game acceptance remain pending. The [migration baseline](docs/migration-baseline.md) is the single
+the API on the LAN. Ubuntu speech and private model provisioning are available;
+live-game acceptance remains pending. The [migration baseline](docs/migration-baseline.md) is the single
 project document for direction, measurements, unresolved issues and next steps.
 Historical plans and development mandates have been retired; source and tests
 remain intact.
@@ -94,7 +94,30 @@ git pull --ff-only origin main
 
 Windows remains the editing/commit workspace. Push there, pull on Ubuntu and
 verify `git rev-parse HEAD` matches the intended commit before testing. Do not
-overwrite a dirty Ubuntu checkout. Linux Ollama setup is still pending.
+overwrite a dirty Ubuntu checkout.
+
+### Ubuntu private model
+
+The x86_64 setup installs checksum-pinned Ollama 0.40.2 under
+`~/.local/share/GP...T/ollama`, creates a private user service, downloads Qwen3
+4B and pins its full digest beside the database. It requires `zstd`, user systemd
+and at least 12 GiB free for initial provisioning; it does not use sudo or alter
+an existing system Ollama installation.
+
+```bash
+cd ~/GP...T
+~/.local/bin/uv run --frozen --extra app python -m scripts.setup_ubuntu_ollama
+systemctl --user status f1-engineer-ollama
+```
+
+The endpoint is Ubuntu loopback `127.0.0.1:11435`. The app requests CPU inference,
+the service permits one model/request at a time, and `OLLAMA_NO_CLOUD=1` is set.
+Cloud routing remains labelled unverified rather than claiming daemon-wide
+attestation. Repeat setup preserves installed models/pins; pass `--database`
+for another data directory. Only use `--accept-model-update` after reviewing a
+model change. A conflicting user unit or unrelated listener aborts setup.
+Use `systemctl --user start f1-engineer-ollama` for later starts and
+`systemctl --user stop f1-engineer-ollama` to stop only this private service.
 
 ### Ubuntu transcription
 
