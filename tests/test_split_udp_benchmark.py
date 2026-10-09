@@ -10,7 +10,10 @@ from tests.test_lap_tracking import LAP_RECORD
 from tests.helpers import HEADER
 
 
-def test_receiver_failure_preserves_samples_and_explicit_failed_result(tmp_path, monkeypatch):
+@pytest.mark.parametrize('failure_state, expected_error', [('failed', 'publication_failed'),
+                                                         ('stale', 'became silent')])
+def test_receiver_failure_preserves_samples_and_explicit_failed_result(tmp_path, monkeypatch,
+                                                                     failure_state, expected_error):
     class FailedRuntime:
         state = 'listening'
         closed = False
@@ -22,8 +25,8 @@ def test_receiver_failure_preserves_samples_and_explicit_failed_result(tmp_path,
             pass
 
         def status(self):
-            self.state = 'failed'
-            return {'received': 1, 'state': 'failed', 'error': 'publication_failed'}
+            self.state = failure_state
+            return {'received': 1, 'state': failure_state, 'error': 'publication_failed'}
 
         def close(self):
             self.closed = True
@@ -32,7 +35,7 @@ def test_receiver_failure_preserves_samples_and_explicit_failed_result(tmp_path,
     output = tmp_path / 'failed-run'
     args = Namespace(output=output, host='127.0.0.1', port=49077, duration_s=90,
                      expected_datagrams=33700)
-    with pytest.raises(RuntimeError, match='publication_failed'):
+    with pytest.raises(RuntimeError, match=expected_error):
         benchmark_split_udp.receive(args)
     failure = json.loads((output / 'failure.json').read_text())
     assert failure['passed'] is False

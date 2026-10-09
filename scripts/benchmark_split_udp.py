@@ -76,6 +76,9 @@ def receive(args) -> None:
                 samples.append({'elapsed_s': elapsed, 'rss_bytes': current_rss_bytes(), **status})
                 if runtime.state == 'failed':
                     raise RuntimeError(status)
+                if (runtime.state == 'stale' and elapsed < args.duration_s - 1
+                        and status['received'] < args.expected_datagrams):
+                    raise RuntimeError('Synthetic sender became silent before completing the offered workload')
                 if pending is not None and pending.done():
                     try:
                         comparison = pending.result()
