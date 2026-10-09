@@ -71,6 +71,7 @@ dependencies = [
 [package.optional-dependencies]
 app = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "uvicorn" },
 ]
 dev = [
@@ -81,6 +82,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", marker = "extra == 'app'", specifier = ">=0.142,<1" },
+    { name = "httpx", marker = "extra == 'app'", specifier = ">=0.28.1,<1" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28.1" },
     { name = "pyarrow", specifier = ">=25,<26" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3,<9" },
