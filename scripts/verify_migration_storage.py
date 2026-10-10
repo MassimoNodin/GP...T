@@ -252,7 +252,7 @@ def run(target: Path, *, isolated: bool, max_bytes: int, application_pipeline: b
         os.close(descriptor)
         sidecars = (Path(str(database_path) + "-wal"), Path(str(database_path) + "-shm"))
         _ensure_owned_sidecars(sidecars, owned)
-        with closing(sqlite3.connect(database_path)) as database, database:
+        with closing(sqlite3.connect(database_path)) as database:
             database.execute("PRAGMA journal_mode=WAL")
             database.execute("PRAGMA synchronous=FULL")
             journal_mode = database.execute("PRAGMA journal_mode").fetchone()[0]
@@ -263,33 +263,29 @@ def run(target: Path, *, isolated: bool, max_bytes: int, application_pipeline: b
             report["synchronous"] = synchronous
             database.execute("CREATE TABLE records (id INTEGER PRIMARY KEY, value BLOB NOT NULL)")
             database.execute("INSERT INTO records(value) VALUES (?)", (b"baseline",))
-        for path in sidecars:
-            identity = _identity(path)
-            if identity is not None:
-                owned[path] = identity
-        filled = _write_filler(filler_path, max_bytes, owned)
-        report["filler_bytes"] = filled
-        available_bytes = shutil.disk_usage(directory).free
-        report["free_bytes_after_filler"] = available_bytes
-        saw_full = False
-        demand_bytes = min(max_bytes, available_bytes + 256 * 1024)
-        report["transaction_demand_bytes"] = demand_bytes
-        payload = b"x" * min(FILL_CHUNK_BYTES, demand_bytes)
-        remaining = demand_bytes
-        try:
+            database.commit()
             _ensure_owned_sidecars(sidecars, owned)
-            with closing(sqlite3.connect(database_path)) as database, database:
-                database.execute("PRAGMA synchronous=FULL")
-                database.execute("BEGIN IMMEDIATE")
-                while remaining:
-                    piece = payload[:min(len(payload), remaining)]
-                    database.execute("INSERT INTO records(value) VALUES (?)", (piece,))
-                    remaining -= len(piece)
-                database.commit()
-        except sqlite3.OperationalError as exc:
-            if "full" not in str(exc).lower() and getattr(exc, "sqlite_errorcode", None) != sqlite3.SQLITE_FULL:
-                raise
-            saw_full = True
+            filled = _write_filler(filler_path, max_bytes, owned)
+            report["filler_bytes"] = filled
+            available_bytes = shutil.disk_usage(directory).free
+            report["free_bytes_after_filler"] = available_bytes
+            saw_full = False
+            demand_bytes = min(max_bytes, available_bytes + 256 * 1024)
+            report["transaction_demand_bytes"] = demand_bytes
+            payload = b"x" * min(FILL_CHUNK_BYTES, demand_bytes)
+            remaining = demand_bytes
+            try:
+                with database:
+                    database.execute("BEGIN IMMEDIATE")
+                    while remaining:
+                        piece = payload[:min(len(payload), remaining)]
+                        database.execute("INSERT INTO records(value) VALUES (?)", (piece,))
+                        remaining -= len(piece)
+            except sqlite3.OperationalError as exc:
+                if getattr(exc, "sqlite_errorcode", None) != sqlite3.SQLITE_FULL:
+                    raise
+                saw_full = True
+            _unlink_owned(filler_path, owned)
         report["observed_enospc"] = saw_full
         if not saw_full:
             raise RuntimeError("filesystem did not produce SQLite SQLITE_FULL within the supplied bound")
