@@ -513,7 +513,7 @@ export default function EngineerSpeechDraft({
     availability === null
       ? "Checking local speech runtime…"
       : availability.status === "ready"
-        ? "Local English speech input is ready. Clips are transcribed on this computer."
+        ? "English speech input is ready. Your browser records the clip; the configured backend transcribes it."
         : speechUnavailableText(availability.reason);
 
   return (

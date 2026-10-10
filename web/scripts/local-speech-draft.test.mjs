@@ -17,6 +17,19 @@ const speech = await import(
   `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`
 );
 
+test("speech UI distinguishes browser capture from backend transcription", () => {
+  const component = readFileSync(
+    new URL("../src/app/EngineerSpeechDraft.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.ok(
+    component.includes(
+      "Your browser records the clip; the configured backend transcribes it.",
+    ),
+  );
+  assert.ok(!component.includes("Clips are transcribed on this computer."));
+});
+
 function readyStatus(overrides = {}) {
   return {
     api_version: "v1",
