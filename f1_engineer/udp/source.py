@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
 import socket
+import sys
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -39,8 +41,47 @@ class UDPSource:
         self._queue: asyncio.Queue[RawDatagram] = asyncio.Queue(maxsize=queue_size)
         self._transport: asyncio.DatagramTransport | None = None
         self._sequence = 0
+        self._kernel_drops: int | None = None
+        self._kernel_drops_sampled_at: float | None = None
+
+    @property
+    def kernel_receive_drops(self) -> int | None:
+        """Return drops attributed to this socket, or None when unavailable.
+
+        Linux procfs is sampled at most once every 250 ms. The last observed
+        count remains available after close; unsupported or unreadable procfs
+        data is reported as None rather than as zero.
+        """
+        now = time.monotonic()
+        if (
+            self._kernel_drops_sampled_at is not None
+            and now - self._kernel_drops_sampled_at < 0.25
+        ):
+            return self._kernel_drops
+        self._kernel_drops_sampled_at = now
+        if self._transport is None:
+            return self._kernel_drops
+        if sys.platform != "linux":
+            self._kernel_drops = None
+            return None
+        try:
+            udp_socket = self._transport.get_extra_info("socket")
+            if udp_socket is None:
+                self._kernel_drops = None
+                return None
+            target_inode = _socket_inode(udp_socket.fileno())
+            if target_inode is None:
+                self._kernel_drops = None
+                return None
+            table = Path("/proc/net/udp6" if udp_socket.family == socket.AF_INET6 else "/proc/net/udp")
+            self._kernel_drops = _socket_drop_count(table, target_inode)
+        except (OSError, ValueError, IndexError, AttributeError, TypeError):
+            self._kernel_drops = None
+        return self._kernel_drops
 
     async def open(self) -> None:
+        self._kernel_drops = None
+        self._kernel_drops_sampled_at = None
         loop = asyncio.get_running_loop()
         source = self
 
@@ -106,6 +147,7 @@ class UDPSource:
 
     def close(self) -> None:
         if self._transport is not None:
+            _ = self.kernel_receive_drops
             self._transport.close()
             self._transport = None
 
@@ -116,6 +158,50 @@ class UDPSource:
                 pending.append(self._queue.get_nowait())
             except asyncio.QueueEmpty:
                 return tuple(pending)
+
+
+def _socket_inode(fd: int) -> int | None:
+    try:
+        target = os.readlink(f"/proc/self/fd/{fd}")
+        if not target.startswith("socket:[") or not target.endswith("]"):
+            return None
+        return int(target[8:-1])
+    except (OSError, ValueError):
+        return None
+
+
+def _socket_drop_count(table: Path, target_inode: int) -> int | None:
+    try:
+        with table.open("r", encoding="ascii") as stream:
+            header = stream.readline(4097)
+            if not header or len(header) > 4096 or not header.endswith("\n"):
+                return None
+            for _ in range(4096):
+                line = stream.readline(4097)
+                if not line:
+                    return None
+                if len(line) > 4096 or not line.endswith("\n"):
+                    return None
+                fields = line.split()
+                if len(fields) <= 9:
+                    continue
+                try:
+                    inode = int(fields[9])
+                except ValueError:
+                    continue
+                if inode == target_inode:
+                    if len(fields) <= 12:
+                        return None
+                    try:
+                        drops = int(fields[12])
+                    except ValueError:
+                        return None
+                    return drops if drops >= 0 else None
+            if stream.readline(1):
+                return None
+    except (OSError, UnicodeError):
+        return None
+    return None
 
 
 class ReplaySource:

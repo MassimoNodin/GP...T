@@ -85,6 +85,7 @@ class LiveSessionRuntime:
                 "last_publication_delay_s": self.last_publication_delay_s,
                 "received": source.stats.received if source else 0,
                 "dropped": source.stats.dropped if source else 0,
+                "kernel_dropped": source.kernel_receive_drops if source else None,
                 "socket_errors": source.stats.socket_errors if source else 0}
 
     def _run(self) -> None:
@@ -144,9 +145,14 @@ class LiveSessionRuntime:
                 self._ready.set()
                 previous_sequence = -1
                 previous_socket_errors = 0
+                previous_kernel_drops = 0
                 last_received = time.monotonic()
                 stale = False
                 while not self._stop.is_set():
+                    kernel_drops = source.kernel_receive_drops
+                    if kernel_drops is not None and kernel_drops > previous_kernel_drops:
+                        await gap("kernel_receive_overflow")
+                        previous_kernel_drops = kernel_drops
                     if source.stats.socket_errors != previous_socket_errors:
                         await gap("socket_error")
                         previous_socket_errors = source.stats.socket_errors
