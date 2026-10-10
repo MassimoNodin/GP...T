@@ -147,8 +147,9 @@ mount silently falling back to the root disk.
 
 On the four-core migration host, optional
 `scripts/ubuntu/f1-engineer-four-core-cpu.conf` and
-`scripts/ubuntu/f1-engineer-ollama-four-core-cpu.conf` reserve CPUs 0?1 for the
-backend and 2?3 for model work, with lower model scheduling priority. Verify
+`scripts/ubuntu/f1-engineer-ollama-four-core-cpu.conf` restrict the backend to
+CPUs 0-1 and model work to 2-3, with lower model scheduling priority. Other OS
+processes can still use those CPUs; this is not exclusive reservation. Verify
 `lscpu -e` first; these are not portable defaults for fewer cores or different
 CPU topology. Install each as its matching user service's
 `cpu-isolation.conf` drop-in, reload systemd and restart while acquisition is
