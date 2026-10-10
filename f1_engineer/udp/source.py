@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import math
 import os
+import queue
 import socket
 import sys
+import threading
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -28,9 +30,10 @@ class UDPSourceStats:
 
 
 class UDPSource:
-    """Bounded asynchronous UDP input. Socket callbacks only enqueue datagrams."""
+    """Bounded UDP input with optional reception independent of the consumer loop."""
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 20777, queue_size: int = 8192) -> None:
+    def __init__(self, host: str = "0.0.0.0", port: int = 20777, queue_size: int = 8192,
+                 *, independent_receiver: bool = False) -> None:
         if not 0 <= port <= 65535:
             raise ValueError("UDP port must be between 0 and 65535")
         if queue_size < 1:
@@ -43,6 +46,14 @@ class UDPSource:
         self._sequence = 0
         self._kernel_drops: int | None = None
         self._kernel_drops_sampled_at: float | None = None
+        self.independent_receiver = independent_receiver
+        self._receiver_queue: queue.Queue[RawDatagram] = queue.Queue(maxsize=queue_size)
+        self._receiver_socket: socket.socket | None = None
+        self._receiver_thread: threading.Thread | None = None
+        self._receiver_stop = threading.Event()
+        self._wake_pending = threading.Event()
+        self._receiver_ready = asyncio.Event()
+        self.receive_buffer_bytes: int | None = None
 
     @property
     def kernel_receive_drops(self) -> int | None:
@@ -59,13 +70,13 @@ class UDPSource:
         ):
             return self._kernel_drops
         self._kernel_drops_sampled_at = now
-        if self._transport is None:
+        if self._transport is None and self._receiver_socket is None:
             return self._kernel_drops
         if sys.platform != "linux":
             self._kernel_drops = None
             return None
         try:
-            udp_socket = self._transport.get_extra_info("socket")
+            udp_socket = self._receiver_socket or self._transport.get_extra_info("socket")
             if udp_socket is None:
                 self._kernel_drops = None
                 return None
@@ -83,6 +94,9 @@ class UDPSource:
         self._kernel_drops = None
         self._kernel_drops_sampled_at = None
         loop = asyncio.get_running_loop()
+        if self.independent_receiver:
+            self._open_independent_receiver(loop)
+            return
         source = self
 
         class Receiver(asyncio.DatagramProtocol):
@@ -114,6 +128,7 @@ class UDPSource:
             if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
                 udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
             udp_socket.bind((self.host, self.port))
+            self.receive_buffer_bytes = udp_socket.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
             udp_socket.setblocking(False)
             transport, _ = await loop.create_datagram_endpoint(Receiver, sock=udp_socket)
         except BaseException:
@@ -121,11 +136,79 @@ class UDPSource:
             raise
         self._transport = transport
 
+    def _open_independent_receiver(self, loop: asyncio.AbstractEventLoop) -> None:
+        udp_socket = socket.socket(socket.AF_INET6 if ":" in self.host else socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            udp_socket.bind((self.host, self.port))
+            self.receive_buffer_bytes = udp_socket.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
+            udp_socket.settimeout(0.05)
+            self._receiver_stop.clear()
+            self._wake_pending.clear()
+            self._receiver_ready.clear()
+            self._receiver_socket = udp_socket
+            self._receiver_thread = threading.Thread(
+                target=self._receive_independently, args=(udp_socket, loop),
+                name="udp-reception", daemon=True,
+            )
+            self._receiver_thread.start()
+        except BaseException:
+            self._receiver_socket = None
+            udp_socket.close()
+            raise
+
+    def _notify_receiver_ready(self) -> None:
+        self._receiver_ready.set()
+        self._wake_pending.clear()
+
+    def _receive_independently(self, udp_socket: socket.socket,
+                             loop: asyncio.AbstractEventLoop) -> None:
+        while not self._receiver_stop.is_set():
+            try:
+                payload, address = udp_socket.recvfrom(65535)
+            except socket.timeout:
+                continue
+            except OSError:
+                if self._receiver_stop.is_set():
+                    return
+                self.stats.socket_errors += 1
+                continue
+            raw = RawDatagram(
+                sequence=self._sequence, captured_at_ns=time.time_ns(),
+                monotonic_ns=time.perf_counter_ns(), source_host=str(address[0]),
+                source_port=int(address[1]), payload=payload,
+            )
+            self._sequence += 1
+            self.stats.received += 1
+            try:
+                self._receiver_queue.put_nowait(raw)
+                self.stats.queued += 1
+            except queue.Full:
+                self.stats.dropped += 1
+            if not self._wake_pending.is_set():
+                self._wake_pending.set()
+                try:
+                    loop.call_soon_threadsafe(self._notify_receiver_ready)
+                except RuntimeError:
+                    self._receiver_stop.set()
+                    return
+
     @property
     def pending_count(self) -> int:
-        return self._queue.qsize()
+        return self._receiver_queue.qsize() if self.independent_receiver else self._queue.qsize()
 
     async def receive(self) -> RawDatagram:
+        if self.independent_receiver:
+            while True:
+                try:
+                    return self._receiver_queue.get_nowait()
+                except queue.Empty:
+                    self._receiver_ready.clear()
+                try:
+                    return self._receiver_queue.get_nowait()
+                except queue.Empty:
+                    await self._receiver_ready.wait()
         return await self._queue.get()
 
     async def receive_batch(self, maximum: int) -> tuple[RawDatagram, ...]:
@@ -134,18 +217,28 @@ class UDPSource:
         pending = [await self.receive()]
         while len(pending) < maximum:
             try:
-                pending.append(self._queue.get_nowait())
-            except asyncio.QueueEmpty:
+                pending.append(self._receiver_queue.get_nowait() if self.independent_receiver else self._queue.get_nowait())
+            except (asyncio.QueueEmpty, queue.Empty):
                 break
         return tuple(pending)
 
     async def packets(self) -> AsyncIterator[RawDatagram]:
-        if self._transport is None:
+        if self._transport is None and self._receiver_socket is None:
             raise RuntimeError("UDPSource.open() must be called before reading packets")
         while True:
-            yield await self._queue.get()
+            yield await self.receive()
 
     def close(self) -> None:
+        if self._receiver_socket is not None:
+            _ = self.kernel_receive_drops
+            self._receiver_stop.set()
+            self._receiver_socket.close()
+            if self._receiver_thread is not None:
+                self._receiver_thread.join(timeout=1)
+                if self._receiver_thread.is_alive():
+                    raise RuntimeError("UDP receiver did not stop")
+            self._receiver_socket = None
+            self._receiver_thread = None
         if self._transport is not None:
             _ = self.kernel_receive_drops
             self._transport.close()
@@ -155,8 +248,8 @@ class UDPSource:
         pending: list[RawDatagram] = []
         while True:
             try:
-                pending.append(self._queue.get_nowait())
-            except asyncio.QueueEmpty:
+                pending.append(self._receiver_queue.get_nowait() if self.independent_receiver else self._queue.get_nowait())
+            except (asyncio.QueueEmpty, queue.Empty):
                 return tuple(pending)
 
 

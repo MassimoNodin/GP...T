@@ -84,6 +84,8 @@ class LiveSessionRuntime:
                 "max_publication_batch_size": self.max_publication_batch_size,
                 "last_publication_delay_s": self.last_publication_delay_s,
                 "received": source.stats.received if source else 0,
+                "receiver_mode": "independent_thread" if source and source.independent_receiver else "unavailable",
+                "receive_buffer_bytes": source.receive_buffer_bytes if source else None,
                 "dropped": source.stats.dropped if source else 0,
                 "kernel_dropped": source.kernel_receive_drops if source else None,
                 "socket_errors": source.stats.socket_errors if source else 0}
@@ -98,7 +100,7 @@ class LiveSessionRuntime:
             self._ready.set()
 
     async def _listen(self) -> None:
-        source = UDPSource(self.host, self.port, self.queue_size)
+        source = UDPSource(self.host, self.port, self.queue_size, independent_receiver=True)
         self.source = source
         loop = asyncio.get_running_loop()
         with ThreadPoolExecutor(max_workers=1, thread_name_prefix="session-persistence") as executor:
