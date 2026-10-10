@@ -96,7 +96,11 @@ class CarLapInventoryTracker:
     """Track diagnostic lap attempts only inside an admitted participant tenure."""
 
     def active_tenures(self, frame_ordinals: dict[int, int] | None = None) -> tuple[CarSlotTenure, ...]:
-        return tuple(CarSlotTenure(
+        key = tuple(sorted((frame_ordinals or {}).items()))
+        cached = self._active_tenure_cache.get(key)
+        if cached is not None:
+            return cached
+        tenures = tuple(CarSlotTenure(
             session_uid=tenure.session_uid, packet_format=tenure.packet_format,
             lifecycle_epoch=tenure.lifecycle_epoch, car_index=tenure.car_index,
             tenure_ordinal=tenure.tenure_ordinal, start_frame_ordinal=tenure.start_frame_ordinal,
@@ -106,8 +110,13 @@ class CarLapInventoryTracker:
             participant_identity_fingerprint=tenure.participant_identity_fingerprint,
             close_reason="active",
         ) for tenure in self._open_tenures.values())
+        if len(self._active_tenure_cache) >= 2:
+            self._active_tenure_cache.clear()
+        self._active_tenure_cache[key] = tenures
+        return tenures
 
     def interrupt(self, frame_ordinal: int, reason: str) -> None:
+        self._active_tenure_cache.clear()
         self._close_scope(frame_ordinal=frame_ordinal, reason=reason)
         self._slot_state = {slot: "unknown" for slot in range(MAX_CAR_SLOTS)}
 
@@ -118,6 +127,7 @@ class CarLapInventoryTracker:
         self.packet_format: int | None = None
         self.lifecycle_epoch: int | None = None
         self._open_tenures: dict[int, _OpenTenure] = {}
+        self._active_tenure_cache: dict[tuple[tuple[int, int], ...], tuple[CarSlotTenure, ...]] = {}
         self._slot_state: dict[int, str] = {}
         self._next_tenure_ordinal: dict[int, int] = {}
         self._completed_tenures: list[CarSlotTenure] = []
@@ -213,6 +223,7 @@ class CarLapInventoryTracker:
             self._slot_state[car_index] = "unknown"
 
     def start_session(self, session_uid: int) -> None:
+        self._active_tenure_cache.clear()
         if self.session_uid == session_uid:
             return
         if self.session_uid is not None:
@@ -225,6 +236,7 @@ class CarLapInventoryTracker:
         self._next_tenure_ordinal = {slot: 0 for slot in range(MAX_CAR_SLOTS)}
 
     def end_session(self, session_uid: int, *, reason: str = "session_ended") -> None:
+        self._active_tenure_cache.clear()
         if self.session_uid != session_uid:
             return
         frame_ordinal = max(
@@ -257,6 +269,7 @@ class CarLapInventoryTracker:
         self.lifecycle_epoch = None
 
     def finish(self) -> None:
+        self._active_tenure_cache.clear()
         if self.session_uid is None:
             return
         frame_ordinal = max(
@@ -450,6 +463,7 @@ class CarLapInventoryTracker:
         timeline_provider: ContextTimelineProvider,
         boundary_reason: str | None = None,
     ) -> None:
+        self._active_tenure_cache.clear()
         if self.session_uid != session_uid:
             self.start_session(session_uid)
         if (

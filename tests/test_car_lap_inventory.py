@@ -3,6 +3,8 @@ from __future__ import annotations
 import struct
 from types import SimpleNamespace
 
+import pytest
+
 from f1_engineer.sessions.context import GameMode, RuleSet, SessionContext, SessionType
 from f1_engineer.sessions.car_lap_inventory import CarLapInventoryTracker
 from f1_engineer.storage.database import Database
@@ -185,6 +187,40 @@ def _time_trial_context(air_temperature_c: int) -> SessionContext:
         gearbox_assist_id=0,
         equal_car_performance_id=0,
     )
+
+
+def test_active_tenure_snapshots_are_cached_bounded_and_invalidated_by_observation():
+    tracker = CarLapInventoryTracker()
+    _observe(tracker, 1, participants=(_participants_packet(1),), lap=_car_lap())
+    first = tracker.active_tenures()
+    assert first and tracker.active_tenures() is first
+    for frame in range(2, 10):
+        snapshot = tracker.active_tenures({_SESSION_UID: frame})
+        assert all(tenure.end_frame_ordinal_exclusive == frame + 1 for tenure in snapshot)
+        assert len(tracker._active_tenure_cache) <= 2
+    _observe(tracker, 2, participants=(_participants_packet(2, driver_ids={1: 88}),), lap=_car_lap())
+    changed = tracker.active_tenures()
+    assert changed is not first
+    assert changed[1].participant_identity_fingerprint != first[1].participant_identity_fingerprint
+    assert first[1].end_frame_ordinal_exclusive == 2
+    _observe(tracker, 3, participants=(_participants_packet(3),), lap=_car_lap(), lifecycle_epoch=1)
+    assert all(tenure.lifecycle_epoch == 1 for tenure in tracker.active_tenures())
+
+
+@pytest.mark.parametrize('boundary', ['interrupt', 'finish', 'end_session', 'start_session'])
+def test_active_tenure_cache_cannot_survive_scope_closure(boundary):
+    tracker = CarLapInventoryTracker()
+    _observe(tracker, 1, participants=(_participants_packet(1),), lap=_car_lap())
+    assert tracker.active_tenures()
+    if boundary == 'interrupt':
+        tracker.interrupt(2, 'test_gap')
+    elif boundary == 'finish':
+        tracker.finish()
+    elif boundary == 'end_session':
+        tracker.end_session(_SESSION_UID)
+    else:
+        tracker.start_session(_SESSION_UID + 1)
+    assert tracker.active_tenures() == ()
 
 
 def test_non_player_lap_is_bound_to_admitted_slot_tenure() -> None:
