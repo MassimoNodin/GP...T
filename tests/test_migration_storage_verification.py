@@ -10,6 +10,7 @@ from scripts.verify_migration_storage import (
     SafetyError,
     _unlink_owned,
     _verify_application_pipeline,
+    _write_filler,
     main,
     run,
     validate_target,
@@ -131,3 +132,22 @@ def test_owned_unlink_preserves_replaced_path(tmp_path):
     path.write_bytes(b"replacement")
     assert _unlink_owned(path, owned) is False
     assert path.read_bytes() == b"replacement"
+
+
+def test_filler_retries_with_smaller_writes_after_enospc(tmp_path, monkeypatch):
+    path = tmp_path / "filler.bin"
+    owned = {}
+    write_sizes = []
+    real_write = __import__("os").write
+
+    def write_with_tail_limit(descriptor, data):
+        write_sizes.append(len(data))
+        if len(data) > 4096:
+            raise OSError(28, "No space left on device")
+        return real_write(descriptor, data)
+
+    monkeypatch.setattr("scripts.verify_migration_storage.os.write", write_with_tail_limit)
+    assert _write_filler(path, 16 * 1024, owned) == 16 * 1024
+    assert path.stat().st_size == 16 * 1024
+    assert max(write_sizes) > 4096
+    assert min(write_sizes) == 4096

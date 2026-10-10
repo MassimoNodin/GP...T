@@ -57,27 +57,39 @@ def validate_target(target: Path, *, isolated: bool, max_bytes: int) -> Path:
 def _write_filler(path: Path, limit: int, owned: dict[Path, tuple[int, int]]) -> int:
     written = 0
     block = b"F" * FILL_CHUNK_BYTES
+    chunk_size = len(block)
+    try:
+        filesystem_block_size = os.statvfs(path.parent).f_frsize or 4096
+    except (AttributeError, OSError):
+        filesystem_block_size = 4096
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(path, flags, 0o600)
     try:
         details = os.fstat(descriptor)
         owned[path] = (details.st_dev, details.st_ino)
         while written < limit:
+            size = min(chunk_size, limit - written)
+            no_space = False
             try:
-                size = min(len(block), limit - written)
                 count = os.write(descriptor, block[:size])
-                if count == 0:
-                    break
-                written += count
             except OSError as exc:
                 if exc.errno != errno.ENOSPC:
                     raise
+                count = 0
+                no_space = True
+            written += count
+            try:
+                os.fsync(descriptor)
+            except OSError as exc:
+                if exc.errno != errno.ENOSPC:
+                    raise
+                no_space = True
+            if no_space and chunk_size > filesystem_block_size:
+                chunk_size = max(filesystem_block_size, chunk_size // 2)
+            elif no_space:
                 break
-        try:
-            os.fsync(descriptor)
-        except OSError as exc:
-            if exc.errno != errno.ENOSPC:
-                raise
+            if shutil.disk_usage(path.parent).free == 0:
+                break
     finally:
         os.close(descriptor)
     return written
@@ -257,13 +269,22 @@ def run(target: Path, *, isolated: bool, max_bytes: int, application_pipeline: b
                 owned[path] = identity
         filled = _write_filler(filler_path, max_bytes, owned)
         report["filler_bytes"] = filled
+        available_bytes = shutil.disk_usage(directory).free
+        report["free_bytes_after_filler"] = available_bytes
         saw_full = False
+        demand_bytes = min(max_bytes, available_bytes + 256 * 1024)
+        report["transaction_demand_bytes"] = demand_bytes
+        payload = b"x" * min(FILL_CHUNK_BYTES, demand_bytes)
+        remaining = demand_bytes
         try:
             _ensure_owned_sidecars(sidecars, owned)
             with closing(sqlite3.connect(database_path)) as database, database:
                 database.execute("PRAGMA synchronous=FULL")
                 database.execute("BEGIN IMMEDIATE")
-                database.execute("INSERT INTO records(value) VALUES (?)", (b"x" * 256 * 1024,))
+                while remaining:
+                    piece = payload[:min(len(payload), remaining)]
+                    database.execute("INSERT INTO records(value) VALUES (?)", (piece,))
+                    remaining -= len(piece)
                 database.commit()
         except sqlite3.OperationalError as exc:
             if "full" not in str(exc).lower() and getattr(exc, "sqlite_errorcode", None) != sqlite3.SQLITE_FULL:
