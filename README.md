@@ -126,6 +126,23 @@ do not certify real game traffic, microphone capture or audible playback.
 Remove the optional test rule afterward with
 `sudo ufw delete allow from 192.168.1.111 to any port 49077 proto udp`.
 
+### Optional NVMe storage
+
+The opt-in drop-ins `scripts/ubuntu/f1-engineer-nvme.conf` and
+`scripts/ubuntu/f1-engineer-ollama-nvme.conf` use `/mnt/nvme/f1-engineer/`
+for databases, recordings and model blobs. They refuse startup when the NVMe
+mount or prepared directories are missing; the API token stays in the private
+checkout data directory. Do not install these on an unverified drive.
+Stop acquisition and both user services before copying data. Use SQLite's backup
+API for each database, copy the verified runtime pins beside the destination
+database, and checksum-verify model blobs and recordings before switching.
+Preserve original data and units for rollback. Install the matching drop-in as
+`~/.config/systemd/user/<service>.service.d/storage.conf`, reload user systemd,
+then verify authenticated API readiness and the unchanged model digest.
+The current host's migration and measured acceptance are in
+`docs/migration-baseline.md`; never copy a live SQLite file or rely on a missing
+mount silently falling back to the root disk.
+
 ### Ubuntu private model
 
 The x86_64 setup installs checksum-pinned Ollama 0.40.2 under
