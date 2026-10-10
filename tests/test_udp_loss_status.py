@@ -16,6 +16,8 @@ def test_runtime_preserves_socket_loss_observation_without_combining_queue_losse
     runtime = LiveSessionRuntime(None, host="127.0.0.1", port=49077)
     runtime.source = SimpleNamespace(
         pending_count=0,
+        independent_receiver=True,
+        receive_buffer_bytes=212992,
         kernel_receive_drops=kernel_dropped,
         stats=SimpleNamespace(received=12, dropped=2, socket_errors=0),
     )
@@ -23,6 +25,8 @@ def test_runtime_preserves_socket_loss_observation_without_combining_queue_losse
     assert status["kernel_dropped"] == kernel_dropped
     assert status["dropped"] == 2
     assert status["received"] == 12
+    assert status["receiver_mode"] == "independent_thread"
+    assert status["receive_buffer_bytes"] == 212992
 
 
 def test_runtime_without_a_socket_has_unknown_kernel_losses():
@@ -52,7 +56,7 @@ def test_observed_kernel_losses_interrupt_evidence_once_per_increase(tmp_path, m
     runtime.start()
     try:
         assert runtime.state == "listening"
-        port = runtime.source._transport.get_extra_info("sockname")[1]
+        port = runtime.source._receiver_socket.getsockname()[1]
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
             sender.sendto(next(admitted_packets()).payload, ("127.0.0.1", port))
         wait_until(lambda: runtime.processed == 1)

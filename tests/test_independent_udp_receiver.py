@@ -13,6 +13,10 @@ def test_receiver_keeps_draining_socket_while_processing_loop_is_blocked():
         source = UDPSource("127.0.0.1", 0, 256, independent_receiver=True)
         await source.open()
         address = source._receiver_socket.getsockname()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as default_socket:
+            assert source.receive_buffer_bytes == default_socket.getsockopt(
+                socket.SOL_SOCKET, socket.SO_RCVBUF
+            )
 
         def send():
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
