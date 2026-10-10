@@ -145,6 +145,16 @@ mount silently falling back to the root disk.
 
 ### Ubuntu private model
 
+On the four-core migration host, optional
+`scripts/ubuntu/f1-engineer-four-core-cpu.conf` and
+`scripts/ubuntu/f1-engineer-ollama-four-core-cpu.conf` reserve CPUs 0?1 for the
+backend and 2?3 for model work, with lower model scheduling priority. Verify
+`lscpu -e` first; these are not portable defaults for fewer cores or different
+CPU topology. Install each as its matching user service's
+`cpu-isolation.conf` drop-in, reload systemd and restart while acquisition is
+idle. Remove only these drop-ins to roll back. Benchmark receivers must use
+the same backend CPU set. This does not enlarge queues or weaken durability.
+
 The x86_64 setup installs checksum-pinned Ollama 0.40.2 under
 `~/.local/share/GP...T/ollama`, creates a private user service, downloads Qwen3
 4B and pins its full digest beside the database. It requires `zstd`, user systemd
