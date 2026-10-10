@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cmp_to_key
 
@@ -147,14 +148,28 @@ class SessionTracker:
             ):
                 return self._current_context, self._current_context_frame_identifier
             return None, None
-        context: SessionContext | None = None
-        context_frame: int | None = None
-        for update_frame, update_context in self._context_history_by_uid.get(uid or 0, ()):
-            if not self._is_not_older(frame_identifier, update_frame):
-                break
-            context = update_context
-            context_frame = update_frame if update_context is not None else None
-        return context, context_frame
+        history = self._context_history_by_uid.get(uid or 0, ())
+        position = self._context_index(history, frame_identifier)
+        if position == 0:
+            return None, None
+        update_frame, context = history[position - 1]
+        return context, update_frame if context is not None else None
+
+    def _context_index(
+        self,
+        history: Sequence[tuple[int, SessionContext | None]],
+        frame_identifier: int,
+    ) -> int:
+        if history and not self._is_not_older(frame_identifier, history[0][0]):
+            return 0
+        lower, upper = 0, len(history)
+        while lower < upper:
+            middle = (lower + upper) // 2
+            if self._is_not_older(frame_identifier, history[middle][0]):
+                lower = middle + 1
+            else:
+                upper = middle
+        return lower
 
     def context_history(
         self, session_uid: int
@@ -179,7 +194,18 @@ class SessionTracker:
         uid = self.current_session_uid if session_uid is None else session_uid
         initial_context, _ = self.context_at(start, session_uid=uid)
         changes: list[tuple[int, SessionContext | None]] = [(start, initial_context)]
-        for update_frame, update_context in self._context_history_by_uid.get(uid or 0, ()):
+        history = self._context_history_by_uid.get(uid or 0, ())
+        if self._is_not_older(end, start) and (
+            not history or (
+                self._is_not_older(start, history[0][0])
+                and self._is_not_older(end, history[0][0])
+            )
+        ):
+            lower = self._context_index(history, start)
+            upper = self._context_index(history, end)
+            changes.extend(history[lower:upper])
+            return tuple(changes)
+        for update_frame, update_context in history:
             if update_frame == start or not self._is_newer(update_frame, start):
                 continue
             if self._is_not_older(end, update_frame):
