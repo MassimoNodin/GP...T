@@ -360,8 +360,8 @@ Read-only host inspection finds `/mnt/nvme` unusable: the Kingston NVMe reports
 **0 sectors**, controller state **dead**, ext4 mount option **shutdown**, and
 directory I/O errors. Kernel logs record controller/reset failure and aborted
 ext4 journal on October 9 (host timestamps), before these diagnostics. `df`'s
-cached free-space figure is not proof that this mount works. No writes, remount,
-filesystem repair, device reset or reboot is attempted. The repository, model
+cached free-space figure is not proof that this mount works. At this inspection,
+no writes, remount, filesystem repair, device reset or reboot had been attempted. The repository, model
 and evidence remain on the 120 GB SATA SSD, with about **11 GiB free** at this
 inspection. Operator storage recovery is required before testing an NVMe-backed
 deployment. Evidence: `data/migration-nvme-health-20261010.json`.
@@ -383,6 +383,41 @@ with **zero application and observed per-socket kernel drops**, queue peak
 p95 **51.386/270.041 ms** still fail; backlog maximum **685.139 ms** passes.
 This verifies live socket-specific reporting without claiming latency acceptance.
 Evidence: `data/migration-kernel-observer-20261010-k/`.
+
+## Ubuntu boot and storage recovery (October 10)
+
+The operator stopped nginx, unmounted the failed NVMe and power-cycled the host.
+Booting `7.0.0-38-generic` then failed: NVIDIA **535.288.01** DKMS compilation
+had interrupted kernel configuration, leaving its initramfs missing. Passwordless
+sudo enabled repair using Ubuntu's recommended proprietary **580.178.04** driver
+and prebuilt modules for both kernels, plus the HWE module metapackage. Package
+audit/dependency checks now pass; the rebuilt initramfs contains the SATA driver.
+A one-shot boot into **7.0.0-38-generic** succeeds over SSH and `nvidia-smi` passes.
+GRUB now defaults explicitly to that tested kernel with a visible 10-second menu;
+**6.17.0-19-generic** is retained and marked manual to protect the fallback from
+autoremove. Future kernels still install, but require validation before promoting
+the boot default. Host override: `/etc/default/grub.d/99-local-nvme-stability.cfg`.
+
+The NVMe reports **live / 931.5 GiB**, zero SMART critical warnings/media errors,
+and passes an offline, read-only `e2fsck -fn` with mount reactivation temporarily
+blocked. nginx is restored. The override disables NVMe APST through
+`nvme_core.default_ps_max_latency_us=0`, verified after reboot; this is a reversible
+mitigation suggested by the original kernel failure, not proof of its cause or
+long-term hardware reliability. No existing app/model/evidence data is moved.
+Isolated fsync/readback and SQLite **WAL/FULL** checks pass. Repair/health/check
+artifacts are retained under ignored `data/migration-*20261010*` on Ubuntu.
+
+At unchanged app SHA `4060827`, a 90-second Windows-to-Ubuntu NVMe-backed repeat
+(`l`) sends/receives/journals/processes **33,700** packets, with zero application,
+observed per-socket kernel or socket-error losses. Publication p95 is **13.905 ms**;
+backlog p95/max **46.982/140.013 ms**; queue peak **25**. Retained comparison,
+continued ingestion and SQLite integrity pass. Evidence:
+`/mnt/nvme/f1-engineer-migration-checks/migration-nvme-post-repair-20261010-l/`.
+This short no-inference synthetic run does not accept sustained storage stability,
+model coexistence, a production-data relocation or real microphone/game usage.
+SSH, nginx, telemetry and the private pinned model service are active after reboot.
+The unrelated reviewer service's boot-time DNS failure cleared on restart; its
+startup retry policy remains outside this repair. Migration acceptance stays **3/6**.
 
 ## Migration milestones
 
