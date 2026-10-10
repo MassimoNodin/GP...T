@@ -96,6 +96,33 @@ Windows remains the editing/commit workspace. Push there, pull on Ubuntu and
 verify `git rev-parse HEAD` matches the intended commit before testing. Do not
 overwrite a dirty Ubuntu checkout.
 
+### Split-host acceptance checks
+
+The synthetic UDP harness uses a separate evidence database and UDP `49077`,
+never the production listener or game database. On Ubuntu, permit only the
+Windows sender (this setup uses `192.168.1.111`) when UFW is enabled:
+
+```bash
+sudo ufw allow from 192.168.1.111 to any port 49077 proto udp
+~/.local/bin/uv run --frozen --extra app python -m scripts.benchmark_split_udp receive --host 0.0.0.0 --output data/split-acceptance-unique
+```
+
+Wait for `ready: true`, then run on Windows:
+
+```powershell
+uv run --frozen --extra app python -m scripts.benchmark_split_udp send --host 192.168.1.115
+```
+
+The default run lasts 90 seconds: 355 datagrams/s plus a 10-second 530/s burst.
+It requires 33,700 lossless admissions, retained analysis, continued ingestion,
+SQLite integrity and explicit latency targets. A nonzero receiver exit means
+acceptance failed; inspect `summary.json` or `failure.json` and `samples.json`.
+Always use a new output directory. For a 300-second soak, pass `--duration-s 300`
+on both sides and `--expected-datagrams 108250` on the receiver. These fixtures
+do not certify real game traffic, microphone capture or audible playback.
+Remove the optional test rule afterward with
+`sudo ufw delete allow from 192.168.1.111 to any port 49077 proto udp`.
+
 ### Ubuntu private model
 
 The x86_64 setup installs checksum-pinned Ollama 0.40.2 under

@@ -1,9 +1,9 @@
 # Ubuntu / Windows migration baseline
 
 Updated: 2026-10-10. This is the single project baseline replacing historical
-plans, audits and development-rule documents. Measurements are carried forward
-from recorded investigations, not rerun during this cleanup. They describe
-specific fixtures/hosts, not verified Ubuntu performance.
+plans, audits and development-rule documents. Historical measurements are carried
+forward; migration validations below identify their actual host and commit.
+Synthetic results are not verified live-game performance.
 
 ## Direction and boundaries
 
@@ -85,7 +85,7 @@ their old directives are not inherited by this baseline.
 - **Linux runtime:** replace Windows-only model provisioning; review Whisper's
   DLL-oriented pin validation, locks, permissions, explicit data paths and
   subprocess cleanup. Backend setup is now verified on the host below; Linux
-  speech/model provisioning remains unverified.
+  speech/model provisioning is now verified, with hardware voice acceptance pending.
 - **Evidence correctness:** retain checksums, explicit loss gaps, committed-reader
   visibility, association guards and replay equivalence. Never promote gapped
   fragments into eligible laps or fabricate missing channels. Listener shutdown
@@ -100,6 +100,8 @@ their old directives are not inherited by this baseline.
   cancellation. Distinguish device failures from backend/network failures;
   reconnect must not replay stale speech. Fixture checks do not establish
   radio-first or complete real-user workflow acceptance.
+  Live v2 session evidence and legacy v1 Engineer question selection remain
+  separate paths; retained v2 comparisons do not establish v1 Ask availability.
 - **Resilience:** verify process-kill recovery, disk-full behavior, extended-session
   disk/RSS growth and bounded queues. Short runs and allocation measurements
   do not certify these cases or power-loss recovery.
@@ -177,6 +179,13 @@ pinned; model digest is
 An actual selected-attempt question routed to `attempt_summary/lap_time`, with
 Ollama confirming **CPU (0 VRAM)**. Cold inference took **58.063 s**, near the
 60-second application deadline; latency under telemetry load is not accepted.
+Three later isolated repetitions of the same actual CPU routing request took
+**31.671 s** with an idle model, **2.884 s** immediately afterward, and
+**21.175 s** after the 15-second unload window. All returned
+`attempt_summary/lap_time` with the same pinned digest and CPU placement.
+These observations show model-loading/cache effects, not a latency percentile
+or a microphone-to-answer acceptance. No deadline, model pin or keep-alive
+policy was relaxed to obtain them.
 Ubuntu CPU transcription is now
 installed from the exact whisper.cpp 1.9.3 source commit and checksum-verified
 tiny.en model. CMake 3.31.6 is user-local; no sudo or system package changes were
@@ -197,11 +206,137 @@ include Ubuntu and Windows standalone provisioning commands. Actual microphone
 capture, editable-question submission and audible playback still require an
 operator-driven round trip; fixture transport is not hardware acceptance.
 
-An Ubuntu 90-second synthetic 355/s run with a 10-second 530/s burst before raw
-admission batching failed: 33,700 received, 17,162 processed, 16,538 drops (49.1%),
-sampled oldest-delay p95/max 10.176/11.203 s and no eligible retained comparison.
-This is a failed migration gate, not a completed milestone. Investigate bounded
-FULL-durability raw commit batching; do not hide the failure with a larger queue.
+Ubuntu 90-second synthetic 355/s runs with a 10-second 530/s burst:
+
+| Implementation | Received / processed / dropped | Sampled backlog p95 / max | Result |
+| --- | --- | --- | --- |
+| Before raw batching | 33,700 / 17,162 / 16,538 | 10.176 / 11.203 s | 49.1% loss; no eligible comparison |
+| FULL-durability raw batching | 33,700 / 32,905 / 795 | 2.262 / 3.200 s | 2.4% loss; eligible comparison retained |
+| Binding cache and single chunk decode | 33,700 / 33,700 / 0 | 1.410 / 2.461 s | Lossless, but latency fails |
+
+The last run retained an eligible 150-row lap comparison while ingestion
+continued, with queue peak 966/1,024 and drain time 0.253 s. Sampled publication
+p95 was 172.758 ms: the 50 ms publication p95, 250 ms backlog p95 and one-second
+maximum backlog targets still fail. These same-process synthetic senders compete
+with ingestion; the separate Windows sender harness isolates that interference.
+No live-game acceptance is inferred. Raw batches remain capped at 32 and use
+SQLite WAL/FULL; queued but unadmitted datagrams are not durable.
+
+Full regression at `5360599`: Windows **1,017 passed, 10 skipped** (186.40 s),
+Ubuntu **1,026 passed, 1 skipped** (188.07 s). The subsequent failed-run artifact
+test at `d1ce1e8` passes separately on both hosts. Existing Starlette/httpx warning
+remains. Actual subprocess termination/recovery and speech cancellation tests
+pass on Ubuntu (**17 passed**). The independent Windows companion verification
+passes authentication, ready services, credential non-disclosure, SSH loss (503),
+and reconnect (200), without stopping the primary companion. The actual Ubuntu
+API was safely restarted with zero received game packets and returned to
+authenticated listening on UDP 20777.
+An isolated SQLite page-cap test produces real `SQLITE_FULL`, verifies the
+entire new journal batch rolls back without partial admission, then reopens and
+continues the prior generation after capacity is restored (**3 recovery tests
+passed on both hosts**). This validates database-capacity handling, not a full
+host filesystem or sudden power-loss test.
+
+The first Windows-to-Ubuntu synthetic LAN run sent 33,700 datagrams but received
+none: Ubuntu kernel logs explicitly show UFW blocking UDP 49077 from Windows
+`192.168.1.111`. This is a failed network precondition, not a processing result.
+After the operator added the source-restricted UDP rule, the separate-host
+90-second repeat received/journaled/processed **33,700**, with **zero drops**,
+queue peak 298/1,024, retained comparison, continued ingestion and SQLite
+quick_check passing. Sampled publication p95 **52.299 ms** and backlog p95
+**316.328 ms** still fail their targets; backlog maximum **680.645 ms** passes.
+Sampled receiver RSS peaked at **114,143,232 bytes**; final database size was
+**218,435,584 bytes**. Evidence is `data/migration-two-host-20261010-b/` on Ubuntu.
+The receiver exited unsuccessfully because its explicit latency checks failed;
+losslessness does not mean full acceptance.
+At `f7859e3`, shallow JSON dataclass projection preserves exact serialized
+metadata/binding bytes without recursive deep copies. The next separate-host
+90-second run remained lossless with queue peak **206**, publication p95
+**51.976 ms**, backlog p95/max **258.807/699.070 ms** and RSS peak
+**114,098,176 bytes**. The two p95 targets still fail, despite reduced backlog.
+Evidence is `data/migration-two-host-20261010-c/`. At `e94d0d7`, chunk sealing
+reuses canonical staging JSON bytes instead of re-encoding unchanged records;
+canonical bytes, hashes and sizes are verified by a focused test. Raw durability,
+row caps and acceptance thresholds remain unchanged.
+The first requested 300-second soak at `e94d0d7` is **invalid as a sustained
+soak**: its sender stopped at 35,680 packets when a nested fixture's 20-frame
+lap counter overflowed the protocol's byte. The receiver retained all those
+packets but spent most of the window idle; its latency percentiles must not be
+used for acceptance. `45d1567` forwards the declared lap length through the
+fixture and rejects configurations exceeding the protocol range. `99669d4`
+fails early on premature sender silence while preserving diagnostics.
+The fixture now generates a single braking window per declared lap rather than
+the previous nested 20-frame pattern; historical runs are not identical workloads.
+
+One Windows full-suite run alongside the synthetic sender failed the short-silence
+UDP comparison test (`attempt_not_measurement_ready`); its isolated rerun passed.
+The recorded failing run is not reported as green. Final regression and the
+corrected sustained soak are rerun without competing host test workloads.
+Final isolated regression at `45d1567`: Windows **1,029 passed, 10 skipped**
+(167.97 s), Ubuntu **1,038 passed, 1 skipped** (186.11 s). The subsequent
+premature-silence change at `99669d4` has **4 focused tests passed on both hosts**.
+At `d466233`, a bounded two-view immutable active-tenure cache avoids repeated
+snapshot construction between frame observations. Roster/lifecycle changes
+invalidate it; raw durability and all acceptance thresholds remain unchanged.
+Windows focused inventory/batching tests: **35 passed, 2 deselected**; Ubuntu
+inventory/batching tests: **37 passed**. Full isolated regression at `d466233`:
+Windows **1,035 passed, 10 skipped** (155.74 s), Ubuntu **1,044 passed, 1 skipped**
+(188.10 s). Neither suite runs alongside a throughput sender/receiver.
+The actual private Ollama service was stopped and restarted: API status changed
+from unavailable back to ready and the model pin's file hash stayed unchanged.
+The restored Windows companion renders Ubuntu model, telemetry and storage
+status; browser model/telemetry requests return 200 without authorization headers.
+The corrected five-minute LAN soak at `99669d4` offered **108,250** packets:
+**103,249 admitted/projected**, **5,001 queue-overflow drops (4.62%)**. Sampled
+publication p95 was **160.185 ms**, backlog p95/max **5.192/11.161 s**, with
+queue peak 1,024. The first 180 seconds had no drops; publication stalls reached
+3.689 s in the 180?210 s window and loss accumulated through 240 s. The final
+queue drained, and the retained comparison and SQLite quick_check passed.
+All **103,249 admitted raw checksums** and **1,630 sealed chunk hashes/sizes**
+were independently verified afterward. Receiver RSS first/final/peak was
+**100,552,704 / 118,919,168 / 120,418,304 bytes**; database size was
+**692,662,272 bytes**. Evidence: `data/migration-two-host-soak-20261010-e/`.
+This is a failed sustained-throughput gate, not acceptance. Short lossless runs
+and preserved admitted data do not outweigh it. Profile actual publication
+stalls before changing checkpoint policy; do not increase the queue or weaken
+FULL durability. Longer sessions also need a declared disk budget/retention plan.
+Synthetic harness failures now retain `failure.json`, `samples.json` and their
+isolated evidence database rather than silently losing diagnostic artifacts.
+The next five-minute LAN soak at `d466233` sent **108,250** packets but received,
+journaled and processed **108,243**. There were **zero application queue drops**,
+queue peak **180**, publication p95 **48.144 ms**, backlog p95/max
+**239.103/601.416 ms**, RSS peak **119,001,088 bytes** and database size
+**699,645,952 bytes**. All latency, retained-comparison, continued-ingestion and
+SQLite integrity checks pass; **lossless acceptance still fails** because seven
+sent packets were not received. Their loss location is not established by the
+application counters. Evidence: `data/migration-two-host-soak-20261010-f/`.
+This improvement is a measured repeat, not proof that the cache alone eliminated
+the prior transient stalls or certification of real-game acquisition.
+The independent five-minute repeat `g` at the same commit also passes every
+latency/analysis/integrity gate: publication p95 **48.577 ms**, backlog p95/max
+**222.764/547.887 ms**, queue peak **168**, zero application queue drops and RSS
+peak **117,915,648 bytes**. It receives **108,229/108,250** sent packets.
+Ubuntu's system-wide UDP `RcvbufErrors` and `InErrors` both increase by **21**
+(704 to 725), matching the missing count. This points to kernel receive-buffer
+overflow, not application queue overflow; the system-wide counter does not
+attribute losses to one socket. No kernel/socket buffer, queue, durability or
+acceptance limit was enlarged or relaxed. Both repeated soaks remain failed
+lossless acceptance. Evidence: `data/migration-two-host-soak-20261010-g/`.
+An actual pinned CPU routing call during a separate 90-second LAN run returns
+`attempt_summary/lap_time` in **28.766 s**. However, simultaneous telemetry at
+`d466233` receives **33,700**, processes **32,843** and loses **857** to the
+application queue (peak **992**). Publication p95 **54.016 ms** and backlog
+p95/max **695.249/3,603.042 ms** all fail. The comparison remains retained and
+SQLite integrity passes. This verifies routing under load, **not acceptable
+model/telemetry coexistence**, an evidence-backed API answer or a voice round
+trip. Evidence: `data/migration-two-host-model-load-20261010-h/`, including
+`model-routing.json`. Investigate CPU/disk/model-loading contention before
+selecting resource isolation or provisioning changes; do not hide losses with
+larger queues, weaker durability or looser thresholds.
+Independent post-run verification passes every admitted payload checksum and
+sealed-chunk hash/byte-size/row-count check: `f` **108,243 payloads / 2,288 chunks**,
+`g` **108,229 / 2,288**, `h` **32,843 / 308**. Each run retains the checks in
+`integrity-resource.json`; integrity of admitted data does not recover losses.
 
 ## Migration milestones
 
@@ -212,8 +347,12 @@ Progress is completed acceptance milestones, not estimated code volume:
 4. **In progress:** Linux transcription and Ollama installed; fixture audio
    transport and real CPU inference verified. Operator microphone/question/
    playback acceptance and cold-inference latency headroom remain pending.
-5. **Pending:** Representative live telemetry, eligible analysis and persistence acceptance.
-6. **Pending:** Restart/disconnect/cancellation and long-run resource acceptance.
+5. **In progress:** Separate-host five-minute latency/analysis gates pass without
+   inference, but kernel receive losses and model-load queue drops prevent
+   lossless acceptance. Representative live-game acquisition remains pending.
+6. **In progress:** Actual crash recovery, service restart, SSH disconnect/reconnect
+   and cancellation checks pass; real SQLite capacity exhaustion/recovery passes.
+   Representative long-run resources and full-filesystem exhaustion remain pending.
 
 Milestone progress: **3/6 (50%)**. This is not live-game acceptance or an estimate
 of remaining implementation time.
