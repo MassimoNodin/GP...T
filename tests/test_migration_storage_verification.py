@@ -128,8 +128,9 @@ def test_owned_unlink_preserves_replaced_path(tmp_path):
     path.write_bytes(b"owned")
     stat = path.stat()
     owned = {path: (stat.st_dev, stat.st_ino)}
-    path.unlink()
-    path.write_bytes(b"replacement")
+    replacement = tmp_path / "replacement.bin"
+    replacement.write_bytes(b"replacement")
+    replacement.replace(path)
     assert _unlink_owned(path, owned) is False
     assert path.read_bytes() == b"replacement"
 
