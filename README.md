@@ -117,6 +117,9 @@ The default run lasts 90 seconds: 355 datagrams/s plus a 10-second 530/s burst.
 It requires 33,700 lossless admissions, retained analysis, continued ingestion,
 SQLite integrity and explicit latency targets. A nonzero receiver exit means
 acceptance failed; inspect `summary.json` or `failure.json` and `samples.json`.
+On Linux, `kernel_dropped` reports sampled losses for the receiving socket;
+`dropped` counts application queue overflow. A null kernel count means unknown,
+not zero. Observed kernel overflow also interrupts the current evidence scope.
 Always use a new output directory. For a 300-second soak, pass `--duration-s 300`
 on both sides and `--expected-datagrams 108250` on the receiver. These fixtures
 do not certify real game traffic, microphone capture or audible playback.

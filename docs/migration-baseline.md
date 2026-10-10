@@ -338,6 +338,52 @@ sealed-chunk hash/byte-size/row-count check: `f` **108,243 payloads / 2,288 chun
 `g` **108,229 / 2,288**, `h` **32,843 / 308**. Each run retains the checks in
 `integrity-resource.json`; integrity of admitted data does not recover losses.
 
+## Latest contention and storage investigation
+
+At `7e4f2be`, an instrumented 90-second LAN/inference diagnostic (`i`) is
+lossless but still misses publication/backlog p95 targets (**57.348/302.599 ms**).
+Actual CPU routing takes **23.406 s**. During the first 20 seconds, before
+inference starts, timed SQLite transactions spend **13.390 s wall time** and
+**5.666 s thread CPU**, including **8.145 s in commit exit**. System I/O pressure
+rises while CPU pressure remains low; these timings point to storage waits, not
+proof that translating Python would solve throughput. The process sampler
+does not capture every model child, so its CPU counters are not a complete model
+profile. Evidence: `data/migration-contention-profile-20261010-i/`.
+
+A diagnostic background-checkpoint experiment (`j`) keeps raw `synchronous=FULL`
+but exceeds its **16 MiB WAL guard**, stopping the experimental worker. Its
+publication p95 still fails (**58.804 ms**); it is **not safe bounded-checkpoint
+acceptance**. No checkpoint-policy change is shipped. Evidence remains in
+`data/migration-checkpoint-experiment-20261010-j/`.
+
+Read-only host inspection finds `/mnt/nvme` unusable: the Kingston NVMe reports
+**0 sectors**, controller state **dead**, ext4 mount option **shutdown**, and
+directory I/O errors. Kernel logs record controller/reset failure and aborted
+ext4 journal on October 9 (host timestamps), before these diagnostics. `df`'s
+cached free-space figure is not proof that this mount works. No writes, remount,
+filesystem repair, device reset or reboot is attempted. The repository, model
+and evidence remain on the 120 GB SATA SSD, with about **11 GiB free** at this
+inspection. Operator storage recovery is required before testing an NVMe-backed
+deployment. Evidence: `data/migration-nvme-health-20261010.json`.
+
+At `c5dfd61`, live status adds nullable **`kernel_dropped`**, sampled from the
+listening socket's inode in Linux procfs, separately from application **`dropped`**.
+Missing/unsupported observations stay unknown, not zero. Reads are bounded and
+cached for 250 ms. Each observed increase journals `kernel_receive_overflow`
+and interrupts the current evidence scope; unknown/repeated counts do not
+manufacture new gaps. This is conservative sampled fencing, not reconstruction
+of the exact lost packet/frame boundary. No buffer or queue is enlarged.
+Focused validation: Windows **45 passed, 1 Linux-only test skipped**; Ubuntu
+**46 passed**, including actual loopback receive-buffer overflow attribution.
+Full isolated regression at `c5dfd61`: Windows **1,054 passed, 8 skipped**
+(163.44 s), Ubuntu **1,061 passed, 1 skipped** (196.14 s).
+The actual 90-second LAN repeat (`k`) receives/journals/processes **33,700**
+with **zero application and observed per-socket kernel drops**, queue peak
+**300**, retained comparison and SQLite integrity passing. Publication/backlog
+p95 **51.386/270.041 ms** still fail; backlog maximum **685.139 ms** passes.
+This verifies live socket-specific reporting without claiming latency acceptance.
+Evidence: `data/migration-kernel-observer-20261010-k/`.
+
 ## Migration milestones
 
 Progress is completed acceptance milestones, not estimated code volume:
