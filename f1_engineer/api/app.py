@@ -1124,13 +1124,16 @@ def create_app(
 
     @app.post("/api/v2/session-evidence/sessions/{session_id}/compare")
     def evidence_comparison(session_id: str, target: str = Query(max_length=128), reference: str = Query(max_length=128),
+                            comparison_policy: Literal["observed_session_distance", "practice_qualifying"] = Query(default="observed_session_distance"),
                             authorization: str | None = Header(default=None)):
         if not _authorized(authorization, control_token):
             return _api_error(403, "comparison_control_not_authorized")
         if not comparison_admission.acquire(blocking=False):
             return _api_error(409, "comparison_read_budget_busy")
         try:
-            return {"data": compare_session_laps(evidence_store, session_id, target, reference)}
+            return {"data": compare_session_laps(
+                evidence_store, session_id, target, reference, policy=comparison_policy
+            )}
         except EvidenceUnavailable as exception:
             return _api_error(422, str(exception))
         finally:

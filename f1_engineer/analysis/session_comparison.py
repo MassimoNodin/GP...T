@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import math
+from enum import Enum
 from typing import Any, Protocol
 
 from ..processing.evidence import EvidenceStore, EvidenceUnavailable, digest, encode
 from .comparison import calculate_channel_differences, calculate_delta_time
 from .events import detect_sustained_threshold_events
 from .resampling import ResamplingConfig, TraceSample, resample_trace
+from .service import stable_practice_qualifying_context
 
 
 POLICY_VERSION = "observed-session-distance-v1"
@@ -14,17 +16,30 @@ MAX_GRID_POINTS = 5001
 CONFIG = ResamplingConfig(grid_step_m=5.0)
 
 
+class SessionComparisonPolicy(str, Enum):
+    OBSERVED_SESSION_DISTANCE = "observed_session_distance"
+    PRACTICE_QUALIFYING = "practice_qualifying"
+
+
 class EvidenceProvider(Protocol):
     def evidence(self, attempt_id: str, *, session: str | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]: ...
 
 
 def measure_completed_laps(provider: EvidenceProvider, session: str, target_id: str,
-                           reference_id: str) -> dict[str, Any]:
+                           reference_id: str, *,
+                           policy: SessionComparisonPolicy | str = SessionComparisonPolicy.OBSERVED_SESSION_DISTANCE
+                           ) -> dict[str, Any]:
+    try:
+        policy = SessionComparisonPolicy(policy)
+    except ValueError as exception:
+        raise EvidenceUnavailable("unsupported_comparison_policy") from exception
     target, target_rows = provider.evidence(target_id, session=session)
     reference, reference_rows = provider.evidence(reference_id, session=session)
     for attempt in (target, reference):
         if not attempt["driver"] or attempt["readiness"]["state"] != "published":
             raise EvidenceUnavailable("attempt_not_measurement_ready")
+    if policy is SessionComparisonPolicy.PRACTICE_QUALIFYING:
+        _require_practice_qualifying_pair(target, reference, session)
     if target["manifest"]["format"] != reference["manifest"]["format"]:
         raise EvidenceUnavailable("incompatible_packet_formats")
     geometry = set()
@@ -52,6 +67,15 @@ def measure_completed_laps(provider: EvidenceProvider, session: str, target_id: 
         + ["fuel_and_tyre_conditions_not_established", "later_braking_is_not_automatically_better",
            "numeric_distance_regions_not_named_corners", "measurement_not_reference_ranking"]
     ))
+    if policy is SessionComparisonPolicy.PRACTICE_QUALIFYING:
+        qualifications.extend((
+            "practice_qualifying_diagnostic_only",
+            "fuel_load_uncontrolled",
+            "tyre_condition_uncontrolled",
+            "traffic_uncontrolled",
+            "cooldown_intent_uncontrolled",
+            "no_coaching_or_ranking_claim",
+        ))
     if any(attempt["payload"]["game_valid"] is not True for attempt in (target, reference)):
         qualifications.append("invalid_or_unknown_game_validity")
     if any(attempt["payload"]["pit_encountered"] for attempt in (target, reference)):
@@ -65,7 +89,13 @@ def measure_completed_laps(provider: EvidenceProvider, session: str, target_id: 
     if target["manifest"]["epoch"] != reference["manifest"]["epoch"]:
         qualifications.append("different_lifecycle_epochs")
     return {
-        "policy": POLICY_VERSION, "session": session,
+        "policy": (
+            "practice-qualifying-diagnostic-v1"
+            if policy is SessionComparisonPolicy.PRACTICE_QUALIFYING
+            else POLICY_VERSION
+        ), "session": session,
+        **({"comparison_policy": policy.value, "diagnostic_only": True}
+           if policy is SessionComparisonPolicy.PRACTICE_QUALIFYING else {}),
         "resampling_config": CONFIG.to_dict(),
         "target": {"revision": target_id, "manifest_hash": digest(encode(target["manifest"])),
                    "driver": target["driver"], "readiness": target["readiness"]},
@@ -83,6 +113,51 @@ def measure_completed_laps(provider: EvidenceProvider, session: str, target_id: 
         "excluded_spans": [[span.to_dict() for span in trace.excluded_spans] for trace in sampled],
         "qualifications": qualifications,
     }
+
+
+def _require_practice_qualifying_pair(
+    target: dict[str, Any], reference: dict[str, Any], session: str
+) -> None:
+    for attempt in (target, reference):
+        if attempt.get("session") != session:
+            raise EvidenceUnavailable("practice_qualifying_attempts_must_share_session")
+        payload = attempt["payload"]
+        if attempt.get("role") != "player":
+            raise EvidenceUnavailable("practice_qualifying_attempts_must_be_player_evidence")
+        if payload.get("disposition") != "completed":
+            raise EvidenceUnavailable("practice_qualifying_attempt_not_completed")
+        lap_time_ms = payload.get("lap_time_ms")
+        if not isinstance(lap_time_ms, int) or isinstance(lap_time_ms, bool) or lap_time_ms <= 0:
+            raise EvidenceUnavailable("practice_qualifying_positive_lap_time_required")
+        if payload.get("game_valid") is not True:
+            raise EvidenceUnavailable("practice_qualifying_game_validity_required")
+        if payload.get("start_observed") is not True:
+            raise EvidenceUnavailable("practice_qualifying_start_unobserved")
+        if payload.get("pit_encountered") is not False:
+            raise EvidenceUnavailable("practice_qualifying_pit_encountered")
+        if "acquisition_gap" in attempt["manifest"].get("qualifications", ()):
+            raise EvidenceUnavailable("practice_qualifying_acquisition_gap")
+    if not target.get("driver") or target["driver"] != reference.get("driver"):
+        raise EvidenceUnavailable("practice_qualifying_attempts_must_share_player")
+    if target["payload"].get("car_index") != reference["payload"].get("car_index"):
+        raise EvidenceUnavailable("practice_qualifying_attempts_must_share_player")
+    contexts = []
+    for attempt in (target, reference):
+        segments = attempt["payload"].get("context_segments", ())
+        normalized = tuple(
+            (segment.get("from_frame_identifier", 0), segment.get("context"))
+            for segment in segments
+        )
+        try:
+            _context, signature = stable_practice_qualifying_context(
+                normalized, str(attempt["id"])
+            )
+        except (AttributeError, TypeError, ValueError) as exception:
+            reason = str(exception).split(":", 1)[0]
+            raise EvidenceUnavailable(reason) from exception
+        contexts.append(signature)
+    if contexts[0] != contexts[1]:
+        raise EvidenceUnavailable("practice_qualifying_attempts_have_incompatible_context")
 
 
 def _braking_zones(traces: list[tuple[TraceSample, ...]], start: float, end: float) -> list[dict[str, Any]]:
@@ -118,8 +193,10 @@ def _braking_zones(traces: list[tuple[TraceSample, ...]], start: float, end: flo
     return result
 
 
-def compare_session_laps(store: EvidenceStore, session: str, target_id: str, reference_id: str) -> dict[str, Any]:
-    report = measure_completed_laps(store, session, target_id, reference_id)
+def compare_session_laps(store: EvidenceStore, session: str, target_id: str, reference_id: str,
+                         *, policy: SessionComparisonPolicy | str = SessionComparisonPolicy.OBSERVED_SESSION_DISTANCE
+                         ) -> dict[str, Any]:
+    report = measure_completed_laps(store, session, target_id, reference_id, policy=policy)
     with store.connect() as database:
         database.execute("BEGIN IMMEDIATE")
         for side in ("target", "reference"):
