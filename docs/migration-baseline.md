@@ -90,6 +90,7 @@ Synthetic runs and historical imports are not current live-game acceptance.
 | Actual full-filesystem test, `bd125ef` | Isolated 128 MiB ext4 loop, reserve zero, zero free bytes. Real SQLITE_FULL, WAL/FULL atomic rejection and integrity/reopen pass. SessionCoordinator fences at sequence 32, reopens/publishes to 64 with no partial admissions. Production disk untouched. |
 | Historical captures transferred/imported | Checksums match Windows originals; 144,189 + 83,139 packets, seven attempts; no malformed/decode/frame-overflow import errors. Invalid/partial laps and source gaps remain; no eligible reference. Originals preserved. |
 | Windows browser Ask on imported evidence | Correct lap time 1:19.295 plus game-invalid qualification; pinned model CPU, 0 VRAM, 20.5 s. Not microphone/playback acceptance. |
+| Oct 10 actual Austria short practice after migration | Ubuntu received/journaled/processed 71,214 packets, app drops/socket errors zero, kernel drops 25; queue drained, peak 261. Completed game-valid player lap times 1:09.728 and 1:08.881 retained, but both start-unobserved and practice mode policy unimplemented; quarantined, not comparison acceptance. Four kernel-overflow gap records observed. |
 | Fixture speech transport | JFK WAV correctly transcribed via Windows proxy/SSH on Ubuntu in 1.48 s; not microphone hardware acceptance. |
 
 Earlier cold model call **58.063 s** approached the deadline; idle/warm/unloaded
@@ -131,6 +132,7 @@ Postboot browser Ask returns 1:19.295 with the invalid-lap qualification through
 the pinned CPU model in 21.3 s. Capture hashes/import results preserved. Run q contains
 extended soak/resources, model and speech fixture evidence; postboot report:
 `data/migration-nvme-postboot-20261010.json`.
+Actual game investigation: `data/migration-live-investigation-20261010.json`.
 
 ## Safeguards and unresolved issues
 
@@ -143,6 +145,12 @@ extended soak/resources, model and speech fixture evidence; postboot report:
 - Automatic v2 acquisition owns UDP 20777; legacy controls correctly reject a
   second receiver. Imported/v1 Ask and v2 live evidence are separate paths;
   importing history does not validate live Ask.
+- Dashboard/Live Telemetry still requires a pinned v1 recording or replay; the
+  automatic v2 receiver does not populate that source. Thus an empty live UI
+  does not mean no acquisition. Wire v2 monitoring explicitly; do not start a
+  competing legacy receiver. Actual practice also exposes an unimplemented
+  comparison-mode policy and kernel loss; root cause of these drops is not yet
+  established. Stored completed laps alone are not clean comparison evidence.
 - Current captures contain invalid/partial laps and missing damage samples.
   Completion/integrity is not reference/coaching eligibility. Valid live laps,
   retained comparison and calibrated geometry still need evidence.
