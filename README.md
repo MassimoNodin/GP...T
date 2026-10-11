@@ -40,6 +40,40 @@ The Next.js server reads the control token, not the browser. When overriding
 companion configures a local SSH-forwarded address and a server-only
 `F1_ENGINEER_API_TOKEN_FILE`; all upstream requests then carry the Ubuntu token.
 
+## Simulate live telemetry from Windows
+
+`replay-udp` sends the original datagram payloads from a complete `.f1ecap`
+recording to the normal UDP receiver. Unlike `replay` and the dashboard's
+diagnostic replay, it exercises Windows sending, the network, Ubuntu's socket,
+the acquisition queue, journal and live evidence pipeline. No F1 game is needed.
+
+Existing local Melbourne evidence can be checked without sending anything:
+
+```powershell
+.\.venv\Scripts\f1-engineer.exe replay-udp data/d0058-browser-capture-root/melbourne.f1ecap --host 192.168.1.115 --dry-run
+```
+
+Keep F1 off and ensure no other replay is sending. For clean comparisons, use
+a separate validation evidence directory on Ubuntu and restart the API against
+it before each run; do not overwrite or delete previous evidence. Keep exactly
+one receiver on port 20777. Then send one real-time pass:
+
+```powershell
+.\.venv\Scripts\f1-engineer.exe replay-udp data/d0058-browser-capture-root/melbourne.f1ecap --host 192.168.1.115 --confirm-idle
+```
+
+`--speed 1` preserves recorded timing; `--speed 2` halves the duration for an
+explicit stress test. Ctrl+C stops sending. The full capture is validated before
+the first send; keep the source file unchanged during playback. There is no
+automatic loop. Payloads, session UIDs, frame numbers, invalidity and recorded
+gaps are not rewritten, so repeated runs must not be treated as new real sessions.
+The source IP/port and receiver arrival timestamps are new. OS scheduling and
+network jitter can alter actual arrival spacing, and late scheduling can bunch
+packets. A sender count means datagrams accepted by the local socket, not
+confirmed delivery: compare it with receiver counts and application/kernel drops.
+Replay cannot reproduce packets missing from the original recording or validate
+the game's sender. Do not mix replay evidence with real-game acceptance evidence.
+
 ## Optional model and voice on Windows
 
 Install Ollama, then run from the repository root:

@@ -17,6 +17,7 @@ from .errors import F1EngineerError, ProtocolError
 from .pipeline import PipelineResult, TelemetryPipeline
 from .recording.capture import CaptureReader
 from .recording.service import record_udp_capture
+from .recording.udp_replay import replay_udp_capture
 from .sessions.context import SessionContext
 from .analysis.resampling import ResamplingConfig
 from .analysis.comparison_window import optional_distance_window
@@ -241,6 +242,15 @@ async def _replay(args: argparse.Namespace) -> int:
             "lap_attempts": _lap_attempts(pipeline),
         }
     )
+    return 0
+
+
+async def _replay_udp(args: argparse.Namespace) -> int:
+    result = await replay_udp_capture(
+        args.capture, args.host, args.port, speed=args.speed,
+        confirm_idle=args.confirm_idle, dry_run=args.dry_run,
+    )
+    _json_line(result)
     return 0
 
 
@@ -851,6 +861,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="relative to recorded timing; use 0 for maximum processing speed",
     )
     replay.set_defaults(handler=_replay)
+
+    replay_udp = commands.add_parser(
+        "replay-udp", help="send a complete capture to a live UDP receiver; keep F1 off"
+    )
+    replay_udp.add_argument("capture", help="source .f1ecap capture")
+    replay_udp.add_argument("--host", required=True, help="receiver unicast IP address")
+    replay_udp.add_argument("--port", type=int, default=20777)
+    replay_udp.add_argument("--speed", type=float, default=1.0, help="1 = recorded timing; greater than 1 = stress replay")
+    replay_udp.add_argument("--confirm-idle", action="store_true", help="confirm F1 is off and no other sender is using this receiver")
+    replay_udp.add_argument("--dry-run", action="store_true", help="validate and summarize without sending packets")
+    replay_udp.set_defaults(handler=_replay_udp)
 
     import_command = commands.add_parser("import", help="import a capture into SQLite and Parquet")
     import_command.add_argument("capture", help="source .f1ecap capture")
