@@ -65,11 +65,39 @@ abstain rather than returning an unrelated lap delta as an answer.
 ## Validation and remaining work
 
 The local CLI model catalog advertised `gpt-6-luna` on October 11, 2026.
-The local account probe did not report a signed-in account. No subscription
-inference has been validated, and no credentials were inspected/copied.
-Codex was not found on the Ubuntu service user's PATH during this check.
-The Ubuntu production receiver is not switched to this provider until the
-isolated profile is signed in and a controlled inference is validated.
+Initial checks found no signed-in account and no Codex executable on the Ubuntu
+service user's PATH. The October 11 deployment and subscription verification
+below supersede those initial readiness findings. No credentials were
+inspected or copied between profiles.
+
+### Ubuntu verification, October 11, 2026
+
+The operator signed in through the official device flow for the isolated
+`/mnt/nvme/f1-engineer/codex-engineer-profile` profile. The service uses the
+explicit Codex 0.156.1 executable, reports `ready` for exactly `gpt-6-luna`,
+and retains `fallback_enabled=false` and `billing=codex_subscription`.
+
+The sparse-observation frame correction was deployed after backing up the
+three changed diagnostics files and confirming that acquisition was idle.
+The existing evidence database and service configuration were preserved; no
+journal replay or evidence rewrite was performed. The initial deployment used
+a working-tree patch; the follow-up deployment uses the committed repository
+version.
+
+Paginated checks covered all 22 player attempts in the two saved Bahrain
+Career race sessions. Fourteen returned available descriptive diagnostics,
+with sparse frame transitions explicitly qualified. Eight remained unavailable
+for pit, incomplete/gap, unobserved-start, identity or context qualifications.
+A subscription-backed `Summarize my lap` request returned available in 3.227 s
+(reported model latency 2,939 ms), using the admitted 107,565 ms lap and its
+6,454 retained samples. No alternate model or local/API-key fallback was used.
+
+Focused diagnostics, integration, Codex, provider, session-engineer and backend
+API validation: Ubuntu 112 passed; Windows 111 passed with the already
+documented timing-sensitive live-lease test deselected. The initial Windows
+run reproduced that test's failure (108 passed, one failed before adding three
+frame-wrap regressions). Live telemetry/model coexistence and browser UI
+acceptance were not exercised by this verification.
 
 Race summaries remain descriptive, not race strategy or a tyre-life forecast.
 Full race stint aggregation, richer focused measurements, bounded historical
@@ -79,6 +107,8 @@ validation and release/backup work remain separate follow-up slices.
 Official documentation: Codex Authentication and Codex App Server on the
 OpenAI developer documentation site. The installed CLI's generated protocol
 schemas were also used to verify the exact request/response shapes.
+
+### Initial pre-deployment validation
 
 Focused backend validation passed 315 tests with one existing timing-sensitive
 test deselected. That 20 ms live-lease test was run separately and also failed
@@ -91,6 +121,6 @@ the complete Codex runtime safety test module was rerun.
 Client response guards and focused transport TypeScript checking passed.
 Full TypeScript checking is blocked by malformed generated files under
 `.next/dev/types`; these generated artifacts were not changed. No full backend
-suite, frontend production build, or live subscription inference ran for this
-slice. The live receiver stayed active without a restart. Its observed counters
+suite, frontend production build, or live subscription inference ran for the
+initial slice. The live receiver stayed active without a restart. Its observed counters
 included zero app drops and two kernel drops; loss guards remain in force.

@@ -27,3 +27,9 @@ Unavailable or negative fuel values do not contribute. An explicit
 
 The report is diagnostic only; it provides no coaching, ranking, or strategy
 recommendations and does not change reference eligibility.
+
+Frame counters must move forward, but do not need to advance by exactly one
+between retained observations. Sparse transitions are counted and qualified as
+`nonconsecutive_observation_frames`, with no interpolation or continuity claim.
+Duplicate/backward counters, regressing or excessive time gaps, missing retained
+rows, acquisition-gap epochs, and manifest qualifications still reject the lap.

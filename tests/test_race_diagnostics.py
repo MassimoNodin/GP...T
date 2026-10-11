@@ -99,7 +99,7 @@ def test_supported_race_types_are_admitted(race_type):
         (lambda attempt, rows: attempt["payload"]["context_segments"][0]["context"].update(session_type_id=1), "not_supported_race_session_type"),
         (lambda attempt, rows: rows[1].update(gap_epoch=4), "trace_acquisition_gap_or_unknown"),
         (lambda attempt, rows: rows.pop(), "missing_observation_rows"),
-        (lambda attempt, rows: rows[1].update(frame_ordinal=105), "trace_frame_gap"),
+        (lambda attempt, rows: rows[1].update(frame_ordinal=105), "trace_frame_regression"),
         (lambda attempt, rows: attempt["payload"]["context_segments"][0].update(context=None), "unknown_context"),
     ],
 )
@@ -233,3 +233,57 @@ def test_real_evidence_store_race_rows_are_admitted(tmp_path):
         assert report["lap"]["sample_count"] == len(rows)
     finally:
         coordinator.close()
+
+
+def test_sparse_observation_frames_are_qualified_without_fabricating_samples():
+    attempt, rows = _v2_attempt()
+    attempt["manifest"]["end_frame"] = 104
+    for index, row in enumerate(rows):
+        row["frame_ordinal"] = 100 + index * 2
+        row["frame_identifier"] = 50 + index * 2
+    original = deepcopy(rows)
+    report = build_session_race_diagnostics(Provider(attempt, rows), "session-1", "race-lap")
+    assert report["status"] == "available"
+    assert report["lap"]["sample_count"] == 3
+    assert report["lap"]["nonconsecutive_frame_transitions"] == 2
+    assert "nonconsecutive_observation_frames" in report["qualifications"]
+    assert rows == original
+
+
+@pytest.mark.parametrize(
+    "field,value,reason",
+    [
+        ("frame_ordinal", 100, "trace_frame_regression"),
+        ("frame_identifier", 50, "trace_frame_discontinuity"),
+        ("frame_identifier", 49, "trace_frame_discontinuity"),
+        ("session_time_s", 5.0, "trace_time_gap_or_regression"),
+    ],
+)
+def test_sparse_admission_still_rejects_ordering_and_time_failures(field, value, reason):
+    attempt, rows = _v2_attempt()
+    rows[1][field] = value
+    report = build_session_race_diagnostics(Provider(attempt, rows), "session-1", "race-lap")
+    assert report["status"] == "unavailable"
+    assert reason in report["reasons"]
+
+
+@pytest.mark.parametrize(
+    "frames,expected_sparse",
+    [([0xFFFFFFFE, 0xFFFFFFFF, 0], 0), ([0xFFFFFFFD, 0xFFFFFFFF, 1], 2)],
+)
+def test_forward_frame_counter_wrap_is_admitted(frames, expected_sparse):
+    attempt, rows = _v2_attempt()
+    for row, frame in zip(rows, frames):
+        row["frame_identifier"] = frame
+    report = build_session_race_diagnostics(Provider(attempt, rows), "session-1", "race-lap")
+    assert report["status"] == "available"
+    assert report["lap"]["nonconsecutive_frame_transitions"] == expected_sparse
+    assert ("nonconsecutive_observation_frames" in report["qualifications"]) == bool(expected_sparse)
+
+
+def test_half_range_frame_counter_jump_is_rejected():
+    attempt, rows = _v2_attempt()
+    rows[1]["frame_identifier"] = rows[0]["frame_identifier"] + (1 << 31)
+    report = build_session_race_diagnostics(Provider(attempt, rows), "session-1", "race-lap")
+    assert report["status"] == "unavailable"
+    assert "trace_frame_discontinuity" in report["reasons"]

@@ -79,6 +79,13 @@ def build_session_race_diagnostics(
     if tyre_report["status"] != "observed":
         qualifications.append("tyre_context_unknown")
     qualifications.extend(("traffic_context_unknown", "tyre_stints_unknown"))
+    sparse_frames = sum(
+        current["frame_ordinal"] - previous["frame_ordinal"] > 1
+        or ((current["frame_identifier"] - previous["frame_identifier"]) & _FRAME_MASK) > 1
+        for previous, current in zip(rows, rows[1:])
+    )
+    if sparse_frames:
+        qualifications.append("nonconsecutive_observation_frames")
     result.update(
         status="available",
         source={
@@ -93,6 +100,7 @@ def build_session_race_diagnostics(
         lap={
             "lap_time_ms": attempt["payload"]["lap_time_ms"],
             "sample_count": len(rows),
+            "nonconsecutive_frame_transitions": sparse_frames,
             "distance_start_m": min(distances) if distances else None,
             "distance_end_m": max(distances) if distances else None,
             "speed_min_mps": min(speeds) if speeds else None,
@@ -223,10 +231,12 @@ def _admission_reasons(
             prior_ordinal = previous.get("frame_ordinal")
             prior_frame = previous.get("frame_identifier")
             prior_time = _finite(previous.get("session_time_s"))
-            if _integer(ordinal) and _integer(prior_ordinal) and ordinal != prior_ordinal + 1:
-                reasons.append("trace_frame_gap")
-            if _integer(frame) and _integer(prior_frame) and frame != ((prior_frame + 1) & _FRAME_MASK):
-                reasons.append("trace_frame_discontinuity")
+            if _integer(ordinal) and _integer(prior_ordinal) and ordinal <= prior_ordinal:
+                reasons.append("trace_frame_regression")
+            if _integer(frame) and _integer(prior_frame):
+                frame_step = (frame - prior_frame) & _FRAME_MASK
+                if frame_step == 0 or frame_step >= (1 << 31):
+                    reasons.append("trace_frame_discontinuity")
             if session_time is not None and prior_time is not None:
                 delta = session_time - prior_time
                 if delta <= 0 or delta > _MAX_SESSION_TIME_GAP_S:
