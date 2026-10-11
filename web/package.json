@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test:acquisition-status": "node --test scripts/acquisition-status.test.mjs",
     "test:production-workflow": "node --test scripts/production-workflow.test.mjs",
     "test:header-evidence": "node --test scripts/header-evidence.test.mjs",
     "test:api-transport": "node --test scripts/api-transport.test.mjs",

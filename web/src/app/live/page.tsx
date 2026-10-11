@@ -16,6 +16,7 @@ import {
 import AppHeader from "../AppHeader";
 import { testDataRoute } from "../TestDataRoute";
 import LiveTelemetryScreen from "../LiveTelemetryScreen";
+import AcquisitionStatusPanel from "../AcquisitionStatusPanel";
 
 type InitialStatus = PinnedLiveRead["status"] | "unselected" | "invalid";
 
@@ -61,6 +62,7 @@ export default async function LivePage({
         id="main-content"
         tabIndex={-1}
       >
+        <AcquisitionStatusPanel />
         <LiveTelemetryScreen
           key={JSON.stringify([source, operationId])}
           initialStatus={status}

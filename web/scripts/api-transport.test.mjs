@@ -18,6 +18,7 @@ let requestApiPost;
 let forwardLocalRequest;
 let JSON_API_DEADLINE_MS;
 let recordingCurrentGet;
+let acquisitionStatusGet;
 
 function compile(source) {
   return ts
@@ -30,10 +31,8 @@ function compile(source) {
     .outputText.replaceAll(
       'from "./local-api-transport"',
       'from "./local-api-transport.mjs"',
-    ).replaceAll(
-      'from "./api-authorization"',
-      'from "./api-authorization.mjs"',
-    );
+    )
+    .replaceAll('from "./api-authorization"', 'from "./api-authorization.mjs"');
 }
 
 function envelope(data = { ready: true }, status = "ok", reason = null) {
@@ -63,7 +62,12 @@ function stalledBody() {
 describe("local JSON API transport", { concurrency: 1 }, () => {
   before(async () => {
     compiledDir = mkdtempSync(join(tmpdir(), "f1-api-transport-"));
-    for (const name of ["local-api-transport.ts", "api-authorization.ts", "local-proxy.ts", "api.ts"]) {
+    for (const name of [
+      "local-api-transport.ts",
+      "api-authorization.ts",
+      "local-proxy.ts",
+      "api.ts",
+    ]) {
       const source = readFileSync(
         new URL(`../src/lib/${name}`, import.meta.url),
         "utf8",
@@ -89,6 +93,22 @@ describe("local JSON API transport", { concurrency: 1 }, () => {
       join(compiledDir, "recording-current.mjs"),
       compile(routeSource),
     );
+    const acquisitionSource = readFileSync(
+      new URL(
+        "../src/app/api/session-evidence/status/route.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    )
+      .replace(
+        'import { NextResponse } from "next/server";',
+        "const NextResponse = { json(body, init) { return Response.json(body, init); } };",
+      )
+      .replace('from "@/lib/local-proxy"', 'from "./local-proxy.mjs"');
+    writeFileSync(
+      join(compiledDir, "acquisition-status.mjs"),
+      compile(acquisitionSource),
+    );
 
     const transport = await import(
       pathToFileURL(join(compiledDir, "local-api-transport.mjs")).href
@@ -105,6 +125,11 @@ describe("local JSON API transport", { concurrency: 1 }, () => {
     requestApiPost = api.requestApiPost;
     forwardLocalRequest = proxy.forwardLocalRequest;
     recordingCurrentGet = route.GET;
+    acquisitionStatusGet = (
+      await import(
+        pathToFileURL(join(compiledDir, "acquisition-status.mjs")).href
+      )
+    ).GET;
   });
 
   after(() => {
@@ -121,13 +146,66 @@ describe("local JSON API transport", { concurrency: 1 }, () => {
       process.env.F1_ENGINEER_CONTROL_TOKEN_FILE = originalTokenFile;
     }
     delete globalThis.__recordingCurrentForward;
-    if (originalApiTokenFile === undefined) delete process.env.F1_ENGINEER_API_TOKEN_FILE;
+    if (originalApiTokenFile === undefined)
+      delete process.env.F1_ENGINEER_API_TOKEN_FILE;
     else process.env.F1_ENGINEER_API_TOKEN_FILE = originalApiTokenFile;
     try {
       mock.timers.reset();
     } catch {
       // Timers are only mocked in the deadline test.
     }
+  });
+
+  test("acquisition status rejects untrusted reads without calling upstream", async () => {
+    const calls = installFetch(() => {
+      throw new Error("must not forward");
+    });
+    const response = await acquisitionStatusGet(
+      new Request("http://127.0.0.1:3000/api/session-evidence/status", {
+        headers: { "sec-fetch-site": "cross-site" },
+      }),
+    );
+    assert.equal(response.status, 403);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal(calls.length, 0);
+  });
+
+  test("acquisition proxy uses authenticated transport and fails closed", async () => {
+    const tokenPath = join(compiledDir, "acquisition-token");
+    const token = "a".repeat(64);
+    writeFileSync(tokenPath, token);
+    process.env.F1_ENGINEER_API_TOKEN_FILE = tokenPath;
+    process.env.F1_ENGINEER_API_URL = "http://127.0.0.1:18765";
+    const request = new Request(
+      (process.env.F1_ENGINEER_WEB_ORIGIN ?? "http://127.0.0.1:3000") +
+        "/api/session-evidence/status",
+      {
+        headers: { "sec-fetch-site": "same-origin" },
+      },
+    );
+    const calls = installFetch(() => Response.json({ state: "listening" }));
+    const response = await acquisitionStatusGet(request);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), { state: "listening" });
+    assert.equal(
+      calls[0].url,
+      "http://127.0.0.1:18765/api/v2/session-evidence/status",
+    );
+    assert.equal(calls[0].init.headers.get("authorization"), "Bearer " + token);
+    assert.ok(calls[0].init.signal instanceof AbortSignal);
+    installFetch(() => Response.json({ state: "denied" }, { status: 403 }));
+    assert.equal((await acquisitionStatusGet(request)).status, 403);
+    installFetch(() => {
+      throw new Error("disconnected");
+    });
+    assert.equal((await acquisitionStatusGet(request)).status, 503);
+    process.env.F1_ENGINEER_API_TOKEN_FILE = missingTokenFile;
+    const missingCalls = installFetch(() => {
+      throw new Error("must not forward");
+    });
+    assert.equal((await acquisitionStatusGet(request)).status, 503);
+    assert.equal(missingCalls.length, 0);
   });
 
   test("accepted loopback bases keep their existing request URLs", async () => {
@@ -465,26 +543,45 @@ describe("local JSON API transport", { concurrency: 1 }, () => {
     process.env.F1_ENGINEER_CONTROL_TOKEN_FILE = missingTokenFile;
     const calls = installFetch(() => Response.json(envelope()));
     assert.deepEqual(await requestApi("/api/v1/sessions"), envelope());
-    assert.deepEqual(await requestApiPost("/api/v1/engineer/query", {}), envelope());
+    assert.deepEqual(
+      await requestApiPost("/api/v1/engineer/query", {}),
+      envelope(),
+    );
     await forwardLocalRequest("/api/v1/recording-sources", {}, false);
-    await forwardLocalRequest("/api/v1/recordings/start", { method: "POST" }, true);
+    await forwardLocalRequest(
+      "/api/v1/recordings/start",
+      { method: "POST" },
+      true,
+    );
     assert.equal(calls.length, 4);
     for (const call of calls) {
-      assert.equal(new Headers(call.init.headers).get("authorization"), `Bearer ${token}`);
+      assert.equal(
+        new Headers(call.init.headers).get("authorization"),
+        `Bearer ${token}`,
+      );
       assert.equal(call.init.redirect, "error");
       assert.equal(call.url.includes(token), false);
     }
   });
 
   test("missing or malformed companion credentials fail closed", async () => {
-    const calls = installFetch(() => { throw new Error("upstream was called"); });
+    const calls = installFetch(() => {
+      throw new Error("upstream was called");
+    });
     const tokenFile = join(compiledDir, "invalid-companion-token");
-    for (const token of [null, "short", "x".repeat(32) + "\n" + "y".repeat(32)]) {
-      process.env.F1_ENGINEER_API_TOKEN_FILE = token === null ? missingTokenFile : tokenFile;
+    for (const token of [
+      null,
+      "short",
+      "x".repeat(32) + "\n" + "y".repeat(32),
+    ]) {
+      process.env.F1_ENGINEER_API_TOKEN_FILE =
+        token === null ? missingTokenFile : tokenFile;
       if (token !== null) writeFileSync(tokenFile, token);
       assert.equal(await requestApi("/api/v1/sessions"), null);
       assert.equal(await requestApiPost("/api/v1/engineer/query", {}), null);
-      await assert.rejects(() => forwardLocalRequest("/api/v1/recordings/current"));
+      await assert.rejects(() =>
+        forwardLocalRequest("/api/v1/recordings/current"),
+      );
     }
     assert.equal(calls.length, 0);
   });

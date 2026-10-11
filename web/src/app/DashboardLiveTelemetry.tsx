@@ -7,6 +7,7 @@ import {
 } from "@/lib/navigation";
 import { usePinnedLiveCurrent } from "@/lib/use-pinned-live-current";
 import { LiveTelemetryCard } from "./LiveTelemetryScreen";
+import AcquisitionStatusPanel from "./AcquisitionStatusPanel";
 
 export default function DashboardLiveTelemetry({
   preservedQuery,
@@ -51,6 +52,7 @@ function PinnedCard({
   });
   return (
     <div className="dynamic-live dashboard-live-card">
+      <AcquisitionStatusPanel />
       <LiveTelemetryCard snapshot={state.snapshot} status={state.status} />
     </div>
   );

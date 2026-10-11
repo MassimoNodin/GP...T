@@ -8606,6 +8606,11 @@ body {
 .dynamic-live .live-chart-panel p { color: #617a9f; font-size: 10px; }
 .dynamic-live .live-chart-svg text { fill: #4b6590; }
 .dynamic-live .live-chart-grid { stroke: #e4edf8; }
+.acquisition-status-panel { padding: 12px; margin-bottom: 12px; }
+.acquisition-status-panel .ref-facts-box { border: 1px solid #edf2f8; border-radius: 8px; }
+.acquisition-status-panel .ref-facts-box > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 6px 8px; border-bottom: 1px solid #edf2f8; font-size: 12px; }
+.acquisition-status-panel .ref-facts-box > div:last-child { border-bottom: 0; }
+.acquisition-status-panel p { margin: 0; font-size: 12px; line-height: 1.5; }
 .dashboard-live-card { display: contents; }
 .dashboard-live-card .ref-panel-heading h2 { font-size: 12px; }
 
