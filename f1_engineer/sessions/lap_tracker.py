@@ -327,7 +327,10 @@ class LapTracker:
                 == previous.data.current_lap_number + 1
                 and observation.data.last_lap_time_ms > 0
             )
-            complete_start = line_crossing or confirmed_lap_advance
+            complete_start = (
+                line_crossing or confirmed_lap_advance
+                or _outlap_start_observed(previous, observation)
+            )
             self._start_attempt(observation, start_observed=complete_start)
 
         self._previous[car_index] = observation
@@ -504,6 +507,44 @@ class LapTracker:
             ),
         )
         self.attempts.append(attempt)
+
+
+def _outlap_start_observed(
+    previous: LapObservation | None, observation: LapObservation
+) -> bool:
+    context = observation.session_context
+    if (previous is None or context is None or previous.session_context is None
+            or context.rule_set is not RuleSet.PRACTICE_QUALIFYING
+            or context.track_length_m <= 0
+            or previous.session_context.track_length_m != context.track_length_m
+            or _mode_track_signature(previous.session_context) != _mode_track_signature(context)
+            or previous.session_uid != observation.session_uid
+            or previous.car_index != observation.car_index
+            or not previous.association_scope_assessable
+            or not observation.association_scope_assessable
+            or previous.association_epoch != observation.association_epoch
+            or previous.association_packet_format != observation.association_packet_format
+            or observation.association_packet_format != context.packet_format.value
+            or observation.frame_ordinal <= previous.frame_ordinal
+            or not 0 < observation.session_time_s - previous.session_time_s <= 1.0):
+        return False
+    before, after = previous.data, observation.data
+    distance_advanced = after.total_distance_m - before.total_distance_m
+    wrapped_distance = context.track_length_m - before.lap_distance_m + after.lap_distance_m
+    return (
+        before.current_lap_number == after.current_lap_number
+        and before.driver_status_id == 3 and after.driver_status_id == 1
+        and before.result_status_id == after.result_status_id == 2
+        and before.pit_status_id == after.pit_status_id == 0
+        and not before.pit_lane_timer_active and not after.pit_lane_timer_active
+        and before.sector_id == 2 and after.sector_id == 0
+        and before.current_lap_time_ms == 0
+        and 0 <= after.current_lap_time_ms <= 1_000
+        and context.track_length_m - 100 <= before.lap_distance_m <= context.track_length_m
+        and 0 <= after.lap_distance_m <= 100
+        and 0 < distance_advanced <= 100
+        and abs(distance_advanced - wrapped_distance) <= 5
+    )
 
 
 def _can_start(data: CarLapData) -> bool:

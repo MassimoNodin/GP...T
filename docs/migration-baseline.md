@@ -1,6 +1,6 @@
 # Ubuntu / Windows migration baseline
 
-Updated: October 10, 2026. Single handover for architecture, measurements,
+Updated: October 11, 2026. Single handover for architecture, measurements,
 unresolved issues and acceptance. Superseded plans remain in Git history,
 not active development instructions. See README for setup commands.
 
@@ -219,6 +219,25 @@ Acceptance counts completed milestones, not code volume:
    resources, final regressions and actual NVMe/service reboot persistence pass.
 
 **[####--] 4/6 accepted (67%)**. No synthetic claim of live-game acceptance.
+
+October 11 clean live run, `live-validation-20261011-121111`: 118,666 received,
+journaled and processed; zero application/kernel/socket losses. With Linux
+receiver isolation, `demand_v1`, and Wi-Fi power saving disabled, 170 advancing
+two-second samples reported publication p95 18.169 ms and backlog p95/max
+48.966/702.392 ms. Selection peaked at three cars; explicit task demands and
+concurrent model/comparison workloads were not exercised. Milestone 5 therefore
+remains pending, not accepted on the strength of this reception-only run.
+
+The raw journal retained the first flying-lap boundary, but the tracker failed
+to recognise a same-lap-number out-lap distance wrap. A guarded correction
+requires an out-lap-to-flying status transition, sector wrap, near-line distances,
+continuous total distance/time, and unchanged assessed ownership/context.
+Isolated Linux replay of all 118,666 datagrams recognises player lap 3's start
+at frame 32403 (92,796 ms), preserves lap 4 (94,737 ms), and still excludes the
+unfinished lap 5. Published original evidence is not rewritten. Validation:
+28 new regressions; full Windows suite 1,212 passed / 16 skipped; isolated Linux
+lap/boundary/lifecycle suite 48 passed. Fresh post-deployment live validation
+and the existing milestone 4/5 operator gates remain necessary.
 
 Milestone 5 reapproval run armed October 10 after the 32 MiB API retries:
 Windows `data/migration-m5-live-coexistence-20261010-2146/` records a fresh
