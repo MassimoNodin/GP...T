@@ -1,0 +1,410 @@
+.topGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 457fr) minmax(0, 341fr);
+  gap: 17px;
+}
+
+.bottomGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 505fr) minmax(0, 295fr);
+  gap: 17px;
+  margin-top: 18px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.dot {
+  margin: 0 8px;
+  font-size: 9px;
+  color: #a7adb5;
+}
+
+/* System status */
+.systemCard {
+  padding-bottom: 8px;
+}
+
+.systemList {
+  margin-top: -2px;
+}
+
+.systemRow {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1.55fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 14px;
+  min-height: 43px;
+  border-top: 1px solid var(--divider);
+}
+
+.systemRow:first-child {
+  border-top: 0;
+}
+
+.systemLabel {
+  color: #30353c;
+  font-size: 13px;
+}
+
+.systemStatus {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.systemStatus[data-tone="green"] { color: var(--green-text); }
+.systemStatus[data-tone="amber"] { color: var(--amber-text); }
+.systemStatus[data-tone="red"] { color: var(--red-text); }
+.systemStatus[data-tone="grey"] { color: var(--muted); }
+
+.systemDetail {
+  justify-self: end;
+  color: #9198a1;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.activity {
+  grid-column: 3 / 5;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  color: #9198a1;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Session context */
+.contextCard {
+  display: flex;
+  flex-direction: column;
+}
+
+.contextHead {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  min-height: 60px;
+}
+
+.contextTitle {
+  margin-top: 2px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.contextSub {
+  margin-top: 6px;
+  color: #7b828c;
+  font-size: 12.5px;
+}
+
+.contextMap {
+  position: absolute;
+  right: 4px;
+  top: -24px;
+  width: 124px;
+  height: 84px;
+  color: #23272e;
+}
+
+.contextBody {
+  display: flex;
+  gap: 18px;
+  margin-top: 6px;
+}
+
+.contextPhoto {
+  width: 145px;
+  height: 182px;
+  border-radius: 7px;
+}
+
+.facts {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  margin: 12px 0 0;
+  font-size: 12.5px;
+}
+
+.fact {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.fact dt {
+  color: #3a3f47;
+  font-weight: 500;
+}
+
+.fact dd {
+  margin: 0;
+  color: #848b94;
+}
+
+.liveWrap {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.livePill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 33px;
+  padding: 0 16px 0 13px;
+  border-radius: 9px;
+  background: #fdeced;
+  color: var(--red-text);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* Radio history */
+.radioCard {
+  display: flex;
+  flex-direction: column;
+  height: 547px;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 12px;
+}
+
+.filter {
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: #f2f4f6;
+  color: #8a919a;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.filter[aria-selected="true"] {
+  border-color: var(--border-strong);
+  background: #fff;
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-raised);
+}
+
+.radioList {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0 -6px;
+  padding: 0 6px;
+}
+
+.radioRow {
+  display: grid;
+  grid-template-columns: 52px 82px minmax(0, 1fr) 72px;
+  align-items: center;
+  width: 100%;
+  height: 41px;
+  padding: 0 8px 0 7px;
+  border: 0;
+  border-bottom: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+}
+
+.radioRow:hover {
+  background: var(--surface-hover);
+}
+
+.radioRow[aria-pressed="true"] {
+  border-bottom-color: transparent;
+  border-radius: 6px;
+  background: #ecf3fe;
+}
+
+.radioTime {
+  color: #5c636d;
+  font-variant-numeric: tabular-nums;
+}
+
+.radioKind {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 500;
+}
+
+.radioKind[data-kind="proactive"] { color: var(--green-text); }
+.radioKind[data-kind="question"] { color: var(--blue-text); }
+.radioKind[data-kind="response"] { color: #4a5059; }
+.radioKind[data-kind="issue"] { color: var(--red-text); }
+
+.radioText {
+  overflow: hidden;
+  color: #3d424a;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding-right: 14px;
+}
+
+.radioOutcome {
+  color: #9aa1aa;
+  font-size: 11.5px;
+}
+
+/* Event details */
+.detailCard {
+  height: 547px;
+  overflow-y: auto;
+}
+
+.detailHead {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.detailHead > svg {
+  margin-top: 2px;
+}
+
+.detailTitle {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.detailTime {
+  margin-top: 2px;
+  color: #848b94;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.outcomeBadge {
+  height: 23px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 23px;
+}
+
+.outcomeBadge[data-tone="green"] { background: var(--green-soft); color: #1b8b52; }
+.outcomeBadge[data-tone="amber"] { background: var(--amber-soft); color: #9a6a06; }
+.outcomeBadge[data-tone="red"] { background: var(--red-soft); color: var(--red-text); }
+.outcomeBadge[data-tone="grey"] { background: var(--grey-soft); color: #6b727c; }
+
+.detailSection {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.detailSection:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.detailLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #2b3037;
+}
+
+.detailBody {
+  color: #7d848d;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.bullets {
+  color: #7d848d;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.bullets li {
+  position: relative;
+  padding-left: 13px;
+}
+
+.bullets li::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0.75em;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #9aa1aa;
+}
+
+@media (max-width: 900px) {
+  .topGrid,
+  .bottomGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .radioCard,
+  .detailCard {
+    height: auto;
+    max-height: 560px;
+  }
+}
+
+@media (max-width: 560px) {
+  .radioRow {
+    grid-template-columns: 44px 26px minmax(0, 1fr);
+  }
+
+  .radioKind {
+    font-size: 0;
+    gap: 0;
+  }
+
+  .radioOutcome {
+    display: none;
+  }
+
+  .contextBody {
+    flex-direction: column;
+  }
+
+  .contextPhoto {
+    width: 100%;
+    height: 160px;
+  }
+}
+
+.activity {
+  min-width: 0;
+}
+
+.activity > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity > svg {
+  flex: none;
+}

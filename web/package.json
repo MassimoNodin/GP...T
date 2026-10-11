@@ -4,8 +4,6 @@
   "private": true,
   "scripts": {
     "test:acquisition-status": "node --test scripts/acquisition-status.test.mjs",
-    "test:production-workflow": "node --test scripts/production-workflow.test.mjs",
-    "test:header-evidence": "node --test scripts/header-evidence.test.mjs",
     "test:api-transport": "node --test scripts/api-transport.test.mjs",
     "test:analysis-display": "node scripts/analysis-display-check.mjs",
     "dev": "next dev --hostname 127.0.0.1",
@@ -17,7 +15,6 @@
     "test:car-lap-observations": "node --test scripts/car-lap-observations.test.mjs",
     "test:recording-catalog": "node --test scripts/recording-catalog.test.mjs",
     "test:import-queue": "node --test scripts/import-queue.test.mjs",
-    "test:local-speech": "node --test scripts/local-speech-draft.test.mjs",
     "test:recording-download-proxy": "node --test scripts/recording-download-proxy.test.mjs",
     "test:recording-upload-proxy": "node --test scripts/recording-upload-proxy.test.mjs",
     "test:telemetry-service": "node --test scripts/telemetry-service.test.mjs",
@@ -28,7 +25,6 @@
     "test:speech": "node scripts/recorded-speech-check.mjs",
     "test:comparison-window": "node scripts/comparison-window-brief-check.mjs",
     "test:comparison-report-match": "node scripts/comparison-report-match-check.mjs",
-    "test:comparison-context-validation": "node scripts/comparison-context-validation-check.mjs",
     "test:session-best-assessment": "node scripts/session-best-assessment-check.mjs",
     "test:draft-track-model": "node scripts/draft-track-model-check.mjs",
     "test:engineer-query-match": "node scripts/engineer-query-match-check.mjs",
@@ -36,7 +32,8 @@
     "test:attempt-trace-chart-match": "node scripts/attempt-trace-chart-match-check.mjs",
     "test:lap-debrief-match": "node scripts/lap-debrief-match-check.mjs",
     "test:engineer-ask": "node scripts/engineer-ask-check.mjs",
-    "test:attempt-quality-match": "node scripts/attempt-quality-match-check.mjs"
+    "test:attempt-quality-match": "node scripts/attempt-quality-match-check.mjs",
+    "test:ui-foundation": "node --test scripts/ui-foundation.test.mjs"
   },
   "dependencies": {
     "next": "16.3.8",

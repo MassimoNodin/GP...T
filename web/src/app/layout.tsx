@@ -1,20 +1,24 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
-import ReferenceDisclosureOpener from "./ReferenceDisclosureOpener";
+
+const inter = Inter({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-inter",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
-  title: "GP...T · AI Race Engineer",
+  title: "Race Engineer",
   description:
     "A personal AI race engineer for local F1 telemetry capture and lap analysis.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en">
-      <body>
-        {children}
-        <ReferenceDisclosureOpener />
-      </body>
+    <html lang="en" className={inter.variable}>
+      <body>{children}</body>
     </html>
   );
 }

@@ -1,13 +1,9 @@
 export type AppScreen =
+  | "drive"
+  | "review"
+  | "settings"
   | "dashboard"
-  | "recordings"
-  | "sessions"
-  | "engineer"
-  | "live"
-  | "hud"
-  | "compare"
-  | "track"
-  | "settings";
+  | "recordings";
 export type ImportReturnScreen = "dashboard" | "recordings";
 
 export type AppSearchParams = Record<string, string | string[] | undefined>;
@@ -143,15 +139,11 @@ export function isSelectionTransferBlocked(value: string): boolean {
 }
 
 export function appScreenPath(screen: AppScreen): string {
-  if (screen === "recordings") return "/recordings";
-  if (screen === "sessions") return "/sessions";
-  if (screen === "engineer") return "/engineer";
-  if (screen === "live") return "/live";
-  if (screen === "hud") return "/hud";
-  if (screen === "compare") return "/compare";
-  if (screen === "track") return "/track";
+  if (screen === "drive") return "/drive";
   if (screen === "settings") return "/settings";
-  return "/";
+  // Import flows return to the Session Library, which replaced the old
+  // dashboard and recordings screens.
+  return "/review";
 }
 
 export function appScreenFrom(
