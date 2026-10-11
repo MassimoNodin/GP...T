@@ -55,6 +55,19 @@ per contribution branch and one logical change per commit.
   explicitly requested. Do not rewrite existing history without permission.
 - In the final handoff, summarize changes, validation, and any remaining risks.
 
+## UI icons and logos
+
+- Use SVG for all UI icons and logos, including the F1 logo. This applies to
+  new UI and any icons or logos added or modified in existing UI.
+- Use inline SVG components or SVG assets. Do not substitute emoji, Unicode
+  symbols, icon fonts, raster images, CSS-drawn icon placeholders, or styled
+  text for icons or logos. Render the F1 logo with SVG vector paths, not text.
+- Reuse shared SVG components or assets to keep artwork, viewBox, sizing, and
+  stroke weights consistent. Match the approved mock artwork and alignment.
+- Hide decorative SVGs from assistive technology. Give meaningful standalone
+  SVGs an accessible name, and label icon-only controls on the control itself.
+- Photographs, textures, and other non-icon imagery may remain raster assets.
+
 ## Luna subagent preference
 
 When Luna subagents are requested or authorized, use `gpt-6-luna`. Do not

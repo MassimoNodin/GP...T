@@ -4,6 +4,14 @@ Updated: October 11, 2026. Single handover for architecture, measurements,
 unresolved issues and acceptance. Superseded plans remain in Git history,
 not active development instructions. See README for setup commands.
 
+## Accepted UI direction (not yet implemented)
+
+The standalone engineer must work without the website; Drive is radio diagnostics
+and Review is visual-first retained session/lap analysis. The supplied mock replaces
+the old UI as visual reference. See [approved corrections](ui-mock-differences.md)
+and [development slices](ui-development-slices.md) for the active redesign handoff.
+These target requirements do not supersede the verified runtime status below.
+
 ## Deployment and workflow
 
 Keep Python processing and TypeScript UI; persistence/model loading dominate
