@@ -37,10 +37,18 @@
   background: var(--surface-hover);
 }
 
-.moreButton {
+.toolbarActions .moreButton {
   width: 40px;
   height: 40px;
   border-radius: 8px;
+}
+
+.toolbarActions .morePanel {
+  min-width: 210px;
+}
+
+.toolbarActions .morePanel a {
+  color: inherit;
 }
 
 /* Hero */
@@ -254,6 +262,11 @@
   pointer-events: none;
 }
 
+/* Laps near the right edge: open the tooltip to the left so it stays inside the card */
+.tooltip[data-flip] {
+  transform: translateX(calc(-100% + 4px));
+}
+
 .tooltipLap {
   font-size: 12.5px;
   font-weight: 600;
@@ -303,6 +316,21 @@
   gap: 12px;
   color: #6e757f;
   font-size: 12.5px;
+}
+
+/* Sections a real session cannot supply */
+.unavailable {
+  margin: 4px 0 0;
+  color: #7d848d;
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.dataNote {
+  margin: 10px 0 0;
+  color: #9a6a12;
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 
 /* Events */
@@ -576,6 +604,11 @@
 
   .toolbar > div:first-child {
     overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .toolbar > div:first-child::-webkit-scrollbar {
+    display: none;
   }
 
   .grid {
@@ -597,46 +630,56 @@
   }
 }
 
-.moreMenu {
-  position: relative;
-}
 
-.moreMenu summary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border-strong);
-  background: #fff;
-  color: #3f444c;
-  list-style: none;
-  cursor: pointer;
-}
+/* Phones: the hero text wraps beside a smaller photo and long rows stay inside their cards */
+@media (max-width: 600px) {
+  .heroPhoto {
+    flex: none;
+    width: 96px;
+    height: 88px;
+  }
 
-.moreMenu summary::-webkit-details-marker {
-  display: none;
-}
+  .heroIdentity {
+    gap: 14px;
+  }
 
-.menu {
-  position: absolute;
-  top: 46px;
-  right: 0;
-  z-index: 4;
-  display: flex;
-  flex-direction: column;
-  min-width: 210px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: #fff;
-  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.12);
-}
+  .heroText {
+    min-width: 0;
+    padding-top: 6px;
+  }
 
-.menu a {
-  padding: 9px 10px;
-  border-radius: 6px;
-  font-size: 12.5px;
-}
+  .heroLine {
+    white-space: normal;
+  }
 
-.menu a:hover {
-  background: var(--surface-muted);
+  .heroStats dd {
+    font-size: 14px;
+  }
+
+  .stintLegend {
+    flex-wrap: wrap;
+    gap: 6px 22px;
+    margin-left: 0;
+  }
+
+  .stepper {
+    flex-wrap: wrap;
+  }
+
+  .stepButton {
+    flex: none;
+  }
+
+  .stepValue {
+    min-width: 0;
+    gap: 12px;
+  }
+
+  .compareWith {
+    margin-left: 0;
+  }
+
+  .bestNote {
+    min-width: 0;
+  }
 }

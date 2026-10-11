@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { shellFixture } from "@/features/review-data/fixtures";
 import { ExportLapsButton } from "@/features/lap-analysis/ExportLapsButton";
 import { LapAnalysis } from "@/features/lap-analysis/LapAnalysis";
 import { loadLapAnalysis } from "@/features/lap-analysis/load";
@@ -19,11 +18,16 @@ export default async function LapAnalysisPage({ params, searchParams }: PageProp
   if (!model) notFound();
   const target = model.laps.find((lap) => lap.id === model.targetId);
   const reference = model.laps.find((lap) => lap.id === model.referenceId);
-  const compared = target ? (reference ? `Lap ${target.lap} vs ${reference.lap}` : `Lap ${target.lap}`) : "No lap";
+  const compared = target
+    ? reference && reference.id !== target.id
+      ? `Lap ${target.lap} vs ${reference.lap}`
+      : `Lap ${target.lap}`
+    : "No lap";
   return (
     <AppShell
       active="review"
-      status={shellFixture.replayMode}
+      live={model.live ? "telemetry" : undefined}
+      status={model.status}
       context={
         <HeaderContext
           items={[...model.header, compared]}

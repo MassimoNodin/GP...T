@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { shellFixture } from "@/features/review-data/fixtures";
 import { loadOverview } from "@/features/session-overview/load";
 import { SessionOverview } from "@/features/session-overview/SessionOverview";
 import { AppShell, HeaderContext } from "@/features/ui-foundation/AppShell";
@@ -14,7 +13,8 @@ export default async function SessionOverviewPage({ params }: PageProps<"/review
   return (
     <AppShell
       active="review"
-      status={shellFixture.replayMode}
+      live={model.shell.live ? "telemetry" : undefined}
+      status={model.shell.status}
       context={<HeaderContext items={model.header} />}
       footer={model.footer}
     >

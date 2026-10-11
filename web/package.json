@@ -33,7 +33,12 @@
     "test:lap-debrief-match": "node scripts/lap-debrief-match-check.mjs",
     "test:engineer-ask": "node scripts/engineer-ask-check.mjs",
     "test:attempt-quality-match": "node scripts/attempt-quality-match-check.mjs",
-    "test:ui-foundation": "node --test scripts/ui-foundation.test.mjs"
+    "test:ui-foundation": "node --test scripts/ui-foundation.test.mjs",
+    "test:live-status": "node --test scripts/live-status.test.mjs",
+    "test:review-data-v2": "node --test scripts/review-data-v2.test.mjs",
+    "test:settings": "node --test scripts/settings.test.mjs",
+    "test:ui-routes": "node --test scripts/ui-routes.test.mjs",
+    "test:lap-analysis": "node --test scripts/lap-analysis.test.mjs"
   },
   "dependencies": {
     "next": "16.3.8",

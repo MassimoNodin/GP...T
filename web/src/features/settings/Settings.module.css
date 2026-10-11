@@ -103,6 +103,10 @@
   line-height: 1.5;
 }
 
+.applyNote[data-tone="red"] {
+  color: var(--red-text);
+}
+
 .kv {
   display: flex;
   flex-direction: column;
@@ -134,12 +138,133 @@
 .kv dd[data-tone="green"] { color: var(--green-text); }
 .kv dd[data-tone="amber"] { color: var(--amber-text); }
 .kv dd[data-tone="red"] { color: var(--red-text); }
+.kv dd[data-tone="grey"] { color: #8d949d; }
+
+.kv dd {
+  overflow-wrap: anywhere;
+}
 
 .kv code {
   padding: 1px 5px;
   border-radius: 4px;
   background: var(--surface-muted);
   font-size: 11.5px;
+}
+
+.footnote {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--divider);
+  color: #9aa1aa;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.footnote code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-muted);
+  font-size: 11px;
+}
+
+.cmdNote {
+  display: block;
+  margin-top: 5px;
+  color: #9aa1aa;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.unavailable {
+  color: var(--red-text);
+  font-size: 12.5px;
+}
+
+.kv code {
+  overflow-wrap: anywhere;
+}
+
+/* Storage breakdown */
+.storageSummary {
+  margin-bottom: 10px;
+}
+
+.storageUsed {
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.storageSummary .help {
+  margin-top: 3px;
+}
+
+.meter {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--grey-soft);
+}
+
+.meter[data-small] {
+  height: 5px;
+  margin-top: 7px;
+}
+
+.meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue);
+}
+
+.meter[data-small] > span {
+  background: #8d949d;
+}
+
+.scopes {
+  display: flex;
+  flex-direction: column;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scope {
+  padding: 10px 0;
+  border-top: 1px solid var(--divider);
+  font-size: 12.5px;
+}
+
+.scope[data-unavailable] .scopeValue {
+  color: var(--amber-text);
+}
+
+.scopeHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: #6e757f;
+}
+
+.scopeValue {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.scopeDetail {
+  margin-top: 4px;
+  color: #9aa1aa;
+  font-size: 11.5px;
+}
+
+/* Header chip: keeps the card header height unchanged. */
+.chip {
+  display: inline-flex;
+  margin: -3px 0;
 }
 
 /* Current configuration */
@@ -154,16 +279,16 @@
 
 .tiles {
   display: grid;
-  grid-template-columns: 160fr 188fr 186fr 164fr 156fr;
+  grid-template-columns: repeat(5, minmax(max-content, 1fr));
   gap: 10px;
 }
 
 .tile {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 11px;
   min-height: 72px;
-  padding: 10px 12px 10px 14px;
+  padding: 10px 10px 10px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fff;
@@ -176,7 +301,7 @@
 
 .tileMap {
   flex: none;
-  width: 44px;
+  width: 38px;
   height: 44px;
   color: #2b3037;
   transform: rotate(-58deg);
@@ -185,6 +310,7 @@
 .tileLabel {
   color: #6e757f;
   font-size: 11.5px;
+  white-space: nowrap;
 }
 
 .tileName {
@@ -208,6 +334,8 @@
 .tileState[data-tone="green"] { color: var(--green-text); }
 .tileState[data-tone="green-text"] { color: var(--green-text); }
 .tileState[data-tone="amber-text"] { color: var(--amber-text); }
+.tileState[data-tone="grey"],
+.tileState[data-tone="grey-text"] { color: #8d949d; }
 
 .tileState i {
   width: 5px;
@@ -219,6 +347,7 @@
 .tileBadge {
   display: inline-block;
   margin-top: 3px;
+  white-space: nowrap;
   padding: 2px 6px;
   border-radius: 4px;
   background: var(--grey-soft);
@@ -226,7 +355,7 @@
   font-size: 11px;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1040px) {
   .tiles {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -236,6 +365,7 @@
   .tabs {
     max-width: 100%;
     overflow-x: auto;
+    overflow-y: hidden;
   }
 
   .grid {
@@ -249,5 +379,33 @@
   .applyRow {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+@media (max-width: 560px) {
+  .kv > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .checks {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tiles {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tileName,
+  .tileState {
+    white-space: normal;
+  }
+
+  .applyRow {
+    align-items: stretch;
+  }
+
+  .apply {
+    width: 100%;
   }
 }

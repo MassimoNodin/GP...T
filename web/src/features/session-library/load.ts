@@ -1,5 +1,20 @@
 import type { SessionRecord } from "@/lib/api";
-import { fetchAcquisition, fetchSessions, telemetryFooter, telemetryStatus } from "@/features/review-data/backend";
+import {
+  fetchAcquisition,
+  fetchEvidenceAttempts,
+  fetchEvidenceSessions,
+  fetchSessions,
+  telemetryFooter,
+  telemetryStatus,
+} from "@/features/review-data/backend";
+import {
+  evidenceLaps,
+  evidenceLibraryFields,
+  evidenceSessionContext,
+  sessionRecency,
+  typeTone,
+  type EvidenceSession,
+} from "@/features/review-data/session-evidence";
 import { libraryFixture, shellFixture, type LibrarySession } from "@/features/review-data/fixtures";
 import {
   formatDayTime,
@@ -21,14 +36,6 @@ export type LibraryModel = {
   header: { items: string[]; trailing?: string };
   sessions: LibraryRow[];
 };
-
-function typeTone(sessionType: string | null | undefined): Tone {
-  if (!sessionType) return "grey";
-  if (sessionType.startsWith("race") || sessionType.startsWith("sprint")) return "green";
-  if (sessionType.startsWith("practice")) return "amber";
-  if (sessionType === "time_trial") return "purple";
-  return "grey";
-}
 
 function statusOf(record: SessionRecord): { label: string; tone: Tone } {
   switch (record.run_status) {
@@ -67,6 +74,21 @@ function toRow(record: SessionRecord): LibraryRow {
   };
 }
 
+/** v2 sessions the engine acquired from the game, newest journal position first. */
+async function evidenceRows(sessions: EvidenceSession[]): Promise<LibraryRow[]> {
+  const results = await Promise.all(sessions.map((session) => fetchEvidenceAttempts(session.id)));
+  return sessions
+    .map((session, index) => {
+      const attempts = results[index]?.attempts ?? [];
+      const context = evidenceSessionContext(session, attempts);
+      const track = trackKeyFromName(context?.trackName);
+      const fields = evidenceLibraryFields(session, context, evidenceLaps(attempts).length);
+      return { recency: sessionRecency(attempts), row: { ...fields, track, photo: trackPhotoUrl(track) } };
+    })
+    .sort((a, b) => b.recency - a.recency)
+    .map((entry) => entry.row);
+}
+
 function connectionHeader(state: string): LibraryModel["header"] {
   return state === "receiving"
     ? libraryFixture.header
@@ -74,14 +96,20 @@ function connectionHeader(state: string): LibraryModel["header"] {
 }
 
 export async function loadLibrary(): Promise<LibraryModel> {
-  const [sessions, acquisition] = await Promise.all([fetchSessions(), fetchAcquisition()]);
+  const [sessions, evidence, acquisition] = await Promise.all([
+    fetchSessions(),
+    fetchEvidenceSessions(),
+    fetchAcquisition(),
+  ]);
   const status = acquisition ? telemetryStatus(acquisition) : shellFixture.telemetryLive;
   const footer = acquisition
     ? telemetryFooter(acquisition, shellFixture.telemetryFooter)
     : shellFixture.telemetryFooter;
-  if (!sessions || sessions.length === 0) {
+  const imported = sessions ?? [];
+  const acquired = evidence ?? [];
+  if (imported.length === 0 && acquired.length === 0) {
     return {
-      live: sessions !== null,
+      live: sessions !== null || evidence !== null,
       status,
       footer,
       header: acquisition ? connectionHeader(acquisition.state) : libraryFixture.header,
@@ -91,11 +119,16 @@ export async function loadLibrary(): Promise<LibraryModel> {
       })),
     };
   }
+  // The v2 API records no wall-clock time, so acquired sessions (ordered by
+  // journal position) come first and dated imports follow, newest first.
+  const rows = [...(await evidenceRows(acquired)), ...imported.map(toRow)];
+  // The footer names the game of the newest session instead of the reference platform.
+  const game = rows[0]?.meta[0] ?? "F1";
   return {
     live: true,
     status,
-    footer,
+    footer: { ...footer, lines: [game, footer.lines[1] ?? ""] },
     header: acquisition ? connectionHeader(acquisition.state) : { items: ["Local engine connected"] },
-    sessions: sessions.map(toRow),
+    sessions: rows,
   };
 }

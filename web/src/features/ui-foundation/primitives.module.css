@@ -124,6 +124,10 @@
   white-space: nowrap;
 }
 
+.tab:focus-visible {
+  outline-offset: -2px;
+}
+
 .tab + .tab::before {
   content: "";
   position: absolute;
@@ -324,6 +328,7 @@
 .checkbox input:focus-visible + .checkboxBox {
   outline: 2px solid var(--blue);
   outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--blue-soft);
 }
 
 /* Toggle */
@@ -343,6 +348,12 @@
   background: #2f80f5;
 }
 
+.toggle:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--blue-soft);
+}
+
 .toggleKnob {
   position: absolute;
   top: 3px;
@@ -357,4 +368,56 @@
 
 .toggle[aria-checked="true"] .toggleKnob {
   transform: translateX(18px);
+}
+
+/* Menu (disclosure) */
+.menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.menuPanel {
+  position: absolute;
+  top: calc(100% + 6px);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.12);
+}
+
+.menuPanel[data-align="end"] {
+  right: 0;
+}
+
+.menuPanel[data-align="start"] {
+  left: 0;
+}
+
+.menuPanel a,
+.menuItem {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.menuPanel a:hover,
+.menuItem:hover:not(:disabled) {
+  background: var(--surface-muted);
+}
+
+.menuItem:disabled {
+  color: var(--faint);
+  cursor: not-allowed;
 }

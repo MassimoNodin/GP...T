@@ -1,13 +1,9 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { LiveShellFooter, LiveShellProvider, LiveStatusPill } from "@/features/live-status/LiveShell";
+import { ShellFooterBlock, StatusPill } from "@/features/live-status/ShellParts";
 import { F1Logo } from "./F1Logo";
-import {
-  ChevronDownIcon,
-  DriveIcon,
-  ReviewIcon,
-  SettingsIcon,
-  StatusGlyph,
-} from "./icons";
+import { DriveIcon, ReviewIcon, SettingsIcon } from "./icons";
 import styles from "./AppShell.module.css";
 
 export type ShellTone = "green" | "amber" | "red" | "grey";
@@ -24,6 +20,14 @@ export type ShellFooter = {
   lines: string[];
 };
 
+/**
+ * Live mode for the header pill and sidebar footer. Omitted keeps the static,
+ * server-rendered values. "telemetry" follows the UDP receiver state;
+ * "engineer" follows the engineer runtime. Both start from the props below and
+ * refresh in the browser while the tab is visible.
+ */
+export type ShellLiveMode = "telemetry" | "engineer";
+
 export type NavKey = "drive" | "review" | "settings";
 
 const NAV: Array<{ key: NavKey; label: string; href: string; Icon: typeof DriveIcon }> = [
@@ -37,15 +41,17 @@ export function AppShell({
   status,
   context,
   footer,
+  live,
   children,
 }: {
   active: NavKey;
   status: ShellStatus;
   context: ReactNode;
   footer: ShellFooter;
+  live?: ShellLiveMode;
   children: ReactNode;
 }) {
-  return (
+  const shell = (
     <div className={styles.app}>
       <a className={styles.skip} href="#main">
         Skip to content
@@ -55,7 +61,7 @@ export function AppShell({
           <F1Logo className={styles.logo} />
           <span className={styles.brandName}>Race Engineer</span>
         </Link>
-        <StatusPill status={status} />
+        {live ? <LiveStatusPill fallback={status} /> : <StatusPill status={status} />}
         <div className={styles.context}>{context}</div>
       </header>
       <aside className={styles.sidebar}>
@@ -75,49 +81,19 @@ export function AppShell({
             ))}
           </ul>
         </nav>
-        <div className={styles.footer} role="status">
-          <div className={styles.footerHead}>
-            <ToneDot tone={footer.tone} />
-            {footer.label}
-          </div>
-          {footer.lines.map((line) => (
-            <div key={line} className={styles.footerLine}>
-              {line}
-            </div>
-          ))}
-        </div>
+        {live ? <LiveShellFooter fallback={footer} /> : <ShellFooterBlock footer={footer} />}
       </aside>
       <main id="main" className={styles.main}>
         {children}
       </main>
     </div>
   );
-}
-
-function ToneDot({ tone }: { tone: ShellTone }) {
-  return (
-    <StatusGlyph
-      tone={tone}
-      glyph={tone === "green" ? "check" : tone === "grey" ? "dot" : "alert"}
-      size={13}
-    />
-  );
-}
-
-function StatusPill({ status }: { status: ShellStatus }) {
-  return (
-    <span className={styles.pill} data-tone={status.tone} role="status">
-      {status.tone === "amber" ? (
-        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-          <circle cx="8" cy="8" r="7.5" fill="var(--amber)" />
-          <path d="M6.3 5.2v5.6L10.8 8z" fill="#fff" />
-        </svg>
-      ) : (
-        <ToneDot tone={status.tone} />
-      )}
-      {status.label}
-      {status.menu && <ChevronDownIcon size={14} className={styles.pillChevron} />}
-    </span>
+  return live ? (
+    <LiveShellProvider mode={live} status={status} footer={footer}>
+      {shell}
+    </LiveShellProvider>
+  ) : (
+    shell
   );
 }
 

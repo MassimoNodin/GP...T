@@ -168,6 +168,11 @@
   text-transform: uppercase;
 }
 
+.livePill[data-live="false"] {
+  background: var(--grey-soft);
+  color: var(--muted);
+}
+
 /* Radio history */
 .radioCard {
   display: flex;
@@ -193,7 +198,7 @@
   font-weight: 500;
 }
 
-.filter[aria-selected="true"] {
+.filter[aria-pressed="true"] {
   border-color: var(--border-strong);
   background: #fff;
   color: var(--text);
@@ -222,6 +227,10 @@
   background: transparent;
   text-align: left;
   font-size: 12px;
+}
+
+.radioRow:focus-visible {
+  outline-offset: -2px;
 }
 
 .radioRow:hover {

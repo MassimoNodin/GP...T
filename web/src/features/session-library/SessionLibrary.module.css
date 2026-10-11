@@ -262,14 +262,24 @@
   padding: 4px 0 0;
 }
 
-.more {
-  position: relative;
+/* Row actions menu: the shared Menu trigger and panel, restyled to the reference */
+.rowMenu {
   z-index: 1;
+  /* keeps the trigger where the reference puts it (the old inline summary sat in a taller line box) */
+  margin-bottom: 1.2px;
+}
+
+.rowMenu .more {
   width: 26px;
   height: 22px;
   border: 0;
+  border-radius: 6px;
   background: transparent;
   color: #3f444c;
+}
+
+.rowMenu .more:hover {
+  background: var(--surface-muted);
 }
 
 .empty {
@@ -281,14 +291,6 @@
 }
 
 @media (max-width: 900px) {
-  .filters {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .sort {
-    width: 100%;
-  }
-
   .row {
     grid-template-columns: 110px minmax(0, 1fr) auto;
     grid-template-areas:
@@ -323,41 +325,64 @@
   }
 }
 
-.rowMenu {
-  position: relative;
-  z-index: 1;
+/* Phones: two filter columns, and the row's status/actions drop under the details */
+@media (max-width: 600px) {
+  .filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sort {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .importMain {
+    padding: 0 18px;
+    white-space: nowrap;
+  }
+
+  .row {
+    grid-template-columns: 88px minmax(0, 1fr);
+    grid-template-areas:
+      "thumb info"
+      "laps side";
+    row-gap: 8px;
+  }
+
+  .thumb {
+    width: 88px;
+    height: 64px;
+  }
+
+  .badges {
+    flex-wrap: wrap;
+  }
+
+  .laps {
+    justify-content: flex-start;
+    gap: 5px;
+    padding-left: 4px;
+  }
+
+  .side {
+    flex-direction: row;
+    align-items: center;
+    padding: 0;
+    gap: 8px;
+  }
+
+  .side .rowMenu {
+    margin-bottom: 0;
+  }
 }
 
-.rowMenu summary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  list-style: none;
-  cursor: pointer;
-  border-radius: 6px;
-}
-
-.rowMenu summary::-webkit-details-marker {
-  display: none;
-}
-
-.rowMenu summary:hover {
-  background: var(--surface-muted);
-}
-
-.rowMenu .menu {
+.rowMenu .rowMenuPanel {
   top: 26px;
   min-width: 180px;
 }
 
-.rowMenu .menu a {
-  padding: 9px 10px;
-  border-radius: 6px;
-  font-size: 12.5px;
-}
-
-.rowMenu .menu a:hover {
-  background: var(--surface-muted);
+.rowMenu .rowMenuPanel a {
+  color: inherit;
 }
 
 .menuNote {

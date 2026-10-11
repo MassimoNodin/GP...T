@@ -11,7 +11,7 @@ import {
   OpenDocumentIcon,
   StatusGlyph,
 } from "@/features/ui-foundation/icons";
-import { Card, IconButton, Select, StatusBadge, Tabs } from "@/features/ui-foundation/primitives";
+import { Card, IconButton, Menu, Select, StatusBadge, Tabs } from "@/features/ui-foundation/primitives";
 import { TrackMap } from "@/features/ui-foundation/TrackMap";
 import { TrackPhoto } from "@/features/ui-foundation/TrackPhoto";
 import { LapTimeChart } from "./LapTimeChart";
@@ -55,15 +55,15 @@ export function SessionOverview({ model }: { model: OverviewModel }) {
             <OpenDocumentIcon size={15} />
             Open in Lap Analysis
           </Link>
-          <details className={styles.moreMenu}>
-            <summary className={styles.moreButton} aria-label="More session actions" title="More session actions">
-              <MoreIcon size={16} />
-            </summary>
-            <div className={styles.menu}>
-              <Link href={analysisHref}>Open in Lap Analysis</Link>
-              <Link href="/review">Back to Session Library</Link>
-            </div>
-          </details>
+          <Menu
+            label="More session actions"
+            trigger={<MoreIcon size={16} />}
+            triggerClassName={styles.moreButton}
+            panelClassName={styles.morePanel}
+          >
+            <Link href={analysisHref}>Open in Lap Analysis</Link>
+            <Link href="/review">Back to Session Library</Link>
+          </Menu>
         </div>
       </div>
 
@@ -95,27 +95,38 @@ export function SessionOverview({ model }: { model: OverviewModel }) {
                   Selected Lap
                 </span>
               </div>
-              {selected && (
+              {selected ? (
                 <LapTimeChart
                   {...model.progression}
                   selected={{ lap: selected.lap, ms: selected.ms }}
                   bestMs={best?.ms ?? null}
                 />
+              ) : (
+                <Unavailable>No timed laps were recorded for this session.</Unavailable>
               )}
+              {model.lapDataNote && <p className={styles.dataNote}>{model.lapDataNote}</p>}
             </Card>
             <StintCard stints={model.stints} />
           </div>
           <div className={styles.col}>
             <Card title="Session Summary" labelledBy="session-summary" className={styles.summaryCard}>
-              <p className={styles.summaryText}>{model.summary.text}</p>
-              <ul className={styles.summaryList}>
-                {model.summary.items.map((item) => (
-                  <li key={item.text}>
-                    <StatusGlyph tone={item.tone} glyph={item.tone === "green" ? "check" : "alert"} size={15} />
-                    {item.text}
-                  </li>
-                ))}
-              </ul>
+              {model.summary ? (
+                <>
+                  <p className={styles.summaryText}>{model.summary.text}</p>
+                  {model.summary.items.length > 0 && (
+                    <ul className={styles.summaryList}>
+                      {model.summary.items.map((item) => (
+                        <li key={item.text}>
+                          <StatusGlyph tone={item.tone} glyph={item.tone === "green" ? "check" : "alert"} size={15} />
+                          {item.text}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              ) : (
+                <Unavailable>A summary is not available for this session.</Unavailable>
+              )}
             </Card>
             <EventsCard events={model.events} compact />
           </div>
@@ -238,7 +249,18 @@ function Hero({ model }: { model: OverviewModel }) {
 
 const STINT_COLORS = { Soft: "var(--stint-soft)", Medium: "var(--stint-medium)", Hard: "var(--stint-hard)" };
 
+function Unavailable({ children }: { children: React.ReactNode }) {
+  return <p className={styles.unavailable}>{children}</p>;
+}
+
 function StintCard({ stints }: { stints: OverviewModel["stints"] }) {
+  if (!stints || stints.length === 0) {
+    return (
+      <Card title="Stint Structure" labelledBy="stint-structure" className={styles.stintCard}>
+        <Unavailable>Tyre stint data is not available for this session.</Unavailable>
+      </Card>
+    );
+  }
   const total = stints.reduce((sum, stint) => sum + stint.laps, 0);
   const ticks = [1, ...Array.from({ length: Math.floor(total / 10) }, (_, i) => (i + 1) * 10).filter((t) => t < total - 4), total];
   return (
@@ -289,6 +311,19 @@ function EventIcon({ icon }: { icon: NotableEvent["icon"] }) {
 }
 
 function EventsCard({ events, compact }: { events: OverviewModel["events"]; compact?: boolean }) {
+  if (!events || events.items.length === 0) {
+    return (
+      <Card
+        title={`Notable Events (${events?.total ?? 0})`}
+        labelledBy="notable-events"
+        className={compact ? styles.eventsCard : undefined}
+      >
+        <Unavailable>
+          {events ? "No notable events were derived from this session." : "Event data is not available for this session."}
+        </Unavailable>
+      </Card>
+    );
+  }
   return (
     <Card
       title={`Notable Events (${events.total})`}

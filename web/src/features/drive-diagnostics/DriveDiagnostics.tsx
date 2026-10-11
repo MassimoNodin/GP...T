@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useAcquisitionFeed, useRuntimeFeed } from "@/features/live-status/hooks";
+import { buildSystemRows, currentActivity, liveDataPill } from "@/features/live-status/map";
 import type { RadioEvent, RadioKind } from "@/features/review-data/fixtures";
 import { InfoIcon, StatusGlyph, WaveformIcon } from "@/features/ui-foundation/icons";
 import { Card, PageHeader, StatusBadge } from "@/features/ui-foundation/primitives";
@@ -26,6 +28,10 @@ const KIND: Record<RadioKind, { label: string; title: string }> = {
   issue: { label: "Issue", title: "Issue" },
 };
 
+function glyphFor(tone: "green" | "amber" | "red" | "grey") {
+  return tone === "green" ? "check" : tone === "grey" ? "dot" : "alert";
+}
+
 function KindIcon({ kind }: { kind: RadioKind }) {
   if (kind === "proactive") return <StatusGlyph tone="green" glyph="square" size={13} />;
   if (kind === "question") return <StatusGlyph tone="blue" glyph="user" size={13} />;
@@ -36,6 +42,16 @@ function KindIcon({ kind }: { kind: RadioKind }) {
 export function DriveDiagnostics({ model }: { model: DriveModel }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [selectedId, setSelectedId] = useState(model.radio[0]?.id ?? "");
+  // Start from the server-read state (identical SSR output), then follow the
+  // backend while the tab is visible. null = the backend did not answer.
+  const acquisition = useAcquisitionFeed(model.initial.acquisition) ?? null;
+  const runtime = useRuntimeFeed(model.initial.runtime) ?? null;
+  const system = useMemo(
+    () => buildSystemRows(model.referenceSystem, acquisition, runtime),
+    [model.referenceSystem, acquisition, runtime],
+  );
+  const activity = currentActivity(model.activity, acquisition, runtime);
+  const liveData = liveDataPill(acquisition);
 
   const counts = useMemo(() => {
     const result: Record<Filter, number> = { all: model.radio.length, question: 0, response: 0, proactive: 0, issue: 0 };
@@ -52,9 +68,9 @@ export function DriveDiagnostics({ model }: { model: DriveModel }) {
       <div className={styles.topGrid}>
         <Card title="System Status" labelledBy="system-status" className={styles.systemCard}>
           <ul className={styles.systemList}>
-            {model.system.map((row) => (
+            {system.map((row) => (
               <li key={row.label} className={styles.systemRow}>
-                <StatusGlyph tone={row.tone} glyph={row.tone === "green" ? "check" : "alert"} size={14} />
+                <StatusGlyph tone={row.tone} glyph={glyphFor(row.tone)} size={14} />
                 <span className={styles.systemLabel}>{row.label}</span>
                 <span className={styles.systemStatus} data-tone={row.tone}>
                   {row.status}
@@ -63,11 +79,11 @@ export function DriveDiagnostics({ model }: { model: DriveModel }) {
               </li>
             ))}
             <li className={styles.systemRow}>
-              <StatusGlyph tone="green" glyph="check" size={14} />
+              <StatusGlyph tone={activity.tone} glyph={glyphFor(activity.tone)} size={14} />
               <span className={styles.systemLabel}>Current Activity</span>
               <span className={styles.activity}>
-                <span>{model.activity}</span>
-                <WaveformIcon size={40} />
+                <span>{activity.text}</span>
+                {activity.tone === "green" && <WaveformIcon size={40} />}
               </span>
             </li>
           </ul>
@@ -100,9 +116,9 @@ export function DriveDiagnostics({ model }: { model: DriveModel }) {
             </dl>
           </div>
           <div className={styles.liveWrap}>
-            <span className={styles.livePill}>
-              <StatusGlyph tone="red" glyph="dot" size={14} />
-              {model.context.source}
+            <span className={styles.livePill} data-live={liveData.live}>
+              <StatusGlyph tone={liveData.live ? "red" : "grey"} glyph="dot" size={14} />
+              {liveData.label}
             </span>
           </div>
         </Card>
@@ -110,13 +126,12 @@ export function DriveDiagnostics({ model }: { model: DriveModel }) {
 
       <div className={styles.bottomGrid}>
         <Card title="Radio History" labelledBy="radio-history" className={styles.radioCard}>
-          <div className={styles.filters} role="tablist" aria-label="Filter radio history">
+          <div className={styles.filters} role="group" aria-label="Filter radio history">
             {FILTERS.map((item) => (
               <button
                 key={item.key}
                 type="button"
-                role="tab"
-                aria-selected={filter === item.key}
+                aria-pressed={filter === item.key}
                 className={styles.filter}
                 onClick={() => setFilter(item.key)}
               >

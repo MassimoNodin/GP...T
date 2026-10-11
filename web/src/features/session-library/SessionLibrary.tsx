@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { MoreIcon, SearchIcon, SortIcon } from "@/features/ui-foundation/icons";
-import { Badge, IconButton, PageHeader, Select, StatusBadge } from "@/features/ui-foundation/primitives";
+import { Badge, IconButton, Menu, PageHeader, Select, StatusBadge } from "@/features/ui-foundation/primitives";
 import { TrackPhoto } from "@/features/ui-foundation/TrackPhoto";
 import { ImportSessionButton } from "./ImportSessionButton";
 import type { LibraryModel, LibraryRow } from "./load";
@@ -150,23 +150,24 @@ function SessionRow({ row }: { row: LibraryRow }) {
       <p className={styles.notes}>{row.notes}</p>
       <div className={styles.side}>
         <StatusBadge tone={row.status.tone}>{row.status.label}</StatusBadge>
-        <details className={styles.rowMenu}>
-          <summary className={styles.more} aria-label={`More actions for ${row.title}`} title="More actions">
-            <MoreIcon size={16} />
-          </summary>
-          <div className={styles.menu}>
-            {row.href ? (
-              <>
-                <Link href={row.href}>Open overview</Link>
-                <Link href={`${row.href}/laps`}>Open lap analysis</Link>
-              </>
-            ) : (
-              <span className={styles.menuNote}>
-                {row.status.label === "Unavailable" ? "Session data is unavailable" : "Available once processing finishes"}
-              </span>
-            )}
-          </div>
-        </details>
+        <Menu
+          label={`More actions for ${row.title}`}
+          trigger={<MoreIcon size={16} />}
+          className={styles.rowMenu}
+          triggerClassName={styles.more}
+          panelClassName={styles.rowMenuPanel}
+        >
+          {row.href ? (
+            <>
+              <Link href={row.href}>Open overview</Link>
+              <Link href={`${row.href}/laps`}>Open lap analysis</Link>
+            </>
+          ) : (
+            <span className={styles.menuNote}>
+              {row.status.label === "Unavailable" ? "Session data is unavailable" : "Available once processing finishes"}
+            </span>
+          )}
+        </Menu>
       </div>
     </li>
   );

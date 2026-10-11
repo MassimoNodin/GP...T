@@ -1,0 +1,49 @@
+import type { ShellFooter, ShellStatus, ShellTone } from "@/features/ui-foundation/AppShell";
+import { ChevronDownIcon, StatusGlyph } from "@/features/ui-foundation/icons";
+import styles from "@/features/ui-foundation/AppShell.module.css";
+
+// Presentational pieces of the app shell. They hold no state, so the server
+// shell and the live (client) shell render identical markup.
+
+export function ToneDot({ tone }: { tone: ShellTone }) {
+  return (
+    <StatusGlyph
+      tone={tone}
+      glyph={tone === "green" ? "check" : tone === "grey" ? "dot" : "alert"}
+      size={13}
+    />
+  );
+}
+
+export function StatusPill({ status }: { status: ShellStatus }) {
+  return (
+    <span className={styles.pill} data-tone={status.tone} role="status">
+      {status.tone === "amber" ? (
+        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <circle cx="8" cy="8" r="7.5" fill="var(--amber)" />
+          <path d="M6.3 5.2v5.6L10.8 8z" fill="#fff" />
+        </svg>
+      ) : (
+        <ToneDot tone={status.tone} />
+      )}
+      {status.label}
+      {status.menu && <ChevronDownIcon size={14} className={styles.pillChevron} />}
+    </span>
+  );
+}
+
+export function ShellFooterBlock({ footer }: { footer: ShellFooter }) {
+  return (
+    <div className={styles.footer} role="status">
+      <div className={styles.footerHead}>
+        <ToneDot tone={footer.tone} />
+        {footer.label}
+      </div>
+      {footer.lines.map((line) => (
+        <div key={line} className={styles.footerLine}>
+          {line}
+        </div>
+      ))}
+    </div>
+  );
+}

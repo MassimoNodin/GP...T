@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ComponentProps } from "react";
 import { lapAnalysisFixture } from "@/features/review-data/fixtures";
 import { formatDelta, formatLapTime, formatSectorTime } from "@/features/review-data/format";
 import {
@@ -26,6 +26,7 @@ import {
 } from "@/features/ui-foundation/primitives";
 import { TrackMap } from "@/features/ui-foundation/TrackMap";
 import type { AnalysisLap, LapAnalysisModel } from "./load";
+import { axisFor, lapDifferences, lapQuality, type LapTrace } from "./lap-telemetry";
 import { REFERENCE_COLOR, TARGET_COLOR, TelemetryCharts } from "./TelemetryCharts";
 import styles from "./LapAnalysis.module.css";
 
@@ -93,17 +94,35 @@ export function LapAnalysis({ model }: { model: LapAnalysisModel }) {
     setReferenceIdState(id);
     syncUrl(targetId, id);
   };
-  const [region, setRegion] = useState<string | null>(lapAnalysisFixture.region.label);
+  // Real sessions carry no corner regions: the backend lists track models but not their regions.
+  const measuredTelemetry = model.telemetry.kind === "real" ? model.telemetry : null;
+  const [region, setRegion] = useState<string | null>(measuredTelemetry ? null : lapAnalysisFixture.region.label);
 
   const targetIndex = Math.max(0, model.laps.findIndex((lap) => lap.id === targetId));
   const target = model.laps[targetIndex];
   const referenceIndex = model.laps.findIndex((lap) => lap.id === referenceId);
   const reference = referenceIndex >= 0 ? model.laps[referenceIndex] : null;
 
-  const regionInfo = region ? REGIONS[region] : null;
+  const regionInfo = region && !measuredTelemetry ? REGIONS[region] : null;
   const chart = lapAnalysisFixture.chart;
   const ticks = compare === "distance" ? [2400, 2500, 2600, 2700, 2800, 2900, 3000] : chart.ticks;
   const band = regionInfo && regionInfo.band.to > regionInfo.band.from ? regionInfo.band : null;
+
+  // Measured traces only count once they belong to the laps shown in the pickers.
+  const targetTrace: LapTrace | undefined = measuredTelemetry && target ? measuredTelemetry.traces[target.id] : undefined;
+  const referenceTrace: LapTrace | undefined = measuredTelemetry && reference ? measuredTelemetry.traces[reference.id] : undefined;
+  const axis = axisFor([targetTrace, referenceTrace]);
+  const differences = useMemo(
+    () => (measuredTelemetry ? lapDifferences(target, reference, targetTrace, referenceTrace) : []),
+    [measuredTelemetry, reference, referenceTrace, target, targetTrace],
+  );
+  const quality = useMemo(
+    () =>
+      measuredTelemetry
+        ? lapQuality({ target, reference, targetTrace, referenceTrace, lapDataNote: model.lapDataNote, trackModel: model.trackModel })
+        : [],
+    [measuredTelemetry, model.lapDataNote, model.trackModel, reference, referenceTrace, target, targetTrace],
+  );
 
   const sectors = useMemo(() => {
     if (!target) return [];
@@ -186,6 +205,15 @@ export function LapAnalysis({ model }: { model: LapAnalysisModel }) {
                 </IconButton>
               </div>
               <TrackMap track={model.trackKey} className={styles.trackMap} strokeWidth={2} title={`${model.track} circuit map`} />
+              {measuredTelemetry ? (
+                <div className={styles.trackSection}>
+                  <div className={styles.fieldLabel}>Distance</div>
+                  <div className={styles.fieldValue}>
+                    {axis ? `Full lap · ${axis.from.toLocaleString("en-US")} m – ${axis.to.toLocaleString("en-US")} m` : "Full lap"}
+                  </div>
+                  <p className={styles.unavailable}>Corner regions are not available for this session.</p>
+                </div>
+              ) : (
               <div className={styles.trackSection}>
                 <label className={styles.fieldLabel} htmlFor="region">
                   Selected Region
@@ -217,18 +245,29 @@ export function LapAnalysis({ model }: { model: LapAnalysisModel }) {
                   ))}
                 </div>
               </div>
+              )}
             </Card>
           )}
 
           {(view === "overview" || view === "telemetry" || view === "inputs") && (
             <Card className={styles.chartCard}>
-              <TelemetryCharts
-                from={chart.from}
-                to={chart.to}
-                ticks={ticks}
-                band={band}
-                channels={view === "inputs" ? ["throttle", "brake", "steering"] : ["speed", "throttle", "brake", "steering"]}
-              />
+              {measuredTelemetry ? (
+                <MeasuredCharts
+                  target={target}
+                  reference={reference}
+                  targetTrace={targetTrace}
+                  referenceTrace={referenceTrace}
+                  channels={view === "inputs" ? ["throttle", "brake", "steering"] : ["speed", "throttle", "brake", "steering"]}
+                />
+              ) : (
+                <TelemetryCharts
+                  from={chart.from}
+                  to={chart.to}
+                  ticks={ticks}
+                  band={band}
+                  channels={view === "inputs" ? ["throttle", "brake", "steering"] : ["speed", "throttle", "brake", "steering"]}
+                />
+              )}
             </Card>
           )}
 
@@ -260,24 +299,37 @@ export function LapAnalysis({ model }: { model: LapAnalysisModel }) {
                       </tr>
                     </tbody>
                   </table>
+                  {measuredTelemetry && target && !target.sectors && (
+                    <p className={styles.unavailable}>Sector times were not recorded for this lap.</p>
+                  )}
                 </Card>
               )}
               {(view === "overview" || view === "sectors") && (
-                <Card title="Key Differences (Selected Region)" labelledBy="key-differences" className={styles.diffCard}>
-                  <ul className={styles.diffList}>
-                    {lapAnalysisFixture.differences.map((item) => (
-                      <li key={item.text} data-emphasis={item.emphasis ? "true" : undefined}>
-                        <StatusGlyph tone="red" glyph="alert" size={13} />
-                        {item.text}
-                      </li>
-                    ))}
-                  </ul>
+                <Card
+                  title={measuredTelemetry ? "Key Differences (Full Lap)" : "Key Differences (Selected Region)"}
+                  labelledBy="key-differences"
+                  className={styles.diffCard}
+                >
+                  {measuredTelemetry && differences.length === 0 ? (
+                    <p className={styles.unavailable}>
+                      {reference ? "Differences are not available for these laps." : "Select a reference lap to see differences."}
+                    </p>
+                  ) : (
+                    <ul className={styles.diffList}>
+                      {(measuredTelemetry ? differences : lapAnalysisFixture.differences).map((item) => (
+                        <li key={item.text} data-emphasis={item.emphasis ? "true" : undefined}>
+                          <StatusGlyph tone="red" glyph="alert" size={13} />
+                          {item.text}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </Card>
               )}
               {(view === "overview" || view === "quality") && (
                 <Card title="Data Quality" labelledBy="data-quality" className={styles.qualityCard}>
                   <ul className={styles.qualityList}>
-                    {lapAnalysisFixture.quality.map((item) => (
+                    {(measuredTelemetry ? quality : lapAnalysisFixture.quality).map((item) => (
                       <li key={item.text}>
                         <StatusGlyph tone={item.tone} glyph="ring" size={12} />
                         {item.text}
@@ -293,6 +345,60 @@ export function LapAnalysis({ model }: { model: LapAnalysisModel }) {
 
       <EngineerQuestions model={model} target={target} reference={reference} />
     </div>
+  );
+}
+
+/** Chart card body for real sessions: measured traces, or why there are none. */
+function MeasuredCharts({
+  target,
+  reference,
+  targetTrace,
+  referenceTrace,
+  channels,
+}: {
+  target: AnalysisLap | undefined;
+  reference: AnalysisLap | null;
+  targetTrace: LapTrace | undefined;
+  referenceTrace: LapTrace | undefined;
+  channels: ComponentProps<typeof TelemetryCharts>["channels"];
+}) {
+  if (!target) return <p className={styles.chartEmpty}>No lap is selected.</p>;
+  // The server sends traces for the laps in the URL; the pickers can move ahead of it.
+  if (!targetTrace || (reference && !referenceTrace)) {
+    return <p className={styles.chartEmpty}>Loading telemetry for the selected laps…</p>;
+  }
+  const missing = [
+    { lap: target, trace: targetTrace },
+    ...(reference && referenceTrace ? [{ lap: reference, trace: referenceTrace }] : []),
+  ].filter((entry) => entry.trace.state === "unavailable");
+  const axis = axisFor([targetTrace, referenceTrace]);
+  if (missing.length > 0 || !axis || targetTrace.state !== "available") {
+    return (
+      <div className={styles.chartEmpty}>
+        <p>Telemetry traces are not available for this comparison.</p>
+        {missing.map(({ lap, trace }) => (
+          <p key={lap.id}>
+            Lap {lap.lap}: {trace.state === "unavailable" ? trace.reason : ""}
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <>
+      <TelemetryCharts
+        from={axis.from}
+        to={axis.to}
+        ticks={axis.ticks}
+        band={null}
+        channels={channels}
+        measured={{
+          target: targetTrace.channels,
+          reference: referenceTrace?.state === "available" ? referenceTrace.channels : null,
+        }}
+      />
+      {!reference && <p className={styles.chartNote}>No reference lap is selected, so only the target lap is drawn.</p>}
+    </>
   );
 }
 
@@ -348,6 +454,8 @@ function LapPicker({
     </div>
   );
 }
+
+const ASK_BLOCKED = "Questions are not available for this lap yet. The engineer can only answer about laps imported into the local engine.";
 
 function EngineerQuestions({
   model,
@@ -432,6 +540,8 @@ function EngineerQuestions({
   }
 
   const last = turns.at(-1);
+  // Real laps can only be asked about through a v1 attempt key.
+  const askBlocked = model.live && !target?.attemptKey;
 
   return (
     <Card
@@ -439,7 +549,13 @@ function EngineerQuestions({
       labelledBy="engineer-questions"
       className={styles.questions}
       aside={
-        <Button variant="outline-blue" className={styles.newQuestion} onClick={() => setComposing(true)}>
+        <Button
+          variant="outline-blue"
+          className={styles.newQuestion}
+          disabled={askBlocked}
+          title={askBlocked ? ASK_BLOCKED : undefined}
+          onClick={() => setComposing(true)}
+        >
           <PlusIcon size={13} />
           New Question
         </Button>
@@ -448,8 +564,14 @@ function EngineerQuestions({
       <div className={styles.thread}>
         {turns.length === 0 && !composing && (
           <p className={styles.threadEmpty}>
-            Ask about {target ? `Lap ${target.lap}` : "this lap"}
-            {reference ? ` compared with Lap ${reference.lap}` : ""}.
+            {askBlocked ? (
+              ASK_BLOCKED
+            ) : (
+              <>
+                Ask about {target ? `Lap ${target.lap}` : "this lap"}
+                {reference ? ` compared with Lap ${reference.lap}` : ""}.
+              </>
+            )}
           </p>
         )}
         {turns.map((turn) => (

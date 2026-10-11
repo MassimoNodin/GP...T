@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { shellFixture } from "@/features/review-data/fixtures";
 import { loadSettings } from "@/features/settings/load";
 import { Settings } from "@/features/settings/Settings";
 import { AppShell, HeaderContext } from "@/features/ui-foundation/AppShell";
@@ -11,9 +10,10 @@ export default async function SettingsPage() {
   return (
     <AppShell
       active="settings"
+      live="engineer"
       status={model.pill}
       context={<HeaderContext items={model.header.items} />}
-      footer={shellFixture.sessionFooter}
+      footer={{ tone: model.pill.tone, label: model.pill.label, lines: model.footerLines }}
     >
       <Settings model={model} />
     </AppShell>

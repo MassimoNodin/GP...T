@@ -34,6 +34,12 @@ port `20777`. The API listens on `127.0.0.1:8765` and automatically acquires
 telemetry on `0.0.0.0:20777`; do not start another receiver on that port.
 Add `--manual-acquisition` for diagnostic recording controls.
 
+The dashboard has three areas: **Drive** (live engineer and telemetry diagnostics),
+**Review** (session library, session overview and lap analysis) and **Settings**.
+Where the local API cannot supply a section, the screens show the reference
+content from `docs/assets/ui-reference.png`; see [the polish plan](docs/ui-polish-plan.md).
+Optional circuit photos go in `web/public/tracks/<track>.jpg` (for example `monaco.jpg`).
+
 The Next.js server reads the control token, not the browser. When overriding
 `F1_ENGINEER_CONTROL_TOKEN_FILE`, use an absolute path. The current
 `F1_ENGINEER_API_URL` accepts only loopback HTTP addresses. For Ubuntu, the
@@ -43,8 +49,7 @@ companion configures a local SSH-forwarded address and a server-only
 ## Simulate live telemetry from Windows
 
 `replay-udp` sends the original datagram payloads from a complete `.f1ecap`
-recording to the normal UDP receiver. Unlike `replay` and the dashboard's
-diagnostic replay, it exercises Windows sending, the network, Ubuntu's socket,
+recording to the normal UDP receiver. Unlike `replay`, it exercises Windows sending, the network, Ubuntu's socket,
 the acquisition queue, journal and live evidence pipeline. No F1 game is needed.
 
 Existing local Melbourne evidence can be checked without sending anything:

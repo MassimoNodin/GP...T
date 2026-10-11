@@ -310,3 +310,23 @@ export function WaveformIcon({ size = 36 }: { size?: number }) {
     </svg>
   );
 }
+
+export function AlertTriangleIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M10.3 3.9 2.4 17.5A2 2 0 0 0 4.1 20.5h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+      <path d="M12 9.5v4.2" />
+      <path d="M12 16.9v.1" strokeWidth={2.4} />
+    </Svg>
+  );
+}
+
+export function FileMissingIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5" />
+      <path d="M9.6 12.6l4.8 4.8M14.4 12.6l-4.8 4.8" />
+    </Svg>
+  );
+}

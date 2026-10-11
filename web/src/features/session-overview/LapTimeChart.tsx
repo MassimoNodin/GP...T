@@ -111,6 +111,7 @@ export function LapTimeChart({
       </svg>
       <div
         className={styles.tooltip}
+        data-flip={mx / W > 0.6 ? "true" : undefined}
         style={{ left: `${(mx / W) * 100}%`, top: `${(Math.max(my - 112, 0) / H) * 100}%` }}
         aria-hidden="true"
       >

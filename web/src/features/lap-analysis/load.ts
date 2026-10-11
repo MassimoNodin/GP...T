@@ -1,15 +1,30 @@
 import type { LapRecord } from "@/lib/api";
 import {
   completedLaps,
+  fetchAcquisition,
+  fetchEvidenceAttempts,
+  fetchEvidenceSession,
   fetchLaps,
   fetchSession,
   sessionBestLap,
+  telemetryFooter,
+  telemetryStatus,
+  TELEMETRY_OFFLINE,
 } from "@/features/review-data/backend";
+import {
+  bestEvidenceLap,
+  evidenceLaps,
+  evidenceSessionContext,
+  type EvidenceAttempt,
+  type EvidenceSession,
+} from "@/features/review-data/session-evidence";
 import { FIXTURE_SESSION_KEY, lapAnalysisFixture, shellFixture } from "@/features/review-data/fixtures";
-import { formatSessionType } from "@/features/review-data/format";
+import { formatGame, formatSessionType } from "@/features/review-data/format";
 import { fixtureLaps } from "@/features/session-overview/load";
-import type { ShellFooter } from "@/features/ui-foundation/AppShell";
+import type { ShellFooter, ShellStatus } from "@/features/ui-foundation/AppShell";
 import { trackKeyFromName } from "@/features/ui-foundation/TrackMap";
+import { unavailableTrace, type LapTelemetry, type LapTrace } from "./lap-telemetry";
+import { fetchEvidenceTrace, fetchPreviewTrace, fetchTrackModelLabel } from "./trace-data";
 
 export type AnalysisLap = {
   id: string;
@@ -17,13 +32,31 @@ export type AnalysisLap = {
   ms: number;
   /** Sector times when the game reported them for this lap. */
   sectors: [number, number, number] | null;
-  /** Attempt key for the local engine; null for reference fixture laps. */
+  /**
+   * v1 attempt key accepted by `POST /api/v1/engineer/ask`; null for reference
+   * fixture laps and for v2 laps (v1 ask cannot resolve v2 attempt ids).
+   */
   attemptKey: string | null;
+  /**
+   * v2 attempt revision id for `GET /api/v2/session-evidence/sessions/{session}/attempts/{revision}`;
+   * null for fixture and v1 laps.
+   */
+  revisionId: string | null;
+  /** Whether the v2 trace is already materialised (`detail.state === "available"`). */
+  traceAvailable?: boolean;
+  /** Game validity verdict; null or absent when the backend did not report one. */
+  valid?: boolean | null;
+  /** Lap included the pit lane. */
+  pit?: boolean;
+  /** False when the start of the lap was not observed. */
+  startObserved?: boolean | null;
 };
 
 export type LapAnalysisModel = {
   sessionKey: string;
   live: boolean;
+  /** Header pill; real sessions keep it in sync with telemetry acquisition. */
+  status: ShellStatus;
   header: string[];
   footer: ShellFooter;
   track: string;
@@ -32,6 +65,14 @@ export type LapAnalysisModel = {
   targetId: string;
   referenceId: string | null;
   bestId: string | null;
+  /** Backend that supplied the laps. */
+  source: "fixture" | "v1" | "v2";
+  /** Set when lap data is known to be incomplete. */
+  lapDataNote: string | null;
+  /** Fixture: illustrative traces. Real sessions: measured traces for the selected laps. */
+  telemetry: LapTelemetry;
+  /** Registered track model for the circuit of a real session; null when none matches. */
+  trackModel: string | null;
 };
 
 function fixtureModel(footer: ShellFooter): LapAnalysisModel {
@@ -44,6 +85,7 @@ function fixtureModel(footer: ShellFooter): LapAnalysisModel {
   return {
     sessionKey: FIXTURE_SESSION_KEY,
     live: false,
+    status: shellFixture.replayMode,
     header: ["Monaco Grand Prix", "Race"],
     footer,
     track: lapAnalysisFixture.track,
@@ -54,10 +96,15 @@ function fixtureModel(footer: ShellFooter): LapAnalysisModel {
       ms: lap.ms,
       sectors: sectorsByLap[lap.lap] ?? null,
       attemptKey: null,
+      revisionId: null,
     })),
     targetId: lapAnalysisFixture.target.id,
     referenceId: lapAnalysisFixture.reference.id,
     bestId: lapAnalysisFixture.reference.id,
+    source: "fixture",
+    lapDataNote: null,
+    telemetry: { kind: "reference" },
+    trackModel: null,
   };
 }
 
@@ -86,12 +133,42 @@ export async function loadLapAnalysis(
   };
   if (sessionKey === FIXTURE_SESSION_KEY) return pick(fixtureModel(footer));
 
+  const acquisition = await fetchAcquisition();
+  const live = async (
+    model: LapAnalysisModel,
+    readTrace: (lap: AnalysisLap) => Promise<LapTrace>,
+    trackLengthM: number | null,
+  ): Promise<LapAnalysisModel> => {
+    const picked = pick(model);
+    return {
+      ...picked,
+      status: acquisition ? telemetryStatus(acquisition) : TELEMETRY_OFFLINE,
+      footer: acquisition ? telemetryFooter(acquisition, picked.footer) : picked.footer,
+      telemetry: await selectedTraces(picked, readTrace),
+      trackModel: await fetchTrackModelLabel(picked.track === UNKNOWN_CIRCUIT ? null : picked.track, trackLengthM),
+    };
+  };
+
+  const evidenceSession = await fetchEvidenceSession(sessionKey);
+  if (evidenceSession) {
+    const result = await fetchEvidenceAttempts(evidenceSession.id);
+    const model = evidenceAnalysisModel(evidenceSession, result?.attempts ?? [], result === null || result.truncated);
+    const length = evidenceSessionContext(evidenceSession, result?.attempts ?? [])?.trackLengthM ?? null;
+    return live(
+      model,
+      (lap) =>
+        lap.revisionId && lap.traceAvailable
+          ? fetchEvidenceTrace(evidenceSession.id, lap.revisionId)
+          : Promise.resolve(unavailableTrace("not_processed")),
+      length,
+    );
+  }
+
   const session = await fetchSession(sessionKey);
   if (!session) return null;
   const records = (await fetchLaps(session)) ?? [];
   const completed = completedLaps(records);
-  if (!completed.length) return pick({ ...fixtureModel(footer), sessionKey });
-  const title = session.context?.track_name ?? "Unknown circuit";
+  const title = session.context?.track_name ?? UNKNOWN_CIRCUIT;
   const best = sessionBestLap(records);
   const laps: AnalysisLap[] = completed.map((lap) => ({
     id: lap.attempt_key,
@@ -99,22 +176,95 @@ export async function loadLapAnalysis(
     ms: lap.lap_time_ms as number,
     sectors: sectorsOf(lap),
     attemptKey: lap.attempt_key,
+    revisionId: null,
+    valid: lap.game_valid,
+    pit: lap.pit_encountered,
+    startObserved: lap.start_observed,
   }));
-  const fallbackTarget = laps.at(-1)?.id ?? "";
-  return pick({
+  return live(
+    {
+      ...realShell(sessionKey, title, formatSessionType(session.context?.session_type), formatGame(session.packet_format)),
+      laps,
+      targetId: laps.at(-1)?.id ?? "",
+      referenceId: best?.attempt_key ?? null,
+      bestId: best?.attempt_key ?? null,
+      source: "v1",
+    },
+    (lap) => (lap.attemptKey ? fetchPreviewTrace(lap.attemptKey) : Promise.resolve(unavailableTrace(null))),
+    session.context?.track_length_m ?? null,
+  );
+}
+
+const UNKNOWN_CIRCUIT = "Unknown circuit";
+
+/**
+ * Measured traces for the laps currently selected as target and reference,
+ * read one at a time (the backend admits a single trace read). The client
+ * compares the keys with its pickers, so a lap missing here means "loading".
+ */
+async function selectedTraces(
+  model: LapAnalysisModel,
+  readTrace: (lap: AnalysisLap) => Promise<LapTrace>,
+): Promise<LapTelemetry> {
+  const traces: Record<string, LapTrace> = {};
+  for (const id of new Set([model.targetId, model.referenceId])) {
+    const lap = id ? model.laps.find((item) => item.id === id) : undefined;
+    if (lap) traces[lap.id] = await readTrace(lap);
+  }
+  return { kind: "real", traces };
+}
+
+/** Model parts shared by real sessions; never carries reference-fixture content. */
+function realShell(sessionKey: string, title: string, type: string, game: string): LapAnalysisModel {
+  return {
     sessionKey,
     live: true,
-    header: [title, formatSessionType(session.context?.session_type)],
-    footer: {
-      tone: "green",
-      label: "Engineer running",
-      lines: [title, `${formatSessionType(session.context?.session_type)}  •  ${laps.length} laps`],
-    },
+    // Replaced from telemetry acquisition by loadLapAnalysis.
+    status: TELEMETRY_OFFLINE,
+    header: [title, type],
+    footer: { ...TELEMETRY_OFFLINE, lines: [game, "Not receiving"] },
     track: title,
     trackKey: trackKeyFromName(title),
+    laps: [],
+    targetId: "",
+    referenceId: null,
+    bestId: null,
+    source: "v1",
+    lapDataNote: null,
+    telemetry: { kind: "real", traces: {} },
+    trackModel: null,
+  };
+}
+
+/** Lap Analysis model for a v2 session: player laps only, no sector times in v2. */
+export function evidenceAnalysisModel(
+  session: EvidenceSession,
+  attempts: EvidenceAttempt[],
+  truncated: boolean,
+): LapAnalysisModel {
+  const context = evidenceSessionContext(session, attempts);
+  const title = context?.trackName ?? UNKNOWN_CIRCUIT;
+  const evidence = evidenceLaps(attempts);
+  const best = bestEvidenceLap(evidence);
+  const laps: AnalysisLap[] = evidence.map((lap) => ({
+    id: lap.id,
+    lap: lap.lap,
+    ms: lap.ms,
+    sectors: lap.sectors,
+    attemptKey: null,
+    revisionId: lap.revisionId,
+    traceAvailable: lap.traceAvailable,
+    valid: lap.valid,
+    pit: lap.pit,
+    startObserved: lap.startObserved,
+  }));
+  return {
+    ...realShell(session.id, title, formatSessionType(context?.sessionType), formatGame(context?.packetFormat)),
     laps,
-    targetId: fallbackTarget,
-    referenceId: best?.attempt_key ?? null,
-    bestId: best?.attempt_key ?? null,
-  });
+    targetId: laps.at(-1)?.id ?? "",
+    referenceId: best?.id ?? null,
+    bestId: best?.id ?? null,
+    source: "v2",
+    lapDataNote: truncated ? "Only the first attempts of this session could be read, so some laps may be missing." : null,
+  };
 }

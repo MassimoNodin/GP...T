@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { DriveDiagnostics } from "@/features/drive-diagnostics/DriveDiagnostics";
 import { loadDrive } from "@/features/drive-diagnostics/load";
-import { shellFixture } from "@/features/review-data/fixtures";
 import { AppShell, HeaderContext } from "@/features/ui-foundation/AppShell";
 
 export const metadata: Metadata = { title: "Drive Diagnostics · Race Engineer" };
@@ -11,9 +10,10 @@ export default async function DrivePage() {
   return (
     <AppShell
       active="drive"
-      status={shellFixture.engineerRunning}
+      live="engineer"
+      status={model.status}
       context={<HeaderContext items={model.header.items} trailing={model.header.trailing} />}
-      footer={shellFixture.sessionFooter}
+      footer={model.footer}
     >
       <DriveDiagnostics model={model} />
     </AppShell>

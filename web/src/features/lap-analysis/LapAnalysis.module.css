@@ -272,6 +272,34 @@
   height: auto;
 }
 
+/* Real sessions without measured traces */
+.chartEmpty {
+  margin: 0;
+  padding: 56px 24px;
+  color: #7d848d;
+  font-size: 12.5px;
+  line-height: 1.65;
+  text-align: center;
+}
+
+.chartEmpty p {
+  margin: 0;
+}
+
+.chartNote {
+  margin: 4px 0 6px;
+  color: #7d848d;
+  font-size: 12px;
+  text-align: center;
+}
+
+.unavailable {
+  margin: 8px 0 0;
+  color: #7d848d;
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
 .rowLabel {
   fill: #2b3037;
   font-size: 12.5px;

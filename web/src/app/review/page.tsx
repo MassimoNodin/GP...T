@@ -10,6 +10,7 @@ export default async function ReviewPage() {
   return (
     <AppShell
       active="review"
+      live="telemetry"
       status={model.status}
       context={<HeaderContext items={model.header.items} trailing={model.header.trailing} />}
       footer={model.footer}
