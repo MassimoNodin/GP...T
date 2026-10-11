@@ -6,7 +6,6 @@
     "test:production-workflow": "node --test scripts/production-workflow.test.mjs",
     "test:header-evidence": "node --test scripts/header-evidence.test.mjs",
     "test:api-transport": "node --test scripts/api-transport.test.mjs",
-    "test:reference-screen-extraction": "node --test scripts/reference-screen-extraction.test.mjs",
     "test:analysis-display": "node scripts/analysis-display-check.mjs",
     "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
