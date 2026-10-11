@@ -13,7 +13,7 @@ from typing import Any, Iterator
 PROCESSOR_VERSION = "session-evidence-v1"
 CHUNK_ROWS = 256
 MAX_READ_ROWS = 20_000
-MAX_READ_BYTES = 16 * 1024 * 1024
+MAX_READ_BYTES = 32 * 1024 * 1024
 MAX_STAGED_ROWS_PER_CAR = 40_000
 
 
@@ -175,6 +175,23 @@ class EvidenceStore:
             (row["id"],),
         ).fetchone()
         result["readiness"] = dict(status) if status else None
+        config = database.execute(
+            """SELECT m.payload FROM sessions s JOIN metadata m ON m.generation=s.generation
+               WHERE s.id=? AND m.kind='processor_config' ORDER BY m.sequence LIMIT 1""",
+            (row["session"],),
+        ).fetchone()
+        profile = json.loads(config["payload"]).get("detail_profile", "full") if config else "full"
+        if status and status["state"] == "deferred":
+            detail_state = "deferred"
+        elif status and status["state"] == "published":
+            detail_state = "available"
+        else:
+            detail_state = "unavailable"
+        result["detail"] = {
+            "profile": profile,
+            "state": detail_state,
+            "reason": status["reason"] if status and detail_state != "available" else None,
+        }
         return result
 
     def evidence(self, attempt_id: str, *, session: str | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -186,6 +203,8 @@ class EvidenceStore:
             if row["rows"] > MAX_READ_ROWS or row["bytes"] > MAX_READ_BYTES:
                 raise EvidenceUnavailable("analysis_read_budget_exceeded")
             attempt = self._attempt(database, row)
+            if attempt["detail"]["state"] == "deferred":
+                raise EvidenceUnavailable(attempt["detail"]["reason"] or "trace_not_selected")
             manifest = attempt["manifest"]
             payload = attempt["payload"]
             if attempt["driver"]:

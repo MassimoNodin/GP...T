@@ -13,6 +13,7 @@ import pytest
 from f1_engineer.analysis.session_comparison import compare_session_laps, measure_completed_laps
 from f1_engineer.processing.coordinator import SessionCoordinator
 from f1_engineer.processing.evidence import EvidenceStore, EvidenceUnavailable
+from f1_engineer.processing.evidence import MAX_READ_BYTES, digest, encode
 from f1_engineer.processing.runtime import LiveSessionRuntime
 from f1_engineer.recording.capture import CaptureReader, CaptureWriter
 from f1_engineer.api.app import create_app
@@ -333,6 +334,41 @@ def test_source_lock_read_budget_and_checksum_integrity(tmp_path, monkeypatch):
     with pytest.raises(EvidenceUnavailable, match="checksum"):
         store.evidence(target["id"])
     coordinator.close()
+
+
+@pytest.mark.parametrize("payload_bytes", [20 * 1024 * 1024, 33 * 1024 * 1024])
+def test_evidence_byte_budget_accepts_larger_laps_but_remains_bounded(tmp_path, monkeypatch, payload_bytes):
+    assert MAX_READ_BYTES == 32 * 1024 * 1024
+    store = EvidenceStore(tmp_path / "evidence.sqlite3")
+    coordinator = SessionCoordinator(store, "byte-budget")
+    try:
+        for raw in admitted_packets():
+            coordinator.ingest(raw)
+        session, target, reference = completed_pair(store)
+        original, records = store.evidence(target["id"], session=session)
+        records[0]["budget_test_padding"] = "x" * payload_bytes
+        content = encode(records)
+        byte_count = len(content.encode())
+        chunk_hash = digest(content)
+        manifest = {**original["manifest"], "chunks": [chunk_hash]}
+        with store.connect() as database:
+            database.execute("INSERT INTO chunks VALUES (?,?,?,?)", (chunk_hash, content, len(records), byte_count))
+            row = dict(database.execute("SELECT * FROM attempts WHERE id=?", (target["id"],)).fetchone())
+            row.update(id="byte-budget-attempt", manifest=encode(manifest), bytes=byte_count)
+            database.execute("INSERT INTO attempts VALUES (" + ",".join("?" for value in row) + ")", tuple(row.values()))
+        monkeypatch.setattr("f1_engineer.processing.evidence.MAX_READ_BYTES", 16 * 1024 * 1024)
+        with pytest.raises(EvidenceUnavailable, match="analysis_read_budget_exceeded"):
+            store.evidence(row["id"], session=session)
+        monkeypatch.undo()
+        if byte_count <= MAX_READ_BYTES:
+            loaded, samples = store.evidence(row["id"], session=session)
+            assert loaded["bytes"] == byte_count
+            assert samples == records
+        else:
+            with pytest.raises(EvidenceUnavailable, match="analysis_read_budget_exceeded"):
+                store.evidence(row["id"], session=session)
+    finally:
+        coordinator.close()
 
 
 def test_runtime_binds_automatically_and_comparison_runs_during_udp(tmp_path):

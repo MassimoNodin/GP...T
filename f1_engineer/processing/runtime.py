@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from ..udp.source import UDPSource
+from ..udp.isolated import IsolatedUDPSource
 from .coordinator import PUBLICATION_BATCH_ROWS, PUBLICATION_INTERVAL_S, SessionCoordinator
 from .evidence import EvidenceStore
+from .detail_demand import DetailCommand, DetailDemandQueue
 
 
 class LiveSessionRuntime:
@@ -17,12 +21,25 @@ class LiveSessionRuntime:
     def __init__(self, store: EvidenceStore, *, host: str, port: int,
                  queue_size: int = 1024, stale_after_s: float = 3.0,
                  publication_batch_size: int = PUBLICATION_BATCH_ROWS,
-                 publication_interval_s: float = PUBLICATION_INTERVAL_S) -> None:
+                 publication_interval_s: float = PUBLICATION_INTERVAL_S,
+                 detail_profile: str = "full") -> None:
         if (not 1 <= queue_size <= 4096 or stale_after_s <= 0
                 or not 1 <= publication_batch_size <= PUBLICATION_BATCH_ROWS
                 or not 0 < publication_interval_s <= 1):
             raise ValueError("invalid live acquisition budget")
         self.store = store
+        if detail_profile not in {"full", "demand_v1"}:
+            raise ValueError("invalid detail profile")
+        self.detail_profile = detail_profile
+        self.detail_tasks = DetailDemandQueue()
+        self._detail_status_lock = threading.Lock()
+        self._detail_status_cache: dict[str, Any] = {
+            "profile": detail_profile,
+            "policy_version": "demand-v1" if detail_profile == "demand_v1" else None,
+            "session_id": None, "epoch": None, "selected": [],
+            "active_tasks": 0, "queued_commands": 0,
+            "observation_rows_created": 0, "observation_rows_skipped_by_policy": 0,
+        }
         self.host = host
         self.port = port
         self.queue_size = queue_size
@@ -84,11 +101,34 @@ class LiveSessionRuntime:
                 "max_publication_batch_size": self.max_publication_batch_size,
                 "last_publication_delay_s": self.last_publication_delay_s,
                 "received": source.stats.received if source else 0,
-                "receiver_mode": "independent_thread" if source and source.independent_receiver else "unavailable",
+                "receiver_mode": ("isolated_process" if source and getattr(source, "isolated_receiver", False)
+                                  else "independent_thread" if source and source.independent_receiver else "unavailable"),
                 "receive_buffer_bytes": source.receive_buffer_bytes if source else None,
                 "dropped": source.stats.dropped if source else 0,
                 "kernel_dropped": source.kernel_receive_drops if source else None,
-                "socket_errors": source.stats.socket_errors if source else 0}
+                "socket_errors": source.stats.socket_errors if source else 0,
+                "detail_processing": self._detail_status()}
+
+    def _detail_status(self) -> dict[str, Any]:
+        with self._detail_status_lock:
+            snapshot = copy.deepcopy(self._detail_status_cache)
+        active, queued = self.detail_tasks.counts()
+        snapshot["active_tasks"] = active
+        snapshot["queued_commands"] = queued
+        return snapshot
+
+    def enqueue_detail_command(self, command: DetailCommand) -> tuple[int, dict[str, object]]:
+        if self.detail_profile != "demand_v1" or self.state not in {"listening", "receiving", "stale"}:
+            return 409, {"reason": "detail_demands_unavailable"}
+        return self.detail_tasks.enqueue(command)
+
+    def detail_targets(self, session_id: str) -> tuple[dict[str, object], ...] | None:
+        if self.detail_profile != "demand_v1":
+            return None
+        return self.detail_tasks.targets(session_id)
+
+    def detail_task(self, task_id: str):
+        return self.detail_tasks.get(task_id)
 
     def _run(self) -> None:
         try:
@@ -100,13 +140,23 @@ class LiveSessionRuntime:
             self._ready.set()
 
     async def _listen(self) -> None:
-        source = UDPSource(self.host, self.port, self.queue_size, independent_receiver=True)
+        source_type = IsolatedUDPSource if sys.platform == "linux" else UDPSource
+        source = source_type(self.host, self.port, self.queue_size, independent_receiver=True)
         self.source = source
         loop = asyncio.get_running_loop()
         with ThreadPoolExecutor(max_workers=1, thread_name_prefix="session-persistence") as executor:
-            coordinator = await loop.run_in_executor(executor, lambda: SessionCoordinator(self.store, f"udp:{self.host}:{self.port}"))
+            coordinator = await loop.run_in_executor(
+                executor, lambda: SessionCoordinator(
+                    self.store, f"udp:{self.host}:{self.port}",
+                    detail_profile=self.detail_profile, detail_demand_queue=self.detail_tasks,
+                )
+            )
             async def persist(function, *arguments):
                 return await loop.run_in_executor(executor, function, *arguments)
+            async def update_detail_status():
+                snapshot = await persist(coordinator.detail_status)
+                with self._detail_status_lock:
+                    self._detail_status_cache = snapshot
             first_pending_ns = None
             pending_since = None
 
@@ -116,6 +166,7 @@ class LiveSessionRuntime:
                     return
                 started = time.perf_counter()
                 count = await persist(coordinator.publish_pending)
+                await update_detail_status()
                 self.last_publication_s = time.perf_counter() - started
                 self.last_publication_batch_size = count
                 self.max_publication_batch_size = max(self.max_publication_batch_size, count)
@@ -128,6 +179,7 @@ class LiveSessionRuntime:
                 await publish()
                 started = time.perf_counter()
                 await persist(coordinator.gap, reason)
+                await update_detail_status()
                 self.last_gap_s = time.perf_counter() - started
 
             async def journal(packets):
@@ -140,6 +192,13 @@ class LiveSessionRuntime:
                 await persist(coordinator.journal_batch, packets)
                 self.last_journal_s = coordinator.last_journal_s
                 self.journaled += len(packets)
+
+            async def apply_one_detail_command():
+                command = self.detail_tasks.pop()
+                if command is not None:
+                    await publish()
+                    await persist(coordinator.apply_detail_command, command)
+                    await update_detail_status()
             try:
                 await source.open()
                 await gap("listener_started_or_reconnected")
@@ -151,6 +210,12 @@ class LiveSessionRuntime:
                 last_received = time.monotonic()
                 stale = False
                 while not self._stop.is_set():
+                    if self.detail_profile == "demand_v1":
+                        if self.detail_tasks.due_tasks():
+                            await publish()
+                            await persist(coordinator.expire_detail_tasks)
+                            await update_detail_status()
+                        await apply_one_detail_command()
                     kernel_drops = source.kernel_receive_drops
                     if kernel_drops is not None and kernel_drops > previous_kernel_drops:
                         await gap("kernel_receive_overflow")
@@ -193,7 +258,13 @@ class LiveSessionRuntime:
                 if pending:
                     await gap("shutdown_discarded_unadmitted_queue")
                 await gap("listener_stopped")
+                await persist(self.detail_tasks.reject_queued_on_shutdown)
                 self.state = "stopped"
             finally:
-                source.close()
-                await persist(coordinator.close)
+                try:
+                    source.close()
+                finally:
+                    try:
+                        await persist(self.detail_tasks.reject_queued_on_shutdown)
+                    finally:
+                        await persist(coordinator.close)

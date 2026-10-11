@@ -23,6 +23,7 @@ from ..analysis.session_comparison import compare_session_laps
 from ..processing.evidence import EvidenceStore, EvidenceUnavailable
 from ..processing.legacy import archived_session_page
 from ..processing.runtime import LiveSessionRuntime
+from ..processing.detail_demand import DetailCommand, DetailDemandQueue
 from ..analysis.ai_admission import AIGateLease, PROCESS_ENGINEER_AI_GATE
 from ..analysis.local_speech import (
     LocalSpeechRuntime,
@@ -1004,14 +1005,19 @@ def create_app(
     engineer_runtime: OllamaRuntime | None = None,
     automatic_acquisition: bool = True,
     evidence_database_path: str | Path | None = None,
+    detail_profile: str = "full",
 ) -> FastAPI:
     """Create a local API bound to operator-configured storage and recording roots."""
     if require_auth and (not control_token or len(control_token) < 32):
         raise ValueError("authenticated API requires a control token of at least 32 characters")
     configured_database_path = Path(database_path).expanduser().resolve()
-    evidence_store = EvidenceStore(evidence_database_path or configured_database_path.with_name(configured_database_path.stem + "-evidence.sqlite3"))
+    if detail_profile not in {"full", "demand_v1"}:
+        raise ValueError("invalid detail profile")
+    default_evidence_suffix = "-demand-evidence.sqlite3" if detail_profile == "demand_v1" else "-evidence.sqlite3"
+    evidence_store = EvidenceStore(evidence_database_path or configured_database_path.with_name(configured_database_path.stem + default_evidence_suffix))
     live_runtime = LiveSessionRuntime(evidence_store, host=recording_host, port=recording_port,
-                                     queue_size=min(recording_queue_size, 1024)) if automatic_acquisition else None
+                                     queue_size=min(recording_queue_size, 1024),
+                                     detail_profile=detail_profile) if automatic_acquisition else None
     comparison_admission = threading.BoundedSemaphore(2)
     configured_recordings_root = Path(recordings_root).expanduser().resolve()
     selected_track_models_root = (
@@ -1108,7 +1114,66 @@ def create_app(
 
     @app.get("/api/v2/session-evidence/status")
     def session_evidence_status():
-        return live_runtime.status() if live_runtime else {"state": "disabled"}
+        return live_runtime.status() if live_runtime else {"state": "disabled", "detail_processing": {"profile": "disabled"}}
+
+    @app.get("/api/v2/session-evidence/detail-targets")
+    def detail_targets(session_id: str = Query(min_length=32, max_length=32)):
+        if live_runtime is None or live_runtime.detail_profile != "demand_v1":
+            return _api_error(409, "detail_demands_unavailable")
+        if not DetailDemandQueue.validate("x", session_id, "0" * 64):
+            return _api_error(404, "detail_session_not_current")
+        targets = live_runtime.detail_targets(session_id)
+        if targets is None:
+            return _api_error(404, "detail_session_not_current")
+        return {"data": list(targets)}
+
+    @app.post("/api/v2/session-evidence/detail-tasks")
+    async def create_detail_task(request: Request, authorization: str | None = Header(default=None)):
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "detail_control_not_authorized")
+        if live_runtime is None or live_runtime.detail_profile != "demand_v1":
+            return _api_error(409, "detail_demands_unavailable")
+        try:
+            body = await request.json()
+        except Exception:
+            return _api_error(422, "detail_task_request_invalid")
+        if (not isinstance(body, dict) or set(body) != {"task_id", "session_id", "binding_id"}
+                or not DetailDemandQueue.validate(body.get("task_id"), body.get("session_id"), body.get("binding_id"))):
+            return _api_error(422, "detail_task_request_invalid")
+        targets = live_runtime.detail_targets(body["session_id"])
+        if targets is None or not any(item.get("binding_id") == body["binding_id"] for item in targets):
+            return _api_error(409, "detail_target_not_current")
+        code, result = live_runtime.enqueue_detail_command(
+            DetailCommand("post", body["task_id"], body["session_id"], body["binding_id"])
+        )
+        if code != 202:
+            return _api_error(code, str(result.get("reason", "detail_task_request_invalid")))
+        return JSONResponse(status_code=202, content={"data": result})
+
+    @app.get("/api/v2/session-evidence/detail-tasks/{task_id}")
+    def get_detail_task(task_id: str):
+        if live_runtime is None or live_runtime.detail_profile != "demand_v1":
+            return _api_error(409, "detail_demands_unavailable")
+        task = live_runtime.detail_task(task_id)
+        if task is None:
+            return _api_error(404, "detail_task_not_found")
+        return {"data": {key: getattr(task, key) for key in task.__dataclass_fields__}}
+
+    @app.delete("/api/v2/session-evidence/detail-tasks/{task_id}")
+    def delete_detail_task(task_id: str, authorization: str | None = Header(default=None)):
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "detail_control_not_authorized")
+        if live_runtime is None or live_runtime.detail_profile != "demand_v1":
+            return _api_error(409, "detail_demands_unavailable")
+        task = live_runtime.detail_task(task_id)
+        if task is None:
+            return _api_error(404, "detail_task_not_found")
+        code, result = live_runtime.enqueue_detail_command(
+            DetailCommand("release", task_id, task.session_id, task.binding_id)
+        )
+        if code != 202:
+            return _api_error(code, str(result.get("reason", "detail_task_not_found")))
+        return JSONResponse(status_code=202, content={"data": result})
 
     @app.get("/api/v2/session-evidence/sessions")
     def evidence_sessions(limit: int = Query(default=100, ge=1, le=100), after: str = Query(default="", max_length=128)):

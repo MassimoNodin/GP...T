@@ -22,6 +22,7 @@ from .sessions.setup_context import PlayerCarSetupObservation
 from .sessions.context import SessionContext
 from .sessions.manager import ContextHistoryChange, SessionTracker
 from .analysis.continuity import float32_ulp, session_time_discontinuity
+from .processing.detail_policy import DetailDemandTarget, DetailPolicyFrame, DetailSelection, select_detail
 from .telemetry.canonical import (
     CarObservation,
     CarSample,
@@ -81,6 +82,8 @@ class PipelineResult:
     car_setup_decode_errors: tuple[str, ...] = ()
     car_slot_tenures: tuple[CarSlotTenure, ...] = ()
     observed_car_lap_attempts: tuple[ObservedCarLapAttempt, ...] = ()
+    detail_selections: tuple[dict[str, object], ...] = ()
+    detail_omissions: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +102,8 @@ class PipelineFlushResult:
     car_setup_decode_errors: tuple[str, ...] = ()
     car_slot_tenures: tuple[CarSlotTenure, ...] = ()
     observed_car_lap_attempts: tuple[ObservedCarLapAttempt, ...] = ()
+    detail_selections: tuple[dict[str, object], ...] = ()
+    detail_omissions: tuple[tuple[str, int], ...] = ()
 
 
 class TelemetryPipeline:
@@ -122,13 +127,27 @@ class TelemetryPipeline:
             values = getattr(self, name)
             while len(values) > 128:
                 values.pop(next(iter(values)))
+        while len(self._last_detail_selection) > 128:
+            self._last_detail_selection.pop(next(iter(self._last_detail_selection)))
 
     def __init__(
         self,
         max_open_frames: int = 256,
         reorder_window_frames: int = 3,
         max_pending_packets: int = 8192,
+        *,
+        detail_profile: str = "full",
     ) -> None:
+        if detail_profile not in {"full", "demand_v1"}:
+            raise ValueError("invalid detail profile")
+        self.detail_profile = detail_profile
+        self.detail_demands: tuple[DetailDemandTarget, ...] = ()
+        self._last_detail_selection: dict[int, tuple[object, ...]] = {}
+        self._detail_selection_events: list[dict[str, object]] = []
+        self._detail_omitted_samples: dict[str, int] = {}
+        self.observation_rows_created = 0
+        self.observation_rows_skipped_by_policy = 0
+
         self.decoder = PacketDecoder()
         self.session_context_decoder = SessionContextDecoder()
         self.sessions = SessionTracker(reorder_window_frames=reorder_window_frames)
@@ -210,6 +229,9 @@ class TelemetryPipeline:
         self.missing_car_telemetry_frame_count = 0
         self.missing_car_telemetry_frame_examples: list[tuple[int, int]] = []
 
+    def set_detail_demands(self, demands: tuple[DetailDemandTarget, ...]) -> None:
+        self.detail_demands = tuple(demands)
+
     def _process_frames(
         self, frames: tuple[PacketFrame, ...]
     ) -> tuple[
@@ -272,6 +294,9 @@ class TelemetryPipeline:
                 tuple[DecodedPacket, CarDamagePacket | None, str | None]
             ] = []
             missing_telemetry_for_frame = False
+            pending_observation: tuple[DecodedPacket, object, int, str | None,
+                                      object | None, str | None, object | None, str | None,
+                                      str | None] | None = None
             for packet in frame.packets:
                 if packet.packet_kind is PacketId.CAR_TELEMETRY:
                     raw_telemetry_candidates.append(packet)
@@ -540,37 +565,11 @@ class TelemetryPipeline:
                         if context is not None
                         else None
                     )
-                    for car_index, lap_data in enumerate(lap_data_packet.cars):
-                        telemetry = (
-                            observation_telemetry.cars[car_index]
-                            if observation_telemetry is not None
-                            and car_index < len(observation_telemetry.cars)
-                            else None
-                        )
-                        motion = (
-                            observation_motion[car_index]
-                            if observation_motion is not None
-                            and car_index < len(observation_motion)
-                            else None
-                        )
-                        observations.append(
-                            make_car_observation(
-                                session_uid=frame.session_uid,
-                                frame_identifier=frame.overall_frame_identifier,
-                                session_time_s=lap_packet.header.session_time,
-                                car_index=car_index,
-                                frame_ordinal=frame_ordinal,
-                                packet_format=int(lap_packet.packet_format),
-                                lifecycle_epoch=association_epoch,
-                                header_player_car_index=player_index,
-                                context_json=context_json,
-                                lap=lap_data,
-                                telemetry=telemetry,
-                                motion=motion,
-                                car_telemetry_unavailable_reason=telemetry_reason,
-                                motion_unavailable_reason=motion_reason,
-                            )
-                        )
+                    pending_observation = (
+                        lap_packet, lap_data_packet, player_index, context_json,
+                        observation_telemetry, telemetry_reason, observation_motion,
+                        motion_reason, ("conflicting_lap_data" if frame_observation_conflicted else None),
+                    )
             lap_data_signatures = {
                 (
                     int(candidate.packet_format),
@@ -630,6 +629,92 @@ class TelemetryPipeline:
                 ),
                 boundary_reason=("lifecycle_boundary" if lifecycle_boundary else None),
             )
+            if pending_observation is not None:
+                (lap_packet, lap_data_packet, player_index, context_json,
+                 observation_telemetry, telemetry_reason, observation_motion,
+                 motion_reason, _) = pending_observation
+                if self.detail_profile == "full":
+                    selected = tuple(range(len(lap_data_packet.cars)))
+                    selection = DetailSelection(selected, tuple((car, ()) for car in selected))
+                else:
+                    tenures = self.car_lap_inventory.active_tenures(
+                        {frame.session_uid: frame_ordinal}
+                    )
+                    selection = select_detail(DetailPolicyFrame(
+                        session_uid=frame.session_uid,
+                        frame_ordinal=frame_ordinal,
+                        packet_format=int(lap_packet.packet_format),
+                        lifecycle_epoch=association_epoch,
+                        player_car_index=player_index,
+                        lap_data=lap_data_packet.cars,
+                        context=inventory_context,
+                        association_scope_assessable=association_scope_assessable,
+                        lap_data_conflicted=lap_data_conflicted,
+                        verified_tenures=tenures,
+                        demands=self.detail_demands,
+                        frame_conflicted=frame_observation_conflicted,
+                    ))
+                    self.observation_rows_skipped_by_policy += max(
+                        0, len(lap_data_packet.cars) - len(selection.cars)
+                    )
+                    snapshot = tuple(
+                        (car, selection.reasons_for(car)) for car in selection.cars
+                    )
+                    binding_signature = tuple(
+                        (car, next(((item.tenure_ordinal, item.participant_identity_fingerprint)
+                                    for item in tenures if item.car_index == car), None))
+                        for car in selection.cars
+                    )
+                    prior = self._last_detail_selection.get(frame.session_uid)
+                    scope = (int(lap_packet.packet_format), association_epoch, snapshot, binding_signature)
+                    if prior != scope:
+                        self._detail_selection_events.append({
+                            "session_uid": frame.session_uid,
+                            "packet_format": int(lap_packet.packet_format),
+                            "epoch": association_epoch,
+                            "frame_ordinal": frame_ordinal,
+                            "selected": [
+                                {"car_index": car, "reasons": list(selection.reasons_for(car))}
+                                for car in selection.cars
+                            ],
+                            "tenures": tenures,
+                        })
+                        self._last_detail_selection[frame.session_uid] = scope
+                if self.detail_profile == "demand_v1" and selected_lap is not None:
+                    selected_cars = set(selection.cars)
+                    for car_index in range(len(selected_lap[1].cars)):
+                        attempt_id = self.car_lap_inventory.lap_tracker.active_attempt_id(car_index)
+                        if attempt_id is not None and car_index not in selected_cars:
+                            self._detail_omitted_samples[attempt_id] = self._detail_omitted_samples.get(attempt_id, 0) + 1
+                for car_index in selection.cars:
+                    lap_data = lap_data_packet.cars[car_index]
+                    telemetry = (
+                        observation_telemetry.cars[car_index]
+                        if observation_telemetry is not None
+                        and car_index < len(observation_telemetry.cars) else None
+                    )
+                    motion = (
+                        observation_motion[car_index]
+                        if observation_motion is not None
+                        and car_index < len(observation_motion) else None
+                    )
+                    observations.append(make_car_observation(
+                        session_uid=frame.session_uid,
+                        frame_identifier=frame.overall_frame_identifier,
+                        session_time_s=lap_packet.header.session_time,
+                        car_index=car_index,
+                        frame_ordinal=frame_ordinal,
+                        packet_format=int(lap_packet.packet_format),
+                        lifecycle_epoch=association_epoch,
+                        header_player_car_index=player_index,
+                        context_json=context_json,
+                        lap=lap_data,
+                        telemetry=telemetry,
+                        motion=motion,
+                        car_telemetry_unavailable_reason=telemetry_reason,
+                        motion_unavailable_reason=motion_reason,
+                    ))
+                    self.observation_rows_created += 1
             if missing_telemetry_for_frame:
                 self.missing_car_telemetry_frame_count += 1
                 if len(self.missing_car_telemetry_frame_examples) < 128:
@@ -1572,7 +1657,25 @@ class TelemetryPipeline:
             car_setup_decode_errors=self.drain_car_setups_decode_errors(),
             car_slot_tenures=car_slot_tenures,
             observed_car_lap_attempts=observed_car_lap_attempts,
+            detail_selections=self._drain_detail_selections(),
+            detail_omissions=self._drain_detail_omissions(observed_car_lap_attempts),
         )
+
+    def _drain_detail_selections(self) -> tuple[dict[str, object], ...]:
+        events = tuple(self._detail_selection_events)
+        self._detail_selection_events.clear()
+        return events
+
+    def _drain_detail_omissions(self, attempts: tuple[ObservedCarLapAttempt, ...]) -> tuple[tuple[str, int], ...]:
+        if self.detail_profile == "full":
+            return ()
+        completed = tuple((item.attempt.attempt_id, self._detail_omitted_samples.pop(item.attempt.attempt_id, 0))
+                          for item in attempts)
+        active_ids = {self.car_lap_inventory.lap_tracker.active_attempt_id(car_index)
+                      for car_index in range(24)}
+        self._detail_omitted_samples = {attempt_id: count for attempt_id, count in self._detail_omitted_samples.items()
+                                        if attempt_id in active_ids}
+        return completed
 
     def finish(self) -> tuple[PacketFrame, ...]:
         return self.finish_with_outputs().completed_frames
@@ -1593,6 +1696,7 @@ class TelemetryPipeline:
             self.car_lap_inventory.interrupt(self._frame_ordinal_by_uid.get(uid, 0) + 1, interruption_reason)
             self._association_epoch_by_uid[uid] = self._association_epoch_by_uid.get(uid, 0) + 1
         car_slot_tenures, observed_car_lap_attempts = self.car_lap_inventory.drain()
+        self._last_detail_selection.clear()
         return PipelineFlushResult(
             completed_frames=frames,
             lap_attempts=tuple(attempts),
@@ -1608,6 +1712,8 @@ class TelemetryPipeline:
             car_setup_decode_errors=self.drain_car_setups_decode_errors(),
             car_slot_tenures=car_slot_tenures,
             observed_car_lap_attempts=observed_car_lap_attempts,
+            detail_selections=self._drain_detail_selections(),
+            detail_omissions=self._drain_detail_omissions(observed_car_lap_attempts),
         )
 
 

@@ -570,6 +570,7 @@ def _api(args: argparse.Namespace) -> int:
             max_recording_upload_bytes=args.max_recording_upload_bytes,
             track_models_root=args.track_models_root,
             reviewed_track_models_root=args.reviewed_track_models_root,
+            detail_profile=getattr(args, "detail_profile", "full"),
         ),
         host="127.0.0.1",
         port=args.port,
@@ -1018,6 +1019,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     api = commands.add_parser("api", help="serve the local telemetry API and import inbox")
     api.add_argument("--database", default=str(DEFAULT_DATABASE), help="SQLite database path")
+    api.add_argument("--detail-profile", choices=("full", "demand_v1"), default="full",
+                     help="opt in to demand-driven live opponent detail")
     api.add_argument("--recordings-root", default="recordings", help="folder containing local .f1ecap files")
     api.add_argument(
         "--track-models-root",

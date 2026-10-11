@@ -91,6 +91,9 @@ Synthetic runs and historical imports are not current live-game acceptance.
 | Historical captures transferred/imported | Checksums match Windows originals; 144,189 + 83,139 packets, seven attempts; no malformed/decode/frame-overflow import errors. Invalid/partial laps and source gaps remain; no eligible reference. Originals preserved. |
 | Windows browser Ask on imported evidence | Correct lap time 1:19.295 plus game-invalid qualification; pinned model CPU, 0 VRAM, 20.5 s. Not microphone/playback acceptance. |
 | Oct 10 actual Austria short practice after migration | Ubuntu received/journaled/processed 71,214 packets, app drops/socket errors zero, kernel drops 25; queue drained, peak 261. Completed game-valid player lap times 1:09.728 and 1:08.881 retained, but both start-unobserved and practice mode policy unimplemented; quarantined, not comparison acceptance. Four kernel-overflow gap records observed. |
+| Oct 10 actual Bahrain practice after restart into independent receiver and explicit practice policy, `33f9f5f` | 228,237 received/journaled/processed, app/kernel/socket losses zero, queue drained, peak 442. Six game-valid completed player laps retained; laps 7-10 fully start-observed without acquisition-gap qualifications. Lap 6 start-unobserved; lap 11 acquisition-gap qualified. 300 advancing-publication samples: publication p95/max 30.077/57.108 ms, backlog p95/max 78.503/306.634 ms; not exhaustive latency statistics. Comparisons 9 vs 8 and 10 vs 7 both reject HTTP 422 `analysis_read_budget_exceeded`: clean laps contain 20.55-21.61 MB of evidence, exceeding the 16 MiB reader budget. Useful live capture, not retained-comparison acceptance; do not request repeat driving to compensate for the reader limitation. |
+| Operator-authorized 32 MiB per-lap reader experiment on saved Bahrain evidence | Isolated Ubuntu worker compares 9 vs 8 and 10 vs 7 successfully, retains and rereads identical reports. Times 0.570/0.539 s; worker peak RSS 139,186,176 bytes. Explicit practice diagnostic policy and qualifications remain; differences -654/+3130 ms. This measures sequential saved-evidence reads, not two concurrent requests or ingestion coexistence with these larger laps. |
+| Restarted Ubuntu API with the one-line 32 MiB trial | Authenticated comparisons 9 vs 8 and 10 vs 7 both HTTP 200 in 0.899/0.741 s; retained report GETs HTTP 200 and payloads match. Independent receiver recovered and is ready, queue/socket/app/kernel counters zero after restart; no new driving during these comparison reads. |
 | Fixture speech transport | JFK WAV correctly transcribed via Windows proxy/SSH on Ubuntu in 1.48 s; not microphone hardware acceptance. |
 
 Earlier cold model call **58.063 s** approached the deadline; idle/warm/unloaded
@@ -133,6 +136,29 @@ the pinned CPU model in 21.3 s. Capture hashes/import results preserved. Run q c
 extended soak/resources, model and speech fixture evidence; postboot report:
 `data/migration-nvme-postboot-20261010.json`.
 Actual game investigation: `data/migration-live-investigation-20261010.json`.
+Latest actual Bahrain window: Windows
+`data/migration-live-ready-20261010-1912/` contains the baseline, bounded
+two-second diagnostics log, six player attempt manifests, failed comparison
+responses and `verification-summary.json`. Background sampling stopped after
+the operator finished; no competing UDP receiver or bulk import was started.
+Production evidence ledger read-only `quick_check` passes after this run.
+The two terminal gap records (sequences 569040 and 569042) are telemetry silence,
+not kernel/app/socket loss; lap 11 remains gap-qualified rather than being
+promoted to clean comparison evidence.
+`read-budget32-worker.json` preserves the isolated comparison measurements.
+`read-budget32-api-verification.json` and the `comparison32-api-*` responses
+preserve the successful restarted-API retries. New byte-budget tests accept a
+20 MiB payload and reject a 33 MiB payload. The relevant regression run passed
+47 of 48 tests initially; the timing-sensitive live UDP comparison test failed
+with `attempt_not_measurement_ready` and passed its isolated rerun. Existing
+Starlette/httpx deprecation warning remains; no unrelated test change was made.
+The requested byte-limit change is 16 to 32 MiB per lap; the 20,000-row limit,
+checksums/ownership checks, two-request comparison admission and receiver/WAL
+settings are unchanged. Ubuntu received only the one-line reader change as an
+uncommitted experiment, with rollback copy
+`data/migration-evidence-reader16-20261010-before.py`; no unrelated Windows
+dashboard changes were deployed. Normal deployment still requires an explicitly
+authorized commit/push of this change.
 
 ## Safeguards and unresolved issues
 
@@ -145,15 +171,25 @@ Actual game investigation: `data/migration-live-investigation-20261010.json`.
 - Automatic v2 acquisition owns UDP 20777; legacy controls correctly reject a
   second receiver. Imported/v1 Ask and v2 live evidence are separate paths;
   importing history does not validate live Ask.
-- Dashboard/Live Telemetry still requires a pinned v1 recording or replay; the
-  automatic v2 receiver does not populate that source. Thus an empty live UI
-  does not mean no acquisition. Wire v2 monitoring explicitly; do not start a
-  competing legacy receiver. Actual practice also exposes an unimplemented
-  comparison-mode policy and kernel loss; root cause of these drops is not yet
-  established. Stored completed laps alone are not clean comparison evidence.
+- Dashboard/Live Telemetry now has a separate read-only automatic v2 acquisition
+  panel: receiver state, admission/publication counters, separate app/kernel/socket
+  losses, queue occupancy and last publication backlog. Unknown kernel losses stay
+  unknown; disconnect/hidden tabs clear values. The authenticated Windows proxy
+  does not start a competing receiver. Player gauges/charts still require a pinned
+  v1 recording or replay; v2 player-monitor integration remains pending.
+  Explicit practice/qualifying comparison policy is implemented. The latest actual
+  Bahrain run has no reported app/kernel/socket losses. Its initial comparisons
+  failed the 16 MiB budget; the operator-authorized 32 MiB experiment now retains
+  diagnostic comparisons in an isolated worker and through the restarted API.
+  Verify larger-lap read contention before treating the new resource budget as accepted;
+  the cause of earlier kernel losses remains
+  unproven and one clean run does not establish universal reliability.
+  Stored completed laps alone are not clean comparison evidence.
 - Current captures contain invalid/partial laps and missing damage samples.
-  Completion/integrity is not reference/coaching eligibility. Valid live laps,
-  retained comparison and calibrated geometry still need evidence.
+  Completion/integrity is not reference/coaching eligibility. The latest run has
+  four valid, fully start-observed, gap-unqualified live player laps and retained
+  diagnostic comparisons at 32 MiB; calibrated geometry and coaching eligibility
+  remain unproven.
 - Cold-model headroom remains a risk; operator microphone/edit/submit/read-aloud
   and representative live-game telemetry remain acceptance gates. Do not bulk-import
   during live validation; simultaneous import contention is not resolved.
@@ -174,11 +210,149 @@ Acceptance counts completed milestones, not code volume:
 4. **Operator gate:** transcription/model and historical Ask work; real
    microphone/edit/submit/audible playback pending.
 5. **Live-game gate:** repaired NVMe 30-minute model coexistence passes;
-   representative valid live laps and retained comparison pending.
+   earlier actual Bahrain run retains valid fully observed player laps with zero
+   reported receiver losses and retained diagnostic comparisons at the requested
+   32 MiB budget through the restarted authenticated API. New-budget large-lap
+   ingestion contention remains pending; the October 10 reapproval run reports
+   receiver losses before stress workloads launch and does not pass the live gate.
 6. **Complete:** crash/disconnect/capacity/full-filesystem checks, 30-minute
    resources, final regressions and actual NVMe/service reboot persistence pass.
 
 **[####--] 4/6 accepted (67%)**. No synthetic claim of live-game acceptance.
+
+Milestone 5 reapproval run armed October 10 after the 32 MiB API retries:
+Windows `data/migration-m5-live-coexistence-20261010-2146/` records a fresh
+baseline (61 old received/processed packets excluded), 0.25-second latest-value
+samples and five-second Ubuntu process/cgroup/memory/pressure/storage samples.
+After a new completed player lap, the harness schedules at most 24 batches of
+two simultaneous saved Bahrain lap comparisons, 15 seconds apart, plus three
+pinned CPU model calls at offsets 0/90/180 seconds. The model calls use verified
+historical v1 evidence to exercise contention, not live v2 Ask. Total harness
+duration is bounded to 45 minutes; no bulk imports or competing listener.
+Observed receiver losses stop additional workloads without stopping acquisition.
+Driving protocol: fresh dry Bahrain practice, one out-lap then five uninterrupted
+timed laps; pause after the fifth timed completion and request result review.
+Milestone 5 stays pending until overlap, loss, sampled latency, resource and fresh
+lap/retained-comparison evidence are inspected. Sampling is not exhaustive
+per-publication maximum-latency proof; do not silently relax existing thresholds.
+
+Reapproval result (October 10, stopped 22:07:34 Sydney / 11:07:34 UTC):
+**Milestone 5 remains pending; 4/6 milestones accepted.** The harness and its
+resource sampler stopped; acquisition and Ollama services remain active. Since
+baseline, 222,230 packets were received and 222,139 journaled/processed, with
+91 application queue drops, 7 reported kernel drops and zero socket errors. The
+queue drained afterward; peak occupancy was 992/1024. First sampled loss was
+21:59:39 Sydney, before the 22:00:12 completed-lap workload trigger. The safety
+guard therefore launched zero comparison batches and zero model calls during
+driving. Preflight comparisons preceded arming and do not establish coexistence.
+
+Across 2,363 advancing-publication samples, publication p95/max was
+33.126/368.988 ms and backlog p95/max was 75.092/3,513.788 ms. The sampled
+backlog maximum exceeds the existing 1-second gate; percentile passes do not
+override packet losses or missing workload overlap. These are sampled
+latest-value statistics, not exhaustive per-publication latency measurements.
+The 185 resource samples retained at least 6.18 GB available memory and
+903.20 GB NVMe free, with NVMe mounted throughout and no parent-service process
+swap. Backend/model CPU affinities remained 0-1/2-3; no cause of the stalls is
+established from this alone.
+
+Fresh session `6a0c945288aa51dab29768cbbd31261c` retained two game-valid,
+fully start-observed, gap-unqualified published player laps: lap 4 (95,174 ms,
+20,554,007 bytes) and lap 5 (111,363 ms, 24,049,507 bytes). Their post-driving
+32 MiB diagnostic comparison and authenticated retained GET succeeded, report
+`e78642e128a2f610fb50a5951e91b786b10383ceb8749112762a5ec57ffe5118`.
+This proves these new large laps can be read, not live model/comparison overlap
+or coaching eligibility. Run artifacts, loss chronology and sampled resource
+summary are retained in the ignored run directory above. Investigate acquisition
+stalls before requesting another driving run; do not increase buffers or relax
+acceptance thresholds to hide the losses.
+
+### October 10 kernel-receive isolation investigation
+
+Read-only inspection of the production UDP socket confirmed seven socket drops;
+host UDP errors were receive-buffer errors, not checksum or UDP-memory errors.
+The first loss precedes retained opponent-lap publication in the new run. Raw
+journal sequences 641444/641445 have a 190.430 ms monotonic receive gap near the
+first loss. These user-space timestamps cannot distinguish network/game bursts
+from receiver scheduling delays; the exact historical trigger remains unproven.
+
+A controlled, independent-process sender reproduced the receiver-thread failure
+on Ubuntu with unchanged 212,992-byte socket buffering and 1,024-packet admission:
+530 packets/s plus a deliberate 190 ms parent-interpreter stall lost 11 of 240
+datagrams in the threaded receiver, versus zero with process-isolated reception.
+A 355 packets/s, 500 ms diagnostic also reproduced losses (69/240 threaded,
+zero isolated). Artificial stalls establish the failure mechanism, not attribution
+of every historical loss to a particular processing function.
+
+Linux automatic acquisition now selects an isolated socket-owner process with
+a bounded shared mapped ring; Windows retains the independent-thread path.
+The ring has the same packet-count limit, supports full UDP payloads, and uses
+anonymous temporary backing with sparse allocation. No socket buffers or queue
+limits are increased. Shutdown preserves queued packets for the existing discard
+fence, releases resources on failures, and terminates reception on parent death.
+Status identifies this path as `isolated_process`. Opponent
+selection/persistence policy is unchanged.
+
+Reproduce on Linux with:
+
+```
+python -m scripts.benchmark_receiver_isolation --output data/unique-isolation.json
+```
+
+An isolated-checkout 90-second loopback ingestion/comparison run admitted,
+journaled and processed all 33,700 packets with zero kernel/application/socket
+losses and retained its comparison after shutdown. Queue peak was 414/1024;
+sampled publication p95 was 117.382 ms and backlog p95/max 579.211/912.642 ms.
+Its database was on the host root filesystem, not production NVMe; do not compare
+these timings directly with production or claim all live latency gates passed.
+Evidence is in Ubuntu data/udp-isolation-20261010-fix/ and the corresponding
+ignored Windows data directory. Production services/source were not replaced;
+normal explicitly approved push/pull deployment and fresh live-game acceptance
+remain necessary. Milestone 5 remains pending.
+
+Follow-up on October 11: Windows-to-Ubuntu synthetic traffic exposed a second
+remaining risk. The host receives over `wlp6s0` Wi-Fi with power saving enabled.
+The original sender generated packets while sending and had catch-up delays of
+630/452 ms; two runs lost 597/297 packets despite isolated reception. Preparing
+the same 33,700 datagrams before sending reduced maximum sender lateness to
+120 ms, but the power-saving-on run still recorded 14 kernel drops.
+
+A temporary power-saving-off run with the same precomputed workload and a
+comparable 118 ms maximum sender lateness admitted, journaled, and processed
+all 33,700 packets without application/kernel/socket loss. All split-host checks
+passed, including retained comparison, concurrent ingestion, and SQLite
+integrity. Publication p95 was 17.791 ms, oldest-delay p95/max was
+51.620/141.498 ms, and queue peak was 43/1024. The database was on NVMe.
+This A/B result implicates the Wi-Fi power-saving path in the residual synthetic
+losses; it does not establish the cause of every historical live-game drop.
+Power saving was restored to on after the test; the production service remained
+active with its original PID/source. Results are under
+`/mnt/nvme/f1-engineer-migration-checks/udp-isolation-20261010-lan-*` and the
+ignored Windows `data/udp-isolation-20261010-fix/` directory.
+
+Before live acceptance, prefer wired reception or explicitly approve disabling
+power saving for the telemetry Wi-Fi connection. On this host the connection
+is `dusty`; record its existing value before making a persistent change:
+
+```sh
+nmcli -g 802-11-wireless.powersave connection show dusty
+sudo nmcli connection modify dusty 802-11-wireless.powersave 2
+sudo iw dev wlp6s0 set power_save off
+iw dev wlp6s0 get power_save
+```
+
+These commands are an operator recommendation, not a persistent change already
+applied. Do not restart the Wi-Fi connection during active ingestion. Restore
+the recorded connection value and previous runtime setting to roll back. The
+isolated receiver also still needs the normal approved code deployment.
+
+Validation: full isolated Ubuntu suite passed (1,111 passed, one skipped).
+The Windows full suite had 1,095 passed, 16 skipped, and one failure in the
+200 ms stale-timeout live-comparison test. That test failed again during
+concurrent synthetic sending, then passed standalone on both unchanged HEAD
+and the patched checkout; do not report the complete Windows suite as green.
+The focused receiver run had 20 passed and nine skipped apart from that test.
+Compilation and diff-whitespace checks passed.
 
 After automated work, operator:
 1. Set F1 UDP `192.168.1.115:20777`; drive clean completed comparable laps;

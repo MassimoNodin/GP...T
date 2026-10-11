@@ -5,7 +5,7 @@ import hashlib
 import sqlite3
 import uuid
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from collections import OrderedDict
 from collections.abc import Sequence
 from typing import Any
@@ -18,6 +18,9 @@ from ..storage.lock import ImportRunLock
 from ..udp.models import RawDatagram
 from .evidence import CHUNK_ROWS, MAX_STAGED_ROWS_PER_CAR, PROCESSOR_VERSION, EvidenceStore, EvidenceUnavailable, digest, encode
 from .output_consumption import consume_trace_outputs
+from .detail_demand import DetailCommand, DetailDemandQueue
+from .detail_policy import DetailDemandTarget
+from ..sessions.car_lap_inventory import CarSlotTenure
 
 
 PUBLICATION_BATCH_ROWS = 32
@@ -27,10 +30,17 @@ PUBLICATION_INTERVAL_S = 0.020
 class SessionCoordinator:
     """One serialized owner for live and replay. Raw admission precedes publication."""
 
-    def __init__(self, store: EvidenceStore, source: str, *, recover: bool = True) -> None:
+    def __init__(self, store: EvidenceStore, source: str, *, recover: bool = True,
+                 detail_profile: str = "full", detail_demand_queue: DetailDemandQueue | None = None) -> None:
+        if detail_profile not in {"full", "demand_v1"}:
+            raise ValueError("invalid detail profile")
         self.store = store
         self.source = source
-        self.pipeline = TelemetryPipeline(max_open_frames=64, max_pending_packets=512)
+        self.detail_profile = detail_profile
+        self.detail_demand_queue = (detail_demand_queue or DetailDemandQueue()
+                                    if detail_profile == "demand_v1" else None)
+        self.pipeline = TelemetryPipeline(max_open_frames=64, max_pending_packets=512,
+                                          detail_profile=detail_profile)
         self.sequence = 0
         self.admitted_sequence = 0
         self.last_journal_s = 0.0
@@ -61,6 +71,17 @@ class SessionCoordinator:
                     self.close()
                     raise EvidenceUnavailable("processor_version_requires_new_generation")
                 self.generation = existing["id"]
+                configured = database.execute(
+                    "SELECT payload FROM metadata WHERE generation=? AND kind='processor_config' ORDER BY sequence LIMIT 1",
+                    (self.generation,),
+                ).fetchone()
+                old_config = json.loads(configured["payload"]) if configured else {}
+                old_profile = old_config.get("detail_profile", "full")
+                old_policy = old_config.get("detail_policy_version")
+                requested_policy = "demand-v1" if detail_profile == "demand_v1" else None
+                if old_profile != detail_profile or old_policy != requested_policy:
+                    self.close()
+                    raise EvidenceUnavailable("processing_profile_mismatch_requires_new_generation")
                 database.execute("UPDATE generations SET state='recovering' WHERE id=?", (self.generation,))
             else:
                 self.generation = uuid.uuid4().hex
@@ -71,7 +92,9 @@ class SessionCoordinator:
                     encode({"processor_version": PROCESSOR_VERSION, "ledger_schema": 2,
                             "max_open_frames": 64, "max_pending_packets": 512, "reorder_window_frames": 3,
                             "context_history_limit": 512, "attempt_context_limit": 64,
-                            "staging_limit_per_car": MAX_STAGED_ROWS_PER_CAR}),
+                            "staging_limit_per_car": MAX_STAGED_ROWS_PER_CAR,
+                            "detail_profile": detail_profile,
+                            "detail_policy_version": "demand-v1" if detail_profile == "demand_v1" else None}),
                 ))
         if existing:
             try:
@@ -116,16 +139,24 @@ class SessionCoordinator:
                 self._publish_entries(tail)
         with self.store.connect() as database:
             database.execute("UPDATE generations SET state=? WHERE id=?", ("finished" if self.finished else "running", self.generation))
+        if self.finished and self.detail_demand_queue is not None:
+            self.detail_demand_queue.reject_queued_on_shutdown()
+        else:
+            self._clear_detail_tasks("detail_acquisition_interrupted")
 
     @contextmanager
     def _transaction(self):
-        try:
-            with self._writer:
-                yield self._writer
-        except Exception:
-            self._staging_counts.clear()
-            self._binding_payloads.clear()
-            raise
+        guard = self.detail_demand_queue.owner_transaction() if self.detail_demand_queue else nullcontext()
+        with guard:
+            try:
+                with self._writer:
+                    yield self._writer
+            except Exception:
+                self._staging_counts.clear()
+                self._binding_payloads.clear()
+                if self.detail_demand_queue is not None:
+                    self.detail_demand_queue.reject_queued_on_shutdown()
+                raise
 
     def close(self) -> None:
         self._writer.close()
@@ -150,6 +181,30 @@ class SessionCoordinator:
     @property
     def pending_publication(self) -> int:
         return self.admitted_sequence - self.sequence
+
+    def detail_status(self) -> dict[str, Any]:
+        uid = self.pipeline.sessions.current_session_uid
+        current = self.pipeline._last_detail_selection.get(uid) if uid is not None else None
+        selected = []
+        epoch = None
+        packet_format = None
+        if current is not None:
+            packet_format, epoch, snapshot = current[:3]
+            selected = [{"car_index": car, "reasons": list(reasons)} for car, reasons in snapshot]
+        active, queued = self.detail_demand_queue.counts() if self.detail_demand_queue else (0, 0)
+        session_id = None
+        if uid is not None:
+            row = self._writer.execute(
+                "SELECT id FROM sessions WHERE generation=? AND uid=? ORDER BY occurrence DESC LIMIT 1",
+                (self.generation, str(uid)),
+            ).fetchone()
+            session_id = row["id"] if row else None
+        return {"profile": self.detail_profile,
+                "policy_version": "demand-v1" if self.detail_profile == "demand_v1" else None,
+                "session_id": session_id, "epoch": epoch, "packet_format": packet_format,
+                "selected": selected, "active_tasks": active, "queued_commands": queued,
+                "observation_rows_created": self.pipeline.observation_rows_created,
+                "observation_rows_skipped_by_policy": self.pipeline.observation_rows_skipped_by_policy}
 
     def journal(self, raw: RawDatagram) -> None:
         self.journal_batch((raw,))
@@ -188,10 +243,26 @@ class SessionCoordinator:
             return 0
         try:
             self._publish_entries(rows)
+            self._terminate_stale_tasks()
         except Exception:
             self._mark_failed()
             raise
         return sum(row["kind"] == "datagram" for row in rows)
+
+    def _terminate_stale_tasks(self) -> None:
+        if self.detail_demand_queue is None:
+            return
+        bindings = self._current_detail_bindings()
+        session = self._session_ids.get(self.pipeline.sessions.current_session_uid)
+        for task in self.detail_demand_queue.active_tasks():
+            if task.session_id == session and task.binding_id in bindings:
+                continue
+            metadata = self._append("detail_demand", b"", {
+                "command": "interrupt", "task_id": task.task_id,
+                "session_id": task.session_id, "binding_id": task.binding_id,
+                "reason": "detail_scope_changed",
+            }, synchronous=True)
+            self._process("detail_demand", b"", metadata)
 
     def _publish_entries(self, rows: Sequence[sqlite3.Row]) -> None:
         with self._transaction() as database:
@@ -205,9 +276,54 @@ class SessionCoordinator:
 
     def gap(self, reason: str) -> None:
         self._admit("gap", b"", {"reason": reason})
+        self._clear_detail_tasks("detail_acquisition_interrupted")
+
+    def _clear_detail_tasks(self, reason: str) -> None:
+        if self.detail_demand_queue is None:
+            return
+        for task in self.detail_demand_queue.active_tasks():
+            command = DetailCommand("interrupt", task.task_id, task.session_id, task.binding_id)
+            metadata = self._append("detail_demand", b"", {
+                "command": command.command, "task_id": command.task_id,
+                "session_id": command.session_id, "binding_id": command.binding_id,
+                "reason": reason,
+            }, synchronous=True)
+            self._process("detail_demand", b"", metadata)
+
+    def apply_detail_command(self, command: DetailCommand) -> None:
+        if self.pending_publication:
+            self.publish_pending()
+        payload = {"command": command.command, "task_id": command.task_id,
+                   "session_id": command.session_id, "binding_id": command.binding_id}
+        if command.command == "post" and self.detail_demand_queue is not None:
+            payload["lease_expires_at"] = self.detail_demand_queue.lease_deadline()
+        metadata = self._append("detail_demand", b"", payload, synchronous=True)
+        try:
+            self._process("detail_demand", b"", metadata)
+        except Exception:
+            self._mark_failed()
+            raise
+
+    def expire_detail_tasks(self) -> None:
+        if self.detail_demand_queue is None:
+            return
+        if self.pending_publication:
+            self.publish_pending()
+        for task in self.detail_demand_queue.due_tasks():
+            command = DetailCommand("expire", task.task_id, task.session_id, task.binding_id)
+            payload = {"command": command.command, "task_id": command.task_id,
+                       "session_id": command.session_id, "binding_id": command.binding_id}
+            metadata = self._append("detail_demand", b"", payload, synchronous=True)
+            try:
+                self._process("detail_demand", b"", metadata)
+            except Exception:
+                self._mark_failed()
+                raise
 
     def finish(self) -> None:
         self._admit("finish", b"", {})
+        if self.detail_demand_queue is not None:
+            self.detail_demand_queue.reject_queued_on_shutdown()
 
     def _admit(self, kind: str, payload: bytes, metadata: dict[str, Any]) -> None:
         if self.pending_publication:
@@ -221,6 +337,9 @@ class SessionCoordinator:
 
     def _mark_failed(self) -> None:
         self.failed = True
+        if self.detail_demand_queue is not None:
+            self.detail_demand_queue.reject_queued_on_shutdown()
+            self.pipeline.set_detail_demands(())
         try:
             with self.store.connect() as database:
                 database.execute("UPDATE generations SET state='failed' WHERE id=?", (self.generation,))
@@ -271,6 +390,47 @@ class SessionCoordinator:
             pass
         return metadata
 
+    def _current_detail_bindings(self) -> dict[str, CarSlotTenure]:
+        uid = self.pipeline.sessions.current_session_uid
+        if uid is None or uid not in self._session_ids:
+            return {}
+        session = self._session_ids[uid]
+        return {
+            digest(f"{session}:{item.lifecycle_epoch}:{item.car_index}:{item.tenure_ordinal}:{item.participant_identity_fingerprint}"): item
+            for item in self.pipeline.car_lap_inventory.active_tenures({uid: self.pipeline.frame_ordinal(uid)})
+            if item.session_uid == uid
+        }
+
+    def _apply_detail_demand(self, metadata: dict[str, Any]) -> None:
+        queue = self.detail_demand_queue
+        if queue is None:
+            return
+        command = DetailCommand(metadata["command"], metadata["task_id"],
+                                metadata["session_id"], metadata["binding_id"])
+        current_bindings = self._current_detail_bindings()
+        uid = self.pipeline.sessions.current_session_uid
+        session = self._session_ids.get(uid)
+        if command.command in {"expire", "interrupt"}:
+            queue.terminate_one(command.task_id,
+                                reason=("detail_task_expired" if command.command == "expire"
+                                        else metadata.get("reason", "detail_acquisition_interrupted")),
+                                effective_sequence=self.sequence)
+        else:
+            tenure = current_bindings.get(command.binding_id)
+            queue.apply(
+                command, effective_sequence=self.sequence,
+                target_current=tenure is not None and command.session_id == session,
+                is_player=(tenure is not None and tenure.car_index ==
+                           self.pipeline._last_association_player_by_uid.get(uid)),
+                frame_ordinal=self.pipeline.frame_ordinal(uid) + 1 if uid is not None else None,
+                expires_at=metadata.get("lease_expires_at"),
+            )
+        self.pipeline.set_detail_demands(tuple(
+            DetailDemandTarget(task.task_id, current_bindings[task.binding_id])
+            for task in queue.active_tasks()
+            if task.session_id == session and task.binding_id in current_bindings
+        ))
+
     def _process(self, kind: str, payload: bytes, metadata: dict[str, Any], *, persist: bool = True,
                  database: sqlite3.Connection | None = None) -> None:
         if persist and database is None:
@@ -292,12 +452,19 @@ class SessionCoordinator:
             if persist and (metadata.get("retired_input") or metadata.get("restart_occurrence")):
                 self._metadata(database, "input_route", [{"retired_input": metadata.get("retired_input", False),
                                                          "restart_occurrence": metadata.get("restart_occurrence", False)}])
+        elif kind == "detail_demand":
+            self._apply_detail_demand(metadata)
         restart_occurrence = metadata.pop("restart_occurrence", False)
         retired_input = metadata.pop("retired_input", False)
         prior_output = None
         if restart_occurrence:
             prior_output = self.pipeline.finish_with_outputs(interruption_reason="authoritative_new_occurrence")
-            self.pipeline = TelemetryPipeline(max_open_frames=64, max_pending_packets=512)
+            created = self.pipeline.observation_rows_created
+            skipped = self.pipeline.observation_rows_skipped_by_policy
+            self.pipeline = TelemetryPipeline(max_open_frames=64, max_pending_packets=512,
+                                              detail_profile=self.detail_profile)
+            self.pipeline.observation_rows_created = created
+            self.pipeline.observation_rows_skipped_by_policy = skipped
         if kind == "datagram" and not retired_input:
             try:
                 output = self.pipeline.process(RawDatagram(payload=payload, **{**metadata, "sequence": self.sequence}))
@@ -309,6 +476,27 @@ class SessionCoordinator:
         elif kind == "gap":
             output = self.pipeline.finish_with_outputs(interruption_reason=metadata["reason"])
             self.gap_epoch += 1
+        if output is not None and not persist:
+            for event in getattr(output, "session_events", ()) if self.detail_profile == "demand_v1" else ():
+                if event.kind == "session_started":
+                    identity = self._writer.execute(
+                        "SELECT payload FROM metadata WHERE generation=? AND sequence=? AND kind='logical_session'",
+                        (self.generation, self.sequence),
+                    ).fetchone()
+                    if identity is not None:
+                        session = json.loads(identity["payload"])["session_id"]
+                    else:
+                        legacy = self._writer.execute(
+                            "SELECT id FROM sessions WHERE generation=? AND uid=? LIMIT 2",
+                            (self.generation, str(event.session_uid)),
+                        ).fetchall()
+                        if len(legacy) != 1:
+                            raise EvidenceUnavailable("detail_replay_session_identity_unavailable")
+                        session = legacy[0]["id"]
+                    self._session_ids[event.session_uid] = session
+                    while len(self._session_ids) > 128:
+                        self._session_ids.popitem(last=False)
+            self._update_detail_targets(output)
         if not persist:
             self.pipeline.release_consumed_history()
             return
@@ -322,6 +510,11 @@ class SessionCoordinator:
                 database.execute("UPDATE sessions SET lifecycle='interrupted',acquisition='stale' WHERE generation=? AND lifecycle!='ended'", (self.generation,))
             if error:
                 self._metadata(database, "decode_error", [{"error": error}])
+            if kind == "detail_demand":
+                self._metadata(database, "detail_demand", [{
+                    "task_id": metadata["task_id"], "command": metadata["command"],
+                    "session_id": metadata["session_id"], "binding_id": metadata["binding_id"],
+                }])
             if retired_input:
                 self._metadata(database, "retired_input", [{"reason": "ended_or_retired_logical_session"}])
             if kind == "finish":
@@ -331,8 +524,14 @@ class SessionCoordinator:
         self.pipeline.release_consumed_history()
 
     def _metadata(self, database: sqlite3.Connection, kind: str, values: Sequence[Any]) -> None:
+        first_ordinal = 0
+        if kind == "detail_selection" and values:
+            first_ordinal = database.execute(
+                "SELECT COALESCE(MAX(ordinal),-1)+1 FROM metadata WHERE generation=? AND sequence=? AND kind=?",
+                (self.generation, self.sequence, kind),
+            ).fetchone()[0]
         database.executemany("INSERT OR IGNORE INTO metadata VALUES (?,?,?,?,?)", [
-            (self.generation, self.sequence, kind, ordinal, encode(value))
+            (self.generation, self.sequence, kind, first_ordinal + ordinal, encode(value))
             for ordinal, value in enumerate(values)
         ])
 
@@ -345,6 +544,11 @@ class SessionCoordinator:
                 database.execute("INSERT INTO sessions VALUES (?,?,?,'active','receiving',NULL,?)",
                                  (session, self.generation, str(event.session_uid), occurrence))
                 self._session_ids[event.session_uid] = session
+                if self.detail_profile == "demand_v1":
+                    self._metadata(database, "logical_session", [{
+                        "session_id": session, "session_uid": event.session_uid,
+                        "occurrence": occurrence,
+                    }])
                 while len(self._session_ids) > 128:
                     self._session_ids.popitem(last=False)
             else:
@@ -386,6 +590,30 @@ class SessionCoordinator:
             self._binding_payloads.move_to_end(driver)
             while len(self._binding_payloads) > 512:
                 self._binding_payloads.popitem(last=False)
+        self._update_detail_targets(output)
+        selection_records = []
+        for event in getattr(output, "detail_selections", ()):
+            uid = int(event["session_uid"])
+            session = self._session(uid)
+            selected = []
+            for item in event.get("selected", ()):
+                car_index = int(item["car_index"])
+                binding_id = None
+                for tenure in event.get("tenures", tenures):
+                    if (tenure.session_uid == uid and tenure.car_index == car_index
+                            and tenure.lifecycle_epoch == event["epoch"]
+                            and tenure.start_frame_ordinal <= event["frame_ordinal"]
+                            < tenure.end_frame_ordinal_exclusive):
+                        binding_id = digest(f"{session}:{tenure.lifecycle_epoch}:{tenure.car_index}:{tenure.tenure_ordinal}:{tenure.participant_identity_fingerprint}")
+                        break
+                selected.append({"car_index": car_index, "binding_id": binding_id,
+                                 "reasons": item.get("reasons", [])})
+            selection_records.append({
+                "logical_session": session, "epoch": event["epoch"],
+                "frame_ordinal": event["frame_ordinal"], "journal_sequence": self.sequence,
+                "selected": selected,
+            })
+        self._metadata(database, "detail_selection", selection_records)
         source_ranges = {(frame.session_uid, frame.overall_frame_identifier):
                          sorted({packet.source_sequence for packet in frame.packets if packet.source_sequence is not None})
                          for frame in output.completed_frames}
@@ -412,14 +640,37 @@ class SessionCoordinator:
         consume_trace_outputs(output.car_samples, output.lap_attempts, write_sample=write_player_sample,
                               finish_attempt=lambda attempt: self._publish(database, attempt, "player", attempt.association_epoch,
                                                                             attempt.association_packet_format))
+        detail_omissions = dict(getattr(output, "detail_omissions", ()))
         for observed in output.observed_car_lap_attempts:
-            self._publish(database, observed.attempt, "opponent", observed.lifecycle_epoch, observed.packet_format)
+            self._publish(database, observed.attempt, "opponent", observed.lifecycle_epoch, observed.packet_format,
+                          omitted_samples=detail_omissions.get(observed.attempt.attempt_id, 0))
         for event in output.lifecycle_events:
             self._reconcile(database, event)
             if event.event_kind == "session_end_annotation":
                 database.execute("UPDATE sessions SET lifecycle='ended' WHERE id=?", (self._session(event.session_uid),))
         for uid, car in {(row.session_uid, row.car_index) for row in output.car_observations}:
             self._prune_staging(database, str(uid), car)
+
+    def _update_detail_targets(self, output: Any) -> None:
+        queue = self.detail_demand_queue
+        if queue is None:
+            return
+        if (not getattr(output, "completed_frames", ())
+                and not getattr(output, "session_events", ()) and hasattr(output, "packet")):
+            return
+        uid = self.pipeline.sessions.current_session_uid
+        if uid is None:
+            queue.clear_targets()
+            return
+        session = self._session(uid)
+        player = self.pipeline._last_association_player_by_uid.get(uid)
+        current_tenures = self._current_detail_bindings()
+        targets = tuple({
+            "binding_id": binding_id, "car_index": item.car_index,
+            "epoch": item.lifecycle_epoch, "packet_format": item.packet_format,
+            "is_player": item.car_index == player,
+        } for binding_id, item in current_tenures.items())
+        queue.publish_targets(session, targets)
 
     def _staging_count(self, database: sqlite3.Connection, uid: str, car: int) -> int:
         key = (uid, car)
@@ -456,7 +707,7 @@ class SessionCoordinator:
         self._staging_counts[(uid, car)] -= removed
 
     def _publish(self, database: sqlite3.Connection, attempt: LapAttempt, role: str,
-                 epoch: int | None, packet_format: int | None) -> None:
+                 epoch: int | None, packet_format: int | None, *, omitted_samples: int = 0) -> None:
         session = self._session(attempt.session_uid)
         revision = digest(f"{session}:{role}:{epoch}:{attempt.attempt_id}")
         if database.execute("SELECT 1 FROM attempts WHERE id=?", (revision,)).fetchone():
@@ -496,12 +747,20 @@ class SessionCoordinator:
         qualifications = []
         if any(segment.context is None for segment in attempt.context_segments):
             qualifications.append("session_context_unknown_or_truncated")
-        if rows != attempt.sample_count:
+        if rows + omitted_samples != attempt.sample_count:
             qualifications.append("missing_observation_rows")
         if len(gap_epochs) > 1:
             qualifications.append("acquisition_gap")
         if not attempt.start_observed:
             qualifications.append("lap_start_unobserved")
+        if (self.detail_profile == "demand_v1" and role == "opponent"
+                and state == "published" and start is not None and end is not None):
+            if rows + omitted_samples != attempt.sample_count or len(gap_epochs) > 1:
+                state = "quarantined"
+                reason = "missing_observation_rows" if len(gap_epochs) <= 1 else "acquisition_gap"
+            elif omitted_samples:
+                state = "deferred"
+                reason = "trace_not_selected" if rows == 0 else "trace_selection_interrupted"
         manifest = {"schema": PROCESSOR_VERSION, "chunks": chunks, "driver": driver,
                     "epoch": epoch, "format": packet_format, "start_frame": start, "end_frame": end,
                     "source_start": first_sequence, "source_end": last_sequence,
@@ -512,6 +771,15 @@ class SessionCoordinator:
             encode(attempt.to_dict()), rows, total_bytes, self.sequence,
         ))
         database.execute("INSERT INTO dispositions VALUES (?,?,?,?)", (revision, self.sequence, state, reason))
+        if (state == "published" and role == "opponent" and self.detail_demand_queue is not None
+                and attempt.start_frame_ordinal is not None and attempt.end_frame_ordinal is not None):
+            current_frame = self.pipeline.frame_ordinal(attempt.session_uid)
+            for task in self.detail_demand_queue.active_tasks():
+                if (task.session_id == session and task.binding_id == driver
+                        and task.activation_frame_ordinal is not None
+                        and attempt.start_frame_ordinal >= task.activation_frame_ordinal
+                        and attempt.end_frame_ordinal <= current_frame):
+                    self.detail_demand_queue.mark_available(task.task_id, driver)
         self._fault("after_manifest_insert")
         if end is not None:
             removed = database.execute("DELETE FROM staging WHERE generation=? AND uid=? AND car=? AND frame<=?",
@@ -519,6 +787,7 @@ class SessionCoordinator:
             key = (str(attempt.session_uid), attempt.car_index)
             if key in self._staging_counts:
                 self._staging_counts[key] -= removed.rowcount
+
 
     def _reconcile(self, database: sqlite3.Connection, event: LifecycleEvent) -> None:
         if event.event_kind not in ("flashback", "session_time_regression", "malformed_or_unsupported"):
