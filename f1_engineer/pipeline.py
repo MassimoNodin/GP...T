@@ -349,7 +349,7 @@ class TelemetryPipeline:
             if frame.session_uid == 0:
                 continue
             if quarantine_lap_data:
-                player_slots = {packet.header.player_car_index for packet in frame.packets}
+                player_slots = self._frame_player_slots(frame)
                 packet_formats = {int(packet.packet_format) for packet in frame.packets}
                 self.car_lap_inventory.observe_frame(
                     session_uid=frame.session_uid,
@@ -587,7 +587,7 @@ class TelemetryPipeline:
                         (frame.session_uid, frame.overall_frame_identifier)
                     )
             packet_formats = {int(packet.packet_format) for packet in frame.packets}
-            player_slots = {packet.header.player_car_index for packet in frame.packets}
+            player_slots = self._frame_player_slots(frame)
             selected_lap = observation_lap_data[-1] if observation_lap_data and not lap_data_conflicted else None
             inventory_packet_format = (
                 int(selected_lap[0].packet_format)
@@ -729,6 +729,13 @@ class TelemetryPipeline:
             tuple(telemetry_errors),
         )
 
+    @staticmethod
+    def _frame_player_slots(frame: PacketFrame) -> set[int]:
+        return {
+            packet.header.player_car_index for packet in frame.packets
+            if packet.packet_kind is not PacketId.EVENT
+        }
+
     def _process_lifecycle(
         self, frame: PacketFrame, frame_ordinal: int
     ) -> tuple[tuple[LapAttempt, ...], bool, int, bool, bool]:
@@ -756,12 +763,15 @@ class TelemetryPipeline:
             uid, True
         )
         packet_formats = {int(packet.packet_format) for packet in frame.packets}
-        primary_players = {packet.header.player_car_index for packet in frame.packets}
-        frame_scope_uncertain = len(packet_formats) != 1 or len(primary_players) != 1
+        primary_players = self._frame_player_slots(frame)
+        frame_scope_uncertain = len(packet_formats) != 1 or len(primary_players) > 1
         current_format = next(iter(packet_formats)) if len(packet_formats) == 1 else None
-        current_player = next(iter(primary_players)) if len(primary_players) == 1 else None
         previous_format = self._last_association_format_by_uid.get(uid)
         previous_player = self._last_association_player_by_uid.get(uid)
+        current_player = (
+            next(iter(primary_players)) if len(primary_players) == 1
+            else previous_player if not primary_players else None
+        )
         frame_scope_changed = (
             frame_scope_uncertain
             or (previous_format is not None and previous_format != current_format)
@@ -1090,7 +1100,7 @@ class TelemetryPipeline:
             return
 
         formats = {int(packet.packet_format) for packet in frame.packets}
-        player_slots = {packet.header.player_car_index for packet in frame.packets}
+        player_slots = self._frame_player_slots(frame)
         packet_format = next(iter(formats)) if len(formats) == 1 else None
         player_car_index = next(iter(player_slots)) if len(player_slots) == 1 else None
         source = packets[0]
@@ -1266,7 +1276,7 @@ class TelemetryPipeline:
             return
 
         formats = {int(packet.packet_format) for packet in frame.packets}
-        player_slots = {packet.header.player_car_index for packet in frame.packets}
+        player_slots = self._frame_player_slots(frame)
         packet_format = next(iter(formats)) if len(formats) == 1 else None
         player_car_index = next(iter(player_slots)) if len(player_slots) == 1 else None
         source = packets[0]
