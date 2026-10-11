@@ -103,7 +103,7 @@ class EngineerAskRoute:
 
 
 def route_schema(allowed_routes: Sequence[str]) -> dict[str, object]:
-    """Return the closed JSON Schema sent to Ollama for one request."""
+    """Return the closed JSON Schema sent to the selected runtime for one request."""
     routes = tuple(dict.fromkeys((*allowed_routes, "unsupported")))
     return {
         "type": "object",

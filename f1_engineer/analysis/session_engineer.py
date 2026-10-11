@@ -18,9 +18,11 @@ from copy import deepcopy
 from ..processing.detail_demand import DetailCommand
 from ..processing.evidence import EvidenceUnavailable, MAX_READ_BYTES, MAX_READ_ROWS, digest, encode
 from .ai_admission import EngineerAIGate, PROCESS_ENGINEER_AI_GATE
-from .ollama_runtime import OllamaUnavailable
+from .engineer_runtime import EngineerRuntimeUnavailable
 from .session_measurement import analyze_session_pair
 from .session_reference import select_session_reference
+from .session_answers import braking_observation_message
+from .race_diagnostics import RACE_SESSION_TYPE_IDS, build_session_race_diagnostics
 
 
 REQUEST_TIMEOUT_S = 30.0
@@ -57,6 +59,37 @@ def _checked_attempt(provider, session, identifier):
     if attempt.get("id") != identifier or attempt.get("session") != session:
         raise EvidenceUnavailable("attempt_identity_mismatch")
     return attempt
+
+
+async def _route_with_gate(runtime, question, *, selection_kind, allowed_routes):
+    lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
+    if lease is None:
+        raise EvidenceUnavailable("engineer_ai_busy")
+    work = None
+    try:
+        work = asyncio.create_task(runtime.route_question(
+            question, selection_kind=selection_kind, allowed_routes=allowed_routes
+        ))
+        lease.retain_until(work)
+        return await asyncio.shield(work)
+    except BaseException:
+        if work is not None:
+            work.cancel()
+        raise
+    finally:
+        lease.close()
+
+
+def _is_race_attempt(attempt):
+    payload = attempt.get("payload")
+    if not isinstance(payload, dict) or not isinstance(payload.get("context_segments"), list):
+        return False
+    return any(
+        isinstance(segment, dict) and isinstance(segment.get("context"), dict)
+        and type(segment["context"].get("session_type_id")) is int
+        and segment["context"].get("session_type_id") in RACE_SESSION_TYPE_IDS
+        for segment in payload["context_segments"]
+    )
 
 
 class _Overlay:
@@ -293,7 +326,7 @@ Cancelled materialization workers retain their shared gate until completion.
         nonlocal materialization_lease
         original = await asyncio.to_thread(_checked_attempt, overlay, session, identifier)
         if (original.get("readiness") or {}).get("state") != "deferred":
-            return
+            return original
         if not allow_materialization:
             raise EvidenceUnavailable("historical_materialization_not_authorized")
         if materializer is None:
@@ -317,6 +350,7 @@ Cancelled materialization workers retain their shared gate until completion.
         provenance["materializations"][identifier] = deepcopy(
             overlay.derived[identifier][0].get("materialization") or {}
         )
+        return overlay.attempt(identifier, session=session)
 
     try:
         async with asyncio.timeout(LIVE_REQUEST_TIMEOUT_S if binding_id is not None else REQUEST_TIMEOUT_S):
@@ -351,7 +385,38 @@ Cancelled materialization workers retain their shared gate until completion.
                                    message="Complete observed lap evidence is available. "
                                            "This is a diagnostic trace summary, not coaching or ranking.")
             else:
-                await prepare(target_id)
+                original = await prepare(target_id)
+                if reference_id is None and _is_race_attempt(original):
+                    selection = {"target": target_id, "reference": None, "origin": "revision",
+                                 "kind": "race_lap"}
+                    report = await asyncio.to_thread(
+                        build_session_race_diagnostics, overlay, session, target_id
+                    )
+                    if report.get("status") != "available":
+                        return _result("unavailable", report.get("reason"), selection=selection,
+                                       report=report, provenance=provenance)
+                    message = (
+                        f"The observed race lap time is {report['lap']['lap_time_ms']:g} ms. "
+                        "This is a descriptive single-lap diagnostic, not a pace comparison, "
+                        "stint assessment, strategy recommendation or causal explanation. "
+                        "Fuel, tyre and traffic availability is reported explicitly in the evidence."
+                    )
+                    response = _result("available", None, selection=selection, report=report,
+                                       provenance=provenance, message=message)
+                    if runtime is not None:
+                        route, model = await _route_with_gate(
+                            runtime, question, selection_kind="attempt",
+                            allowed_routes=("attempt_summary",)
+                        )
+                        response["model"] = deepcopy(model)
+                        response["routing"] = {"route": route.route, "focus": route.focus}
+                        if route.route != "attempt_summary":
+                            response.update(status="unsupported", reason="question_unsupported",
+                                            message="Only descriptive race-lap diagnostics are available.")
+                        elif route.focus not in ("overview", "lap_time", "context", "validity", "capture_quality"):
+                            response.update(status="unavailable", reason="focus_measurement_unavailable",
+                                            message="The requested race-lap measurement is not available.")
+                    return response
             if reference_id is not None:
                 await prepare(reference_id)
             selection = await asyncio.to_thread(
@@ -373,32 +438,29 @@ Cancelled materialization workers retain their shared gate until completion.
                                provenance=provenance, message=message)
             if runtime is None:
                 return response
-            ai_lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
-            if ai_lease is None:
-                raise EvidenceUnavailable("engineer_ai_busy")
-            work = None
-            try:
-                work = asyncio.create_task(runtime.route_question(
-                    question, selection_kind="pair", allowed_routes=("region_comparison",)
-                ))
-                ai_lease.retain_until(work)
-                route, model = await asyncio.shield(work)
-            except BaseException:
-                if work is not None:
-                    work.cancel()
-                raise
-            finally:
-                ai_lease.close()
+            route, model = await _route_with_gate(
+                runtime, question, selection_kind="pair", allowed_routes=("region_comparison",)
+            )
             response["model"] = deepcopy(model)
             response["routing"] = {"route": route.route, "focus": route.focus}
             if route.route != "region_comparison":
                 response.update(status="unsupported", reason="question_unsupported",
                                 message="This question is outside diagnostic pair comparison.")
+            elif route.focus == "braking":
+                observation = braking_observation_message(report)
+                if observation is None:
+                    response.update(status="unavailable", reason="focus_measurement_unavailable",
+                                    message="No unambiguous sustained brake-onset comparison is available.")
+                else:
+                    response["message"] = observation + " " + message
+            elif route.focus not in ("overview",):
+                response.update(status="unavailable", reason="focus_measurement_unavailable",
+                                message="The selected evidence does not yet provide the requested focused measurement.")
             return response
     except TimeoutError:
         return _result("unavailable", "engineer_request_timeout", selection=selection,
                        report=report, provenance=provenance)
-    except (EvidenceUnavailable, OllamaUnavailable) as exception:
+    except (EvidenceUnavailable, EngineerRuntimeUnavailable) as exception:
         return _result("unavailable", getattr(exception, "reason", str(exception)),
                        selection=selection, report=report, provenance=provenance)
     finally:

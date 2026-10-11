@@ -70,6 +70,9 @@ export interface EngineerAskModel {
   runtime_version: string | null;
   inference_placement: string;
   latency_ms: number;
+  runtime?: "Codex";
+  billing?: "codex_subscription";
+  fallback_enabled?: false;
 }
 
 export interface EngineerAskResult {
@@ -104,7 +107,7 @@ export interface EngineerRuntimeStatus {
     | "model_rejected"
     | "unavailable";
   reason: string | null;
-  runtime: "Ollama";
+  runtime: "Ollama" | "Codex";
   runtime_version: string | null;
   endpoint: string;
   model_name: string;
@@ -112,7 +115,9 @@ export interface EngineerRuntimeStatus {
   model_quantization: string | null;
   model_parameter_size: string | null;
   cloud_routing: string;
-  requested_placement: "CPU";
+  requested_placement: "CPU" | "cloud";
+  billing?: "codex_subscription";
+  fallback_enabled?: false;
   last_inference_placement: string | null;
   last_inference_at_utc: string | null;
 }

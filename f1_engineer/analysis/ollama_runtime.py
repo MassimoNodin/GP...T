@@ -18,6 +18,7 @@ from .engineer_ask import (
     parse_router_output,
     route_schema,
 )
+from .engineer_runtime import EngineerRuntimeUnavailable
 
 
 OLLAMA_BASE_URL = "http://127.0.0.1:11435"
@@ -30,10 +31,8 @@ _DIGEST_PATTERN = re.compile(r"^(?:sha256:)?([a-f0-9]{64})$")
 _OLLAMA_VERSION_PATTERN = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
 
 
-class OllamaUnavailable(RuntimeError):
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
+class OllamaUnavailable(EngineerRuntimeUnavailable):
+    pass
 
 
 @dataclass(frozen=True, slots=True)

@@ -41,7 +41,10 @@ from ..analysis.session_best import assess_session_best
 from ..analysis.comparison_window import optional_distance_window
 from ..analysis.engineer_query import query_engineer_evidence
 from ..analysis.engineer_ask_service import answer_engineer_question
-from ..analysis.ollama_runtime import OllamaRuntime, OllamaUnavailable
+from ..analysis.ollama_runtime import OllamaRuntime
+from ..analysis.codex_runtime import CodexRuntime
+from ..analysis.engineer_runtime import EngineerRuntime, EngineerRuntimeUnavailable
+from ..analysis.race_diagnostics import build_session_race_diagnostics
 from ..analysis.observation_set import build_observation_set
 from ..analysis.paired_region_service import (
     PairedRegionReportUnavailable,
@@ -1007,7 +1010,10 @@ def create_app(
     max_recording_upload_bytes: int = DEFAULT_MAX_RECORDING_UPLOAD_BYTES,
     track_models_root: str | Path | None = None,
     reviewed_track_models_root: str | Path | None = None,
-    engineer_runtime: OllamaRuntime | None = None,
+    engineer_runtime: EngineerRuntime | None = None,
+    engineer_ai_provider: Literal["codex", "ollama"] = "codex",
+    codex_executable: str = "codex",
+    codex_home: str | Path | None = None,
     automatic_acquisition: bool = True,
     evidence_database_path: str | Path | None = None,
     detail_profile: str = "full",
@@ -1067,8 +1073,13 @@ def create_app(
         import_controller,
         max_upload_bytes=max_recording_upload_bytes,
     )
-    ollama_runtime = engineer_runtime or OllamaRuntime(
-        configured_database_path.parent / ".f1-engineer-ollama-model.json"
+    if engineer_ai_provider not in ("codex", "ollama"):
+        raise ValueError("engineer_ai_provider_invalid")
+    selected_engineer_runtime = engineer_runtime or (
+        CodexRuntime(codex_home or configured_database_path.parent / ".codex-engineer",
+                     executable=codex_executable)
+        if engineer_ai_provider == "codex"
+        else OllamaRuntime(configured_database_path.parent / ".f1-engineer-ollama-model.json")
     )
     local_speech_runtime = LocalSpeechRuntime(
         configured_database_path.parent / ".f1-engineer-whisper-pin.json",
@@ -1090,7 +1101,8 @@ def create_app(
         app.state.recording_controller = recording_controller
         app.state.replay_controller = replay_controller
         app.state.recording_upload_service = recording_upload_service
-        app.state.ollama_runtime = ollama_runtime
+        app.state.engineer_runtime = selected_engineer_runtime
+        app.state.ollama_runtime = selected_engineer_runtime
         app.state.local_speech_runtime = local_speech_runtime
         app.state.live_session_runtime = live_runtime
         app.state.evidence_store = evidence_store
@@ -1252,6 +1264,18 @@ def create_app(
         finally:
             comparison_admission.release()
 
+    @app.post("/api/v2/session-evidence/sessions/{session_id}/race-diagnostics")
+    def session_race_diagnostics(session_id: str, target: str = Query(min_length=1, max_length=128),
+                                 authorization: str | None = Header(default=None)):
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "race_diagnostics_control_not_authorized")
+        if not comparison_admission.acquire(blocking=False):
+            return _api_error(409, "comparison_read_budget_busy")
+        try:
+            return {"data": build_session_race_diagnostics(evidence_store, session_id, target)}
+        finally:
+            comparison_admission.release()
+
     @app.post("/api/v2/session-evidence/sessions/{session_id}/reference")
     def session_reference(session_id: str, target: str = Query(min_length=1, max_length=128),
                           reference: str | None = Query(default=None, min_length=1, max_length=128),
@@ -1316,7 +1340,7 @@ def create_app(
                 reference_id=selection.reference, materializer=historical_materializer,
                 allow_materialization=selection.allow_materialization,
                 live_runtime=live_runtime, binding_id=selection.binding_id,
-                runtime=ollama_runtime if selection.use_model else None, cache=measurement_cache,
+                runtime=selected_engineer_runtime if selection.use_model else None, cache=measurement_cache,
             ))
             while True:
                 done, _pending = await asyncio.wait({task}, timeout=0.1)
@@ -2857,7 +2881,7 @@ def create_app(
     async def engineer_runtime_status(request: Request) -> APIResponse[dict[str, Any]] | JSONResponse:
         if request.query_params:
             return _api_error(400, "engineer_runtime_query_not_allowed")
-        status = await ollama_runtime.status()
+        status = await selected_engineer_runtime.status()
         return APIResponse[dict[str, Any]](data=status)
 
     @app.get("/api/v1/engineer/transcribe", response_model=APIResponse[dict[str, Any]])
@@ -2914,7 +2938,7 @@ def create_app(
                         configured_database_path,
                         body.selection.model_dump(),
                         body.question.strip(),
-                        runtime=ollama_runtime,
+                        runtime=selected_engineer_runtime,
                         track_model_catalog=track_model_catalog,
                         gate_lease=gate_lease,
                     ),
@@ -2940,7 +2964,7 @@ def create_app(
             return _api_error(413, "engineer_ask_request_limit_exceeded")
         except _EngineerClientDisconnected:
             return _api_error(499, "engineer_ask_client_disconnected")
-        except OllamaUnavailable as exc:
+        except EngineerRuntimeUnavailable as exc:
             if exc.reason == "analysis_busy":
                 return _api_error(409, "engineer_ask_busy")
             return _api_error(503, "engineer_ask_unavailable")

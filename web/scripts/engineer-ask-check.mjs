@@ -106,4 +106,63 @@ assert.equal(
   null,
 );
 
+const codexStatus = {
+  ...runtimeStatus,
+  runtime: "Codex",
+  reason: "codex_subscription_login_required",
+  endpoint: "codex:stdio",
+  model_name: "gpt-6-luna",
+  billing: "codex_subscription",
+  fallback_enabled: false,
+  cloud_routing: "subscription",
+  requested_placement: "cloud",
+};
+assert.ok(parseEngineerRuntimeResponse(runtimeEnvelope(codexStatus)));
+for (const changes of [
+  { model_name: "gpt-6-sol" },
+  { billing: "api_key" },
+  { fallback_enabled: true },
+  { requested_placement: "CPU" },
+  { status: ["ready"] },
+]) {
+  assert.equal(
+    parseEngineerRuntimeResponse(
+      runtimeEnvelope({ ...codexStatus, ...changes }),
+    ),
+    null,
+  );
+}
+const codexModel = {
+  runtime: "Codex",
+  model_name: "gpt-6-luna",
+  billing: "codex_subscription",
+  fallback_enabled: false,
+  model_digest: "not_applicable",
+  runtime_version: null,
+  inference_placement: "cloud",
+  latency_ms: 150,
+};
+assert.ok(
+  parseEngineerAskResult(
+    { ...unsupported, model: codexModel },
+    selection,
+    validation,
+  ),
+);
+for (const changes of [
+  { model_name: "gpt-6-sol" },
+  { billing: "api_key" },
+  { fallback_enabled: true },
+  { latency_ms: -1 },
+]) {
+  assert.equal(
+    parseEngineerAskResult(
+      { ...unsupported, model: { ...codexModel, ...changes } },
+      selection,
+      validation,
+    ),
+    null,
+  );
+}
+
 console.log("Engineer ask response guards passed.");

@@ -191,6 +191,31 @@ export function parseEngineerRuntimeResponse(
   const envelope = record(value);
   const statusData = record(envelope?.data);
   if (
+    envelope?.api_version === "v1" &&
+    (envelope.status === "ok" || envelope.status === "unavailable") &&
+    statusData?.runtime === "Codex"
+  ) {
+    if (
+      statusData.model_name !== "gpt-6-luna" ||
+      statusData.endpoint !== "codex:stdio" ||
+      statusData.billing !== "codex_subscription" ||
+      statusData.fallback_enabled !== false ||
+      statusData.cloud_routing !== "subscription" ||
+      statusData.requested_placement !== "cloud" ||
+      typeof statusData.status !== "string" ||
+      !["ready", "not_configured", "unavailable"].includes(statusData.status) ||
+      !(statusData.reason === null || text(statusData.reason, 96)) ||
+      statusData.runtime_version !== null ||
+      statusData.model_digest !== null ||
+      statusData.model_quantization !== null ||
+      statusData.model_parameter_size !== null ||
+      statusData.last_inference_placement !== null ||
+      statusData.last_inference_at_utc !== null
+    )
+      return null;
+    return statusData as unknown as EngineerRuntimeStatus;
+  }
+  if (
     !envelope ||
     envelope.api_version !== "v1" ||
     typeof envelope.status !== "string" ||
@@ -351,6 +376,20 @@ function validModelDigest(value: unknown): value is string {
 
 function parseModel(value: unknown): EngineerAskResult["model"] {
   const model = record(value);
+  if (model?.runtime === "Codex") {
+    if (
+      model.model_name !== "gpt-6-luna" ||
+      model.billing !== "codex_subscription" ||
+      model.fallback_enabled !== false ||
+      model.model_digest !== "not_applicable" ||
+      model.runtime_version !== null ||
+      model.inference_placement !== "cloud" ||
+      !count(model.latency_ms) ||
+      model.latency_ms > 60_000
+    )
+      return null;
+    return model as unknown as EngineerAskResult["model"];
+  }
   if (
     !model ||
     !text(model.model_name, 64) ||

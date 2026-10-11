@@ -16,7 +16,7 @@ from .engineer_ask import (
     select_report_facts,
 )
 from .engineer_query import query_engineer_evidence
-from .ollama_runtime import OllamaUnavailable, OllamaRuntime
+from .engineer_runtime import EngineerRuntime, EngineerRuntimeUnavailable
 from .service import ComparisonPolicy, compare_attempts
 
 
@@ -25,7 +25,7 @@ async def answer_engineer_question(
     selection: Mapping[str, object],
     question: str,
     *,
-    runtime: OllamaRuntime,
+    runtime: EngineerRuntime,
     track_model_catalog: TrackModelCatalog | None = None,
     gate_lease: AIGateLease | None = None,
 ) -> dict[str, object]:
@@ -50,7 +50,7 @@ async def answer_engineer_question(
             selection_kind="attempt" if intent == "attempt_summary" else "pair",
             allowed_routes=allowed_routes,
         )
-    except OllamaUnavailable as exc:
+    except EngineerRuntimeUnavailable as exc:
         return _unavailable(selection, exc.reason)
     if route.route == "unsupported":
         return {
