@@ -170,6 +170,15 @@ class EvidenceStore:
         result = dict(row)
         result["manifest"] = json.loads(result["manifest"])
         result["payload"] = json.loads(result["payload"])
+        manifest = result["manifest"]
+        payload = result["payload"]
+        owner = database.execute(
+            "SELECT 1 FROM bindings WHERE id=? AND session=? AND epoch=? AND format=? "
+            "AND car=? AND start_frame<=? AND end_frame>?",
+            (row["driver"], row["session"], manifest.get("epoch"), manifest.get("format"),
+             payload.get("car_index"), manifest.get("start_frame"), manifest.get("end_frame")),
+        ).fetchone()
+        result["binding_verified"] = owner is not None
         status = database.execute(
             "SELECT state,reason,sequence FROM dispositions WHERE attempt=? ORDER BY sequence DESC LIMIT 1",
             (row["id"],),
@@ -193,6 +202,14 @@ class EvidenceStore:
             "reason": status["reason"] if status and detail_state != "available" else None,
         }
         return result
+
+    def attempt(self, attempt_id: str, *, session: str | None = None) -> dict[str, Any]:
+        with self.connect() as database:
+            database.execute("BEGIN")
+            row = database.execute("SELECT * FROM attempts WHERE id=?", (attempt_id,)).fetchone()
+            if row is None or (session is not None and row["session"] != session):
+                raise EvidenceUnavailable("attempt_not_in_session")
+            return self._attempt(database, row)
 
     def evidence(self, attempt_id: str, *, session: str | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         with self.connect() as database:

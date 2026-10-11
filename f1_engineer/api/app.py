@@ -20,7 +20,12 @@ from starlette.concurrency import run_in_threadpool
 
 from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, select_reference
 from ..analysis.session_comparison import compare_session_laps
+from ..analysis.session_reference import select_session_reference
+from ..analysis.session_measurement import analyze_session_pair
+from ..analysis.session_engineer import LIVE_REQUEST_TIMEOUT_S, answer_session_question
+from ..analysis.evidence_cache import EvidenceCache
 from ..processing.evidence import EvidenceStore, EvidenceUnavailable
+from ..processing.materialization import HistoricalMaterializer, MaterializedEvidenceProvider
 from ..processing.legacy import archived_session_page
 from ..processing.runtime import LiveSessionRuntime
 from ..processing.detail_demand import DetailCommand, DetailDemandQueue
@@ -1019,6 +1024,8 @@ def create_app(
                                      queue_size=min(recording_queue_size, 1024),
                                      detail_profile=detail_profile) if automatic_acquisition else None
     comparison_admission = threading.BoundedSemaphore(2)
+    historical_materializer = HistoricalMaterializer(evidence_store)
+    measurement_cache = EvidenceCache()
     configured_recordings_root = Path(recordings_root).expanduser().resolve()
     selected_track_models_root = (
         track_models_root
@@ -1222,6 +1229,117 @@ def create_app(
             return {"data": evidence_store.report(comparison_id)}
         except EvidenceUnavailable as exception:
             return _api_error(404, str(exception))
+
+    @app.get("/api/v2/session-evidence/services/status")
+    def evidence_service_status():
+        return {"data": {"materialization": historical_materializer.status(),
+                         "measurement_cache": measurement_cache.status(),
+                         "diagnostic_only": True, "coaching_eligible": False}}
+
+    @app.post("/api/v2/session-evidence/sessions/{session_id}/attempts/{revision_id}/materialize")
+    def materialize_session_attempt(session_id: str, revision_id: str,
+                                    authorization: str | None = Header(default=None)):
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "materialization_control_not_authorized")
+        if not comparison_admission.acquire(blocking=False):
+            return _api_error(409, "comparison_read_budget_busy")
+        try:
+            metadata, samples = historical_materializer.materialize(revision_id, session=session_id)
+            return {"data": {"attempt": metadata, "samples": samples,
+                             "persistence": "request_scoped_ephemeral"}}
+        except EvidenceUnavailable as exception:
+            return _api_error(409 if str(exception) == "materialization_busy" else 422, str(exception))
+        finally:
+            comparison_admission.release()
+
+    @app.post("/api/v2/session-evidence/sessions/{session_id}/reference")
+    def session_reference(session_id: str, target: str = Query(min_length=1, max_length=128),
+                          reference: str | None = Query(default=None, min_length=1, max_length=128),
+                          authorization: str | None = Header(default=None)):
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "reference_control_not_authorized")
+        if not comparison_admission.acquire(blocking=False):
+            return _api_error(409, "comparison_read_budget_busy")
+        try:
+            return {"data": select_session_reference(evidence_store, session_id, target,
+                                                      reference_id=reference)}
+        except EvidenceUnavailable as exception:
+            return _api_error(422, str(exception))
+        finally:
+            comparison_admission.release()
+
+    @app.post("/api/v2/session-evidence/sessions/{session_id}/analyze")
+    def session_analysis(session_id: str, target: str = Query(min_length=1, max_length=128),
+                         reference: str | None = Query(default=None, min_length=1, max_length=128),
+                         comparison_policy: Literal["observed_session_distance", "practice_qualifying"] = Query(default="observed_session_distance"),
+                         allow_materialization: bool = Query(default=False),
+                         authorization: str | None = Header(default=None)):
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "analysis_control_not_authorized")
+        if not comparison_admission.acquire(blocking=False):
+            return _api_error(409, "comparison_read_budget_busy")
+        try:
+            provider = MaterializedEvidenceProvider(evidence_store)
+            if allow_materialization:
+                for identifier in dict.fromkeys(item for item in (target, reference) if item is not None):
+                    metadata = evidence_store.attempt(identifier, session=session_id)
+                    if metadata["detail"]["state"] == "deferred":
+                        provider.add(*historical_materializer.materialize(identifier, session=session_id))
+            selection = select_session_reference(provider, session_id, target, reference_id=reference)
+            if selection["status"] != "available":
+                return {"data": selection}
+            return {"data": analyze_session_pair(provider, session_id, target, selection["reference"],
+                                                  policy=comparison_policy, cache=measurement_cache)}
+        except EvidenceUnavailable as exception:
+            return _api_error(422, str(exception))
+        finally:
+            comparison_admission.release()
+
+    @app.post("/api/v2/session-evidence/sessions/{session_id}/ask")
+    async def session_engineer_question(session_id: str, request: Request,
+                                         authorization: str | None = Header(default=None)):
+        if not _authorized(authorization, control_token):
+            return _api_error(403, "engineer_control_not_authorized")
+        if not comparison_admission.acquire(blocking=False):
+            return _api_error(409, "comparison_read_budget_busy")
+        task = None
+        deadline = asyncio.get_running_loop().time() + 30.0
+        try:
+            body = await asyncio.wait_for(_read_limited_body(request, 8 * 1024), timeout=30.0)
+            selection = SessionEngineerRequest.model_validate_json(body)
+            if (selection.target is None) == (selection.binding_id is None):
+                return _api_error(422, "engineer_target_or_future_binding_required")
+            if selection.binding_id is not None:
+                deadline += LIVE_REQUEST_TIMEOUT_S - 30.0
+            task = asyncio.create_task(answer_session_question(
+                evidence_store, session_id, selection.target, selection.question,
+                reference_id=selection.reference, materializer=historical_materializer,
+                allow_materialization=selection.allow_materialization,
+                live_runtime=live_runtime, binding_id=selection.binding_id,
+                runtime=ollama_runtime if selection.use_model else None, cache=measurement_cache,
+            ))
+            while True:
+                done, _pending = await asyncio.wait({task}, timeout=0.1)
+                if done:
+                    return {"data": await task}
+                if asyncio.get_running_loop().time() >= deadline:
+                    return _api_error(504, "engineer_request_deadline_exceeded")
+                if await request.is_disconnected():
+                    return _api_error(499, "engineer_client_disconnected")
+        except TimeoutError:
+            return _api_error(504, "engineer_request_deadline_exceeded")
+        except _EngineerRequestBodyLimitExceeded:
+            return _api_error(413, "engineer_request_limit_exceeded")
+        except (ValidationError, ValueError):
+            return _api_error(422, "engineer_request_invalid")
+        finally:
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            comparison_admission.release()
 
     @app.exception_handler(FileNotFoundError)
     @app.exception_handler(DatabaseSchemaError)
@@ -3037,6 +3155,16 @@ def _engineer_speech_error_status(reason: str) -> int:
     if reason == "transcription_timeout":
         return 504
     return 503
+
+
+class SessionEngineerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    target: str | None = Field(default=None, min_length=1, max_length=128)
+    reference: str | None = Field(default=None, min_length=1, max_length=128)
+    question: str = Field(min_length=1, max_length=2000)
+    allow_materialization: bool = False
+    binding_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    use_model: bool = False
 
 
 class _EngineerRequestBodyLimitExceeded(Exception):
