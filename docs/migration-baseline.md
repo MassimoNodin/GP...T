@@ -190,9 +190,9 @@ authorized commit/push of this change.
   four valid, fully start-observed, gap-unqualified live player laps and retained
   diagnostic comparisons at 32 MiB; calibrated geometry and coaching eligibility
   remain unproven.
-- Cold-model headroom remains a risk; operator microphone/edit/submit/read-aloud
-  and representative live-game telemetry remain acceptance gates. Do not bulk-import
-  during live validation; simultaneous import contention is not resolved.
+- Cold-model headroom remains a risk despite operator acceptance of voice and
+  live reception. Concurrent model/comparison load remains unverified. Do not
+  bulk-import during live validation; simultaneous import contention is not resolved.
 - **Manual resource policy:** 100 GiB app-evidence budget, 10 GiB NVMe free reserve.
   Not an automatic quota/retention guarantee. Synthetic run m grew about
   8 GiB/hour; actual packet mix/duplicate archives change growth. Check Settings/df,
@@ -207,26 +207,30 @@ Acceptance counts completed milestones, not code volume:
 1. **Complete:** Linux compatibility and backend regression baseline.
 2. **Complete:** Authenticated private transport and server-side credentials.
 3. **Complete:** Ubuntu service / Windows companion across actual SSH.
-4. **Operator gate:** transcription/model and historical Ask work; real
-   microphone/edit/submit/audible playback pending.
-5. **Live-game gate:** repaired NVMe 30-minute model coexistence passes;
-   earlier actual Bahrain run retains valid fully observed player laps with zero
-   reported receiver losses and retained diagnostic comparisons at the requested
-   32 MiB budget through the restarted authenticated API. New-budget large-lap
-   ingestion contention remains pending; the October 10 reapproval run reports
-   receiver losses before stress workloads launch and does not pass the live gate.
+4. **Complete, operator verified October 11:** real microphone transcription,
+   manual draft editing, Ask submission and audible browser playback passed.
+   The operator confirmed editing and submission worked; the supplied screenshot
+   shows the selected lap's 1:21.437 time with its game-invalid qualification,
+   pinned local qwen3:4b CPU inference (20.7 s) and local browser read-aloud.
+5. **Operator accepted, October 11:** accepted by explicit operator instruction
+   after the loss-free 118,666-packet live run and guarded boundary-fix replay.
+   This is operator acceptance of the demonstrated reception scope, not verified
+   concurrent large-lap comparison/model load or explicit task-demand testing;
+   those checks remain deferred. The failed October 10 run is preserved below.
 6. **Complete:** crash/disconnect/capacity/full-filesystem checks, 30-minute
    resources, final regressions and actual NVMe/service reboot persistence pass.
 
-**[####--] 4/6 accepted (67%)**. No synthetic claim of live-game acceptance.
+**[######] 6/6 accepted (100%)**, including scoped operator acceptance of milestone 5.
+Milestone 4's real microphone/edit/submit/audible-playback gate is complete.
+This acceptance does not verify concurrent live telemetry/model/comparison load.
 
 October 11 clean live run, `live-validation-20261011-121111`: 118,666 received,
 journaled and processed; zero application/kernel/socket losses. With Linux
 receiver isolation, `demand_v1`, and Wi-Fi power saving disabled, 170 advancing
 two-second samples reported publication p95 18.169 ms and backlog p95/max
 48.966/702.392 ms. Selection peaked at three cars; explicit task demands and
-concurrent model/comparison workloads were not exercised. Milestone 5 therefore
-remains pending, not accepted on the strength of this reception-only run.
+concurrent model/comparison workloads were not exercised. The operator subsequently
+accepted milestone 5 on this narrower scope; workload coexistence remains unverified.
 
 The raw journal retained the first flying-lap boundary, but the tracker failed
 to recognise a same-lap-number out-lap distance wrap. A guarded correction
@@ -237,7 +241,8 @@ at frame 32403 (92,796 ms), preserves lap 4 (94,737 ms), and still excludes the
 unfinished lap 5. Published original evidence is not rewritten. Validation:
 28 new regressions; full Windows suite 1,212 passed / 16 skipped; isolated Linux
 lap/boundary/lifecycle suite 48 passed. Fresh post-deployment live validation
-and the existing milestone 4/5 operator gates remain necessary.
+remains necessary for stronger technical verification, including workload coexistence;
+all six migration milestones are now accepted within their recorded scopes.
 
 Milestone 5 reapproval run armed October 10 after the 32 MiB API retries:
 Windows `data/migration-m5-live-coexistence-20261010-2146/` records a fresh
