@@ -101,8 +101,13 @@ acceptance were not exercised by this verification.
 
 Race summaries remain descriptive, not race strategy or a tyre-life forecast.
 Full race stint aggregation, richer focused measurements, bounded historical
-reconstruction, asynchronous request lifecycle, live AI/acquisition coexistence
+reconstruction, asynchronous request lifecycle, live-game AI/acquisition coexistence
 validation and release/backup work remain separate follow-up slices.
+
+Recorded Windows-to-Ubuntu telemetry and three concurrent subscription AI
+requests passed the isolated coexistence check documented in
+[telemetry and AI coexistence validation](telemetry-ai-coexistence-validation.md).
+This does not promote recorded replay to live-game acceptance.
 
 Official documentation: Codex Authentication and Codex App Server on the
 OpenAI developer documentation site. The installed CLI's generated protocol
