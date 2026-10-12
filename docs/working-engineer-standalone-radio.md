@@ -49,15 +49,56 @@ Enter one command per line; an optional leading `/` is accepted.
 | Command | Behaviour |
 | --- | --- |
 | `lap` | Speak the current player's last completed lap, or explain that timing is unavailable. |
+| `listen` | Request listening; currently reports that microphone capture is not implemented. |
 | `quiet` | Cancel speech and queued calls; suppress proactive calls, not explicit answers. |
 | `resume` | Re-enable future proactive calls; do not replay suppressed calls. |
 | `cancel` | Cancel current speech and queued messages. |
 | `repeat` | Repeat the active or last completed message within its current session/player binding. |
-| `status` | Print backend availability and radio state as JSON. |
+| `status` | Print backend availability, radio state and wheel binding/status as JSON. |
 | `quit` | Stop playback and close the client/helper; Ctrl+C also stops the client. |
 
 Closing stdin stops the radio. Commands are fixed console controls, not natural
 language questions. No microphone is opened and no listening cue is emitted.
+
+## Learn or change the wheel button
+
+Wheel support is optional and installed with the `radio` extra. No button number
+is hardcoded. List the currently connected controllers, select the MOZA device's
+index, then press the desired button when prompted:
+
+```powershell
+uv run --extra app --extra radio f1-engineer radio-input list
+uv run --extra app --extra radio f1-engineer radio-input bind --device-index 0
+uv run --extra app --extra radio f1-engineer radio-input show
+uv run --extra app --extra radio f1-engineer radio-input test
+uv run --extra app --extra radio f1-engineer radio
+```
+
+Replace `0` with the index from `list`. Button learning waits up to 30 seconds;
+`--timeout` accepts 1 to 120 seconds. Release held buttons before pressing the
+chosen button. An aborted/timed-out learning attempt leaves the old assignment
+intact. `test` emits requests without backend access, audio or microphone capture;
+use Ctrl+C to stop. Test again with the game focused on the actual MOZA R3.
+
+The saved assignment lives in `data/radio-input.json` (ignored by Git). Re-run
+`bind` at any time in another console to change it; a running radio reloads the
+settings every half second without a restart. Use `radio-input clear` to disable
+wheel activation. For a custom file, place `--input-settings PATH` before the
+`radio-input` action, and pass the same option to `radio`. Neither `show` nor
+`clear` opens a controller. No SDL subsystem is opened by an unbound radio.
+
+Assignments match controller GUID and name, not enumeration index. SDL GUIDs
+identify device types rather than guaranteeing unique hardware serials: two
+identical matching devices cause an explicit ambiguous-device status, never a
+guess. Disconnects, changed button counts and invalid settings fail closed.
+Held buttons on startup/rebinding/reconnection cannot activate until released;
+press/release edges are tracked with a short debounce, including taps between
+polls. Background input is enabled without creating a visible window.
+
+This is **input mapping only**, not microphone functionality. In normal radio
+mode a bound press cancels queued speech and emits `radio_listen_requested`, then
+`radio_listen_unavailable` with `microphone_capture_not_implemented`. It does not
+pretend that listening has begun. Capture, cues and transcription are next.
 
 ## Reliability and timing
 
@@ -89,10 +130,17 @@ Automated tests cover scheduling, interruption, quiet/repeat/cancellation,
 identity/epoch changes, freshness across hosts, malformed/missing snapshots,
 history gaps, bounded authenticated transport, CLI no-audio modes and a mocked
 native helper. Installed voice discovery was also exercised on Windows.
-The focused radio/CLI/live-facts run passed 100 tests; the full backend regression
+The initial focused radio/CLI/live-facts run passed 100 tests; its backend regression
 passed 1,820 with 16 skipped and two existing deprecation warnings. Compilation,
-CLI help and installed voice discovery also passed. Actual audible playback,
-live-game behaviour and wheel input are not verified by those checks.
+CLI help and installed voice discovery also passed. Subsequent button-binding
+tests cover learning, saved assignments, live changes, held/bouncing input,
+disconnects, ambiguity and safe degradation. The input update passed 1,863 full
+regression tests with 16 skipped and the same two warnings; the final focused
+input/radio/CLI run passed 114, including six additional routing/timeout cases
+added after the full run had collected its tests. Native controller enumeration was
+exercised on Windows and found no connected controllers in this environment.
+Actual audible playback, live-game behaviour and physical wheel input are not
+verified by those checks.
 
 Still required: MOZA R3 activation with the game focused, microphone capture and
 listening cues, transcription/conversation integration, multi-driver queries,

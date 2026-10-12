@@ -101,7 +101,7 @@ and telemetry workflows do not require the optional speech/model runtimes.
 
 An initial browser-independent radio client speaks fresh player lap completions
 and answers the fixed console command `lap` using the authenticated live backend.
-It does not yet provide microphone/wheel input or the full conversational engineer.
+It does not yet provide microphone capture or the full conversational engineer.
 
 ```powershell
 uv run --extra app f1-engineer radio --list-voices
@@ -112,6 +112,9 @@ uv run --extra app f1-engineer radio
 See the [standalone radio guide](docs/working-engineer-standalone-radio.md) for
 split-host token/tunnel settings, controls, timing diagnostics and pending
 hardware acceptance. The backend must already be running; no browser is needed.
+Optional wheel-button learning and live reassignment use `radio-input` with
+`--extra radio`; see the guide. The button currently emits a listening request,
+not microphone capture.
 
 ## Validation and diagnostics
 

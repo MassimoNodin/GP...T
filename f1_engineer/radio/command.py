@@ -10,7 +10,9 @@ from pathlib import Path
 
 from .client import RadioClient
 from .controller import RadioController
+from .input_settings import DEFAULT_INPUT_SETTINGS
 from .scheduler import RadioScheduler
+from .wheel_input import WheelButtonMonitor
 from .windows_speech import WindowsSpeech
 
 
@@ -71,6 +73,7 @@ def run_radio(args) -> int:
         return 0
     client = RadioClient(args.api_url, Path(args.token_file))
     scheduler = None
+    wheel = None
     stop = threading.Event()
     worker = None
     try:
@@ -83,9 +86,10 @@ def run_radio(args) -> int:
         controller.feed(snapshot, now=time.monotonic(), transport_age_s=time.monotonic() - started)
         if args.once:
             return 0 if controller.status()["backend"] == "available" else 2
+        wheel = WheelButtonMonitor(Path(getattr(args, "input_settings", DEFAULT_INPUT_SETTINGS)), notify=emit)
         emit({"event": "radio_ready", "dry_run": args.dry_run, "voice": getattr(playback, "voice", None),
               "rate": args.rate, "volume": args.volume,
-              "commands": ["lap", "quiet", "resume", "cancel", "repeat", "status", "quit"]})
+              "commands": ["lap", "listen", "quiet", "resume", "cancel", "repeat", "status", "quit"]})
         snapshots: queue.Queue = queue.Queue(maxsize=1)
         commands: queue.Queue = queue.Queue(maxsize=16)
         worker = threading.Thread(target=_poll, args=(client, snapshots, stop, args.poll_interval),
@@ -100,12 +104,16 @@ def run_radio(args) -> int:
             except queue.Empty:
                 pass
             controller.check_freshness(now=now)
+            if wheel.poll(now=now):
+                request_listening(scheduler, source="wheel")
             try:
                 command = commands.get_nowait()
                 if command == "quit":
                     stop.set()
                 elif command == "lap":
                     controller.answer_last_lap(now=now)
+                elif command == "listen":
+                    request_listening(scheduler, source="console")
                 elif command == "quiet":
                     scheduler.quiet()
                 elif command == "resume":
@@ -116,7 +124,7 @@ def run_radio(args) -> int:
                     if not scheduler.repeat(now=now):
                         emit({"event": "radio_repeat_unavailable"})
                 elif command == "status":
-                    emit({"event": "radio_status", **controller.status()})
+                    emit({"event": "radio_status", **controller.status(), "input": wheel.status()})
                 else:
                     emit({"event": "radio_command_unavailable"})
             except queue.Empty:
@@ -128,9 +136,19 @@ def run_radio(args) -> int:
     finally:
         stop.set()
         try:
-            if scheduler is not None:
-                scheduler.close()
+            try:
+                if wheel is not None:
+                    wheel.close()
+            finally:
+                if scheduler is not None:
+                    scheduler.close()
         finally:
             if worker is not None:
                 worker.join(timeout=7)
             client.close()
+
+
+def request_listening(scheduler: RadioScheduler, *, source: str) -> None:
+    scheduler.cancel()
+    emit({"event": "radio_listen_requested", "source": source})
+    emit({"event": "radio_listen_unavailable", "reason": "microphone_capture_not_implemented"})

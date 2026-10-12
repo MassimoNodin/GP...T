@@ -22,6 +22,9 @@ app = [
     "httpx>=0.28.1,<1",
     "uvicorn>=0.54,<1",
 ]
+radio = [
+    "pygame-ce>=2.5,<3",
+]
 
 [project.scripts]
 f1-engineer = "f1_engineer.cli:main"

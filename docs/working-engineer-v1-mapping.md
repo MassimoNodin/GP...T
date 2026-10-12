@@ -31,6 +31,22 @@ This supplies the playback/transport foundation of slice 2, not its wheel,
 capture, listening cues or conversational answer requirements. The inventory
 table below remains the pre-implementation baseline.
 
+### Dynamic wheel input foundation
+
+The radio now supports optional SDL controller enumeration, press-to-learn
+assignment and a saved listening-button binding. Re-learning in a second console
+hot-reloads the active radio without code changes or restart. GUID/name matching
+survives enumeration reordering and refuses ambiguous devices; reconnect and
+held-button baselines prevent unintended activation. A diagnostic-only `test`
+command works without the backend/browser/audio. Native enumeration succeeded
+on Windows but no controller was connected. This remains an input request hook:
+the radio explicitly reports capture unavailable, not listening. MOZA-focused
+activation, microphone capture and cues still require implementation/validation.
+Final focused validation: 49 input cases, 114 including radio/CLI checks. Full
+regression: 1,863 passed, 16 skipped; six final test-only cases were additionally
+verified in the focused run. Existing dependency pins remain unchanged; SDL is
+an optional local `radio` extra, not a production deployment change.
+
 | Requirement | Current foundation | Gap to acceptance |
 | --- | --- | --- |
 | Proactive comparisons | `engineer_activity/calls.py` observes published player laps, logs best-lap deltas, invalid/pit laps and telemetry state changes. | Calls are activity records, not a standalone spoken coach. Add opponent/comparable-reference selection and event-to-radio delivery. Its session best is not a condition-matched coaching reference. |

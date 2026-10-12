@@ -842,6 +842,14 @@ def _radio(args: argparse.Namespace) -> int:
     return run_radio(args)
 
 
+def _radio_input(args: argparse.Namespace) -> int:
+    try:
+        from .radio.input_command import run_input
+    except ImportError as exception:
+        raise ValueError("radio input requires app dependencies; install with uv sync --extra app --extra radio") from exception
+    return run_input(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="f1-engineer", description="F1 telemetry capture and replay")
     parser.add_argument("--version", action="version", version=f"f1-engineer {__version__}")
@@ -857,7 +865,18 @@ def build_parser() -> argparse.ArgumentParser:
     radio.add_argument("--list-voices", action="store_true", help="list installed voices without speaking or contacting the backend")
     radio.add_argument("--dry-run", action="store_true", help="log proposed speech without audio")
     radio.add_argument("--once", action="store_true", help="check backend status once without audio")
+    radio.add_argument("--input-settings", default="data/radio-input.json", help="saved wheel button binding; live changes are reloaded")
     radio.set_defaults(handler=_radio)
+
+    radio_input = commands.add_parser("radio-input", help="list, learn, change or test the listening button without audio")
+    radio_input.add_argument("--input-settings", default="data/radio-input.json", help="local wheel binding file")
+    input_actions = radio_input.add_subparsers(dest="input_action", required=True)
+    for action in ("list", "show", "clear", "test"):
+        input_actions.add_parser(action).set_defaults(handler=_radio_input)
+    input_bind = input_actions.add_parser("bind", help="press a button on the selected device to save its assignment")
+    input_bind.add_argument("--device-index", type=int, required=True, help="current device index from radio-input list")
+    input_bind.add_argument("--timeout", type=float, default=30, help="button learning timeout in seconds (1 to 120)")
+    input_bind.set_defaults(handler=_radio_input)
 
     record = commands.add_parser("record", help="capture raw F1 UDP telemetry")
     record.add_argument("--output", required=True, help="destination .f1ecap file")

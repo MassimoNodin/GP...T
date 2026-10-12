@@ -68,6 +68,8 @@ proactive spoken in-game engineer, not just a dashboard or successful replay.
 
 - A configurable button on the actual MOZA R3 starts listening with the game
   focused. Distinct start/end sounds and a minimal ongoing cue communicate state.
+  The assignment can be learned, saved and changed later without editing code;
+  changes apply to a running radio and cannot accidentally activate capture.
   Support ending/cancelling capture; held/bouncing input cannot duplicate it.
   Cues and engineer playback cannot become unintended commands.
 - With every browser closed, startup, telemetry, wheel input, microphone capture,
