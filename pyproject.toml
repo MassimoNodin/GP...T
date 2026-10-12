@@ -24,6 +24,7 @@ app = [
 ]
 radio = [
     "pygame-ce>=2.5,<3",
+    "sounddevice>=0.5,<1",
 ]
 
 [project.scripts]

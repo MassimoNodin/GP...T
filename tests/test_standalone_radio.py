@@ -382,11 +382,11 @@ def test_cli_rejects_invalid_settings_before_network_or_audio(arguments, monkeyp
         cli._radio(args)
 
 
-def test_cli_dry_run_answers_and_handles_controls_without_a_browser(monkeypatch, capsys):
+def test_cli_dry_run_answers_and_handles_controls_without_a_browser(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(command, "RadioClient", Client)
     monkeypatch.setattr(command.sys, "stdin", io.StringIO("lap\nstatus\nquiet\nresume\nrepeat\ncancel\nquit\n"))
     monkeypatch.setattr(command, "WindowsSpeech", lambda **kwargs: pytest.fail("audio must not initialise"))
-    args = cli.build_parser().parse_args(["radio", "--dry-run"])
+    args = cli.build_parser().parse_args(["radio", "--dry-run", "--input-settings", str(tmp_path / "unbound.json")])
     assert cli._radio(args) == 0
     output = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     spoken = [event for event in output if event["event"] == "radio_started"]

@@ -38,6 +38,7 @@ class RadioScheduler:
         self.notify = notify or (lambda event: None)
         self.scope: str | None = None
         self.muted = False
+        self.suspended = False
         self.pending: list[RadioMessage] = []
         self.active: RadioMessage | None = None
         self.last_completed: RadioMessage | None = None
@@ -70,6 +71,8 @@ class RadioScheduler:
             return self._drop(message, "expired")
         if self.muted and message.kind == "proactive":
             return self._drop(message, "quiet")
+        if self.suspended and message.kind == "proactive":
+            return self._drop(message, "listening")
         if message.key in self._seen:
             return self._drop(message, "duplicate")
         if len(self.pending) >= self.queue_limit:
@@ -94,6 +97,8 @@ class RadioScheduler:
             if message.expires_at <= now:
                 self.pending.remove(message)
                 self._drop(message, "expired")
+        if self.suspended:
+            return
         if self.active is not None:
             if self.active.expires_at <= now:
                 self.playback.cancel()

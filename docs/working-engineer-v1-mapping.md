@@ -47,6 +47,30 @@ regression: 1,863 passed, 16 skipped; six final test-only cases were additionall
 verified in the focused run. Existing dependency pins remain unchanged; SDL is
 an optional local `radio` extra, not a production deployment change.
 
+### Standalone listening and transcription increment
+
+The saved wheel button and console controls now start/finish bounded microphone
+capture with distinct start/end tones and quieter ongoing cues. A dedicated
+worker keeps native audio and correlated authenticated transcription off the
+radio loop. Capture/transcription cancellation, session and wheel-instance
+invalidation, safety timeouts and playback suspension guard the lifecycle.
+The `radio --capture-test` path works without backend/token/browser and keeps
+audio in memory without upload. Normal mode produces an unverified transcript
+draft through the existing pinned speech runtime, not an automatically submitted
+engineer question. Periodic cue guards omit brief audio intervals; hardware
+isolation and usability must be checked before acceptance.
+
+The actual R3 was detected and button 32 learned after the input increment; the
+user deferred game-focused validation to the full test. Audio-device enumeration
+also succeeded, but neither native recording nor cue playback was initiated.
+Slice 2 still needs actual headset/game validation and spoken question/answer
+integration; no acceptance criterion is marked complete by this increment.
+Validation: 57 new listening tests; 221 focused checks passed; full regression
+1,926 passed, 16 skipped with two existing deprecation warnings. Native audio
+enumeration, compilation and CLI help passed; actual recording/cues/transcription
+and hardware latency remain pending. Existing dependencies/runtime pins were
+preserved; only optional local audio dependencies were added.
+
 | Requirement | Current foundation | Gap to acceptance |
 | --- | --- | --- |
 | Proactive comparisons | `engineer_activity/calls.py` observes published player laps, logs best-lap deltas, invalid/pit laps and telemetry state changes. | Calls are activity records, not a standalone spoken coach. Add opponent/comparable-reference selection and event-to-radio delivery. Its session best is not a condition-matched coaching reference. |

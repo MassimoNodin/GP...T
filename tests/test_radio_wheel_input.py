@@ -297,13 +297,12 @@ def test_failed_learning_preserves_previous_binding_and_closes_device(tmp_path, 
     assert source.closed
 
 
-def test_listening_request_is_honest_and_cancels_radio(capsys):
+def test_listening_request_cancels_radio_and_forwards_session_binding():
     calls = []
-    command.request_listening(SimpleNamespace(cancel=lambda: calls.append("cancel")), source="wheel")
-    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert calls == ["cancel"]
-    assert events == [{"event": "radio_listen_requested", "source": "wheel"},
-                      {"event": "radio_listen_unavailable", "reason": "microphone_capture_not_implemented"}]
+    voice = SimpleNamespace(request=lambda **fields: calls.append(fields))
+    command.request_listening(SimpleNamespace(cancel=lambda: calls.append("cancel"), scope="session"),
+                              voice, source="wheel", binding="button", connection=7)
+    assert calls == ["cancel", {"source": "wheel", "scope": "session", "binding": "button", "connection": 7}]
 
 
 def test_radio_loop_routes_bound_button_request_and_closes_input(tmp_path, monkeypatch, capsys):
@@ -330,6 +329,9 @@ def test_radio_loop_routes_bound_button_request_and_closes_input(tmp_path, monke
 
         def close(self):
             calls.append("wheel-close")
+
+        def status(self):
+            return {"status": "ready", "binding": None, "connection_instance": 7}
 
     monkeypatch.setattr(command, "RadioClient", Client)
     monkeypatch.setattr(command, "WheelButtonMonitor", Wheel)

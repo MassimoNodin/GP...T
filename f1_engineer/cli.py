@@ -866,6 +866,12 @@ def build_parser() -> argparse.ArgumentParser:
     radio.add_argument("--dry-run", action="store_true", help="log proposed speech without audio")
     radio.add_argument("--once", action="store_true", help="check backend status once without audio")
     radio.add_argument("--input-settings", default="data/radio-input.json", help="saved wheel button binding; live changes are reloaded")
+    radio.add_argument("--list-audio-devices", action="store_true", help="list microphone/output devices without recording or playing audio")
+    radio.add_argument("--microphone", type=int, help="audio input device index; defaults to the system default")
+    radio.add_argument("--cue-output", type=int, help="listening cue output device index; defaults to the system default")
+    radio.add_argument("--cue-volume", type=float, default=0.08, help="listening cue amplitude (greater than 0, up to 0.3)")
+    radio.add_argument("--capture-seconds", type=float, default=12, help="maximum capture duration (1 to 12 seconds)")
+    radio.add_argument("--capture-test", action="store_true", help="test wheel/console capture and cues without backend access or saving/uploading audio")
     radio.set_defaults(handler=_radio)
 
     radio_input = commands.add_parser("radio-input", help="list, learn, change or test the listening button without audio")

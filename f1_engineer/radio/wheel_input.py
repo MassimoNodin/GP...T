@@ -189,6 +189,7 @@ class WheelButtonMonitor:
     def status(self) -> dict:
         status, reason = self._status or ("unbound", None)
         return {"status": status, "reason": reason,
+                "connection_instance": self._connection[0] if self._connection else None,
                 "binding": ({"guid": self._binding.guid, "name": self._binding.name,
                              "button": self._binding.button} if self._binding else None)}
 

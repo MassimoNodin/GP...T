@@ -9,13 +9,14 @@ engineer or completion of the standalone-radio acceptance slice.
 
 Run from the repository root in an interactive Windows console. The backend must
 already be running with the [live facts endpoint](working-engineer-live-facts.md).
-No browser, Next.js server, microphone or model is needed by this client.
+No browser or Next.js server is needed. Lap playback needs no microphone or
+model; microphone capture and pinned backend transcription are optional.
 
 ```powershell
 uv run --extra app f1-engineer radio --list-voices
 uv run --extra app f1-engineer radio --once
 uv run --extra app f1-engineer radio --dry-run
-uv run --extra app f1-engineer radio
+uv run --extra app --extra radio f1-engineer radio
 ```
 
 `--list-voices` discovers installed Windows System.Speech voices without backend
@@ -49,16 +50,18 @@ Enter one command per line; an optional leading `/` is accepted.
 | Command | Behaviour |
 | --- | --- |
 | `lap` | Speak the current player's last completed lap, or explain that timing is unavailable. |
-| `listen` | Request listening; currently reports that microphone capture is not implemented. |
-| `quiet` | Cancel speech and queued calls; suppress proactive calls, not explicit answers. |
+| `listen` | Start capture, or end the current capture when issued again. |
+| `finish` | End the current capture and request transcription (except in capture-test mode). |
+| `quiet` | Cancel capture, drafts, speech and queued calls; suppress proactive calls, not explicit answers. |
 | `resume` | Re-enable future proactive calls; do not replay suppressed calls. |
-| `cancel` | Cancel current speech and queued messages. |
+| `cancel` | Discard capture/transcription/draft and cancel speech and queued messages. |
 | `repeat` | Repeat the active or last completed message within its current session/player binding. |
-| `status` | Print backend availability, radio state and wheel binding/status as JSON. |
+| `status` | Print backend availability, radio state, wheel binding and voice-input state as JSON. |
 | `quit` | Stop playback and close the client/helper; Ctrl+C also stops the client. |
 
 Closing stdin stops the radio. Commands are fixed console controls, not natural
-language questions. No microphone is opened and no listening cue is emitted.
+language questions. `lap` and `repeat` cancel voice capture before their answer
+plays. Dry-run, once, device-listing and wheel-only testing never record audio.
 
 ## Learn or change the wheel button
 
@@ -95,10 +98,71 @@ Held buttons on startup/rebinding/reconnection cannot activate until released;
 press/release edges are tracked with a short debounce, including taps between
 polls. Background input is enabled without creating a visible window.
 
-This is **input mapping only**, not microphone functionality. In normal radio
-mode a bound press cancels queued speech and emits `radio_listen_requested`, then
-`radio_listen_unavailable` with `microphone_capture_not_implemented`. It does not
-pretend that listening has begun. Capture, cues and transcription are next.
+The bound button now toggles microphone capture in normal radio or capture-test
+mode. Wheel-only `radio-input test` remains diagnostic: it does not record audio.
+
+## Microphone capture, cues and transcript drafts
+
+Install the `radio` extra when running capture. List audio devices without
+opening a microphone or playing a sound, then run the backend-free local test:
+
+```powershell
+uv run --extra app --extra radio f1-engineer radio --list-audio-devices
+uv run --extra app --extra radio f1-engineer radio --capture-test
+uv run --extra app --extra radio f1-engineer radio --microphone 1 --cue-output 3
+```
+
+Indices in the last example are illustrative; use the list from your machine.
+Audio device indices are a current-run selection, not a persistent hardware
+identity, and can change when devices reconnect. Defaults follow the OS input
+and output devices without changing OS settings. `--cue-volume` sets tonal
+amplitude (greater than 0, at most 0.3; default 0.08). Cue output selection affects
+tones only; Windows engineer speech still uses the OS default playback device.
+
+Nothing records merely because the radio starts. Press the bound wheel button
+or enter `listen` to start; press again, enter `finish`, or reach the configured
+limit to finish. `--capture-seconds` accepts 1 to 12 seconds, default 12, matching
+the existing pinned transcription backend's maximum clip size. `cancel`, `quiet`
+and shutdown discard the clip. Session changes, wheel disconnects, rebindings
+and reconnect-instance changes invalidate wheel-owned capture and pending drafts.
+Console capture does not depend on a wheel.
+
+A rising two-tone start cue precedes microphone opening; a short, lower end cue
+follows microphone closure. A quieter pulse every two seconds indicates ongoing
+listening. The microphone is aborted/paused during pulses and a 0.2-second guard
+after them; those intervals are omitted from the clip. This reduces cue leakage
+but can omit speech spoken during a pulse/guard. `capture_gap_s` reports an
+aggregate gap estimate. Actual acoustic isolation is not verified; evaluate this
+trade-off with the headset in the full test before accepting the implementation.
+No engineer speech plays during starting/capture/stopping. Routine reports are
+dropped, not queued for a later stale backlog.
+
+Capture uses mono 16 kHz signed 16-bit PCM and a canonical bounded WAV entirely
+in memory. Capture-test mode reports duration and sample counts, but neither
+uploads nor saves a recording and does not require a token/backend. Normal mode
+posts the clip to the existing authenticated `/api/v1/engineer/transcribe` route
+with a UUID and SHA-256 digest. Replies must match both correlations and the
+bounded transcript contract. Existing runtime/model pins are unchanged. The
+backend must already have its approved speech runtime; this command installs or
+deploys no model/service. Backend temporary transcription files follow the
+existing cleanup policy; the radio itself persists no audio or transcripts.
+
+The console prints `radio_transcript` with `verified: false` and
+`submitted: false`. It is a **draft**, not an automatically submitted question
+or an executable control command. Text may still be retained by your terminal
+or logging setup. Conversation submission and multi-driver answers are the next
+increment. This also prevents mistranscriptions or tones from becoming actions.
+
+Native audio work and transcription run off the radio loop. Cancellation aborts
+the asynchronous HTTP request and suppresses late results. New capture cannot
+overlap a still-cleaning-up worker. Operational safeguards cancel stalled audio
+startup after five seconds, overdue capture after its limit plus one second,
+and stalled finishing after two seconds; pending cleanup is reported, not
+misrepresented as success. These are resource safety timeouts, not latency
+acceptance gates. Device/overflow/cue errors discard the clip rather than
+presenting damaged audio as a successful request.
+If microphone closure fails, new capture and engineer playback remain blocked
+and the radio reports that a restart is required, rather than assuming safety.
 
 ## Reliability and timing
 
@@ -123,6 +187,10 @@ playback request, and completion means a native completion acknowledgement
 observed by the loop. Neither proves audible output or measures acoustic onset.
 Dry-run completion is simulated. These diagnostics are measurements, not latency
 acceptance gates; real-game latency still needs a report for user assessment.
+Capture adds application-observed `request_to_listening_s`, `capture_elapsed_s`,
+`capture_audio_s`, `capture_gap_s` and `end_to_transcript_s`. The last includes the
+end cue and backend transport/transcription, not reasoning or answer playback.
+They do not measure acoustic cue onset or prove that output was audible.
 
 ## Validation and remaining work
 
@@ -142,8 +210,18 @@ exercised on Windows and found no connected controllers in this environment.
 Actual audible playback, live-game behaviour and physical wheel input are not
 verified by those checks.
 
-Still required: MOZA R3 activation with the game focused, microphone capture and
-listening cues, transcription/conversation integration, multi-driver queries,
+The wheel was subsequently connected, enumerated as R3 Racing Wheel and Pedals,
+and button 32 was learned successfully. Game-focused activation was deferred by
+the user. Native audio enumeration also succeeded without recording or playing
+sound. Actual capture, cue audibility, transcription and listening latency have
+not been demonstrated on the user's headset.
+The listening increment passed 221 focused capture/input/radio/CLI/speech/facts
+checks and 1,926 full regression tests with 16 skipped and the two existing
+deprecation warnings. Its 57 new tests use fake audio/HTTP adapters, not recorded
+microphone evidence. Compilation, CLI help and documentation-link checks passed.
+
+Still required: MOZA R3 activation with the game focused, capture/cue hardware
+acceptance, conversational submission and history, multi-driver queries,
 task tracking and the selected coaching/benchmark abilities. Real-game,
 browser-closed acceptance remains pending. See the
 [capability mapping](working-engineer-v1-mapping.md) for subsequent slices.
