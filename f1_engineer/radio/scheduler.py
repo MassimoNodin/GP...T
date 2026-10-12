@@ -22,6 +22,7 @@ class RadioMessage:
     expires_at: float
     queued_at: float | None = None
     observation_age_s: float | None = None
+    dispatch_before: float | None = None
 
     @property
     def priority(self) -> int:
@@ -65,10 +66,14 @@ class RadioScheduler:
         if message.observation_age_s is not None and (
                 not math.isfinite(message.observation_age_s) or message.observation_age_s < 0):
             raise ValueError("invalid radio observation age")
+        if message.dispatch_before is not None and not math.isfinite(message.dispatch_before):
+            raise ValueError("invalid radio dispatch deadline")
         if message.scope != self.scope:
             return self._drop(message, "scope_changed")
         if message.expires_at <= now:
             return self._drop(message, "expired")
+        if message.dispatch_before is not None and message.dispatch_before <= now:
+            return self._drop(message, "observations_stale")
         if self.muted and message.kind == "proactive":
             return self._drop(message, "quiet")
         if self.suspended and message.kind == "proactive":
@@ -94,7 +99,7 @@ class RadioScheduler:
 
     def tick(self, *, now: float) -> None:
         for message in tuple(self.pending):
-            if message.expires_at <= now:
+            if message.expires_at <= now or (message.dispatch_before is not None and message.dispatch_before <= now):
                 self.pending.remove(message)
                 self._drop(message, "expired")
         if self.suspended:

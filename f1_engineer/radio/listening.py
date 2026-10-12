@@ -105,6 +105,13 @@ class VoiceInput:
             self._stop_at = self._clock()
             self._finish.set()
 
+    def take_draft(self, *, scope: str | None) -> str | None:
+        if scope is None or scope != self._scope or self._discard:
+            self._draft = None
+            return None
+        draft, self._draft = self._draft, None
+        return draft
+
     def cancel(self, reason="cancelled") -> None:
         self._draft = None
         if self._capture_id is not None and not self._discard:

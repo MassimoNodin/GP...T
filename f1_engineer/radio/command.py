@@ -47,7 +47,8 @@ def _commands(inbox: queue.Queue, stream) -> None:
                 line = stream.readline(1025)
             inbox.put("invalid")
         else:
-            inbox.put(line.strip().lower().removeprefix("/"))
+            text = line.strip().removeprefix("/")
+            inbox.put("ask " + text[4:] if text[:4].lower() == "ask " else text.lower())
 
 
 def _poll(client: RadioClient, inbox: queue.Queue, stop: threading.Event, interval: float) -> None:
@@ -105,7 +106,8 @@ def run_radio(args) -> int:
         emit({"event": "radio_ready", "dry_run": args.dry_run, "voice": getattr(playback, "voice", None),
               "rate": args.rate, "volume": args.volume,
               "capture_test": args.capture_test,
-              "commands": ["lap", "listen", "finish", "quiet", "resume", "cancel", "repeat", "status", "quit"]})
+              "commands": ["lap", "listen", "finish", "ask <question>", "submit", "forget",
+                           "quiet", "resume", "cancel", "repeat", "status", "quit"]})
         snapshots: queue.Queue = queue.Queue(maxsize=1)
         commands: queue.Queue = queue.Queue(maxsize=16)
         if client is not None:
@@ -138,6 +140,15 @@ def run_radio(args) -> int:
                     request_listening(scheduler, voice, source="console")
                 elif command == "finish":
                     voice.finish()
+                elif command == "submit" or command.startswith("ask "):
+                    if args.capture_test:
+                        emit({"event": "radio_question_unavailable", "reason": "capture_test"})
+                    else:
+                        submit_question(command, controller, voice, now=now)
+                elif command == "forget":
+                    voice.cancel()
+                    scheduler.cancel()
+                    controller.forget_conversation()
                 elif command == "quiet":
                     voice.cancel()
                     scheduler.quiet()
@@ -185,3 +196,17 @@ def run_radio(args) -> int:
 def request_listening(scheduler: RadioScheduler, voice: VoiceInput, *, source: str, binding=None, connection=None) -> None:
     scheduler.cancel()
     voice.request(source=source, scope=scheduler.scope, binding=binding, connection=connection)
+
+
+def submit_question(command: str, controller: RadioController, voice: VoiceInput, *, now: float) -> None:
+    controller.check_freshness(now=now)
+    if command == "submit":
+        question = voice.take_draft(scope=controller.scheduler.scope)
+        if question is None:
+            emit({"event": "radio_question_unavailable", "reason": "no_current_draft"})
+            return
+    else:
+        question = command[4:]
+        voice.cancel()
+    controller.scheduler.cancel()
+    controller.answer_question(question, now=now)

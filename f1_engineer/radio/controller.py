@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import math
 import re
+import time
+from copy import deepcopy
 
+from .questions import plan_question, timing_fact
 from .scheduler import RadioMessage, RadioScheduler
 
 
@@ -40,11 +43,15 @@ class RadioController:
         self._age_s = 0.0
         self._answer_id = 0
         self._status = None
+        self._drivers = []
+        self._history = []
 
     def _unavailable(self, reason: str) -> None:
         self.scheduler.set_scope(None)
         self._cursor = None
         self._player = None
+        self._drivers = []
+        self._history.clear()
         safe_reason = reason if re.fullmatch(r"[a-z0-9_]{1,96}", reason) else "unavailable"
         self._report("unavailable", safe_reason)
 
@@ -92,7 +99,10 @@ class RadioController:
                              sort_keys=True, separators=(",", ":"))
         changed = self.scheduler.scope != binding
         self.scheduler.set_scope(binding)
-        self._player = player
+        if changed:
+            self._history.clear()
+        self._player = deepcopy(player)
+        self._drivers = deepcopy(snapshot["drivers"])
         self._received_at = now
         self._age_s = age
         cursor = snapshot["event_cursor"]
@@ -147,5 +157,84 @@ class RadioController:
     def status(self) -> dict:
         return {"backend": self._status[0] if self._status else "unavailable",
                 "reason": self._status[1] if self._status else "not_connected",
+                "conversation_turns": len(self._history),
                 "quiet": self.scheduler.muted, "pending_messages": len(self.scheduler.pending),
                 "active_message": self.scheduler.active.key if self.scheduler.active else None}
+
+    def forget_conversation(self) -> None:
+        self._history.clear()
+        self.notify({"event": "radio_conversation_cleared"})
+
+    def _resolve_target(self, target: str, identity=None) -> dict | None:
+        rows = [row for row in self._drivers if isinstance(row, dict)
+                and _integer(row.get("car_index"), 0, 23)
+                and _identity(row.get("identity"))
+                and row.get("car_index") == row["identity"]["car_index"]
+                and isinstance(row.get("lap"), dict)]
+        if identity is not None:
+            matches = [row for row in rows if row["identity"] == identity]
+        elif target == "self":
+            matches = [row for row in rows if row["identity"] == self._player["identity"]]
+        else:
+            position = self._player["lap"].get("car_position")
+            if target in ("ahead", "behind"):
+                if not _integer(position, 1, 24):
+                    return None
+                wanted = position + (1 if target == "behind" else -1)
+            else:
+                wanted = 1 if target == "leader" else int(target.split(":")[1])
+            if not 1 <= wanted <= 24:
+                return None
+            if sum(isinstance(row, dict) and isinstance(row.get("lap"), dict)
+                   and row["lap"].get("car_position") == wanted for row in self._drivers) != 1:
+                return None
+            matches = [row for row in rows if type(row["lap"].get("car_position")) is int
+                       and row["lap"]["car_position"] == wanted]
+        if len(matches) != 1:
+            return None
+        match = matches[0]
+        if sum(isinstance(row, dict) and row.get("car_index") == match["car_index"]
+               for row in self._drivers) != 1:
+            return None
+        return match
+
+    def answer_question(self, question: str, *, now: float) -> None:
+        self.check_freshness(now=now)
+        previous = self._history[-1] if self._history else None
+        started = time.perf_counter()
+        text = "No fresh player telemetry is available."
+        results = []
+        if self._player is not None:
+            try:
+                plan = plan_question(question, previous["plan"] if previous else None)
+            except ValueError as error:
+                text = str(error)
+            else:
+                bindings = []
+                for index, target in enumerate(plan.targets):
+                    if plan.inherited_targets:
+                        identity = previous["bindings"][index]
+                        row = self._resolve_target(target, identity) if identity is not None else None
+                    else:
+                        row = self._resolve_target(target)
+                        identity = row["identity"] if row else None
+                    bindings.append(deepcopy(identity))
+                    label = "You" if target == "self" else target.replace("position:", "P").capitalize()
+                    if plan.inherited_targets and target != "self":
+                        label = f"Previously selected {label}"
+                    if row is None:
+                        result = f"{label}: driver unavailable or ambiguous."
+                    else:
+                        result = f"{label} (car slot {row['car_index']}): " + ", ".join(
+                            timing_fact(metric, row["lap"]) for metric in plan.metrics) + "."
+                    results.append(result)
+                text = " ".join(results)
+                self._history.append({"question": question, "plan": plan, "bindings": bindings})
+                self._history = self._history[-8:]
+        self._answer_id += 1
+        self.notify({"event": "radio_question_answer", "question": question, "text": text,
+                     "results": results, "planning_s": time.perf_counter() - started})
+        age = self._age_s + now - self._received_at if self._player is not None else None
+        self.scheduler.submit(RadioMessage(f"answer:{self._answer_id}", self.scheduler.scope,
+                                          text, "answer", now + 60, observation_age_s=age,
+                                          dispatch_before=now + 3 - (age or 0)), now=now)

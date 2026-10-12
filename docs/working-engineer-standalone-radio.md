@@ -1,7 +1,8 @@
-# Standalone lap radio foundation
+# Standalone radio foundation
 
 This Windows client provides browser-independent playback of fresh player lap
-completion events and a deterministic last-lap answer. It is a partial increment
+completion events, bounded live timing questions and explicit transcript-draft
+submission. It is a partial increment
 towards [working engineer v1](working-engineer-v1-acceptance.md), not the finished
 engineer or completion of the standalone-radio acceptance slice.
 
@@ -52,6 +53,9 @@ Enter one command per line; an optional leading `/` is accepted.
 | `lap` | Speak the current player's last completed lap, or explain that timing is unavailable. |
 | `listen` | Start capture, or end the current capture when issued again. |
 | `finish` | End the current capture and request transcription (except in capture-test mode). |
+| `ask <question>` | Answer a supported live timing question; cancel any capture or older draft. |
+| `submit` | Submit the current session-bound transcript draft once, as a question only. |
+| `forget` | Clear conversation references and cancel capture, drafts and queued/active speech. |
 | `quiet` | Cancel capture, drafts, speech and queued calls; suppress proactive calls, not explicit answers. |
 | `resume` | Re-enable future proactive calls; do not replay suppressed calls. |
 | `cancel` | Discard capture/transcription/draft and cancel speech and queued messages. |
@@ -59,8 +63,8 @@ Enter one command per line; an optional leading `/` is accepted.
 | `status` | Print backend availability, radio state, wheel binding and voice-input state as JSON. |
 | `quit` | Stop playback and close the client/helper; Ctrl+C also stops the client. |
 
-Closing stdin stops the radio. Commands are fixed console controls, not natural
-language questions. `lap` and `repeat` cancel voice capture before their answer
+Closing stdin stops the radio. Use `ask` for supported natural-language questions;
+other commands remain fixed console controls. `lap` and `repeat` cancel voice capture before their answer
 plays. Dry-run, once, device-listing and wheel-only testing never record audio.
 
 ## Learn or change the wheel button
@@ -150,8 +154,10 @@ existing cleanup policy; the radio itself persists no audio or transcripts.
 The console prints `radio_transcript` with `verified: false` and
 `submitted: false`. It is a **draft**, not an automatically submitted question
 or an executable control command. Text may still be retained by your terminal
-or logging setup. Conversation submission and multi-driver answers are the next
-increment. This also prevents mistranscriptions or tones from becoming actions.
+or logging setup. Review the text and use `submit` to send it as a timing question,
+or `ask <corrected question>` to replace it. Submission never interprets draft text
+as console controls or task instructions. This prevents mistranscriptions or tones
+from automatically becoming actions.
 
 Native audio work and transcription run off the radio loop. Cancellation aborts
 the asynchronous HTTP request and suppresses late results. New capture cannot
@@ -220,8 +226,71 @@ checks and 1,926 full regression tests with 16 skipped and the two existing
 deprecation warnings. Its 57 new tests use fake audio/HTTP adapters, not recorded
 microphone evidence. Compilation, CLI help and documentation-link checks passed.
 
+The live-question increment passed 266 focused radio/input/listening/facts/CLI
+checks and 1,986 full regression tests with 16 skipped and the same two existing
+warnings. Its 60 new cases include a mocked capture-to-transcript-to-explicit-
+submission-to-playback path, not real microphone or in-game evidence. Compilation,
+CLI help, local documentation links and staged whitespace checks also passed.
+
 Still required: MOZA R3 activation with the game focused, capture/cue hardware
-acceptance, conversational submission and history, multi-driver queries,
+acceptance, verified named-driver queries, broader conversational planning,
 task tracking and the selected coaching/benchmark abilities. Real-game,
 browser-closed acceptance remains pending. See the
 [capability mapping](working-engineer-v1-mapping.md) for subsequent slices.
+
+## Live timing questions and follow-ups
+
+This first conversation increment uses a deterministic typed plan, not a new model
+or a change to the recorded-evidence router. Supported facts are last completed
+lap time, current lap elapsed time, current race position, gap to the leader and
+gap to the car immediately ahead. Current lap elapsed is not a projected or
+completed lap time. Last lap time does not establish that the lap was valid, a
+personal best, or on comparable tyres. Gaps are the driver's own UDP race-gap
+fields, never subtraction of lap times or an inferred gap to any arbitrary car.
+Missing, zero-sentinel, malformed or ambiguous observations yield partial
+unavailable results, not invented numbers.
+
+Request up to three targets and three facts, for example:
+
+```text
+ask What are my and the leader's last lap times and positions?
+ask And current lap times?
+ask What about the car behind me?
+ask My gap to the leader and gap to the car ahead
+ask P3 last lap and position
+```
+
+Targets are me/my, leader, car ahead/in front, car behind, and P1 through P24.
+P numbers are race positions, not car slots or race numbers. Replies additionally
+identify the zero-based car slot until verified participant names are available.
+Named drivers, older numbered laps, bests, sectors, tyre benchmarks, strategies
+and recurring instructions are explicitly unsupported in this increment. A
+mixed supported/unsupported request is rejected rather than silently dropping
+the unsupported part. This is not yet the complete multi-driver acceptance slice.
+
+The last eight accepted requests and their typed plans/driver bindings are held
+only in memory. Follow-ups inherit omitted facts or targets from the most recent
+accepted request. An omitted target follows the previously selected participant
+identity and tenure, even if positions change; an explicit new `leader` or `P3`
+resolves the current position again. A disappeared/replaced driver is unavailable,
+not rebound to the new occupant. Missing targets stay unresolved in follow-ups
+until explicitly requested again. Previous numerical values are never used as
+new facts. Unavailable/stale telemetry, session/player/epoch changes, restart and
+`forget` clear context. Invalid requests do not overwrite the prior accepted plan.
+This does not yet infer references to older turns or persist coaching preferences.
+
+`submit` consumes one draft only in its still-current session/player scope. It
+cannot execute `quiet`, `quit`, task controls or instructions through transcript
+text. Wheel assignment/connection changes retain the capture cancellation rules.
+Both explicit submission and typed questions cancel competing queued speech.
+`ask`/`submit` are disabled in capture-test mode. No browser is needed.
+
+`radio_question_answer` reports the original question, per-target results and
+`planning_s`; existing speech events report queue wait and observation-to-dispatch
+age. These are local processing/dispatch observations, not acoustic or end-to-end
+hardware latency. Fresh timing answers must start before their observations reach
+the existing three-second freshness limit; that deadline does not cut off an
+already-started multi-fact answer while live telemetry remains healthy. A separate
+60-second utterance expiry bounds stuck playback. Session invalidation still
+cancels speech, and stale timing answers cannot be replayed with `repeat`. These
+are safety limits, not a user latency acceptance gate.
