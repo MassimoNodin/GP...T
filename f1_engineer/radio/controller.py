@@ -6,6 +6,7 @@ import re
 import time
 from copy import deepcopy
 
+from ..driver_names import display_driver_name, driver_name_aliases
 from .questions import plan_question, timing_fact
 from .scheduler import RadioMessage, RadioScheduler
 
@@ -165,6 +166,19 @@ class RadioController:
         self._history.clear()
         self.notify({"event": "radio_conversation_cleared"})
 
+    def _participant_name(self, row: dict) -> str | None:
+        participant = row.get("participant")
+        if (not isinstance(participant, dict) or participant.get("status") != "available"
+                or not _identity(row.get("identity")) or participant.get("identity") != row["identity"]
+                or not isinstance(participant.get("value"), dict)):
+            return None
+        value = participant["value"]
+        if (not _integer(value.get("driver_id"), 0, 65535)
+                or not _integer(value.get("team_id"), 0, 65535)
+                or not _integer(value.get("race_number"), 0, 255)):
+            return None
+        return display_driver_name(value.get("name"))
+
     def _resolve_target(self, target: str, identity=None) -> dict | None:
         rows = [row for row in self._drivers if isinstance(row, dict)
                 and _integer(row.get("car_index"), 0, 23)
@@ -175,6 +189,9 @@ class RadioController:
             matches = [row for row in rows if row["identity"] == identity]
         elif target == "self":
             matches = [row for row in rows if row["identity"] == self._player["identity"]]
+        elif target.startswith("name:"):
+            matches = [row for row in rows if (name := self._participant_name(row)) is not None
+                       and target[5:] in driver_name_aliases(name)]
         else:
             position = self._player["lap"].get("car_position")
             if target in ("ahead", "behind"):
@@ -206,7 +223,10 @@ class RadioController:
         results = []
         if self._player is not None:
             try:
-                plan = plan_question(question, previous["plan"] if previous else None)
+                aliases = tuple(alias for row in self._drivers if isinstance(row, dict)
+                                and (name := self._participant_name(row)) is not None
+                                for alias in driver_name_aliases(name))
+                plan = plan_question(question, previous["plan"] if previous else None, names=aliases)
             except ValueError as error:
                 text = str(error)
             else:
@@ -220,10 +240,17 @@ class RadioController:
                         identity = row["identity"] if row else None
                     bindings.append(deepcopy(identity))
                     label = "You" if target == "self" else target.replace("position:", "P").capitalize()
+                    if target.startswith("name:"):
+                        label = target[5:]
+                    name = self._participant_name(row) if row is not None else None
+                    if name is not None and target != "self":
+                        label = name
                     if plan.inherited_targets and target != "self":
                         label = f"Previously selected {label}"
                     if row is None:
                         result = f"{label}: driver unavailable or ambiguous."
+                        if target.startswith("name:"):
+                            result += " Use a full name or P1 to P24."
                     else:
                         result = f"{label} (car slot {row['car_index']}): " + ", ".join(
                             timing_fact(metric, row["lap"]) for metric in plan.metrics) + "."

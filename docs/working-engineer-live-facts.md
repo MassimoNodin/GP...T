@@ -27,7 +27,13 @@ isolated copies and recheck freshness at read time.
   `received_monotonic_ns` is the original receiver's monotonic performance-clock
   timestamp, not publication time. `age_s` is computed against the same clock.
 - Each driver has a car slot plus verified tenure ordinal and participant
-  identity fingerprint. Names/natural-language driver resolution are deferred.
+  identity fingerprint. The additive `participant` field exposes bound roster
+  metadata: availability/reason, an `identity` equal to the driver's binding, and
+  `value` containing `name`, `driver_id`, `team_id` and `race_number` when available.
+  Missing, duplicate, wrong-scope/tenure or fingerprint-mismatched descriptors
+  do not publish a name. Empty/control-character names are explicitly unavailable
+  without discarding otherwise usable timing. Older snapshots without this
+  optional field remain usable for player/position-based timing questions.
 - `lap` contains decoded source fields with their original units: millisecond
   timing/gaps, metre distances, lap/sector numbers, position, pit status, validity
   flags and penalties. Raw source zero values are not automatically usable
@@ -43,6 +49,14 @@ not as a response-latency acceptance target. Non-receiving runtime states, old
 lap observations or a future receiver timestamp return unavailable results with
 empty driver/event lists. Acquisition gaps, malformed/conflicting lap data,
 session/format/lifecycle boundaries and shutdown invalidate old current facts.
+
+Participant metadata is retained only within the active verified roster tenure;
+unlike tyre status, it does not require a new roster packet in every lap-data
+frame. The current tenure and source participant identity hash are checked on
+publication. Conflicting rosters fence disputed slots, replacement starts a new
+tenure, and gaps/lifecycle boundaries discard open descriptors. No names are
+reconstructed from official driver IDs, network IDs, race numbers or old session
+history, and no new detailed-trace selection or persistence schema is introduced.
 
 ## Event contract
 

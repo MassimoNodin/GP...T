@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ..driver_names import driver_name_key
 
 @dataclass(frozen=True, slots=True)
 class QuestionPlan:
@@ -26,10 +27,32 @@ TARGETS = {
 }
 
 
-def plan_question(question: str, previous: QuestionPlan | None = None) -> QuestionPlan:
+def plan_question(question: str, previous: QuestionPlan | None = None, *, names: tuple[str, ...] = ()) -> QuestionPlan:
     if not isinstance(question, str) or not 1 <= len(question.encode("utf-8")) <= 1024:
         raise ValueError("Ask a question of at most 1024 bytes.")
-    remaining = question.lower().strip().replace("’", "'")
+    remaining = driver_name_key(question)
+    if "__named_" in remaining:
+        raise ValueError("Please specify a supported driver name or timing fact.")
+    named_targets = []
+    reserved = set("what is are the a and also please tell show give for of about how their his her them him then my me mine myself lap last current quiet resume cancel repeat status quit submit forget ask listen finish".split())
+    reserved_patterns = "|".join((*TARGETS.values(), *METRICS.values(), r"p(?:[1-9]|1[0-9]|2[0-4])"))
+    name_patterns = []
+    known_names = {driver_name_key(name) for name in names}
+    for name in sorted(known_names, key=lambda value: (-len(value), value)):
+        escaped = re.escape(name)
+        name_patterns.append(f'"{escaped}"' + r"(?:'s)?")
+        if (not any(word in reserved for word in name.split()) and not name.isdecimal()
+                and re.fullmatch(reserved_patterns, name) is None):
+            name_patterns.append(escaped + r"(?:'s)?")
+    def named_target(match):
+        text = match.group()
+        alias = text[1:text.rfind('\"')] if text.startswith('\"') else text
+        if alias not in known_names:
+            alias = alias.removesuffix("'s")
+        named_targets.append("name:" + alias)
+        return f" __named_{len(named_targets) - 1}__ "
+    if name_patterns:
+        remaining = re.sub(r"(?<!\w)(?:" + "|".join(name_patterns) + r")(?!\w)", named_target, remaining)
     remaining = re.sub(r"\b(?:tell|show|give) me\b", " ", remaining)
     metrics = []
     targets = []
@@ -39,10 +62,13 @@ def plan_question(question: str, previous: QuestionPlan | None = None) -> Questi
             metrics.append(metric)
     patterns = {target: TARGETS[target] for target in ("ahead", "behind", "leader", "self")}
     patterns["position"] = r"p(?:[1-9]|1[0-9]|2[0-4])(?:'s)?"
+    patterns["named"] = r"__named_[0-9]+__"
     def driver_target(match):
         target = match.lastgroup
         if target == "position":
             targets.append(f"position:{int(re.search(r'[0-9]+', match.group()).group())}")
+        elif target == "named":
+            targets.append(named_targets[int(re.search(r'[0-9]+', match.group()).group())])
         else:
             targets.append(target)
         return " "
@@ -52,7 +78,7 @@ def plan_question(question: str, previous: QuestionPlan | None = None) -> Questi
         raise ValueError("Please specify a driver; that pronoun has no single supported reference.")
     remaining = re.sub(r"\b(?:what|what's|is|are|the|a|and|also|please|tell|show|give|for|of|about|how|their|his|her|them|him|then)\b", " ", remaining)
     if re.sub(r"[\s?,.!']", "", remaining):
-        raise ValueError("I can answer current or last lap times, positions, and gaps to the leader or car ahead. Use me, leader, car ahead, car behind, or P1 to P24. Named drivers and task instructions are not supported yet.")
+        raise ValueError("I can answer current or last lap times, positions, and leader/front-car gaps. Use me, leader, car ahead, car behind, P1 to P24, or an available driver's full name or surname. Other facts and task instructions are not supported yet.")
     if not metrics and not targets:
         raise ValueError("Please specify a driver or timing fact.")
     inherited_targets = not targets and previous is not None

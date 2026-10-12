@@ -232,8 +232,16 @@ warnings. Its 60 new cases include a mocked capture-to-transcript-to-explicit-
 submission-to-playback path, not real microphone or in-game evidence. Compilation,
 CLI help, local documentation links and staged whitespace checks also passed.
 
+The verified-name increment passed 358 focused roster/facts/detail-policy/radio/
+input/listening/CLI checks and 2,022 full regression tests with 16 skipped and
+the same two existing warnings. Its 36 new cases include decoded F1 25 and 2026
+roster packets, identity-bound publication and named radio answers, conflicting
+rosters, replacement, duplicate surnames, Unicode/quoted names and parser safety.
+Compilation, CLI help and local documentation links also passed. These remain
+synthetic packet/audio tests, not live-game or hardware acceptance evidence.
+
 Still required: MOZA R3 activation with the game focused, capture/cue hardware
-acceptance, verified named-driver queries, broader conversational planning,
+acceptance, broader conversational planning and historical timing retrieval,
 task tracking and the selected coaching/benchmark abilities. Real-game,
 browser-closed acceptance remains pending. See the
 [capability mapping](working-engineer-v1-mapping.md) for subsequent slices.
@@ -258,15 +266,28 @@ ask And current lap times?
 ask What about the car behind me?
 ask My gap to the leader and gap to the car ahead
 ask P3 last lap and position
+ask My and Leclerc and Norris last lap times and positions
+ask "Charles Leclerc" last lap
 ```
 
-Targets are me/my, leader, car ahead/in front, car behind, and P1 through P24.
+Targets are me/my, leader, car ahead/in front, car behind, P1 through P24, and
+available participant full names or surnames.
 P numbers are race positions, not car slots or race numbers. Replies additionally
-identify the zero-based car slot until verified participant names are available.
-Named drivers, older numbered laps, bests, sectors, tyre benchmarks, strategies
+identify the verified roster name when available and the zero-based car slot.
+Older numbered laps, bests, sectors, tyre benchmarks, strategies
 and recurring instructions are explicitly unsupported in this increment. A
 mixed supported/unsupported request is rejected rather than silently dropping
 the unsupported part. This is not yet the complete multi-driver acceptance slice.
+
+Names come only from current, identity-bound participant metadata. Exact full
+names and last-word surname aliases are case-insensitive and Unicode-normalized;
+accent stripping, fuzzy matching, first-name guesses and official-ID lookups are
+not used. Duplicate surnames or duplicate full names yield an explicit ambiguous
+result and ask for a full name or race position, never the first match. Reserved
+names such as `me` or `leader`, and numeric-only names, require double quotes.
+Numeric suffixes such as the `16` in `Player 16` are not surname aliases. Unknown
+or unusable names cannot be bound; use an available name or a current P position.
+Legacy servers without name metadata retain player/position-based queries.
 
 The last eight accepted requests and their typed plans/driver bindings are held
 only in memory. Follow-ups inherit omitted facts or targets from the most recent

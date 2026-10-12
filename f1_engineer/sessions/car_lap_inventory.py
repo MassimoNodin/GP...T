@@ -52,6 +52,16 @@ class ObservedCarLapAttempt:
     participant_identity_fingerprint: str
 
 
+@dataclass(frozen=True, slots=True)
+class VerifiedCarParticipant:
+    tenure: CarSlotTenure
+    participant: ParticipantData
+
+    def matches(self, tenure: CarSlotTenure) -> bool:
+        return (self.tenure == tenure
+                and _identity_fingerprint(self.participant) == tenure.participant_identity_fingerprint)
+
+
 @dataclass(slots=True)
 class _OpenTenure:
     session_uid: int
@@ -64,6 +74,7 @@ class _OpenTenure:
     participant_wire_fingerprint: str
     participant_identity_fingerprint: str
     last_frame_ordinal: int
+    participant: ParticipantData
 
 
 ContextTimelineProvider = Callable[
@@ -119,6 +130,10 @@ class CarLapInventoryTracker:
         self._active_tenure_cache.clear()
         self._close_scope(frame_ordinal=frame_ordinal, reason=reason)
         self._slot_state = {slot: "unknown" for slot in range(MAX_CAR_SLOTS)}
+
+    def active_participants(self, frame_ordinals: dict[int, int] | None = None) -> tuple[VerifiedCarParticipant, ...]:
+        return tuple(VerifiedCarParticipant(tenure, self._open_tenures[tenure.car_index].participant)
+                     for tenure in self.active_tenures(frame_ordinals))
 
     def __init__(self) -> None:
         self.lap_tracker = LapTracker()
@@ -376,7 +391,7 @@ class CarLapInventoryTracker:
                     )
                 )
 
-        provenance_packet = min(decoded, key=lambda item: item[0].wire_fingerprint)[0]
+        provenance_packet, provenance_roster = min(decoded, key=lambda item: item[0].wire_fingerprint)
         provenance_keys = {
             (packet.header.frame_identifier, packet.header.session_time)
             for packet, _ in decoded
@@ -421,6 +436,7 @@ class CarLapInventoryTracker:
                 and current.participant_identity_fingerprint == identity_fingerprint
             ):
                 current.last_frame_ordinal = frame_ordinal
+                current.participant = provenance_roster.cars[car_index]
                 self._slot_state[car_index] = "active"
                 continue
             if current is not None:
@@ -442,6 +458,7 @@ class CarLapInventoryTracker:
                 participant_wire_fingerprint=wire_fingerprint,
                 participant_identity_fingerprint=identity_fingerprint,
                 last_frame_ordinal=frame_ordinal,
+                participant=provenance_roster.cars[car_index],
             )
             self._slot_state[car_index] = "active"
 

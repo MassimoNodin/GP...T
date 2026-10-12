@@ -6,6 +6,8 @@ from collections import Counter, deque
 from dataclasses import asdict
 from typing import Any
 
+from ..driver_names import display_driver_name
+from ..sessions.car_lap_inventory import VerifiedCarParticipant
 from .detail_policy import DetailPolicyFrame
 from ..udp.car_status import CarStatusData
 
@@ -68,7 +70,8 @@ class LiveEngineerFacts:
     def observe(self, frame: DetailPolicyFrame, *, frame_identifier: int,
                 session_time_s: float, received_monotonic_ns: int | None,
                 captured_at_ns: int | None,
-                statuses: dict[int, tuple[CarStatusData | None, str | None]] | None = None) -> None:
+                statuses: dict[int, tuple[CarStatusData | None, str | None]] | None = None,
+                participants: tuple[VerifiedCarParticipant, ...] = ()) -> None:
         self.begin_frame(frame.session_uid, frame.lifecycle_epoch)
         if not frame.association_scope_assessable or frame.lap_data_conflicted:
             self.invalidate("lap_association_unavailable")
@@ -96,6 +99,8 @@ class LiveEngineerFacts:
             "drivers": [],
         }
         counts = Counter(item.car_index for item in frame.verified_tenures)
+        participant_counts = Counter(item.tenure.car_index for item in participants)
+        participant_rows = {item.tenure.car_index: item for item in participants}
         prior_drivers = {row["car_index"]: row for row in previous["drivers"]} if previous else {}
         for tenure in frame.verified_tenures:
             car = tenure.car_index
@@ -126,6 +131,19 @@ class LiveEngineerFacts:
                 "tyre": {"status": "available" if tyre is not None else "unavailable",
                          "reason": None if tyre is not None else status_reason, "value": tyre},
             }
+            participant = participant_rows.get(car)
+            participant_value = None
+            participant_reason = "participant_binding_unavailable"
+            if participant_counts[car] == 1 and participant is not None and participant.matches(tenure):
+                name = display_driver_name(participant.participant.name)
+                participant_reason = "participant_name_unavailable"
+                if name is not None:
+                    participant_value = {"name": name, "driver_id": participant.participant.driver_id,
+                                         "team_id": participant.participant.team_id,
+                                         "race_number": participant.participant.race_number}
+            driver["participant"] = {"identity": dict(identity), "value": participant_value,
+                                     "status": "available" if participant_value is not None else "unavailable",
+                                     "reason": None if participant_value is not None else participant_reason}
             current["drivers"].append(driver)
             prior = prior_drivers.get(car)
             if prior is None or prior["identity"] != identity:

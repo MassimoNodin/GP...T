@@ -650,7 +650,8 @@ class TelemetryPipeline:
                     received_monotonic_ns=fact_packet.received_monotonic_ns,
                     captured_at_ns=fact_packet.captured_at_ns,
                     statuses={car: _join_car_status(fact_packet, car, car_status_candidates)
-                              for car in range(len(fact_laps.cars))})
+                              for car in range(len(fact_laps.cars))},
+                    participants=self.car_lap_inventory.active_participants({frame.session_uid: frame_ordinal}))
             if pending_observation is not None:
                 (lap_packet, lap_data_packet, player_index, context_json,
                  observation_telemetry, telemetry_reason, observation_motion,
