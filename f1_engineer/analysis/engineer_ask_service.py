@@ -15,6 +15,7 @@ from .engineer_ask import (
     answer_message,
     select_report_facts,
 )
+from .engineer_preferences import compose_message
 from .engineer_query import query_engineer_evidence
 from .engineer_runtime import EngineerRuntime, EngineerRuntimeUnavailable
 from .service import ComparisonPolicy, compare_attempts
@@ -28,7 +29,9 @@ async def answer_engineer_question(
     runtime: EngineerRuntime,
     track_model_catalog: TrackModelCatalog | None = None,
     gate_lease: AIGateLease | None = None,
+    style: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
+    """``style`` is the optional ``answer_style`` budget; ``None`` keeps the defaults."""
     intent = selection.get("intent")
     allowed_routes = (
         ("attempt_summary",)
@@ -59,7 +62,7 @@ async def answer_engineer_question(
             "status": "unsupported",
             "route": "unsupported",
             "focus": "overview",
-            "message": answer_message("unsupported", "overview", facts_available=False),
+            "message": answer_message("unsupported", "overview", facts_available=False, style=style),
             "selection": _selection_projection(selection),
             "report": None,
             "debrief": None,
@@ -74,8 +77,8 @@ async def answer_engineer_question(
         report = await _run_analysis(
             query_engineer_evidence, database_path, selection, gate_lease=gate_lease
         )
-        report = _focused_report(report, route)
-        return _report_answer(selection, route, model, report)
+        report = _focused_report(report, route, style)
+        return _report_answer(selection, route, model, report, style)
 
     if route.route == "region_comparison":
         report = await _run_analysis(
@@ -85,8 +88,8 @@ async def answer_engineer_question(
             track_model_catalog=track_model_catalog,
             gate_lease=gate_lease,
         )
-        report = _focused_report(report, route)
-        return _report_answer(selection, route, model, report)
+        report = _focused_report(report, route, style)
+        return _report_answer(selection, route, model, report, style)
 
     if route.route == "lap_debrief":
         return await _lap_debrief_answer(
@@ -96,13 +99,16 @@ async def answer_engineer_question(
             model,
             track_model_catalog=track_model_catalog,
             gate_lease=gate_lease,
+            style=style,
         )
 
     return _unavailable(selection, "router_route_unavailable", model=model)
 
 
 def _focused_report(
-    source: Mapping[str, object], route: EngineerAskRoute
+    source: Mapping[str, object],
+    route: EngineerAskRoute,
+    style: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     report = dict(source)
     raw_facts = report.get("facts")
@@ -111,7 +117,9 @@ def _focused_report(
         if isinstance(raw_facts, Sequence) and not isinstance(raw_facts, (str, bytes))
         else []
     )
-    selected = select_report_facts(report, route.focus)
+    selected = select_report_facts(
+        report, route.focus, **({} if style is None else {"limit": int(style["max_facts"])})
+    )
     report["facts"] = selected
     existing_omitted = report.get("omitted_fact_count")
     report["omitted_fact_count"] = (
@@ -125,6 +133,7 @@ def _report_answer(
     route: EngineerAskRoute,
     model: Mapping[str, object],
     report: Mapping[str, object],
+    style: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     facts = report.get("facts")
     warnings = report.get("warnings")
@@ -143,7 +152,7 @@ def _report_answer(
         "status": status,
         "route": route.route,
         "focus": route.focus,
-        "message": answer_message(route.route, route.focus, facts_available=facts_available),
+        "message": _report_message(route, report, facts_available, style),
         "selection": _selection_projection(selection),
         "report": dict(report),
         "debrief": None,
@@ -155,6 +164,25 @@ def _report_answer(
     }
 
 
+def _report_message(
+    route: EngineerAskRoute,
+    report: Mapping[str, object],
+    facts_available: bool,
+    style: Mapping[str, object] | None,
+) -> str:
+    message = answer_message(
+        route.route, route.focus, facts_available=facts_available, style=style
+    )
+    facts = report.get("facts")
+    if style is None or not style["include_context_note"] or not facts:
+        return message
+    omitted = report.get("omitted_fact_count", 0)
+    note = f"Showing {len(facts)} recorded fact(s) for this focus"
+    if isinstance(omitted, int) and not isinstance(omitted, bool) and omitted > 0:
+        note += f"; {omitted} other fact(s) in the report are not shown"
+    return compose_message([(message, True), (note + ".", False)], style)
+
+
 async def _lap_debrief_answer(
     database_path: str | Path,
     selection: Mapping[str, object],
@@ -163,6 +191,7 @@ async def _lap_debrief_answer(
     *,
     track_model_catalog: TrackModelCatalog | None,
     gate_lease: AIGateLease | None,
+    style: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     if not _lap_debrief_is_selectable(selection, track_model_catalog):
         return _unavailable(selection, "lap_debrief_selection_unavailable", model=model)
@@ -224,7 +253,9 @@ async def _lap_debrief_answer(
         "status": "answered" if debrief_status == "available" else "partial" if debrief_status == "partial" else "unavailable",
         "route": route.route,
         "focus": route.focus,
-        "message": answer_message(route.route, route.focus, facts_available=debrief_status != "abstained"),
+        "message": answer_message(
+            route.route, route.focus, facts_available=debrief_status != "abstained", style=style
+        ),
         "selection": _selection_projection(selection),
         "report": None,
         "debrief": dict(debrief),

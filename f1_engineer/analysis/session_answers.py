@@ -7,8 +7,26 @@ def _number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def braking_observation_message(report: dict) -> str | None:
+BRAKING_CAVEAT = (
+    "These are numeric distance regions, not named corners; "
+    "later braking is not automatically better."
+)
+
+
+def braking_observation_message(report: dict, *, max_observations: int = 3,
+                                include_interpretations: bool = True) -> str | None:
+    observations = braking_observations(report, limit=max_observations)
+    if not observations:
+        return None
+    text = " ".join(observations)
+    return text + " " + BRAKING_CAVEAT if include_interpretations else text
+
+
+def braking_observations(report: dict, *, limit: int = 3) -> list[str]:
+    """Observation sentences for supported braking zones, at most ``limit`` (max 3)."""
     observations = []
+    if limit < 1:
+        return observations
     for zone in report.get("braking_zones", []):
         bounds = zone.get("region_m")
         interval = zone.get("difference_interval_m")
@@ -25,8 +43,6 @@ def braking_observation_message(report: dict) -> str | None:
             f"10% brake onset is {abs(difference):g} m {direction}; "
             f"the target-minus-reference bracket is {interval[0]:g} to {interval[1]:g} m."
         )
-        if len(observations) == 3:
+        if len(observations) >= min(3, max(limit, 0)):
             break
-    if not observations:
-        return None
-    return " ".join(observations) + " These are numeric distance regions, not named corners; later braking is not automatically better."
+    return observations

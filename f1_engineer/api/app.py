@@ -129,6 +129,13 @@ from .recording_download import (
     recording_download_content_disposition,
 )
 from .recording_upload import RecordingUploadTransferError, receive_recording_upload
+from ..engineer_activity import build_engineer_activity
+from .engineer_activity_routes import register_engineer_activity_routes
+from ..analysis.engineer_preferences import EngineerPreferencesStore, answer_style, enabled_topics
+from .engineer_preferences_routes import register_engineer_preferences_routes
+from .lap_enrichment_routes import register_lap_enrichment_routes
+from .session_summary_routes import register_session_summary_routes
+from .track_region_routes import register_track_region_routes
 
 REPLAY_CONTROL_CONFLICT_REASONS = {
     "replay_not_playing",
@@ -1086,6 +1093,9 @@ def create_app(
         configured_database_path.parent / ".f1-engineer-speech",
     )
     engineer_ask_lock = asyncio.Lock()
+    engineer_activity = build_engineer_activity(configured_database_path, evidence_store, live_runtime)
+    engineer_preferences_store = EngineerPreferencesStore.beside_database(configured_database_path)
+    engineer_activity.set_topics(lambda: enabled_topics(engineer_preferences_store.current()))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -1095,6 +1105,7 @@ def create_app(
         replay_controller.start()
         if live_runtime:
             await run_in_threadpool(live_runtime.start)
+            engineer_activity.start()
         import_controller.enable_dispatch()
         await run_in_threadpool(local_speech_runtime.cleanup_stale_temporary_files)
         app.state.import_controller = import_controller
@@ -1110,6 +1121,7 @@ def create_app(
             yield
         finally:
             if live_runtime:
+                await run_in_threadpool(engineer_activity.stop)
                 await run_in_threadpool(live_runtime.close)
             import_controller.stop_dispatch()
             await run_in_threadpool(recording_upload_service.close)
@@ -1320,6 +1332,7 @@ def create_app(
             comparison_admission.release()
 
     @app.post("/api/v2/session-evidence/sessions/{session_id}/ask")
+    @engineer_activity.ask_log.record("v2_ask")
     async def session_engineer_question(session_id: str, request: Request,
                                          authorization: str | None = Header(default=None)):
         if not _authorized(authorization, control_token):
@@ -1333,6 +1346,9 @@ def create_app(
             selection = SessionEngineerRequest.model_validate_json(body)
             if (selection.target is None) == (selection.binding_id is None):
                 return _api_error(422, "engineer_target_or_future_binding_required")
+            engineer_activity.ask_log.note_question(
+                request, source="v2_ask", question=selection.question, session_id=session_id,
+                target=selection.target, detail=selection.model_dump(exclude={"question"}))
             if selection.binding_id is not None:
                 deadline += LIVE_REQUEST_TIMEOUT_S - 30.0
             task = asyncio.create_task(answer_session_question(
@@ -1341,6 +1357,7 @@ def create_app(
                 allow_materialization=selection.allow_materialization,
                 live_runtime=live_runtime, binding_id=selection.binding_id,
                 runtime=selected_engineer_runtime if selection.use_model else None, cache=measurement_cache,
+                style=answer_style(engineer_preferences_store.current()),
             ))
             while True:
                 done, _pending = await asyncio.wait({task}, timeout=0.1)
@@ -2894,6 +2911,7 @@ def create_app(
         return APIResponse[dict[str, Any]](data=status)
 
     @app.post("/api/v1/engineer/ask")
+    @engineer_activity.ask_log.record("v1_ask")
     async def engineer_ask(
         request: Request,
         authorization: Annotated[str | None, Header(alias="Authorization")] = None,
@@ -2925,6 +2943,9 @@ def create_app(
                     return _api_error(422, "engineer_ask_question_empty")
                 if len(question_bytes) > 1_024:
                     return _api_error(413, "engineer_ask_question_limit_exceeded")
+                engineer_activity.ask_log.note_question(
+                    request, source="v1_ask", question=body.question.strip(),
+                    detail={"selection": body.selection.model_dump()})
                 if engineer_ask_lock.locked():
                     return _api_error(409, "engineer_ask_busy")
 
@@ -2941,6 +2962,7 @@ def create_app(
                         runtime=selected_engineer_runtime,
                         track_model_catalog=track_model_catalog,
                         gate_lease=gate_lease,
+                        style=answer_style(engineer_preferences_store.current()),
                     ),
                     request,
                     gate_lease=gate_lease,
@@ -3145,6 +3167,13 @@ def create_app(
             )
         return APIResponse[dict[str, Any]](data=_stringify_session_uids(result))
 
+    register_engineer_preferences_routes(
+        app, store=engineer_preferences_store, control_token=control_token
+    )
+    register_engineer_activity_routes(app, engineer_activity)
+    register_lap_enrichment_routes(app, evidence_store=evidence_store)
+    register_session_summary_routes(app, evidence_store=evidence_store)
+    register_track_region_routes(app, catalog=track_model_catalog, evidence_store=evidence_store)
     return app
 
 

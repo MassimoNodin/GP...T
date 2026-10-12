@@ -21,7 +21,8 @@ from .ai_admission import EngineerAIGate, PROCESS_ENGINEER_AI_GATE
 from .engineer_runtime import EngineerRuntimeUnavailable
 from .session_measurement import analyze_session_pair
 from .session_reference import select_session_reference
-from .session_answers import braking_observation_message
+from .session_answers import BRAKING_CAVEAT, braking_observations
+from .engineer_preferences import compose_message
 from .race_diagnostics import RACE_SESSION_TYPE_IDS, build_session_race_diagnostics
 
 
@@ -277,7 +278,9 @@ async def _wait_live(provider, session, binding_id, live_runtime, detail):
         }
 
 
-def _message(report):
+def _message_parts(report, style=None):
+    """(text, required) parts of the pair message; the measurement and the
+    diagnostic disclaimer are always required, notes follow the style."""
     difference = report.get("lap_time_difference_ms")
     if (isinstance(difference, bool) or not isinstance(difference, (int, float))
             or not math.isfinite(difference)):
@@ -288,18 +291,23 @@ def _message(report):
         text = f"The target lap is {abs(difference):g} ms faster than the reference lap."
     else:
         text = "The measured target and reference lap times are equal (0 ms difference)."
-    text += " This is a diagnostic measurement, not coaching, ranking, or a causal explanation."
+    parts = [(text, True),
+             ("This is a diagnostic measurement, not coaching, ranking, or a causal explanation.", True)]
     qualifications = report.get("qualifications") or []
-    if qualifications:
-        text += " Qualifications: " + ", ".join(str(item) for item in qualifications) + "."
-    return text
+    if qualifications and (style is None or style["include_notes"]):
+        parts.append(("Qualifications: " + ", ".join(str(item) for item in qualifications) + ".", False))
+    return parts
+
+
+def _message(report, style=None):
+    return compose_message(_message_parts(report, style), style)
 
 
 async def answer_session_question(
     provider, session: str, target_id: str | None, question: str, *,
     reference_id: str | None = None, materializer=None,
     allow_materialization: bool = False, live_runtime=None,
-    binding_id: str | None = None, runtime=None, cache=None,
+    binding_id: str | None = None, runtime=None, cache=None, style=None,
 ) -> dict:
     """Admit evidence before routing; serialize request-scoped historical work.
 
@@ -395,12 +403,17 @@ Cancelled materialization workers retain their shared gate until completion.
                     if report.get("status") != "available":
                         return _result("unavailable", report.get("reason"), selection=selection,
                                        report=report, provenance=provenance)
-                    message = (
-                        f"The observed race lap time is {report['lap']['lap_time_ms']:g} ms. "
-                        "This is a descriptive single-lap diagnostic, not a pace comparison, "
-                        "stint assessment, strategy recommendation or causal explanation. "
-                        "Fuel, tyre and traffic availability is reported explicitly in the evidence."
-                    )
+                    parts = [
+                        (f"The observed race lap time is {report['lap']['lap_time_ms']:g} ms.", True),
+                        ("This is a descriptive single-lap diagnostic, not a pace comparison, "
+                         "stint assessment, strategy recommendation or causal explanation.", True),
+                    ]
+                    if style is None or style["include_notes"]:
+                        parts.append(("Fuel, tyre and traffic availability is reported "
+                                      "explicitly in the evidence.", False))
+                    if style is not None and style["include_context_note"]:
+                        parts.append((f"Source: recorded race lap {target_id} in session {session}.", False))
+                    message = compose_message(parts, style)
                     response = _result("available", None, selection=selection, report=report,
                                        provenance=provenance, message=message)
                     if runtime is not None:
@@ -433,7 +446,10 @@ Cancelled materialization workers retain their shared gate until completion.
                                              chosen, cache=cache)
             if report.get("status", "available") != "available":
                 raise EvidenceUnavailable(report.get("reason") or "measurement_unavailable")
-            message = _message(report)
+            message_parts = _message_parts(report, style)
+            if style is not None and style["include_context_note"]:
+                message_parts.append((f"Compared target {target_id} with reference {chosen}.", False))
+            message = compose_message(message_parts, style)
             response = _result("available", None, selection=selection, report=report,
                                provenance=provenance, message=message)
             if runtime is None:
@@ -447,12 +463,18 @@ Cancelled materialization workers retain their shared gate until completion.
                 response.update(status="unsupported", reason="question_unsupported",
                                 message="This question is outside diagnostic pair comparison.")
             elif route.focus == "braking":
-                observation = braking_observation_message(report)
-                if observation is None:
+                observations = braking_observations(
+                    report, limit=3 if style is None else style["max_observations"]
+                )
+                if not observations:
                     response.update(status="unavailable", reason="focus_measurement_unavailable",
                                     message="No unambiguous sustained brake-onset comparison is available.")
                 else:
-                    response["message"] = observation + " " + message
+                    braking_parts = [(text, index == 0) for index, text in enumerate(observations)]
+                    if style is None or style["include_interpretations"]:
+                        braking_parts.append((BRAKING_CAVEAT, False))
+                    braking_parts += [(text, required) for text, required in message_parts]
+                    response["message"] = compose_message(braking_parts, style)
             elif route.focus not in ("overview",):
                 response.update(status="unavailable", reason="focus_measurement_unavailable",
                                 message="The selected evidence does not yet provide the requested focused measurement.")

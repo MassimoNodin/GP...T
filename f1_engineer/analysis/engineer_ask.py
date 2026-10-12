@@ -201,14 +201,15 @@ def parse_router_output(
 
 
 def select_report_facts(
-    report: Mapping[str, object], focus: EngineerFocus
+    report: Mapping[str, object], focus: EngineerFocus, *, limit: int = 6
 ) -> list[dict[str, object]]:
     raw_facts = report.get("facts")
     if not isinstance(raw_facts, Sequence) or isinstance(raw_facts, (str, bytes)):
         return []
+    limit = max(limit, 0)
     intent = report.get("intent")
     if focus == "overview":
-        return [dict(item) for item in raw_facts if isinstance(item, Mapping)][:6]
+        return [dict(item) for item in raw_facts if isinstance(item, Mapping)][:limit]
     supported = (
         _SUMMARY_FACTS.get(focus)
         if intent == "attempt_summary"
@@ -222,11 +223,18 @@ def select_report_facts(
         dict(item)
         for item in raw_facts
         if isinstance(item, Mapping) and item.get("kind") in supported
-    ][:6]
+    ][:limit]
 
 
-def answer_message(route: str, focus: str, *, facts_available: bool) -> str:
+def answer_message(
+    route: str, focus: str, *, facts_available: bool, style: Mapping[str, object] | None = None
+) -> str:
     if route == "unsupported":
+        if style is not None and style.get("verbosity") == "concise":
+            return (
+                "I can’t provide driving changes, causes, race strategy, tyre-life "
+                "predictions, or opponent analysis from this evidence."
+            )
         return (
             "I can summarize selected recorded laps and compare explicitly selected "
             "evidence. I can’t provide driving changes, causes, race strategy, tyre-life "
