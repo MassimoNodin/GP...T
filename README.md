@@ -34,10 +34,13 @@ port `20777`. The API listens on `127.0.0.1:8765` and automatically acquires
 telemetry on `0.0.0.0:20777`; do not start another receiver on that port.
 Add `--manual-acquisition` for diagnostic recording controls.
 
-The dashboard has three areas: **Drive** (live engineer and telemetry diagnostics),
-**Review** (session library, session overview and lap analysis) and **Settings**.
-Where the local API cannot supply a section, the screens show the reference
-content from `docs/assets/ui-reference.png`; see [the polish plan](docs/ui-polish-plan.md).
+The dashboard has three areas: **Drive** shows engineer and telemetry status with
+the current or most recent session; **Review** lists acquired and imported
+sessions, with lap times, validity, sector data and telemetry traces when the
+backend has them; **Settings** shows runtime and storage status and saves display
+preferences in this browser. Data the backend does not provide is shown as
+unavailable on real sessions. When no local session data is available, the
+dashboard may show illustrative reference content; it is not recorded telemetry.
 Optional circuit photos go in `web/public/tracks/<track>.jpg` (for example `monaco.jpg`).
 
 The Next.js server reads the control token, not the browser. When overriding
