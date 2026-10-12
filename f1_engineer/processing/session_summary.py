@@ -8,16 +8,18 @@ import struct
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 from ..udp import lap_data as _lap_data
+from ..udp.car_setups import CarSetupsDecoder
 from ..udp.decoder import PacketDecoder
 from ..udp.events import EventDecoder
 from ..udp.header import HEADER_SIZE, _HEADER
 from ..udp.models import RawDatagram
 from ..udp.participants import ParticipantsDecoder
+from ..udp.session_context import SessionContextDecoder
 from .evidence import PROCESSOR_VERSION, EvidenceStore, EvidenceUnavailable
 
 
@@ -158,6 +160,14 @@ class _Scan:
         self.pit_stop_count: int | None = None
         self.pending_fastest: list[tuple[dict[str, Any], int, int, float]] = []
         self.participants_payload: tuple[int, bytes] | None = None
+        self.setup_first: dict[str, Any] | None = None
+        self.setup_last: dict[str, Any] | None = None
+        self.setup_changes = 0
+        self.setup_decode_errors = 0
+        self.setup_invalid_fields = False
+        self.settings_first: dict[str, Any] | None = None
+        self.settings_last: dict[str, Any] | None = None
+        self.settings_decode_errors = 0
 
     @property
     def complete(self) -> bool:
@@ -178,6 +188,8 @@ class SessionSummaryService:
         self._packets = PacketDecoder()
         self._events = EventDecoder()
         self._participants = ParticipantsDecoder()
+        self._setups = CarSetupsDecoder()
+        self._session_context = SessionContextDecoder()
 
     def status(self) -> dict[str, Any]:
         with self._cache_lock:
@@ -269,6 +281,8 @@ class SessionSummaryService:
                 "lifecycle": session["lifecycle"], "acquisition": session["acquisition"],
                 "track_id": context.get("track_id"), "track_name": context.get("track_name"),
                 "session_type": context.get("session_type"), "total_laps": context.get("total_laps"),
+                "packet_format": context.get("packet_format"), "track_length_m": context.get("track_length_m"),
+                "rule_set": context.get("rule_set"), "rule_set_id": context.get("rule_set_id"),
             },
             **wall,
             "session_time": session_time,
@@ -276,6 +290,23 @@ class SessionSummaryService:
             "player": {"car_index": scan.player_car, "last_lap_number": scan.last_lap_number,
                        "pit_stop_count": scan.pit_stop_count},
             "weather": scan.weather,
+            "player_car_setup": self._setup_result(scan),
+            "assists": {
+                "status": "available" if scan.settings_first and scan.complete and not scan.settings_decode_errors else (
+                    "partial" if scan.settings_first else "unavailable"
+                ),
+                "source": "session_packet",
+                "first_observed": scan.settings_first,
+                "last_observed": scan.settings_last,
+                "reason": None if scan.settings_first and scan.complete and not scan.settings_decode_errors else (
+                    "summary_scan_incomplete" if not scan.complete else (
+                        "session_settings_decode_error" if scan.settings_decode_errors else "session_settings_not_recorded"
+                    )
+                ),
+                "decode_errors": scan.settings_decode_errors,
+                "damage_setting": None,
+                "damage_setting_reason": "damage_setting_not_in_telemetry",
+            },
             "events": events,
             "totals": {
                 "by_kind": dict(sorted(scan.by_kind.items())),
@@ -348,8 +379,10 @@ class SessionSummaryService:
                 self._session(scan, payload, packet_format, version, session_time)
             elif packet_id == 3:
                 self._event(scan, sequence, payload, packet_format, player, session_time, frame)
-            else:
+            elif packet_id == 4:
                 scan.participants_payload = (packet_format, payload)
+            elif packet_id == 5:
+                self._setup(scan, sequence, payload, player, session_time)
 
     @staticmethod
     def _route(scan: _Scan, payload: bytes, packet_id: int, uid: int) -> bool:
@@ -384,9 +417,25 @@ class SessionSummaryService:
                  session_time: float) -> None:
         body = payload[HEADER_SIZE:]
         if version != 1 or len(body) != _SESSION_BODY[packet_format]:
+            scan.settings_decode_errors += 1
             return
         fields = _SESSION_PREFIX.unpack_from(body)
         scan.session_fields = fields
+        decoded = self._session_context.decode(self._decode(payload))
+        if decoded.context is not None:
+            context = decoded.context.to_dict()
+            observation = {
+                "session_time_s": _number(session_time),
+                **{key: context[key] for key in (
+                    "steering_assist_id", "braking_assist_id", "gearbox_assist_id",
+                    "equal_car_performance_id", "rule_set_id", "rule_set",
+                )},
+            }
+            if scan.settings_first is None:
+                scan.settings_first = observation
+            scan.settings_last = observation
+        else:
+            scan.settings_decode_errors += 1
         key = (fields[0], fields[1], fields[2])
         if key == scan.weather_key:
             return
@@ -397,6 +446,51 @@ class SessionSummaryService:
         scan.weather.append({"session_time_s": _number(session_time), "weather_id": fields[0],
                              "weather": _WEATHER.get(fields[0]), "track_temperature_c": fields[1],
                              "air_temperature_c": fields[2]})
+
+    def _decode(self, payload: bytes):
+        return self._packets.decode(RawDatagram(
+            sequence=0, captured_at_ns=0, monotonic_ns=0, source_host="", source_port=0,
+            payload=payload,
+        ))
+
+    def _setup(self, scan: _Scan, sequence: int, payload: bytes, player: int,
+               session_time: float) -> None:
+        result = self._setups.decode(self._decode(payload))
+        if result.setups is None or not 0 <= player < len(result.setups.cars):
+            scan.setup_decode_errors += 1
+            return
+        observation = {
+            "sequence": sequence, "session_time_s": _number(session_time),
+            "player_car_index": player, "setup": asdict(result.setups.cars[player]),
+        }
+        scan.setup_invalid_fields |= bool(result.setups.cars[player].invalid_fields)
+        if scan.setup_first is None:
+            scan.setup_first = observation
+        if scan.setup_last is not None and (
+            any(value is not None and scan.setup_last["setup"][field] is not None
+                and value != scan.setup_last["setup"][field]
+                for field, value in observation["setup"].items() if field != "invalid_fields")
+            or scan.setup_last["player_car_index"] != player
+        ):
+            scan.setup_changes += 1
+        scan.setup_last = observation
+
+    @staticmethod
+    def _setup_result(scan: _Scan) -> dict[str, Any]:
+        reason = (
+            "summary_scan_incomplete" if not scan.complete else
+            "car_setup_decode_error" if scan.setup_decode_errors else
+            "car_setup_fields_invalid" if scan.setup_invalid_fields else
+            "car_setup_not_recorded" if scan.setup_first is None else None
+        )
+        return {
+            "status": "unavailable" if scan.setup_first is None else (
+                "partial" if reason else "available"
+            ),
+            "source": "car_setups_packet", "first_observed": scan.setup_first,
+            "last_observed": scan.setup_last, "observed_change_count": scan.setup_changes,
+            "decode_errors": scan.setup_decode_errors, "reason": reason,
+        }
 
     def _lap_data(self, scan: _Scan, payload: bytes, packet_format: int, player: int,
                   session_time: float) -> None:

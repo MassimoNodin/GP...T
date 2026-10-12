@@ -5,8 +5,10 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
+from ..storage.database import Database
 from .store import EngineerActivityStore
 
 LOGGER = logging.getLogger(__name__)
@@ -40,9 +42,11 @@ class _Ticket:
 class AskActivityLog:
     """Records engineer ask traffic; every public method swallows its own failures."""
 
-    def __init__(self, store: EngineerActivityStore, evidence_store: Any | None = None) -> None:
+    def __init__(self, store: EngineerActivityStore, evidence_store: Any | None = None,
+                 *, legacy_database_path: str | Path | None = None) -> None:
         self.store = store
         self.evidence_store = evidence_store
+        self.legacy_database_path = legacy_database_path
 
     def note_question(
         self,
@@ -58,6 +62,10 @@ class AskActivityLog:
         try:
             topic = question_topic(question)
             lap = self._lap(session_id, target)
+            if source == "v1_ask" and self.legacy_database_path is not None:
+                selection = (detail or {}).get("selection")
+                if isinstance(selection, dict):
+                    session_id, lap = self._legacy_scope(selection.get("target_attempt_key"))
             question_id = self.store.append(
                 kind="question", topic=topic, text=question, source=source,
                 session_id=session_id, lap=lap, detail=detail,
@@ -95,6 +103,21 @@ class AskActivityLog:
             return lap if isinstance(lap, int) and not isinstance(lap, bool) else None
         except Exception:
             return None
+
+    def _legacy_scope(self, target: Any) -> tuple[str | None, int | None]:
+        if not isinstance(target, str) or not 1 <= len(target) <= 256:
+            return None, None
+        try:
+            with Database(self.legacy_database_path, read_only=True) as database:
+                row = database.connection.execute(
+                    "SELECT l.session_key,l.lap_number FROM lap_attempts l "
+                    "JOIN sessions s USING(session_key) JOIN processing_runs r USING(run_id) "
+                    "WHERE l.attempt_key=? AND r.status='complete'", (target,),
+                ).fetchone()
+            return (row["session_key"], row["lap_number"]) if row else (None, None)
+        except Exception:
+            LOGGER.warning("engineer activity session could not be resolved", exc_info=True)
+            return None, None
 
     @staticmethod
     def _ticket(request: Any) -> _Ticket | None:

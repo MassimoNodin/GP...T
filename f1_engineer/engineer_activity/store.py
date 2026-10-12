@@ -170,23 +170,36 @@ class EngineerActivityStore:
         self,
         *,
         after: int | None = None,
+        before: int | None = None,
         limit: int = DEFAULT_PAGE_SIZE,
         session_id: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """Return (events oldest-first, next_after).
 
-        With `after`, entries with a larger id are returned oldest first. Without it,
-        the newest `limit` entries are returned. Entries without a session id are
-        included for every session filter. `next_after` is the largest returned id,
+        With 'before', return the newest older entries, still oldest first.
+        The forward and backward cursors are mutually exclusive.
+        With 'after', entries with a larger id are returned oldest first. Without it,
+        the newest `limit` entries are returned. Global system/live notices are
+        included for every session filter, but unbound questions are not.
+        `next_after` is the largest returned id,
         or `after` (0 when absent) when nothing was returned.
         """
         if not 1 <= limit <= MAX_PAGE_SIZE:
             raise ValueError("engineer activity page exceeds budget")
+        if after is not None and before is not None:
+            raise ValueError("engineer activity cursors are mutually exclusive")
+        for cursor in (after, before):
+            if cursor is not None and (isinstance(cursor, bool) or not isinstance(cursor, int)
+                                       or not 0 <= cursor <= 2**62):
+                raise ValueError("invalid engineer activity cursor")
         clauses: list[str] = []
         parameters: list[Any] = []
         if session_id is not None:
-            clauses.append("(session_id=? OR session_id IS NULL)")
+            clauses.append("(session_id=? OR (session_id IS NULL AND source IN ('system','live_rules')))")
             parameters.append(session_id)
+        if before is not None:
+            clauses.append("id<?")
+            parameters.append(before)
         database = self._connect()
         try:
             if after is None:

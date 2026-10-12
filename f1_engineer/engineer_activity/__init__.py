@@ -82,4 +82,6 @@ def build_engineer_activity(
         EngineerCallObserver(store, live_runtime, EvidenceAttemptSource(evidence_store))
         if live_runtime is not None else None
     )
-    return EngineerActivity(store, AskActivityLog(store, evidence_store), observer)
+    return EngineerActivity(
+        store, AskActivityLog(store, evidence_store, legacy_database_path=path), observer,
+    )

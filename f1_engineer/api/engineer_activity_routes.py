@@ -17,11 +17,21 @@ def register_engineer_activity_routes(app: FastAPI, activity: EngineerActivity) 
     @app.get("/api/v2/engineer/events")
     def engineer_events(
         after: int | None = Query(default=None, ge=0, le=2**62),
+        before: int | None = Query(default=None, ge=0, le=2**62),
         limit: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
         session_id: str | None = Query(default=None, min_length=1, max_length=128),
     ) -> Any:
+        if after is not None and before is not None:
+            return JSONResponse(
+                status_code=422,
+                content={"api_version": "v1", "status": "unavailable", "data": None,
+                         "reason": "engineer_activity_cursor_conflict"},
+                headers={"Cache-Control": "no-store"},
+            )
         try:
-            events, next_after = activity.store.events(after=after, limit=limit, session_id=session_id)
+            events, next_after = activity.store.events(
+                after=after, before=before, limit=limit, session_id=session_id,
+            )
         except (EngineerActivityUnavailable, sqlite3.Error):
             return JSONResponse(
                 status_code=503,
@@ -29,7 +39,10 @@ def register_engineer_activity_routes(app: FastAPI, activity: EngineerActivity) 
                          "reason": "engineer_activity_unavailable"},
                 headers={"Cache-Control": "no-store"},
             )
+        page = {"events": events, "next_after": next_after}
+        if before is not None:
+            page["next_before"] = events[0]["id"] if events else before
         return JSONResponse(
-            content={"data": {"events": events, "next_after": next_after}},
+            content={"data": page},
             headers={"Cache-Control": "no-store"},
         )
