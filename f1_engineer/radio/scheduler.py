@@ -23,6 +23,7 @@ class RadioMessage:
     queued_at: float | None = None
     observation_age_s: float | None = None
     dispatch_before: float | None = None
+    owner: str | None = None
 
     @property
     def priority(self) -> int:
@@ -132,6 +133,14 @@ class RadioScheduler:
             self.playback.cancel()
             self.active = None
         self.pending.clear()
+
+    def cancel_owner(self, owner: str) -> None:
+        if self.active is not None and self.active.owner == owner:
+            self.playback.cancel()
+            self.active = None
+        self.pending = [message for message in self.pending if message.owner != owner]
+        if self.last_completed is not None and self.last_completed.owner == owner:
+            self.last_completed = None
 
     def quiet(self) -> None:
         self.cancel()

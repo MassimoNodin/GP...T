@@ -106,7 +106,7 @@ def run_radio(args) -> int:
         emit({"event": "radio_ready", "dry_run": args.dry_run, "voice": getattr(playback, "voice", None),
               "rate": args.rate, "volume": args.volume,
               "capture_test": args.capture_test,
-              "commands": ["lap", "listen", "finish", "ask <question>", "submit", "forget",
+              "commands": ["lap", "listen", "finish", "ask <question>", "submit", "tasks", "forget",
                            "quiet", "resume", "cancel", "repeat", "status", "quit"]})
         snapshots: queue.Queue = queue.Queue(maxsize=1)
         commands: queue.Queue = queue.Queue(maxsize=16)
@@ -140,6 +140,10 @@ def run_radio(args) -> int:
                     request_listening(scheduler, voice, source="console")
                 elif command == "finish":
                     voice.finish()
+                elif command == "tasks":
+                    voice.cancel()
+                    scheduler.cancel()
+                    controller.handle_request("list tasks", now=now)
                 elif command == "submit" or command.startswith("ask "):
                     if args.capture_test:
                         emit({"event": "radio_question_unavailable", "reason": "capture_test"})
@@ -209,4 +213,4 @@ def submit_question(command: str, controller: RadioController, voice: VoiceInput
         question = command[4:]
         voice.cancel()
     controller.scheduler.cancel()
-    controller.answer_question(question, now=now)
+    controller.handle_request(question, now=now)

@@ -54,7 +54,8 @@ Enter one command per line; an optional leading `/` is accepted.
 | `listen` | Start capture, or end the current capture when issued again. |
 | `finish` | End the current capture and request transcription (except in capture-test mode). |
 | `ask <question>` | Answer a supported live timing question; cancel any capture or older draft. |
-| `submit` | Submit the current session-bound transcript draft once, as a question only. |
+| `submit` | Submit the current session-bound draft once, as a supported question or lap-report instruction. |
+| `tasks` | Speak the active lap-report tasks, targets, facts and expiry. |
 | `forget` | Clear conversation references and cancel capture, drafts and queued/active speech. |
 | `quiet` | Cancel capture, drafts, speech and queued calls; suppress proactive calls, not explicit answers. |
 | `resume` | Re-enable future proactive calls; do not replay suppressed calls. |
@@ -155,8 +156,9 @@ The console prints `radio_transcript` with `verified: false` and
 `submitted: false`. It is a **draft**, not an automatically submitted question
 or an executable control command. Text may still be retained by your terminal
 or logging setup. Review the text and use `submit` to send it as a timing question,
-or `ask <corrected question>` to replace it. Submission never interprets draft text
-as console controls or task instructions. This prevents mistranscriptions or tones
+or `ask <corrected question>` to replace it. Explicit submission accepts supported
+timing questions and lap-report task instructions, never arbitrary console controls.
+It does not automatically submit a transcript. This prevents mistranscriptions or tones
 from automatically becoming actions.
 
 Native audio work and transcription run off the radio loop. Cancellation aborts
@@ -242,7 +244,7 @@ synthetic packet/audio tests, not live-game or hardware acceptance evidence.
 
 Still required: MOZA R3 activation with the game focused, capture/cue hardware
 acceptance, broader conversational planning and historical timing retrieval,
-task tracking and the selected coaching/benchmark abilities. Real-game,
+braking/minimum-speed tracking and the selected coaching/benchmark abilities. Real-game,
 browser-closed acceptance remains pending. See the
 [capability mapping](working-engineer-v1-mapping.md) for subsequent slices.
 
@@ -274,8 +276,9 @@ Targets are me/my, leader, car ahead/in front, car behind, P1 through P24, and
 available participant full names or surnames.
 P numbers are race positions, not car slots or race numbers. Replies additionally
 identify the verified roster name when available and the zero-based car slot.
-Older numbered laps, bests, sectors, tyre benchmarks, strategies
-and recurring instructions are explicitly unsupported in this increment. A
+Older numbered laps, bests, sectors, tyre benchmarks and strategies
+are explicitly unsupported in this increment. Recurring lap reports use the
+separate controls below. A
 mixed supported/unsupported request is rejected rather than silently dropping
 the unsupported part. This is not yet the complete multi-driver acceptance slice.
 
@@ -301,8 +304,9 @@ new facts. Unavailable/stale telemetry, session/player/epoch changes, restart an
 This does not yet infer references to older turns or persist coaching preferences.
 
 `submit` consumes one draft only in its still-current session/player scope. It
-cannot execute `quiet`, `quit`, task controls or instructions through transcript
-text. Wheel assignment/connection changes retain the capture cancellation rules.
+can create/update/list/cancel the supported lap-report tasks only after explicit
+submission; it cannot execute `quiet`, `quit` or arbitrary console controls through
+transcript text. Wheel assignment/connection changes retain the capture cancellation rules.
 Both explicit submission and typed questions cancel competing queued speech.
 `ask`/`submit` are disabled in capture-test mode. No browser is needed.
 
@@ -315,3 +319,83 @@ already-started multi-fact answer while live telemetry remains healthy. A separa
 60-second utterance expiry bounds stuck playback. Session invalidation still
 cancels speech, and stale timing answers cannot be replayed with `repeat`. These
 are safety limits, not a user latency acceptance gate.
+
+## Configurable end-of-lap reports
+
+This coarse-timing task increment adds a bounded, in-memory registry to the
+standalone radio. It uses the existing coherent lap events and all-driver timing
+facts; it acquires no extra driving traces and changes no detail-mode gates.
+Create reports through `ask` or review a transcript and explicitly `submit` it:
+
+```text
+ask Tell me at the end of each lap my and Leclerc last lap times and positions
+ask Tell me at the end of each lap my gap to the leader for the next 3 laps
+ask Tell me at the end of next lap my last lap time
+ask What are you tracking?
+ask Update task 1 tell me at the end of each lap my gap to the car ahead
+ask Cancel task 1
+ask Cancel all tracking
+```
+
+`each`, `every`, `the`, or no qualifier before `lap` creates a recurring report
+until cancellation or scope loss. `next lap` means the next observed completion
+of the currently in-progress player lap, not a full trace of the following lap.
+`for the next N laps` accepts one to twenty upcoming completions. The spoken
+acknowledgement gives the first and final lap numbers; updating resets that
+schedule and increments the task version. These timings do not define the later
+next-lap braking/minimum-speed tracking contract.
+
+Facts and targets use the live-question vocabulary. Named drivers are resolved
+unambiguously at creation/update and stay bound to that participant identity and
+tenure. Missing/replaced named targets are unavailable, not rebound by name.
+`leader`, `car ahead`, `car behind` and P positions are explicit dynamic roles,
+resolved again at each player-lap completion. `self` follows the bound player.
+Task instructions require an explicit supported timing fact and do not inherit
+omitted targets from conversation history. Task changes do not overwrite the
+previous accepted question's follow-up context.
+
+The registry allows three active tasks and nine total driver/fact pairs per lap.
+Identical active requests with the same reference bindings and expiry are
+idempotent. Failed creation/update leaves existing tasks intact. `tasks` and
+`what are you tracking` speak active IDs, targets, facts and expiry; `status`
+also shows versions, reference policy and completed finite tasks. Completed
+records are pruned on subsequent successful creation/update, and IDs are not reused.
+Nothing is persisted across a radio restart.
+
+Reports trigger only from a new, verified player lap-completion event matching
+the current player lap; an available event time must agree with the current last
+lap time. Each driver's completed lap number is spoken separately, since drivers
+may be on different laps. Missing own/opponent timing produces partial unavailable
+results. These are side-by-side timing reports, not yet computed lap-time
+comparisons, race-gap change that lap, best-lap coaching or predictions.
+
+All due tasks form one bounded proactive utterance. It replaces the default
+player-only lap call for that event and uses the shared speech scheduler. If the
+combined text exceeds the safe utterance bound, the radio asks for fewer facts
+instead of crashing or silently truncating them. Routine reports never overlap
+questions. Quiet/listening suppresses calls without retaining a backlog; finite
+tasks still consume those lap completions. Expiry without a usable final event
+invalidates obsolete owned output.
+
+Any update/cancellation invalidates queued, active and repeatable task-report
+bundles. Owned cancellation itself preserves unrelated answers; explicit new
+console/submitted requests still use the normal cancel-competing-speech policy.
+Other active tasks remain registered
+and report on the next eligible event. Final finite reports may finish speaking
+after their task becomes completed. Session/player/epoch/generation changes,
+unavailable/stale telemetry, unknown/invalid player lap numbers, rewinds/skipped player laps, player discontinuities
+and event-history gaps clear tasks and obsolete output. Reconnects require
+explicitly creating new reports; no historical events are replayed.
+
+`radio_task_created`, `radio_task_updated`, `radio_task_ended`, `radio_task_report`
+and `radio_task_answer` expose lifecycle, plans and output alongside existing
+dispatch latency events. No real-game latency gate, model/runtime substitution
+or automatic transcript execution is introduced. Coaching and detailed tracking
+remain separate unfinished slices.
+
+Validation for this increment: 408 focused tests and 2,072 full-suite tests passed,
+with 16 skipped tests and two existing deprecation warnings in the full suite.
+The 50 new task cases cover scheduling, reference binding, lifecycle, partial
+facts and invalidation. Radio compilation, CLI help and local documentation-link
+checks also passed. This is synthetic/mocked evidence, not verification of
+in-game speech, wheel input, microphone capture or acoustic latency.
