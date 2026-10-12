@@ -94,8 +94,24 @@ Install Ollama, then run from the repository root:
 Later model starts omit `-InstallModel`; stop it with
 `.\scripts\stop-private-ollama.ps1`. The private model endpoint is
 `127.0.0.1:11435`. Microphone input produces an editable transcript; questions
-are submitted explicitly. Playback uses browser speech synthesis. Typed input
+are submitted explicitly. Dashboard playback uses browser speech synthesis. Typed input
 and telemetry workflows do not require the optional speech/model runtimes.
+
+## Standalone lap radio on Windows
+
+An initial browser-independent radio client speaks fresh player lap completions
+and answers the fixed console command `lap` using the authenticated live backend.
+It does not yet provide microphone/wheel input or the full conversational engineer.
+
+```powershell
+uv run --extra app f1-engineer radio --list-voices
+uv run --extra app f1-engineer radio --dry-run
+uv run --extra app f1-engineer radio
+```
+
+See the [standalone radio guide](docs/working-engineer-standalone-radio.md) for
+split-host token/tunnel settings, controls, timing diagnostics and pending
+hardware acceptance. The backend must already be running; no browser is needed.
 
 ## Validation and diagnostics
 
@@ -104,7 +120,8 @@ at `GET /api/v2/engineer/live`. It includes freshness-qualified field timing,
 verified driver bindings and bounded lap/sector/pit events. See the
 [live facts contract](docs/working-engineer-live-facts.md) and
 [v1 acceptance criteria](docs/working-engineer-v1-acceptance.md).
-This is not yet a browser-independent spoken engineer.
+The standalone lap radio consumes these facts, but the full spoken engineer's
+acceptance criteria remain pending.
 
 ```powershell
 uv run --extra dev --extra app pytest

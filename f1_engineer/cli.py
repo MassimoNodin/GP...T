@@ -834,10 +834,30 @@ def _geometry_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _radio(args: argparse.Namespace) -> int:
+    try:
+        from .radio.command import run_radio
+    except ImportError as exception:
+        raise ValueError("radio requires app dependencies; install with uv sync --extra app") from exception
+    return run_radio(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="f1-engineer", description="F1 telemetry capture and replay")
     parser.add_argument("--version", action="version", version=f"f1-engineer {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
+
+    radio = commands.add_parser("radio", help="run the standalone lap radio without a browser")
+    radio.add_argument("--api-url", default=os.environ.get("F1_ENGINEER_API_URL") or "http://127.0.0.1:8765")
+    radio.add_argument("--token-file", default=os.environ.get("F1_ENGINEER_CONTROL_TOKEN_FILE") or "data/.f1-engineer-control-token")
+    radio.add_argument("--voice", help="installed Windows voice name")
+    radio.add_argument("--rate", type=int, default=0, help="speech rate (-10 to 10)")
+    radio.add_argument("--volume", type=int, default=75, help="speech volume (0 to 100)")
+    radio.add_argument("--poll-interval", type=float, default=0.25, help="backend polling seconds (0.1 to 1)")
+    radio.add_argument("--list-voices", action="store_true", help="list installed voices without speaking or contacting the backend")
+    radio.add_argument("--dry-run", action="store_true", help="log proposed speech without audio")
+    radio.add_argument("--once", action="store_true", help="check backend status once without audio")
+    radio.set_defaults(handler=_radio)
 
     record = commands.add_parser("record", help="capture raw F1 UDP telemetry")
     record.add_argument("--output", required=True, help="destination .f1ecap file")

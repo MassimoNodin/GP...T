@@ -19,6 +19,18 @@ does not depend on detailed trace selection. The original table below records
 the pre-implementation inventory; this increment supplies part of slice 1,
 not full coaching or standalone acceptance. Focused new checks: 35 passed.
 
+### Standalone radio foundation
+
+The [Windows standalone lap radio](working-engineer-standalone-radio.md) now
+consumes the authenticated live endpoint independently of the browser and speaks
+new player lap completions or answers a fixed last-lap console command. It adds
+a bounded priority/expiry/interrupt scheduler, quiet/cancel/repeat controls and
+cross-host freshness handling. Focused radio checks: 56 passed. Installed Windows
+voice discovery was exercised; audible playback and live-game operation were not.
+This supplies the playback/transport foundation of slice 2, not its wheel,
+capture, listening cues or conversational answer requirements. The inventory
+table below remains the pre-implementation baseline.
+
 | Requirement | Current foundation | Gap to acceptance |
 | --- | --- | --- |
 | Proactive comparisons | `engineer_activity/calls.py` observes published player laps, logs best-lap deltas, invalid/pit laps and telemetry state changes. | Calls are activity records, not a standalone spoken coach. Add opponent/comparable-reference selection and event-to-radio delivery. Its session best is not a condition-matched coaching reference. |
