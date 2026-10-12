@@ -28,6 +28,7 @@ from ..processing.evidence import EvidenceStore, EvidenceUnavailable
 from ..processing.materialization import HistoricalMaterializer, MaterializedEvidenceProvider
 from ..processing.legacy import archived_session_page
 from ..processing.runtime import LiveSessionRuntime
+from ..processing.engineer_facts import LiveEngineerFacts
 from ..processing.detail_demand import DetailCommand, DetailDemandQueue
 from ..analysis.ai_admission import AIGateLease, PROCESS_ENGINEER_AI_GATE
 from ..analysis.local_speech import (
@@ -1146,6 +1147,17 @@ def create_app(
     @app.get("/api/v2/session-evidence/status")
     def session_evidence_status():
         return live_runtime.status() if live_runtime else {"state": "disabled", "detail_processing": {"profile": "disabled"}}
+
+    @app.get("/api/v2/engineer/live")
+    def engineer_live_facts(request: Request):
+        if not _authorized(request.headers.get("authorization"), control_token):
+            return _api_error(403, "engineer_control_not_authorized")
+        if live_runtime is None:
+            snapshot = LiveEngineerFacts().snapshot()
+            snapshot["reason"] = "live_runtime_disabled"
+        else:
+            snapshot = live_runtime.engineer_snapshot()
+        return {"data": snapshot}
 
     @app.get("/api/v2/session-evidence/detail-targets")
     def detail_targets(session_id: str = Query(min_length=32, max_length=32)):

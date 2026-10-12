@@ -23,6 +23,7 @@ from .sessions.context import SessionContext
 from .sessions.manager import ContextHistoryChange, SessionTracker
 from .analysis.continuity import float32_ulp, session_time_discontinuity
 from .processing.detail_policy import DetailDemandTarget, DetailPolicyFrame, DetailSelection, select_detail
+from .processing.engineer_facts import LiveEngineerFacts
 from .telemetry.canonical import (
     CarObservation,
     CarSample,
@@ -141,6 +142,7 @@ class TelemetryPipeline:
         if detail_profile not in {"full", "demand_v1"}:
             raise ValueError("invalid detail profile")
         self.detail_profile = detail_profile
+        self.engineer_facts = LiveEngineerFacts()
         self.detail_demands: tuple[DetailDemandTarget, ...] = ()
         self._last_detail_selection: dict[int, tuple[object, ...]] = {}
         self._detail_selection_events: list[dict[str, object]] = []
@@ -259,6 +261,9 @@ class TelemetryPipeline:
                 frame, frame_ordinal
             )
             attempts.extend(lifecycle_attempts)
+            self.engineer_facts.begin_frame(frame.session_uid, association_epoch)
+            if lifecycle_boundary or quarantine_lap_data:
+                self.engineer_facts.invalidate("lifecycle_boundary")
             self._process_player_participants(
                 frame,
                 frame_ordinal,
@@ -629,6 +634,23 @@ class TelemetryPipeline:
                 ),
                 boundary_reason=("lifecycle_boundary" if lifecycle_boundary else None),
             )
+            if raw_lap_data_packets and (lap_data_conflicted or lap_data_unavailable):
+                self.engineer_facts.invalidate("lap_data_conflicted_or_unavailable")
+            elif selected_lap is not None and not lifecycle_boundary and not quarantine_lap_data:
+                fact_packet, fact_laps = selected_lap
+                self.engineer_facts.observe(DetailPolicyFrame(
+                    session_uid=frame.session_uid, frame_ordinal=frame_ordinal,
+                    packet_format=int(fact_packet.packet_format), lifecycle_epoch=association_epoch,
+                    player_car_index=inventory_player_index, lap_data=fact_laps.cars,
+                    context=inventory_context, association_scope_assessable=association_scope_assessable,
+                    lap_data_conflicted=lap_data_conflicted,
+                    verified_tenures=self.car_lap_inventory.active_tenures({frame.session_uid: frame_ordinal}),
+                ), frame_identifier=frame.overall_frame_identifier,
+                    session_time_s=fact_packet.header.session_time,
+                    received_monotonic_ns=fact_packet.received_monotonic_ns,
+                    captured_at_ns=fact_packet.captured_at_ns,
+                    statuses={car: _join_car_status(fact_packet, car, car_status_candidates)
+                              for car in range(len(fact_laps.cars))})
             if pending_observation is not None:
                 (lap_packet, lap_data_packet, player_index, context_json,
                  observation_telemetry, telemetry_reason, observation_motion,
@@ -1589,7 +1611,9 @@ class TelemetryPipeline:
                 self.car_lap_inventory.end_session(
                     event.session_uid, reason="session_ended"
                 )
+                self.engineer_facts.invalidate("session_ended")
             elif event.kind == "session_started":
+                self.engineer_facts.invalidate("session_started")
                 self.laps.start_session(event.session_uid)
                 self.car_lap_inventory.start_session(event.session_uid)
                 self._association_epoch_by_uid[event.session_uid] = 0
@@ -1617,6 +1641,7 @@ class TelemetryPipeline:
                 self.car_lap_inventory.end_session(
                     event.session_uid, reason="packet_format_changed"
                 )
+                self.engineer_facts.invalidate("packet_format_changed")
                 self.car_lap_inventory.start_session(event.session_uid)
                 self._association_epoch_by_uid[event.session_uid] = (
                     self._association_epoch_by_uid.get(event.session_uid, 0) + 1
@@ -1707,6 +1732,7 @@ class TelemetryPipeline:
             self._association_epoch_by_uid[uid] = self._association_epoch_by_uid.get(uid, 0) + 1
         car_slot_tenures, observed_car_lap_attempts = self.car_lap_inventory.drain()
         self._last_detail_selection.clear()
+        self.engineer_facts.invalidate(interruption_reason or "processing_finished")
         return PipelineFlushResult(
             completed_frames=frames,
             lap_attempts=tuple(attempts),

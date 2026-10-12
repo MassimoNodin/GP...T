@@ -8,6 +8,17 @@ No complete acceptance criterion has been demonstrated on real-game hardware.
 
 ## Existing foundations and missing work
 
+### First implemented backend increment
+
+The [live facts/event contract](working-engineer-live-facts.md) now provides
+authenticated, freshness-qualified current field timing and same-frame tyre
+observations, verified identity bindings and bounded lap/sector/pit events.
+Player pit-entry events retain the previous observed field positions for later
+benchmark ranking. It uses the existing acquisition/persistence pipeline and
+does not depend on detailed trace selection. The original table below records
+the pre-implementation inventory; this increment supplies part of slice 1,
+not full coaching or standalone acceptance. Focused new checks: 35 passed.
+
 | Requirement | Current foundation | Gap to acceptance |
 | --- | --- | --- |
 | Proactive comparisons | `engineer_activity/calls.py` observes published player laps, logs best-lap deltas, invalid/pit laps and telemetry state changes. | Calls are activity records, not a standalone spoken coach. Add opponent/comparable-reference selection and event-to-radio delivery. Its session best is not a condition-matched coaching reference. |

@@ -99,6 +99,13 @@ and telemetry workflows do not require the optional speech/model runtimes.
 
 ## Validation and diagnostics
 
+The first working-engineer backend increment exposes authenticated live facts
+at `GET /api/v2/engineer/live`. It includes freshness-qualified field timing,
+verified driver bindings and bounded lap/sector/pit events. See the
+[live facts contract](docs/working-engineer-live-facts.md) and
+[v1 acceptance criteria](docs/working-engineer-v1-acceptance.md).
+This is not yet a browser-independent spoken engineer.
+
 ```powershell
 uv run --extra dev --extra app pytest
 uv run --extra app f1-engineer --help

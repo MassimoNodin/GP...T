@@ -182,6 +182,13 @@ class SessionCoordinator:
     def pending_publication(self) -> int:
         return self.admitted_sequence - self.sequence
 
+    def engineer_snapshot(self) -> dict[str, Any]:
+        result = self.pipeline.engineer_facts.snapshot()
+        scope = result["scope"]
+        result["generation"] = self.generation
+        result["session_id"] = self._session(scope["session_uid"]) if scope else None
+        return result
+
     def detail_status(self) -> dict[str, Any]:
         uid = self.pipeline.sessions.current_session_uid
         current = self.pipeline._last_detail_selection.get(uid) if uid is not None else None
@@ -472,9 +479,11 @@ class SessionCoordinator:
                 error = str(exception)
         elif kind == "finish":
             output = self.pipeline.finish_with_outputs()
+            self.pipeline.engineer_facts.invalidate("processing_finished")
             self.finished = True
         elif kind == "gap":
             output = self.pipeline.finish_with_outputs(interruption_reason=metadata["reason"])
+            self.pipeline.engineer_facts.invalidate(metadata["reason"])
             self.gap_epoch += 1
         if output is not None and not persist:
             for event in getattr(output, "session_events", ()) if self.detail_profile == "demand_v1" else ():
