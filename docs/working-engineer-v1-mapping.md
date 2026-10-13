@@ -6,7 +6,7 @@ This map is an implementation plan, not acceptance evidence for new features.
 Partial means reusable components exist, not that the in-game experience passes.
 No complete acceptance criterion has been demonstrated on real-game hardware.
 
-## Remaining acceptance work as of October 13, 2026
+## Remaining acceptance work as of October 14, 2026
 
 The original inventory and proposed slices below are historical planning context.
 The standalone radio now has recurring reports, basic multi-driver live questions,
@@ -32,7 +32,9 @@ Remaining implementation and scope decisions:
   Pre-connection/evicted laps and missing confirmation/ranking data cannot be
   filled in; pit transition alone is not claimed as a serviced stop.
 - Complete session-best/older-lap retrieval beyond the bounded observed history,
-  plus partial supported answers when a mixed request contains unsupported facts.
+  and broader wording support for safely separable unsupported facts. Mixed
+  requests now return available timing/tyre data alongside explicit unavailable
+  session-best/fastest-sector/fuel results; unknown qualifiers are not discarded.
   Current-lap sectors 1/2, fully observed player/opponent last-lap sectors, retained
   eligible numbered laps and labelled same-compound radio-observed best retrieval
   now exist; these are not

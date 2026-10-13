@@ -22,7 +22,7 @@ def test_explicit_sector_and_observed_history_question_plans(phrase, metric):
 
 
 @pytest.mark.parametrize("phrase", [
-    "my sector one", "my current lap sector three time", "my best lap",
+    "my sector one", "my current lap sector three time",
     "my best observed lap in the rain", "my last lap sector one in traffic",
     "my lap 3 sector one time", "my best observed lap on soft tyres",
 ])

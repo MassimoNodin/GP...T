@@ -46,7 +46,7 @@ def test_typed_plans(question, targets, metrics):
 
 @pytest.mark.parametrize("question", [
     "Leclerc's last lap", "track my last lap next lap", "cancel all tasks",
-    "my best lap", "my last lap and fastest sector", "my last lap in the rain",
+    "my last lap in the rain",
     "what was my position",
     "his last lap", "my and his last lap",
     "", "?", "what", "x" * 1025, "P25 last lap",

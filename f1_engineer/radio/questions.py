@@ -12,6 +12,13 @@ class QuestionPlan:
     inherited_targets: bool = False
 
 
+UNAVAILABLE_FACTS = {
+    "session_best": "session-best lap unavailable; complete session history is not exposed here",
+    "fastest_sector": "fastest sector unavailable; complete session sector history is missing",
+    "fuel_level": "fuel level unavailable in this live timing feed",
+}
+
+
 METRICS = {
     "last_sector1": r"(?:last|previous|latest)(?: completed)? lap sector (?:1|one)(?: time)?",
     "last_sector2": r"(?:last|previous|latest)(?: completed)? lap sector (?:2|two)(?: time)?",
@@ -19,6 +26,11 @@ METRICS = {
     "current_sector1": r"current lap sector (?:1|one)(?: time)?",
     "current_sector2": r"current lap sector (?:2|two)(?: time)?",
     "observed_best": r"best observed(?: valid)? lap(?: time)?",
+    "session_best": r"(?:session )?best(?: valid)? lap(?: time)?",
+    "fastest_sector": r"fastest sector(?: time)?",
+    "fuel_level": r"(?:current )?fuel(?: level| remaining| load)?",
+    "tyre_age": r"(?:current )?(?:tyre|tire) ages?(?: in laps)?",
+    "tyre_compound": r"(?:current )?(?:tyre|tire) compounds?",
     "speed": r"(?:current )?speed",
     "brake_input": r"(?:current )?brake input",
     "consistency": r"consistency",
@@ -51,7 +63,7 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
     if "__named_" in remaining:
         raise ValueError("Please specify a supported driver name or timing fact.")
     named_targets = []
-    reserved = set("what is are the a and also please tell show give for of about how their his her them him then my me mine myself lap last current quiet resume cancel repeat status quit submit forget ask listen finish sector one two three best observed valid time".split())
+    reserved = set("what is are the a and also please tell show give for of about how their his her them him then my me mine myself lap last current quiet resume cancel repeat status quit submit forget ask listen finish sector one two three best observed valid time session fastest fuel level remaining load tyre tire age compound".split())
     reserved_patterns = "|".join((*TARGETS.values(), *METRICS.values(), r"p(?:[1-9]|1[0-9]|2[0-4])"))
     name_patterns = []
     known_names = {driver_name_key(name) for name in names}

@@ -201,7 +201,7 @@ def test_reserved_names_require_quotes_and_numeric_suffixes_do_not_bind():
 
 
 @pytest.mark.parametrize("question", ["__named_0__ last lap", "__named_999__ last lap",
-    "Leclerc last lap and best lap", "track Leclerc next lap", "Unknown Person last lap"])
+    "track Leclerc next lap", "Unknown Person last lap"])
 def test_unknown_or_unsupported_named_requests_abstain(question):
     controller, radio, events, value = named_live()
     controller.answer_question(question, now=10)

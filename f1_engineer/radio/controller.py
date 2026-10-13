@@ -9,7 +9,7 @@ from copy import deepcopy
 
 from ..driver_names import display_driver_name, driver_name_aliases
 from .gaps import GAP_CHANGES, LapGapTracker
-from .questions import QuestionPlan, plan_question, timing_fact
+from .questions import QuestionPlan, UNAVAILABLE_FACTS, plan_question, timing_fact
 from .scheduler import RadioMessage, RadioScheduler
 from .tasks import LapReportRegistry, parse_task_request
 from .watches import RaceWatchTracker
@@ -514,6 +514,20 @@ class RadioController:
                            brake=values["brake"], throttle=None, steering=None, gear=None, drs_active=None)
 
     def _timing_fact(self, metric: str, row: dict, *, now: float) -> str:
+        if metric in UNAVAILABLE_FACTS:
+            return UNAVAILABLE_FACTS[metric]
+        if metric in ("tyre_age", "tyre_compound"):
+            tyre = row.get("tyre")
+            value = tyre.get("value") if isinstance(tyre, dict) and tyre.get("status") == "available" else None
+            label = "current tyre age" if metric == "tyre_age" else "current tyre compound"
+            if not isinstance(value, dict) or not _integer(value.get("actual_compound"), 1, 255):
+                return label + " unavailable"
+            if metric == "tyre_age":
+                age = value.get("age_laps")
+                return f"current tyre age {age} laps" if _integer(age, 0, 255) else label + " unavailable"
+            visual = value.get("visual_compound")
+            return (f"actual tyre compound {value['actual_compound']}, "
+                    + (f"visual compound {visual}" if _integer(visual, 1, 255) else "visual compound unavailable"))
         if metric.startswith("lap_number:"):
             number = int(metric.split(":", 1)[1])
             state = self.lap_history.get(row)
@@ -633,6 +647,8 @@ class RadioController:
                                 and (name := self._participant_name(row)) is not None for alias in driver_name_aliases(name))
                 plan = (QuestionPlan(("self",), ("regional_observations",)) if action.region_bounds_m is not None
                         else plan_question(action.question, names=aliases))
+                if any(metric in UNAVAILABLE_FACTS for metric in plan.metrics):
+                    raise ValueError("Recurring reports cannot track session-best laps, fastest sectors or fuel from this feed. Ask a timing question for partial available results.")
                 region_window = None
                 region_reference = None
                 if action.region_bounds_m is not None:

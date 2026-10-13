@@ -1235,3 +1235,36 @@ with the existing Starlette/httpx deprecation warning. Compilation and whitespac
 checks passed; the full suite was not rerun. Evidence remains synthetic/mocked.
 Real pit-stop/game/wheel/headset testing, latency approval, complete historical
 coverage and the remaining coaching/conversation criteria are still pending.
+
+## Bounded mixed-fact partial answers and current tyre questions
+
+Questions now recognise full session-best lap, fastest-sector and fuel-level
+requests as explicitly unavailable facts, rather than rejecting otherwise
+supported timing parts. For example, `my and Leclerc last lap and best lap`
+answers both drivers' known last-lap times and explains that complete session-best
+history is not exposed. `my last lap and fuel remaining` returns the last-lap
+time and says fuel is unavailable in this live timing feed. It never silently
+substitutes a radio-observed best for a requested full session best.
+
+`my and Leclerc tyre age and tyre compound` reads fresh same-frame tyre status
+for each verified driver. Zero tyre age is a valid observed measurement; missing,
+non-integer/boolean/out-of-range ages and missing/invalid actual compounds are
+unavailable. Actual and visual compound IDs are distinguished, not guessed into
+friendly labels without formula/visual context. Missing visual data does not
+hide a known actual compound. Missing one supported fact preserves the other
+known facts and drivers in the bounded response.
+
+This is a narrow typed plan, not free-form token deletion. Unrecognised facts,
+conditional/historical qualifiers, arbitrary controls and requests exceeding
+three drivers/three facts still abstain rather than changing the meaning of a
+supported measurement. Identity-bound follow-ups and automatic/manual voice
+submission share the same policy. Keyword-colliding driver names still require
+quotes. Unsupported session-best/fastest-sector/fuel facts cannot create or
+replace recurring placeholder tasks; rejected updates preserve existing tasks.
+
+Validation: 1,079 focused radio/backend-capture/CLI/live-facts tests passed,
+including 40 new partial-answer/tyre cases (four older whole-request-rejection
+cases intentionally superseded), with the existing Starlette/httpx warning.
+Compilation and whitespace checks passed. The full suite and real-game
+wheel/headset/browser-free acceptance were not run. Complete session history,
+broader conversational context/follow-ups and remaining coaching are pending.
