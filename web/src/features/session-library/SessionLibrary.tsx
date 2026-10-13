@@ -1,12 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ReviewIcon, SearchIcon, SortIcon } from "@/features/ui-foundation/icons";
 import { Dropzone } from "@/features/ui-foundation/Dropzone";
-import { Badge, Button, Checkbox, IconButton, PageHeader, Select, StatusBadge } from "@/features/ui-foundation/primitives";
-import { EmptyState, InlineAlert, NotAvailable } from "@/features/ui-foundation/states";
-import { TrackPhoto } from "@/features/ui-foundation/TrackPhoto";
+import { Button, Checkbox, IconButton, PageHeader, Select } from "@/features/ui-foundation/primitives";
+import { EmptyState, InlineAlert } from "@/features/ui-foundation/states";
 import { ImportActivityDrawer } from "./imports/ImportActivityDrawer";
 import { ImportProvider, useImports } from "./imports/ImportProvider";
 import { ImportRow } from "./imports/ImportRow";
@@ -21,9 +19,13 @@ import {
   paginate,
   type RowFilters,
 } from "./library-rows";
-import type { LibraryModel, LibraryRow } from "./load";
-import { SessionRowMenu } from "./SessionRowMenu";
+import type { LibraryModel } from "./load";
+import { SessionRow } from "./SessionRow";
+import { WeekendCard } from "./WeekendCard";
+import { groupWeekends } from "./weekends";
 import styles from "./SessionLibrary.module.css";
+
+const GROUP_KEY = "f1-engineer:library-group-weekends";
 
 export const REFERENCE_BANNER =
   "The local engine is not reachable, so example sessions from the reference design are shown. Start the engine to see your own data.";
@@ -57,6 +59,25 @@ function LibraryBody({ model }: { model: LibraryModel }) {
   const imports = useImports();
   const [filters, setFilters] = useState<RowFilters>(NO_FILTERS);
   const [shown, setShown] = useState(PAGE_SIZE);
+  // Grouping is on by default; a saved choice is restored after hydration.
+  const [grouped, setGrouped] = useState(true);
+  useEffect(() => {
+    try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (window.localStorage.getItem(GROUP_KEY) === "0") setGrouped(false);
+    } catch {
+      // Keep the default.
+    }
+  }, []);
+  function changeGrouped(value: boolean) {
+    setGrouped(value);
+    setShown(PAGE_SIZE);
+    try {
+      window.localStorage.setItem(GROUP_KEY, value ? "1" : "0");
+    } catch {
+      // The choice still applies to this page.
+    }
+  }
   const searchRef = useRef<HTMLInputElement>(null);
   const countRef = useRef<HTMLParagraphElement>(null);
 
@@ -89,7 +110,18 @@ function LibraryBody({ model }: { model: LibraryModel }) {
 
   const rows = useMemo(() => filterRows(model.sessions, filters), [model.sessions, filters]);
   const emptyCount = useMemo(() => model.sessions.filter(isEmptySession).length, [model.sessions]);
-  const page = paginate(rows, shown);
+  const entries = useMemo(
+    () => (grouped ? groupWeekends(rows) : rows.map((row) => ({ kind: "row" as const, row }))),
+    [grouped, rows],
+  );
+  const weekendCount = useMemo(
+    () => groupWeekends(model.sessions).filter((entry) => entry.kind === "weekend").length,
+    [model.sessions],
+  );
+  const page = paginate(entries, shown);
+  const countLine = grouped && entries.length !== rows.length
+    ? `Showing ${page.visible.length} of ${entries.length} weekends and sessions (${rows.length} sessions)`
+    : page.countLine;
   const inFlight = listItems(imports.items);
   const hasSessions = model.sessions.length > 0;
 
@@ -176,13 +208,18 @@ function LibraryBody({ model }: { model: LibraryModel }) {
                 <SortIcon size={16} />
               </IconButton>
             </div>
-            {emptyCount > 0 && (
+            {(emptyCount > 0 || weekendCount > 0) && (
               <div className={styles.listTools}>
-                <Checkbox
-                  label={`Show empty sessions (${emptyCount})`}
-                  checked={filters.showEmpty}
-                  onChange={(showEmpty) => change({ showEmpty })}
-                />
+                {weekendCount > 0 && (
+                  <Checkbox label="Group by weekend" checked={grouped} onChange={changeGrouped} />
+                )}
+                {emptyCount > 0 && (
+                  <Checkbox
+                    label={`Show empty sessions (${emptyCount})`}
+                    checked={filters.showEmpty}
+                    onChange={(showEmpty) => change({ showEmpty })}
+                  />
+                )}
               </div>
             )}
           </>
@@ -215,9 +252,13 @@ function LibraryBody({ model }: { model: LibraryModel }) {
                 {inFlight.map((item) => (
                   <ImportRow key={item.key} item={item} />
                 ))}
-                {page.visible.map((row) => (
-                  <SessionRow key={row.key} row={row} />
-                ))}
+                {page.visible.map((entry) =>
+                  entry.kind === "weekend" ? (
+                    <WeekendCard key={entry.weekend.key} weekend={entry.weekend} />
+                  ) : (
+                    <SessionRow key={entry.row.key} row={entry.row} />
+                  ),
+                )}
               </ul>
             )}
             {rows.length === 0 && hasSessions && (
@@ -244,11 +285,11 @@ function LibraryBody({ model }: { model: LibraryModel }) {
                 }
               />
             )}
-            {rows.length > PAGE_SIZE && (
+            {entries.length > PAGE_SIZE && (
               <div className={styles.pager}>
                 {page.remaining > 0 && <Button onClick={showMore}>{page.more}</Button>}
                 <p ref={countRef} className={styles.count} tabIndex={-1} aria-live="polite">
-                  {page.countLine}
+                  {countLine}
                 </p>
               </div>
             )}
@@ -259,50 +300,3 @@ function LibraryBody({ model }: { model: LibraryModel }) {
   );
 }
 
-function SessionRow({ row }: { row: LibraryRow }) {
-  const title = row.href ? (
-    <Link href={row.href} className={styles.titleLink}>
-      {row.title}
-    </Link>
-  ) : (
-    row.title
-  );
-  return (
-    <li className={styles.row} data-openable={row.href ? "true" : undefined}>
-      <TrackPhoto src={row.photo} alt={`${row.title} circuit`} className={styles.thumb} />
-      <div className={styles.info}>
-        <h2 className={styles.title}>{title}</h2>
-        <div className={styles.badges}>
-          <Badge tone={row.type.tone}>{row.type.label}</Badge>
-          <Badge tone={row.source.tone}>{row.source.label}</Badge>
-        </div>
-        <div className={row.dateKnown ? styles.date : `${styles.date} ${styles.dateUnknown}`}>{row.date}</div>
-        <div className={styles.meta}>
-          {row.meta.map((part, index) => (
-            <span key={`${part}-${index}`}>
-              {index > 0 && <span className={styles.dot}>•</span>}
-              {part}
-            </span>
-          ))}
-        </div>
-      </div>
-      <div className={styles.laps}>
-        <strong>{row.detailed ? row.laps : <NotAvailable reason="Lap counts are read when the session is opened" compact />}</strong>
-        <span>Laps</span>
-      </div>
-      <p className={styles.notes}>
-        {row.highlights.length > 0
-          ? row.highlights.map((line) => (
-              <span key={line} className={styles.noteLine}>
-                {line}
-              </span>
-            ))
-          : row.notes}
-      </p>
-      <div className={styles.side}>
-        <StatusBadge tone={row.status.tone}>{row.status.label}</StatusBadge>
-        <SessionRowMenu row={row} />
-      </div>
-    </li>
-  );
-}

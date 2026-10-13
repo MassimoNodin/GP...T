@@ -376,3 +376,128 @@
   outline: 2px solid var(--blue);
   outline-offset: 2px;
 }
+
+/* Race weekends: a summary row with session chips, expanding to the sessions */
+.weekend {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.weekend:hover {
+  border-color: var(--border-strong);
+}
+
+.weekendHead {
+  display: grid;
+  grid-template-columns: 133px minmax(0, 1fr) 70px minmax(0, 190px) 102px;
+  align-items: center;
+  min-height: 104px;
+  padding: 9px 12px 9px 8px;
+}
+
+.sessionChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.sessionChip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+}
+
+.sessionChip strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+a.sessionChip:hover {
+  border-color: var(--border-strong);
+  background: var(--grey-soft);
+}
+
+a.sessionChip:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.sessionChip[data-best] {
+  border-color: var(--purple);
+}
+
+.sessionChip[data-best] span {
+  color: var(--purple);
+  font-weight: 600;
+}
+
+.expand {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: auto;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.expand:hover {
+  background: var(--grey-soft);
+}
+
+.expand:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+.expandIcon {
+  transition: transform 0.15s ease;
+}
+
+.weekend[data-open] .expandIcon {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .expandIcon {
+    transition: none;
+  }
+}
+
+.weekendSessions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.row[data-nested] {
+  border-color: var(--divider);
+  background: var(--bg);
+}
+
+.listTools {
+  gap: 20px;
+}
+
+.weekendSessions[hidden] {
+  display: none;
+}
+
+.expand {
+  white-space: nowrap;
+}

@@ -29,6 +29,10 @@ export type LibraryRow = LibrarySession & {
   compare: { target: string; reference: string } | null;
   /** Capture file behind an imported row, when the recordings catalog knows it. */
   download: { captureId: string; version: string } | null;
+  /** Fastest valid lap, when the attempts were read. */
+  bestMs?: number | null;
+  /** Rows sharing this key belong to one race weekend (see `weekends.ts`). */
+  groupKey?: string | null;
 };
 
 /** `Best 1:32.104 (lap 7)` then `3 invalid · 2 pit laps`; `No timed laps` without timed laps. */

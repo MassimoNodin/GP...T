@@ -15,6 +15,8 @@ import {
   evidenceSessionContext,
   sessionRecency,
   typeTone,
+  bestEvidenceLap,
+  type EvidenceContext,
   type EvidenceSession,
 } from "@/features/review-data/session-evidence";
 import { libraryFixture, shellFixture } from "@/features/review-data/fixtures";
@@ -116,6 +118,7 @@ function toRow(record: SessionRecord, captures: CaptureLinks): LibraryRow {
     href: status.label === "Complete" ? `/review/${encodeURIComponent(record.session_key)}` : null,
     photo: trackPhotoUrl(track),
     kind: "v1",
+    groupKey: `v1|${trackName ?? ""}|${record.packet_format}|${record.started_at_utc.slice(0, 10)}`,
     highlights: record.lap_attempts === 0 ? ["No timed laps"] : [],
     dateKnown: true,
     detailed: true,
@@ -149,6 +152,8 @@ async function evidenceRows(sessions: EvidenceSession[], dates: ReadonlyMap<stri
       track,
       photo: trackPhotoUrl(track),
       kind: "v2",
+      bestMs: bestEvidenceLap(laps)?.ms ?? null,
+      groupKey: v2GroupKey(session, context),
       notes: highlightLines(laps).join(" "),
       highlights: highlightLines(laps),
       dateKnown: date.known,
@@ -170,6 +175,7 @@ async function evidenceRows(sessions: EvidenceSession[], dates: ReadonlyMap<stri
       track,
       photo: trackPhotoUrl(track),
       kind: "v2",
+      groupKey: v2GroupKey(session, context),
       notes: "",
       highlights: [UNREAD_NOTE],
       dateKnown: date.known,
@@ -179,6 +185,12 @@ async function evidenceRows(sessions: EvidenceSession[], dates: ReadonlyMap<stri
     };
   });
   return [...read.map((entry) => entry.row), ...unread];
+}
+
+/** Live sessions share a weekend when circuit, game and engine run match. */
+function v2GroupKey(session: EvidenceSession, context: EvidenceContext | null): string | null {
+  if (!context?.trackName || !session.generation) return null;
+  return `v2|${context.trackName}|${context.packetFormat ?? ""}|${session.generation}`;
 }
 
 function connectionHeader(state: string): LibraryModel["header"] {

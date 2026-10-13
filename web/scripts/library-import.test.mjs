@@ -43,8 +43,14 @@ const rowsUrl = await urlOf("session-library/library-rows.ts", {
   "@/features/review-data/fixtures": fixturesUrl,
 });
 
+const weekendsUrl = await urlOf("session-library/weekends.ts", {
+  "@/features/review-data/format": formatUrl,
+  "./library-rows": rowsUrl,
+});
+
 const state = await import(importStateUrl);
 const rows = await import(rowsUrl);
+const weekends = await import(weekendsUrl);
 
 /* ----------------------------------------------------------------- helpers */
 
@@ -719,4 +725,25 @@ test("sessions with no timed laps are hidden until asked for", () => {
   assert.deepEqual(rows.filterRows(list, rows.NO_FILTERS).map((entry) => entry.key), ["a", "c", "d"]);
   assert.equal(rows.filterRows(list, { ...rows.NO_FILTERS, showEmpty: true }).length, 4);
   assert.equal(rows.filtersActive({ ...rows.NO_FILTERS, showEmpty: true }), false, "showing empty sessions is not a filter");
+});
+
+test("sessions group into race weekends in weekend order", () => {
+  const session = (key, label, groupKey, bestMs = null) =>
+    row({ key, kind: "v2", groupKey, bestMs, type: { label, tone: "blue" }, title: "Jeddah", meta: ["F1 25"] });
+  const list = [
+    session("race", "Race", "w1", 93303),
+    session("solo", "Race", "w2", 94000),
+    session("q2", "Qualifying 2", "w1", 89049),
+    session("p1", "Practice 1", "w1", 92252),
+    session("tt", "Time Trial", "w1", 88000),
+    session("ref", "Race", null),
+  ];
+  const entries = weekends.groupWeekends(list);
+  assert.deepEqual(entries.map((entry) => entry.kind), ["weekend", "row", "row", "row"]);
+  const [weekend] = entries;
+  assert.deepEqual(weekend.weekend.rows.map((entry) => entry.key), ["p1", "q2", "race"]);
+  assert.equal(weekends.weekendBestLine(weekend.weekend), "Best 1:29.049 in Q2");
+  assert.equal(weekends.shortSessionLabel("Qualifying 3"), "Q3");
+  assert.equal(weekends.shortSessionLabel("Practice 2"), "P2");
+  assert.equal(weekends.weekendDateLabel(weekend.weekend), "4 Jun 2024");
 });
