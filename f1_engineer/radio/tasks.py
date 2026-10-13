@@ -166,12 +166,17 @@ class LapReportRegistry:
                 pace_reference: PaceReference | None = None, pace_tolerance_ms: int | None = None,
                 region_window: RegionWindow | None = None,
                 region_reference: RegionReference | None = None) -> LapReportTask:
+        if (type(cursor) is not int or cursor < 0 or type(lap) is not int or not 1 <= lap <= 255
+                or task_id is not None and (type(task_id) is not int or task_id < 1)):
+            raise ValueError("A report requires a valid current lap, event cursor and task identifier.")
+        if laps is not None and (type(laps) is not int or not 1 <= laps <= 20 or lap + laps - 1 > 255):
+            raise ValueError("Please choose one to twenty upcoming laps, within lap 255.")
         existing = self._tasks.get(task_id) if task_id is not None else None
         if task_id is not None and existing is None:
             raise ValueError("That task does not exist.")
+        if existing is not None and existing.state != "active":
+            raise ValueError("That task has ended. Create a new task rather than reviving an expired report.")
         active = [task for task in self._tasks.values() if task.state == "active" and task.task_id != task_id]
-        if laps is not None and not 1 <= laps <= 20:
-            raise ValueError("Please choose one to twenty upcoming laps.")
         if len(bindings) != len(plan.targets):
             raise ValueError("Task references do not match its driver targets.")
         if "regional_observations" in plan.metrics:

@@ -179,7 +179,7 @@ def test_watch_and_normal_report_share_one_utterance():
     assert len(radio.pending) == 1 and "position 2" in radio.pending[-1].text
 
 
-def test_update_cancel_and_expiry_use_existing_task_controls():
+def test_expired_watch_update_is_refused_and_cancellation_clears_owned_speech():
     controller, radio, events, value = watch_live("watch Norris for next 3 laps")
     for number, gap in enumerate((3000, 2700, 2400), start=4):
         step(controller, radio, value, number, gap)
@@ -187,6 +187,21 @@ def test_update_cancel_and_expiry_use_existing_task_controls():
     radio.tick(now=13)
     controller.feed(value, now=13.1)
     assert radio.active is not None
+    controller.handle_request("update task 1 watch Leclerc", now=13.1)
+    assert radio.active is None and controller.status()["tasks"][0]["version"] == 1
+    assert controller.status()["tasks"][0]["state"] == "completed"
+    assert "Create a new task" in radio.pending[-1].text
+    radio.cancel()
+    controller.handle_request("cancel task 1", now=13.2)
+    assert not controller.tasks.active() and not radio.repeat(now=13.2)
+    assert controller.status()["watches"] == []
+
+
+def test_active_watch_can_be_updated_and_cancelled():
+    controller, radio, events, value = watch_live()
+    for number, gap in enumerate((3000, 2700, 2400), start=4):
+        step(controller, radio, value, number, gap)
+    radio.tick(now=13)
     controller.handle_request("update task 1 watch Leclerc", now=13.1)
     assert radio.active is None and controller.status()["tasks"][0]["version"] == 2
     radio.cancel()

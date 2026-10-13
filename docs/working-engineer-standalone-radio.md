@@ -1335,3 +1335,22 @@ Compilation and whitespace checks pass. The preceding full-suite run passed
 2,952 tests, skipped sixteen and reported two existing deprecation warnings in
 287.68 seconds; that run preceded these final capture-context refinements.
 Real-game microphone/wheel evidence remains pending.
+
+### Version-bound task edits and ended-task refusal
+
+Spoken numbered task updates and cancellations now require the task's active
+version captured at listening start. A later-created task or a task updated,
+cancelled, completed or forgotten during transcription cannot be changed by an
+old command. Explicit “cancel all tracking” remains a current global control.
+Typed numbered commands retain their existing immediate-control behavior.
+
+The registry itself refuses updates of completed tasks; use a new explicit
+tracking request to create a new task ID after expiry. All installations now
+validate integer lap/cursor/task IDs, reject boolean durations and ensure finite
+horizons do not exceed lap 255. Refusal leaves the registry unchanged.
+
+Validation: 22 new mutation-safety cases plus an active-watch edit regression
+pass. The legacy expired-watch test now expects refusal rather than revival.
+The combined radio/live-facts, region, CLI and engineer-facts selection passes
+1,167 tests with the existing Starlette/httpx warning; compilation and whitespace
+checks pass. Real-game acceptance is still pending.

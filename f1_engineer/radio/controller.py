@@ -643,6 +643,13 @@ class RadioController:
             if action is None:
                 self.answer_question(question, now=now, question_context=question_context)
                 return
+            if action.kind in ("update", "cancel") and task_context is not _LIVE_TASK_CONTEXT:
+                if (not isinstance(task_context, TaskContext) or task_context.scope != self.scheduler.scope
+                        or task_context.revision != self.conversation.revision):
+                    raise ValueError("No same-session task reference was captured. Repeat the task command after checking current tracking.")
+                reference = next((entry for entry in task_context.versions if entry[0] == action.task_id), None)
+                if reference is None or not any((task.task_id, task.version) == reference for task in self.tasks.active()):
+                    raise ValueError("The task changed, ended or was not active when listening began. Repeat the command for a current task.")
             if action.kind == "list":
                 active = [task for task in self.tasks.views() if task["state"] == "active"]
                 lines = []
