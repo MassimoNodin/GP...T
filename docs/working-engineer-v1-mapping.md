@@ -6,6 +6,49 @@ This map is an implementation plan, not acceptance evidence for new features.
 Partial means reusable components exist, not that the in-game experience passes.
 No complete acceptance criterion has been demonstrated on real-game hardware.
 
+## Remaining acceptance work as of October 13, 2026
+
+The original inventory and proposed slices below are historical planning context.
+The standalone radio now has recurring reports, basic multi-driver live questions,
+adjacent catch/defend watches, observed sector consistency, fixed lap/sector target
+pace, backend player-region capture and explicit fixed previous-region diagnostic
+comparisons. Dynamic wheel binding, capture/cues and browser-independent radio
+controls also exist. Automated coverage does not establish complete acceptance.
+
+Remaining implementation and scope decisions:
+
+- Proactive advice and previous-best/opponent coaching with defensible reference
+  eligibility, observed context and explicit missing/material-difference disclosures.
+- Focus-corner loss selection or target clarification, supported geometry/reference
+  policy, one coaching focus and fixed-reference progress across requested laps.
+  Numeric diagnostic differences are not this completed capability.
+- Opponent braking/minimum-speed task-owned collection through existing detail
+  permissions, aligned player/opponent lap windows and guarded spoken comparisons.
+- Confirmed post-pit same-session/same-compound benchmarking, retained eligible
+  lap sets, pre-pit-position ranking/tie-breaks, exclusions and one-off reporting.
+- Sector/best/older-lap retrieval and partial supported answers for mixed multi-fact
+  requests, rather than whole-request rejection for unsupported facts.
+- Conversation context including prior answers, instructions and tracking results;
+  metric/target/task follow-ups with clarification and no cancelled-task revival.
+- Safe wheel-only transcript execution without console submission and unambiguous
+  spoken quiet/cancel/repeat controls, preserving capture/playback echo safeguards.
+- Resolve or explicitly agree existing limits: named-driver watches currently
+  pause outside meaningful adjacency; target pace uses eligible laps observed by
+  the radio connection, not complete historical session-best evidence.
+
+Remaining acceptance evidence:
+
+- Real-game demonstrations of every selected capability with the actual wheel,
+  microphone/headset and all browsers closed; startup, recovery and essential
+  controls must remain usable without the dashboard or console task submission.
+- Integrated pits, reconnects, flashbacks/restarts, missing telemetry/identity
+  changes, partial opponent data, task expiry/cancellation and radio priority checks.
+- Actual wheel-to-listening, capture-to-answer and event-to-audio latency samples,
+  including slow cases and available stage breakdowns, followed by user approval.
+  There is no fixed numerical latency acceptance gate.
+- Final acceptance record showing successful, failed and pending criteria and
+  explicit user acceptance before declaring the branch complete.
+
 ## Existing foundations and missing work
 
 ### First implemented backend increment

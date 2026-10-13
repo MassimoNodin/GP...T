@@ -7,6 +7,7 @@ from ..driver_names import driver_name_key
 from .questions import QuestionPlan
 from .pace import PaceReference
 from .regions import RegionWindow
+from .region_progress import RegionReference
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +18,7 @@ class TaskAction:
     laps: int | None = None
     tolerance_ms: int | None = None
     region_bounds_m: tuple[float, float] | None = None
+    region_compare: bool = False
 
 
 def parse_task_request(request: str) -> TaskAction | None:
@@ -34,7 +36,10 @@ def parse_task_request(request: str) -> TaskAction | None:
     task_id = None
     if update:
         task_id, text = int(update.group(1)), update.group(2)
-    region = re.fullmatch(
+    comparison = re.fullmatch(
+        r"compare my braking and minimum speed from ([0-9]{1,5}(?:\.[0-9]{1,2})?) to ([0-9]{1,5}(?:\.[0-9]{1,2})?) (?:metres|meters) with my previous observed region for (?:the )?next(?: ([1-9][0-9]?))? laps?", text
+    )
+    region = comparison or re.fullmatch(
         r"track my braking and minimum speed from ([0-9]{1,5}(?:\.[0-9]{1,2})?) to ([0-9]{1,5}(?:\.[0-9]{1,2})?) (?:metres|meters) for (?:the )?next(?: ([1-9][0-9]?))? laps?", text
     )
     if region:
@@ -42,7 +47,8 @@ def parse_task_request(request: str) -> TaskAction | None:
         if laps > 20:
             raise ValueError("Please choose one to twenty upcoming laps.")
         return TaskAction("update" if task_id is not None else "create", "my regional observations",
-                          task_id, laps, region_bounds_m=(float(region.group(1)), float(region.group(2))))
+                          task_id, laps, region_bounds_m=(float(region.group(1)), float(region.group(2))),
+                          region_compare=comparison is not None)
     duration = re.fullmatch(r"(.+) for (?:the )?next ([1-9][0-9]?) laps?", text)
     payload = duration.group(1) if duration else text
     if re.fullmatch(r"(?:coach|track|monitor) my consistency", payload):
@@ -99,6 +105,7 @@ class LapReportTask:
     pace_reference: PaceReference | None = None
     pace_tolerance_ms: int | None = None
     region_window: RegionWindow | None = None
+    region_reference: RegionReference | None = None
 
     def view(self) -> dict:
         return {"task_id": self.task_id, "version": self.version, "state": self.state,
@@ -107,7 +114,9 @@ class LapReportTask:
                 "pace_reference": self.pace_reference.view() if self.pace_reference is not None else None,
                 "pace_tolerance_ms": self.pace_tolerance_ms,
                 "region_window": self.region_window.view() if self.region_window is not None else None,
+                "region_reference": self.region_reference.view() if self.region_reference is not None else None,
                 "reference_policy": ("valid observed player lap and tolerance fixed" if "target_pace" in self.plan.metrics
+                                     else "previous observed region fixed; same-compound diagnostic differences only" if self.region_reference is not None
                                      else "numeric player-window fixed; diagnostic observations only" if self.region_window is not None
                                      else "rolling three consecutive valid observed player laps on one compound" if "consistency" in self.plan.metrics
                                      else "watch driver identity fixed; pauses outside adjacency" if "race_watch" in self.plan.metrics
@@ -141,7 +150,8 @@ class LapReportRegistry:
     def install(self, plan: QuestionPlan, bindings: tuple[str | None, ...], *, cursor: int,
                 lap: int, laps: int | None, task_id: int | None = None,
                 pace_reference: PaceReference | None = None, pace_tolerance_ms: int | None = None,
-                region_window: RegionWindow | None = None) -> LapReportTask:
+                region_window: RegionWindow | None = None,
+                region_reference: RegionReference | None = None) -> LapReportTask:
         existing = self._tasks.get(task_id) if task_id is not None else None
         if task_id is not None and existing is None:
             raise ValueError("That task does not exist.")
@@ -157,6 +167,10 @@ class LapReportRegistry:
                 raise ValueError("Regional tracking requires your own bounded upcoming laps and an explicit numeric window.")
         elif region_window is not None:
             raise ValueError("Only regional tracking tasks can own a numeric window.")
+        if region_reference is not None and (not isinstance(region_reference, RegionReference)
+                or region_window != region_reference.window or "regional_observations" not in plan.metrics
+                or region_reference.lap_number >= lap):
+            raise ValueError("A regional comparison needs an earlier fixed reference for the same numeric window.")
         if "consistency" in plan.metrics and (plan.targets != ("self",) or plan.metrics != ("consistency",)):
             raise ValueError("Consistency coaching requires only your own laps, without additional facts.")
         if "target_pace" in plan.metrics:
@@ -173,6 +187,7 @@ class LapReportRegistry:
             for task in active:
                 if (task.plan == plan and task.fixed_bindings == bindings
                         and task.region_window == region_window
+                        and task.region_reference == region_reference
                         and task.pace_reference == pace_reference and task.pace_tolerance_ms == pace_tolerance_ms
                         and task.until_lap == (lap + laps - 1 if laps is not None else None)):
                     return task
@@ -185,7 +200,7 @@ class LapReportRegistry:
         task = LapReportTask(identifier, existing.version + 1 if existing else 1, plan, bindings, cursor, lap,
                              lap + laps - 1 if laps is not None else None,
                              pace_reference=pace_reference, pace_tolerance_ms=pace_tolerance_ms,
-                             region_window=region_window)
+                             region_window=region_window, region_reference=region_reference)
         self._tasks[identifier] = task
         self.notify({"event": "radio_task_updated" if existing else "radio_task_created", **task.view()})
         return task

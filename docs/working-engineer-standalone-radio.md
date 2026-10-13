@@ -941,3 +941,57 @@ complete regional report produced without intermediate radio polls inside the
 window. Real-game frame capture, wheel-only voice execution, browser-closed
 wheel/audio acceptance and live acoustic latency remain unverified. The branch
 is not complete; deployment, model/runtime pins and OS audio defaults are unchanged.
+
+## Fixed-reference numeric-region comparisons
+
+After a complete eligible region has been captured, the standalone radio can
+compare future observations against that previous region:
+
+```text
+ask Track my braking and minimum speed from 100 to 250 metres for next lap
+ask Compare my braking and minimum speed from 100 to 250 metres with my previous observed region for next 3 laps
+ask Update task 2 compare my braking and minimum speed from 100 to 250 metres with my previous observed region for next 2 laps
+ask List tasks
+ask Cancel task 2
+```
+
+The comparison command requires an already retained observation for exactly the
+same numeric window, track length and actual compound in the current bound
+radio session/player context. If none exists, it asks for collection first and
+does not create a task. The reference is the latest eligible captured region,
+not a ranked best attempt, a whole-session best lap or necessarily the immediately
+preceding lap. Its lap number, compound and measured elapsed time are confirmed;
+listing/status also expose the reference. Collection still starts on the upcoming
+lap, with one-to-twenty-lap bounds and the existing lease/task/version lifecycle.
+
+References require a fresh observed valid lap completion, connected source
+chronology, fully supported elapsed-time/speed coverage and a complete-window
+sampled minimum. Partial, invalid, unknown-compound or mismatched evidence cannot
+be promoted. At most eight window/compound references are retained as compact
+immutable measurements, without keeping raw traces. Scope/player changes,
+history gaps, stale runtime, changed track length and cancel-all clear this bank.
+Individual cancellation cannot reactivate a task or emit its later results.
+
+Each comparison task freezes its selected reference. Later observations can
+update the retained candidate for a future explicit request/update, but never
+change an active task's reference. Reports give elapsed-time and sampled-minimum
+differences. Supported brake-onset brackets yield a displacement interval, not
+an invented precise braking point; overlapping/touching intervals leave direction
+unresolved. Censored, missing or partially supported brake onset is unavailable
+without discarding supported time/minimum differences. A compound change or
+incomplete current window prevents the comparison instead of changing references.
+
+Matching compound alone does not establish matching tyre age, fuel, conditions
+or traffic; this limitation is spoken with each result. Higher minimum speed or
+later braking is not labelled better and no cause or driving instruction is
+inferred. Results remain diagnostic, layout-unverified, non-ranking and
+non-coaching. Worst-corner selection, named-corner coaching, eligible best-attempt
+ranking and opponent comparisons are still unfinished acceptance work.
+
+Validation: 833 focused radio, backend-capture and numeric-window tests passed,
+including 43 new regional-progress cases, with one existing Starlette/httpx
+deprecation warning. Compilation, radio CLI help and whitespace checks passed.
+The full suite was not rerun. Evidence is synthetic/mocked, including multi-lap
+backend capture with an unchanged reference, explicit updates, eligibility and
+uncertainty gates, cancellation, bounded history and polling compatibility.
+No real-game, wheel/audio or acoustic-latency acceptance is claimed.

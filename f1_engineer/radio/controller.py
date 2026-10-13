@@ -15,6 +15,7 @@ from .tasks import LapReportRegistry, parse_task_request
 from .watches import RaceWatchTracker
 from .pace import PaceTracker
 from .regions import RegionTracker, RegionWindow
+from .region_progress import RegionProgress
 from ..analysis.resampling import TraceSample
 
 
@@ -60,6 +61,7 @@ class RadioController:
         self.watches = RaceWatchTracker()
         self.pace = PaceTracker()
         self.regions = RegionTracker()
+        self.region_progress = RegionProgress()
         self._track_length_m = None
         self._backend_regions = backend_regions
         self._capture_namespace = uuid.uuid4()
@@ -77,6 +79,7 @@ class RadioController:
         self.watches.clear()
         self.pace.clear()
         self.regions.clear()
+        self.region_progress.clear()
         self._report("unavailable", safe_reason)
 
     def _report(self, status: str, reason=None) -> None:
@@ -131,6 +134,7 @@ class RadioController:
             self.watches.clear()
             self.pace.clear()
             self.regions.clear()
+            self.region_progress.clear()
             self._reset_gaps()
         elif not _integer(player["lap"].get("current_lap_number"), 1, 255):
             self._clear_tasks("lap_number_unavailable")
@@ -153,6 +157,8 @@ class RadioController:
                           for key in ("session_uid", "packet_format")) else None)
         if self._track_length_m is not None and length != self._track_length_m:
             self.regions.interrupt()
+            self.region_progress.clear()
+            self.scheduler.cancel_owner("lap_reports")
         self._track_length_m = length if type(length) in (int, float) and math.isfinite(length) and 0 < length <= 20_000 else None
         self.regions.observe(() if self._backend_regions else self.tasks.active(), self._player, self._region_sample(now=now),
                              track_length_m=self._track_length_m)
@@ -177,6 +183,7 @@ class RadioController:
                 self.watches.clear()
                 self.pace.clear()
                 self.regions.clear()
+                self.region_progress.clear()
                 self._reset_gaps()
                 self.notify({"event": "radio_resynchronised", "reason": "event_history_gap"})
             self._cursor = cursor
@@ -423,6 +430,7 @@ class RadioController:
         self.watches.clear()
         self.pace.clear()
         self.regions.clear()
+        self.region_progress.clear()
         self._reset_gaps()
 
     def _reset_gaps(self) -> None:
@@ -533,6 +541,9 @@ class RadioController:
                     if task["region_window"] is not None:
                         window = task["region_window"]
                         metrics += f"; numeric region {window['start_m']:g} to {window['end_m']:g} metres"
+                    if task["region_reference"] is not None:
+                        reference = task["region_reference"]
+                        metrics += f"; fixed observed lap {reference['lap_number']}, compound {reference['actual_compound']}"
                     expiry = f"through lap {task['until_lap']}" if task["until_lap"] is not None else "until cancelled or session change"
                     lines.append(f"Task {task['task_id']}: {targets}; {metrics}; {expiry}.")
                 text = " ".join(lines) if lines else "No active lap reports."
@@ -556,10 +567,13 @@ class RadioController:
                 plan = (QuestionPlan(("self",), ("regional_observations",)) if action.region_bounds_m is not None
                         else plan_question(action.question, names=aliases))
                 region_window = None
+                region_reference = None
                 if action.region_bounds_m is not None:
                     if self._track_length_m is None:
                         raise ValueError("Regional tracking requires a known current track length.")
                     region_window = RegionWindow(*action.region_bounds_m, self._track_length_m)
+                    if action.region_compare:
+                        region_reference = self.region_progress.reference(region_window, self._player)
                 pace_reference = self.pace.reference(self._player) if "target_pace" in plan.metrics else None
                 watching = "race_watch" in plan.metrics
                 if watching and (len(plan.targets) != 1 or plan.metrics != ("race_watch",)):
@@ -578,7 +592,7 @@ class RadioController:
                                           lap=self._player["lap"]["current_lap_number"] + (1 if region_window else 0),
                                           laps=action.laps, task_id=action.task_id,
                                           pace_reference=pace_reference, pace_tolerance_ms=action.tolerance_ms,
-                                          region_window=region_window)
+                                          region_window=region_window, region_reference=region_reference)
                 if action.kind == "update":
                     self.regions.remove(task.task_id)
                 self.scheduler.cancel_owner("lap_reports")
@@ -598,6 +612,10 @@ class RadioController:
                              f"to {region_window.end_m:g} metres on upcoming laps, not this partial lap. "
                              f"{capture_policy}"
                              "Numeric observations only, not corner coaching or opponent tracking.")
+                    if region_reference is not None:
+                        text += (f" Fixed reference: previous complete observed region on lap {region_reference.lap_number}, "
+                                 f"compound {region_reference.actual_compound}, {region_reference.elapsed_s:.3f} seconds. "
+                                 "Reference stays fixed; matching compound does not establish matching tyre age, fuel, conditions or traffic.")
                 if watching:
                     name = self._participant_name(row) or plan.targets[0].removeprefix("name:").replace("position:", "P")
                     text += f" Watching {name}; driver identity fixed. Three comparable adjacent-driver boundaries required. Alerts report trend changes."
@@ -645,11 +663,16 @@ class RadioController:
             if task.region_window is not None:
                 feedback, evidence = (self._captured_region(task, event, now=now) if self._backend_regions
                                       else self.regions.complete(task, event))
+                comparison = None
+                if task.region_reference is not None:
+                    feedback, comparison = self.region_progress.compare(task.region_reference, event, evidence)
+                if max(age, self._fact_age_s or 0) < 3:
+                    self.region_progress.observe(task.region_window, event, evidence)
                 reports.append(f"Task {task.task_id}: " + feedback)
                 self.notify({"event": "radio_region_report", "task_id": task.task_id, "version": task.version,
                              "lap_number": event["lap_number"], "event_id": event["id"],
                              "binding": self.scheduler.scope, "player": deepcopy(self._player["identity"]),
-                             "evidence": evidence, "text": feedback})
+                             "evidence": evidence, "comparison": comparison, "text": feedback})
                 continue
             if "consistency" in task.plan.metrics:
                 feedback, samples = self.pace.consistency(task)
