@@ -417,3 +417,147 @@
 .activity > svg {
   flex: none;
 }
+
+/* ---- Live radio, reference banner and context states (tokens only) ---- */
+.banner {
+  margin-bottom: 16px;
+}
+
+.filters {
+  display: block;
+}
+
+.systemFootnote {
+  margin: 8px 0 4px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.typing circle {
+  opacity: 0.35;
+}
+
+.newBadge {
+  margin-left: 8px;
+  vertical-align: 1px;
+}
+
+.radioTools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 14px;
+}
+
+.toggleField {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toggleText {
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.textButton,
+.textLink {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--blue-text);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.textButton:hover,
+.textLink:hover {
+  text-decoration: underline;
+}
+
+.radioNote {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.radioAlert {
+  margin-bottom: 10px;
+}
+
+.radioEmpty {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+
+.filterEmpty {
+  padding: 18px 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.radioRow[data-unread="true"] {
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+
+.radioRow[data-unread="true"] .radioTime {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.emptyMap {
+  width: 28px;
+  height: 20px;
+  color: var(--faint);
+}
+
+.contextNote {
+  margin-top: 8px;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .radioRow[data-fresh="true"] {
+    animation: radio-arrive 1.2s var(--ease-out);
+  }
+
+  .typing circle {
+    animation: typing-dot 1s var(--ease-out) infinite alternate;
+  }
+}
+
+@keyframes radio-arrive {
+  from {
+    background: var(--blue-soft);
+  }
+
+  to {
+    background: transparent;
+  }
+}
+
+@keyframes typing-dot {
+  from {
+    opacity: 0.3;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* Event Details move into a Drawer below 1024px; the list takes the full width. */
+@media (max-width: 1023px) {
+  .bottomGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .detailCard {
+    display: none;
+  }
+}
