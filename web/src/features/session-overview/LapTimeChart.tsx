@@ -29,6 +29,7 @@ export function LapTimeChart({
   selectedValue,
   reference,
   markers = [],
+  onPick,
 }: {
   points: ProgressionPoint[];
   yMin: number;
@@ -45,6 +46,11 @@ export function LapTimeChart({
   reference?: { lap: number; value: number } | null;
   /** Pit and safety car laps, tagged along the bottom of the plot. */
   markers?: LapMarker[];
+  /**
+   * Point clicks: `compare` is true for a shift-click. Keyboard users change
+   * laps with the Lap Selection stepper, so the points stay out of the tab order.
+   */
+  onPick?: (lap: number, compare: boolean) => void;
 }) {
   const plotW = W - PAD.left - PAD.right;
   const plotH = H - PAD.top - PAD.bottom;
@@ -142,6 +148,20 @@ export function LapTimeChart({
           );
         })}
         <circle cx={mx} cy={my} r="6" fill="#2563eb" stroke="#fff" strokeWidth="1.6" />
+        {onPick &&
+          points.map((point) => (
+            <circle
+              key={`hit-${point.lap}`}
+              cx={x(point.lap)}
+              cy={y(point.ms)}
+              r="9"
+              className={styles.pointHit}
+              aria-hidden="true"
+              onClick={(event) => onPick(point.lap, event.shiftKey)}
+            >
+              <title>{`Lap ${point.lap}: ${formatMetricValue(metric, point.ms)}`}</title>
+            </circle>
+          ))}
         {showReference && (
           <circle
             cx={x(reference.lap)}

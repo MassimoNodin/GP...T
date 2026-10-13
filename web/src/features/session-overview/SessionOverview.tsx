@@ -132,6 +132,15 @@ export function SessionOverview({
     },
     [selectedId],
   );
+  /** Shift-click on the chart: compare the selected lap against this one. */
+  const compareWith = useCallback(
+    (id: string) => {
+      if (id === selectedId || model.laps.length < 2) return;
+      setMode("compare");
+      setReferenceChoice(id);
+    },
+    [model.laps.length, selectedId],
+  );
   const swap = useCallback(() => {
     if (!compare.target || !compare.reference) return;
     setSelectedId(compare.reference.id);
@@ -177,7 +186,13 @@ export function SessionOverview({
       >
         {showHero && <Hero hero={hero} photo={model.photo} chevron={model.source === "fixture"} />}
         {view === "overview" && (
-          <OverviewView data={data} onMetric={setMetric} onShowEvents={() => setView("events")} />
+          <OverviewView
+            data={data}
+            onMetric={setMetric}
+            onShowEvents={() => setView("events")}
+            onSelectLap={selectLap}
+            onCompareLap={compareWith}
+          />
         )}
         {view === "laps" && (
           <LapsView

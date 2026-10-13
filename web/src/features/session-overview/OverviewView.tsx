@@ -32,15 +32,21 @@ export function OverviewView({
   data,
   onMetric,
   onShowEvents,
+  onSelectLap,
+  onCompareLap,
 }: {
   data: ViewData;
   onMetric: (metric: ChartMetric) => void;
   onShowEvents: () => void;
+  /** Click on a chart point. */
+  onSelectLap?: (id: string) => void;
+  /** Shift-click on a chart point: compare against that lap. */
+  onCompareLap?: (id: string) => void;
 }) {
   return (
     <div className={styles.grid}>
       <div className={styles.col}>
-        <ProgressionCard data={data} onMetric={onMetric} />
+        <ProgressionCard data={data} onMetric={onMetric} onSelectLap={onSelectLap} onCompareLap={onCompareLap} />
         <StintCard data={data} />
       </div>
       <div className={styles.col}>
@@ -51,7 +57,17 @@ export function OverviewView({
   );
 }
 
-function ProgressionCard({ data, onMetric }: { data: ViewData; onMetric: (metric: ChartMetric) => void }) {
+function ProgressionCard({
+  data,
+  onMetric,
+  onSelectLap,
+  onCompareLap,
+}: {
+  data: ViewData;
+  onMetric: (metric: ChartMetric) => void;
+  onSelectLap?: (id: string) => void;
+  onCompareLap?: (id: string) => void;
+}) {
   const { model, laps, best, selectedId, referenceId, metric, summary } = data;
   const [excludeOutliers, setExcludeOutliers] = useState(true);
   const summaryEvents = summary.status === "loaded" ? summary.value.events : null;
@@ -131,9 +147,22 @@ function ProgressionCard({ data, onMetric }: { data: ViewData; onMetric: (metric
           selectedValue={chart.values[selected.lap]}
           reference={reference && chart.values[reference.lap] !== undefined ? { lap: reference.lap, value: chart.values[reference.lap] } : null}
           markers={markers}
+          onPick={
+            onSelectLap
+              ? (lapNumber, compareWith) => {
+                  const picked = laps.find((lap) => lap.lap === lapNumber);
+                  if (!picked) return;
+                  if (compareWith && onCompareLap) onCompareLap(picked.id);
+                  else onSelectLap(picked.id);
+                }
+              : undefined
+          }
         />
       ) : (
         <EmptyState size="inline" title="No timed laps were recorded for this session." />
+      )}
+      {selected && onSelectLap && (
+        <p className={viewStyles.chartHint}>Click a lap to select it. Shift-click to compare against it.</p>
       )}
       {model.lapDataNote && <p className={styles.dataNote}>{model.lapDataNote}</p>}
     </Card>

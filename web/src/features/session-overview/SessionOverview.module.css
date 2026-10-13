@@ -237,6 +237,16 @@
   position: relative;
 }
 
+.pointHit {
+  fill: transparent;
+  cursor: pointer;
+}
+
+.pointHit:hover {
+  fill: var(--blue);
+  fill-opacity: 0.12;
+}
+
 .lapMarker rect {
   fill: var(--grey-soft);
   stroke: var(--border-strong);
