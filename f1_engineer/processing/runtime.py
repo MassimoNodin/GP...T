@@ -14,6 +14,7 @@ from .coordinator import PUBLICATION_BATCH_ROWS, PUBLICATION_INTERVAL_S, Session
 from .evidence import EvidenceStore
 from .detail_demand import DetailCommand, DetailDemandQueue
 from .engineer_facts import LiveEngineerFacts, qualify_snapshot
+from .region_capture import RegionCaptureStore
 
 
 class LiveSessionRuntime:
@@ -33,6 +34,7 @@ class LiveSessionRuntime:
             raise ValueError("invalid detail profile")
         self.detail_profile = detail_profile
         self.detail_tasks = DetailDemandQueue()
+        self.region_captures = RegionCaptureStore()
         self._detail_status_lock = threading.Lock()
         self._engineer_snapshot_cache = LiveEngineerFacts().snapshot()
         self._detail_status_cache: dict[str, Any] = {
@@ -68,6 +70,7 @@ class LiveSessionRuntime:
         if self._thread is not None and self._thread.is_alive():
             raise RuntimeError("runtime already started")
         self._stop.clear()
+        self.region_captures.invalidate("region_listener_started")
         with self._detail_status_lock:
             self._engineer_snapshot_cache = LiveEngineerFacts().snapshot()
         self._ready.clear()
@@ -92,6 +95,7 @@ class LiveSessionRuntime:
             self._thread.join(timeout=15)
             if self._thread.is_alive():
                 raise RuntimeError("live persistence owner did not stop")
+        self.region_captures.invalidate("region_listener_stopped")
 
     def engineer_snapshot(self) -> dict[str, Any]:
         with self._detail_status_lock:
@@ -158,6 +162,7 @@ class LiveSessionRuntime:
                 executor, lambda: SessionCoordinator(
                     self.store, f"udp:{self.host}:{self.port}",
                     detail_profile=self.detail_profile, detail_demand_queue=self.detail_tasks,
+                    region_captures=self.region_captures,
                 )
             )
             async def persist(function, *arguments):

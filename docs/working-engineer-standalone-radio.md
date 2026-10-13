@@ -853,3 +853,44 @@ without recording-code changes. An intervening full run lost its final tool
 output and is not counted as successful verification. Compilation, radio CLI
 help and staged whitespace checks passed. Evidence remains synthetic/mocked;
 live-game capture, wheel/audio output and acoustic latency are not verified.
+
+## Task-owned backend regional capture
+
+The live backend now provides authenticated regional capture leases through
+`POST`, `GET` and `DELETE /api/v2/engineer/region-captures/{lease_id}`.
+Admission binds a fresh lowercase hexadecimal lease ID to the live generation,
+session, player identity, numeric window and upcoming one-to-twenty-lap schedule.
+Each observed assembled frame reaches the existing regional analyzer without
+requiring an intermediate HTTP poll or introducing another UDP receiver. Only
+active requested windows retain detailed player samples; opponent detail-demand
+permissions and full/demand-profile selection remain unchanged.
+
+At most three captures are active, with sixteen retained lease records and a
+thirty-second renewable TTL. Repeating the identical admission renews a lease
+without discarding evidence; changing its immutable request requires a new ID.
+Release, expiry, runtime/identity changes and publication failure clear owned
+samples and results. Completed captures retain at most their requested lap
+count, remain renewable while the same binding is fresh, and expire without
+renewal. No historical frames are backfilled on admission or journal recovery.
+
+The publication owner holds the capture guard across its SQLite transaction;
+API admission and reads cannot expose uncommitted measurements. Rollback
+invalidates captured evidence. Reads return detached diagnostic results and
+backend-computed `completion_age_s`; future clients must add transport age rather
+than compare monotonic clocks across processes. Existing telemetry freshness,
+window bounds and connected-measurement continuity guards are unchanged.
+
+This increment is backend/API infrastructure only. The standalone radio client
+still uses the polling tracker described above and does not yet arm, renew,
+read or release these leases. The next slice must integrate leases with task
+versions, updates/cancellation, shutdown, fresh dispatch and duplicate-speech
+prevention while keeping network requests off the input/audio control loop.
+Numeric results remain layout-unverified diagnostic observations, not named
+corner coaching, fixed-reference comparisons or opponent tracking. The branch
+remains unfinished; no live-game, wheel/audio or acoustic-latency proof is added.
+
+Validation: 904 distinct focused tests passed, including 49 new capture cases,
+with one existing Starlette/httpx deprecation warning. The full suite was not
+rerun for this backend-only increment. Compilation, radio CLI help and whitespace
+checks passed. Evidence is synthetic/mocked; model/runtime pins, deployment and
+OS audio defaults are unchanged.

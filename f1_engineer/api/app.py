@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import json
 import os
 import re
 import sqlite3
@@ -1158,6 +1159,44 @@ def create_app(
         else:
             snapshot = live_runtime.engineer_snapshot()
         return {"data": snapshot}
+
+    @app.post("/api/v2/engineer/region-captures/{lease_id}")
+    async def arm_region_capture(lease_id: str, request: Request):
+        if not _authorized(request.headers.get("authorization"), control_token):
+            return _api_error(403, "engineer_control_not_authorized")
+        if live_runtime is None:
+            return _api_error(409, "region_runtime_disabled")
+        try:
+            body = json.loads(await _read_limited_body(request, 4096))
+        except (_EngineerRequestBodyLimitExceeded, ValueError, UnicodeError, RecursionError):
+            return _api_error(422, "region_capture_request_invalid")
+        snapshot = await run_in_threadpool(live_runtime.engineer_snapshot)
+        code, result = await run_in_threadpool(live_runtime.region_captures.arm, lease_id, body, snapshot)
+        if code != 202:
+            return _api_error(code, result["reason"])
+        return JSONResponse(status_code=202, content={"data": result}, headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/v2/engineer/region-captures/{lease_id}")
+    def read_region_capture(lease_id: str, request: Request):
+        if not _authorized(request.headers.get("authorization"), control_token):
+            return _api_error(403, "engineer_control_not_authorized")
+        if live_runtime is None:
+            return _api_error(409, "region_runtime_disabled")
+        result = live_runtime.region_captures.get(lease_id, live_runtime.engineer_snapshot())
+        if result is None:
+            return _api_error(404, "region_capture_not_found")
+        return JSONResponse(content={"data": result}, headers={"Cache-Control": "no-store"})
+
+    @app.delete("/api/v2/engineer/region-captures/{lease_id}")
+    def release_region_capture(lease_id: str, request: Request):
+        if not _authorized(request.headers.get("authorization"), control_token):
+            return _api_error(403, "engineer_control_not_authorized")
+        if live_runtime is None:
+            return _api_error(409, "region_runtime_disabled")
+        result = live_runtime.region_captures.release(lease_id)
+        if result is None:
+            return _api_error(404, "region_capture_not_found")
+        return JSONResponse(content={"data": result}, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/v2/session-evidence/detail-targets")
     def detail_targets(session_id: str = Query(min_length=32, max_length=32)):

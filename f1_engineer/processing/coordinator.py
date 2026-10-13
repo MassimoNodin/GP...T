@@ -31,12 +31,14 @@ class SessionCoordinator:
     """One serialized owner for live and replay. Raw admission precedes publication."""
 
     def __init__(self, store: EvidenceStore, source: str, *, recover: bool = True,
-                 detail_profile: str = "full", detail_demand_queue: DetailDemandQueue | None = None) -> None:
+                 detail_profile: str = "full", detail_demand_queue: DetailDemandQueue | None = None,
+                 region_captures=None) -> None:
         if detail_profile not in {"full", "demand_v1"}:
             raise ValueError("invalid detail profile")
         self.store = store
         self.source = source
         self.detail_profile = detail_profile
+        self.region_captures = region_captures
         self.detail_demand_queue = (detail_demand_queue or DetailDemandQueue()
                                     if detail_profile == "demand_v1" else None)
         self.pipeline = TelemetryPipeline(max_open_frames=64, max_pending_packets=512,
@@ -102,6 +104,14 @@ class SessionCoordinator:
             except Exception:
                 self.close()
                 raise
+        if region_captures is not None:
+            self.pipeline.engineer_facts.on_observe = self._capture_region_frame
+            self.pipeline.engineer_facts.on_invalidate = region_captures.invalidate
+
+    def _capture_region_frame(self, current, events, cursor, floor):
+        self.region_captures.observe({**current, "status": "available" if current["drivers"] else "unavailable",
+            "generation": self.generation, "session_id": self._session_ids.get(current["scope"]["session_uid"]),
+            "events": events, "event_cursor": cursor, "event_floor": floor})
 
     def _session(self, uid: int | str) -> str:
         uid = int(uid)
@@ -147,7 +157,8 @@ class SessionCoordinator:
     @contextmanager
     def _transaction(self):
         guard = self.detail_demand_queue.owner_transaction() if self.detail_demand_queue else nullcontext()
-        with guard:
+        region_guard = self.region_captures.owner_transaction() if self.region_captures else nullcontext()
+        with guard, region_guard:
             try:
                 with self._writer:
                     yield self._writer
@@ -159,6 +170,8 @@ class SessionCoordinator:
                 raise
 
     def close(self) -> None:
+        if self.region_captures is not None:
+            self.region_captures.invalidate("region_listener_stopped")
         self._writer.close()
         self._ownership.__exit__()
 

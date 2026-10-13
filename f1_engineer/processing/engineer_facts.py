@@ -95,7 +95,7 @@ def qualify_snapshot(snapshot: dict[str, Any], *, now_ns: int,
 
 
 class LiveEngineerFacts:
-    def __init__(self, *, event_limit: int = EVENT_LIMIT) -> None:
+    def __init__(self, *, event_limit: int = EVENT_LIMIT, on_observe=None, on_invalidate=None) -> None:
         if not 1 <= event_limit <= EVENT_LIMIT:
             raise ValueError("invalid engineer event limit")
         self._events: deque[dict[str, Any]] = deque(maxlen=event_limit)
@@ -103,11 +103,15 @@ class LiveEngineerFacts:
         self._dropped = 0
         self._current: dict[str, Any] | None = None
         self._reason = "lap_observations_not_received"
+        self.on_observe = on_observe
+        self.on_invalidate = on_invalidate
 
     def invalidate(self, reason: str) -> None:
         self._current = None
         self._events.clear()
         self._reason = reason
+        if self.on_invalidate is not None:
+            self.on_invalidate(reason)
 
     def begin_frame(self, session_uid: int, epoch: int) -> None:
         if self._current is not None:
@@ -256,6 +260,9 @@ class LiveEngineerFacts:
                             actual_compound=tyre["actual_compound"])
         self._current = current
         self._reason = "verified_drivers_unavailable" if not current["drivers"] else None
+        if self.on_observe is not None:
+            self.on_observe(current, tuple(self._events), self._cursor,
+                            self._events[0]["id"] - 1 if self._events else self._cursor)
 
     def snapshot(self) -> dict[str, Any]:
         result = {"schema_version": 1,
