@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 
 from .gaps import integer
@@ -38,6 +38,7 @@ class PaceTracker:
         self.received_at = None
 
     def interrupt(self):
+        self.recent = deque(maxlen=3)
         self.number = None
         self.compound = None
         self.started = False
@@ -84,6 +85,8 @@ class PaceTracker:
             self.last_event_id = self.last_completed = None
         else:
             self.eligible = self.eligible and healthy and compound == self.compound
+        if not self.eligible:
+            self.recent.clear()
         return interrupted or previous_number is not None and previous_number != self.number or was_eligible and not self.eligible
 
     def reset_sectors(self):
@@ -125,6 +128,10 @@ class PaceTracker:
             timings = (sectors[1], sectors[2]) if set(sectors) == {1, 2} and sum(sectors.values()) < elapsed else None
             record = PaceReference(number, elapsed, self.pending[2], timings)
             self.last_completed = record
+            if self.recent and (self.recent[-1][1].lap_number + 1 != number
+                                or self.recent[-1][1].compound != record.compound):
+                self.recent.clear()
+            self.recent.append((event["id"], record))
             previous = self.best.get(record.compound)
             if (previous is None or record.elapsed_ms < previous.elapsed_ms
                     or record.elapsed_ms == previous.elapsed_ms and previous.sector_times_ms is None and timings is not None):
@@ -132,6 +139,8 @@ class PaceTracker:
                 self.best.move_to_end(record.compound)
                 while len(self.best) > 16:
                     self.best.popitem(last=False)
+        else:
+            self.recent.clear()
         if self.number == number + 1:
             self.started = True
         self.pending = None
@@ -144,6 +153,28 @@ class PaceTracker:
         if record is None:
             raise ValueError("No fully observed valid radio lap on your current tyre compound is available. Complete a valid lap with the radio connected first.")
         return record
+
+    def consistency(self, task):
+        records = []
+        for event_id, record in self.recent:
+            if record.sector_times_ms is None:
+                records.clear()
+            elif event_id > task.created_cursor and record.lap_number >= task.first_lap:
+                records.append(record)
+        samples = [record.view() for record in records]
+        if len(records) < 3:
+            return (f"Consistency warming up: {len(records)} of 3 consecutive fully observed valid laps "
+                    "with sectors 1 and 2 on one compound since this request. Missing or invalid evidence restarts the window.", samples)
+        ranges = [max(record.sector_times_ms[index] for record in records)
+                  - min(record.sector_times_ms[index] for record in records) for index in range(2)]
+        lap_range = max(record.elapsed_ms for record in records) - min(record.elapsed_ms for record in records)
+        focus = ("Sectors 1 and 2 have equal observed variation." if ranges[0] == ranges[1]
+                 else f"Sector {1 if ranges[0] > ranges[1] else 2} has more observed variation; focus on repeatable execution there.")
+        return (f"Consistency across valid laps {records[0].lap_number}, {records[1].lap_number}, {records[2].lap_number} "
+                f"on compound {records[0].compound}: fastest-to-slowest spread "
+                f"{lap_range / 1000:.3f} seconds for the lap, {ranges[0] / 1000:.3f} for sector 1 "
+                f"and {ranges[1] / 1000:.3f} for sector 2. {focus} "
+                "Rolling three-lap sample; variation is not a pace deficit or a diagnosis. Fuel, weather and tyre age are not matched.", samples)
 
     def answer(self, event, reference, tolerance_ms):
         record = self.last_completed if self.last_event_id == event["id"] else None

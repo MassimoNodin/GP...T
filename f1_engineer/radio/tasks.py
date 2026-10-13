@@ -34,6 +34,11 @@ def parse_task_request(request: str) -> TaskAction | None:
         task_id, text = int(update.group(1)), update.group(2)
     duration = re.fullmatch(r"(.+) for (?:the )?next ([1-9][0-9]?) laps?", text)
     payload = duration.group(1) if duration else text
+    if re.fullmatch(r"(?:coach|track|monitor) my consistency", payload):
+        laps = int(duration.group(2)) if duration else None
+        if laps is not None and laps > 20:
+            raise ValueError("Please choose one to twenty upcoming laps.")
+        return TaskAction("update" if task_id is not None else "create", "my consistency", task_id, laps)
     pace = re.fullmatch(r"help me stay within (?:(one|two|three|four|five|six|seven|eight|nine|[1-9]) tenths?|([0-9](?:\.[0-9]{1,3})?) seconds?) of my best valid lap", payload)
     if pace:
         if pace.group(1):
@@ -90,6 +95,7 @@ class LapReportTask:
                 "pace_reference": self.pace_reference.view() if self.pace_reference is not None else None,
                 "pace_tolerance_ms": self.pace_tolerance_ms,
                 "reference_policy": ("valid observed player lap and tolerance fixed" if "target_pace" in self.plan.metrics
+                                     else "rolling three consecutive valid observed player laps on one compound" if "consistency" in self.plan.metrics
                                      else "watch driver identity fixed; pauses outside adjacency" if "race_watch" in self.plan.metrics
                                      else "named drivers fixed; race-position roles refreshed each lap")}
 
@@ -129,6 +135,8 @@ class LapReportRegistry:
             raise ValueError("Please choose one to twenty upcoming laps.")
         if len(bindings) != len(plan.targets):
             raise ValueError("Task references do not match its driver targets.")
+        if "consistency" in plan.metrics and (plan.targets != ("self",) or plan.metrics != ("consistency",)):
+            raise ValueError("Consistency coaching requires only your own laps, without additional facts.")
         if "target_pace" in plan.metrics:
             if (plan.targets != ("self",) or plan.metrics != ("target_pace",)
                     or not isinstance(pace_reference, PaceReference) or type(pace_tolerance_ms) is not int

@@ -131,6 +131,8 @@ class RadioController:
         self._age_s = age
         if self.pace.observe(self._player, now=now):
             self.scheduler.cancel_owner("pace_sectors")
+            if any("consistency" in task.plan.metrics for task in self.tasks.active()):
+                self.scheduler.cancel_owner("lap_reports")
         if self.watches.observe(self.tasks.active(), self._player, self._resolve_target, now=now):
             self.scheduler.cancel_owner("lap_reports")
         prior_gap_results = dict(self.gaps.results)
@@ -322,6 +324,8 @@ class RadioController:
         self.scheduler.cancel_owner("pace_sectors")
 
     def _timing_fact(self, metric: str, row: dict) -> str:
+        if metric == "consistency":
+            return "use coach my consistency to track three consecutive valid observed laps"
         if metric == "target_pace":
             return "use help me stay within a tolerance of my best valid lap to set target pace"
         if metric == "race_watch":
@@ -400,6 +404,10 @@ class RadioController:
                 self.watches.observe(self.tasks.active(), self._player, self._resolve_target, now=now)
                 expiry = f"through lap {task.until_lap}" if task.until_lap is not None else "until cancelled or the session changes"
                 text = f"Task {task.task_id} active: end-of-lap report from lap {task.first_lap}, {expiry}."
+                if "consistency" in plan.metrics:
+                    text += (" Rolling three consecutive fully observed valid laps on one compound since this request. "
+                             "Sector 1 and 2 fastest-to-slowest spreads, not pace deficits. "
+                             "Missing evidence restarts warm-up; short tasks may expire before three samples.")
                 if watching:
                     name = self._participant_name(row) or plan.targets[0].removeprefix("name:").replace("position:", "P")
                     text += f" Watching {name}; driver identity fixed. Three comparable adjacent-driver boundaries required. Alerts report trend changes."
@@ -443,6 +451,12 @@ class RadioController:
             return False
         reports = []
         for task in tasks:
+            if "consistency" in task.plan.metrics:
+                feedback, samples = self.pace.consistency(task)
+                reports.append(f"Task {task.task_id}: " + feedback)
+                self.notify({"event": "radio_consistency_report", "task_id": task.task_id, "version": task.version,
+                             "lap_number": event["lap_number"], "samples": samples, "text": feedback})
+                continue
             if "target_pace" in task.plan.metrics:
                 feedback = self.pace.answer(event, task.pace_reference, task.pace_tolerance_ms)
                 reports.append(f"Task {task.task_id}: " + feedback)

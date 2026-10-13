@@ -603,8 +603,8 @@ player, epoch/generation, unavailable telemetry, history-gap and player-lap
 discontinuity resets discard the inventory. `Cancel all tracking` also clears it.
 No new detail demand, persistence, model/runtime change or automatic transcript
 execution is added. Observed sector-progress feedback is described below.
-Whole-session best retrieval, consistency coaching and live-game/audio
-acceptance remain unfinished.
+Whole-session best retrieval and live-game/audio acceptance remain unfinished.
+Observed consistency coaching is described below.
 
 Validation: 558 focused tests passed, including 62 new target-pace cases. The
 full suite passed 2,278 tests with 16 skipped tests and two existing deprecation
@@ -653,3 +653,51 @@ full suite passed 2,327 tests with 16 skipped tests and two existing deprecation
 warnings. Radio compilation, CLI help, local documentation links and staged
 whitespace checks passed. Evidence remains synthetic/mocked; in-game speech,
 wheel/audio behaviour and acoustic latency still require the deferred full test.
+
+## Observed sector consistency coaching
+
+The standalone radio supports these bounded player-only tasks:
+
+```text
+ask Coach my consistency
+ask Track my consistency for the next 6 laps
+ask Update task 1 monitor my consistency for next 4 laps
+ask What are you tracking?
+ask Cancel task 1
+```
+
+Each lap-end report uses a rolling window of three consecutive fully observed
+game-valid laps on one actual tyre compound, with sectors 1 and 2 observed and
+aligned on each lap. Only laps completed after the task version was requested
+are included; updates start a new window. The first partial observed lap never
+qualifies. Missing sectors, invalid laps, pits, unknown flags, tyre changes and
+sampling interruptions restart warm-up rather than borrowing unrelated laps.
+Session/player/history discontinuities retain the existing task reset rules.
+
+After three samples, the report names their lap numbers and compound, then gives
+the fastest-to-slowest range for the whole lap and separately for sectors 1 and
+2. The greater sector range provides one repeatability focus; equal ranges are
+reported as equal, including zero variation. It does not identify a corner,
+infer sector 3, claim a pace deficit or diagnose a driving mistake. These are
+same-compound observed samples, not verified fuel/weather/tyre-age equivalence;
+the spoken report explicitly states that limitation. Subsequent valid laps
+refresh the rolling sample without claiming causal improvement.
+
+Warm-up reports state the available sample count. Finite tasks expire on the
+requested lap schedule even if insufficient evidence prevents a full report.
+Quiet/listening continues to consume observations without a speech backlog.
+Reports combine with other lap tasks into one bounded owned utterance; task
+controls, lost eligibility and observation discontinuities cancel obsolete
+owned speech. The tracker retains at most three lap records, independently of
+the existing fixed target-pace best inventory. No new detailed telemetry demand,
+model/runtime changes, persistence or automatic transcript execution is added.
+
+`radio_consistency_report` logs task/version, lap, exact sample records and
+report text alongside existing dispatch timing evidence. Corner-level
+consistency analysis and live-game/audio acceptance remain outside this increment.
+
+Validation: 641 focused tests passed, including 34 new consistency cases. The
+full suite passed 2,361 tests with 16 skipped tests and two existing deprecation
+warnings. Radio compilation, CLI help, local documentation links and staged
+whitespace checks passed. Evidence is synthetic/mocked; in-game speech,
+wheel/audio behaviour and measured acoustic latency remain unverified.

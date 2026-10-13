@@ -13,6 +13,7 @@ class QuestionPlan:
 
 
 METRICS = {
+    "consistency": r"consistency",
     "target_pace": r"target pace",
     "race_watch": r"catch or defend watch",
     "leader_gap_change": r"gap change to (?:the )?leader|(?:gap|delta|time) to (?:the )?leader change that lap|delta that lap",
