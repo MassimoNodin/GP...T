@@ -1,8 +1,10 @@
-import type { SessionRecord } from "@/lib/api";
+import type { RecordingCatalogSourceRecord, SessionRecord } from "@/lib/api";
 import {
+  cachedSummaryDates,
   fetchAcquisition,
   fetchEvidenceAttempts,
   fetchEvidenceSessions,
+  fetchRecordingSources,
   fetchSessions,
   telemetryFooter,
   telemetryStatus,
@@ -15,27 +17,67 @@ import {
   typeTone,
   type EvidenceSession,
 } from "@/features/review-data/session-evidence";
-import { libraryFixture, shellFixture, type LibrarySession } from "@/features/review-data/fixtures";
-import {
-  formatDayTime,
-  formatGame,
-  formatSessionType,
-  formatWeather,
-} from "@/features/review-data/format";
+import { libraryFixture, shellFixture } from "@/features/review-data/fixtures";
+import { formatDayTime, formatGame, formatSessionType, formatWeather } from "@/features/review-data/format";
 import type { ShellFooter, ShellStatus } from "@/features/ui-foundation/AppShell";
 import type { Tone } from "@/features/ui-foundation/primitives";
 import { trackKeyFromName } from "@/features/ui-foundation/TrackMap";
 import { trackPhotoUrl } from "@/features/ui-foundation/track-photo-url";
+import {
+  restoreImports,
+  type FolderSource,
+  type ImportItem,
+} from "./imports/import-state";
+import {
+  ATTEMPT_READ_CAP,
+  ATTEMPT_READ_CONCURRENCY,
+  comparePair,
+  highlightLines,
+  mapLimit,
+  sessionDate,
+  type LibraryRow,
+} from "./library-rows";
 
-export type LibraryRow = LibrarySession & { photo: string | null };
+export type { LibraryRow } from "./library-rows";
+
+export type LibraryImports = {
+  /** Queued, running and recently failed imports found on the engine. */
+  restored: ImportItem[];
+  /** Captures in the recordings folder that were never imported; null when unreadable. */
+  folder: FolderSource[] | null;
+  /** Total never-imported captures (the list above is one page). */
+  folderTotal: number;
+};
 
 export type LibraryModel = {
+  /**
+   * `live`: the engine answered. `reference`: it is entirely unreachable, so the
+   * rows are the design's example sessions and the screen says so.
+   */
+  mode: "live" | "reference";
+  /** Importing is possible (the engine answered). */
   live: boolean;
   status: ShellStatus;
   footer: ShellFooter;
   header: { items: string[]; trailing?: string };
   sessions: LibraryRow[];
+  /** Readable-but-incomplete notices shown above the list. */
+  warnings: string[];
+  /** The engine answered but neither session list could be read. */
+  sessionsUnreadable: boolean;
+  imports: LibraryImports;
 };
+
+/** Header pill when the backend cannot be reached or its status cannot be read. */
+export const BACKEND_UNAVAILABLE: ShellStatus = { tone: "red", label: "Backend unavailable" };
+export const ENGINE_OFFLINE_FOOTER: ShellFooter = {
+  tone: "red",
+  label: "Engine offline",
+  lines: ["Start the local engine", ""],
+};
+
+const UNREAD_NOTE = "Lap details load when the session is opened";
+const NO_IMPORTS: LibraryImports = { restored: [], folder: null, folderTotal: 0 };
 
 function statusOf(record: SessionRecord): { label: string; tone: Tone } {
   switch (record.run_status) {
@@ -52,7 +94,9 @@ function statusOf(record: SessionRecord): { label: string; tone: Tone } {
   }
 }
 
-function toRow(record: SessionRecord): LibraryRow {
+type CaptureLinks = Map<string, { captureId: string; version: string }>;
+
+function toRow(record: SessionRecord, captures: CaptureLinks): LibraryRow {
   const context = record.context;
   const trackName = context?.track_name ?? null;
   const track = trackKeyFromName(trackName);
@@ -71,22 +115,70 @@ function toRow(record: SessionRecord): LibraryRow {
     status,
     href: status.label === "Complete" ? `/review/${encodeURIComponent(record.session_key)}` : null,
     photo: trackPhotoUrl(track),
+    kind: "v1",
+    highlights: record.lap_attempts === 0 ? ["No timed laps"] : [],
+    dateKnown: true,
+    detailed: true,
+    compare: null,
+    download: captures.get(record.run_id) ?? null,
   };
 }
 
-/** v2 sessions the engine acquired from the game, newest journal position first. */
-async function evidenceRows(sessions: EvidenceSession[]): Promise<LibraryRow[]> {
-  const results = await Promise.all(sessions.map((session) => fetchEvidenceAttempts(session.id)));
-  return sessions
-    .map((session, index) => {
-      const attempts = results[index]?.attempts ?? [];
-      const context = evidenceSessionContext(session, attempts);
-      const track = trackKeyFromName(context?.trackName);
-      const fields = evidenceLibraryFields(session, context, evidenceLaps(attempts).length);
-      return { recency: sessionRecency(attempts), row: { ...fields, track, photo: trackPhotoUrl(track) } };
-    })
-    .sort((a, b) => b.recency - a.recency)
-    .map((entry) => entry.row);
+/**
+ * v2 sessions the engine acquired from the game, newest journal position first.
+ *
+ * Recency needs every session's attempts, which on a cold cache is one request
+ * per session (up to 12 pages each). Reads are therefore capped at
+ * `ATTEMPT_READ_CAP` sessions with a few requests in flight; sessions beyond
+ * the cap are listed after the read ones, without laps or highlights, and
+ * stay openable.
+ */
+async function evidenceRows(sessions: EvidenceSession[], dates: ReadonlyMap<string, string>): Promise<LibraryRow[]> {
+  const toRead = sessions.slice(0, ATTEMPT_READ_CAP);
+  const results = await mapLimit(toRead, ATTEMPT_READ_CONCURRENCY, (session) => fetchEvidenceAttempts(session.id));
+  const read = toRead.map((session, index) => {
+    const attempts = results[index]?.attempts ?? [];
+    const laps = evidenceLaps(attempts);
+    const context = evidenceSessionContext(session, attempts);
+    const track = trackKeyFromName(context?.trackName);
+    const fields = evidenceLibraryFields(session, context, laps.length);
+    const date = sessionDate(session.id, dates.get(session.id) ?? null);
+    const row: LibraryRow = {
+      ...fields,
+      date: date.text,
+      track,
+      photo: trackPhotoUrl(track),
+      kind: "v2",
+      notes: highlightLines(laps).join(" "),
+      highlights: highlightLines(laps),
+      dateKnown: date.known,
+      detailed: true,
+      compare: comparePair(laps),
+      download: null,
+    };
+    return { recency: sessionRecency(attempts), row };
+  });
+  read.sort((a, b) => b.recency - a.recency);
+  const unread = sessions.slice(ATTEMPT_READ_CAP).map((session): LibraryRow => {
+    const context = session.context;
+    const track = trackKeyFromName(context?.trackName);
+    const fields = evidenceLibraryFields(session, context, 0);
+    const date = sessionDate(session.id, dates.get(session.id) ?? null);
+    return {
+      ...fields,
+      date: date.text,
+      track,
+      photo: trackPhotoUrl(track),
+      kind: "v2",
+      notes: "",
+      highlights: [UNREAD_NOTE],
+      dateKnown: date.known,
+      detailed: false,
+      compare: null,
+      download: null,
+    };
+  });
+  return [...read.map((entry) => entry.row), ...unread];
 }
 
 function connectionHeader(state: string): LibraryModel["header"] {
@@ -95,40 +187,101 @@ function connectionHeader(state: string): LibraryModel["header"] {
     : { items: ["Game not connected"], trailing: libraryFixture.header.trailing };
 }
 
-export async function loadLibrary(): Promise<LibraryModel> {
+/** The design's example sessions, used only while the engine is unreachable. */
+function referenceRows(): LibraryRow[] {
+  return libraryFixture.sessions.map((session) => ({
+    ...session,
+    photo: trackPhotoUrl(session.track),
+    kind: "reference",
+    highlights: [],
+    dateKnown: true,
+    detailed: true,
+    compare: null,
+    download: null,
+  }));
+}
+
+const FOLDER_PAGE = 50;
+const RESTORE_PAGE = 20;
+const CATALOG_COMPLETE_PAGE = 50;
+
+/**
+ * Reads the recordings catalog once for the import flow: in-flight and recently
+ * failed jobs, never-imported captures, and the capture behind each imported
+ * session (matched by run id) for `Download capture`.
+ */
+async function readImports(now: number): Promise<{ imports: LibraryImports; captures: CaptureLinks }> {
+  const [queued, running, failed, interrupted, never, complete] = await Promise.all([
+    fetchRecordingSources({ limit: RESTORE_PAGE, latestJobStatus: "queued" }),
+    fetchRecordingSources({ limit: RESTORE_PAGE, latestJobStatus: "running" }),
+    fetchRecordingSources({ limit: RESTORE_PAGE, latestJobStatus: "failed" }),
+    fetchRecordingSources({ limit: RESTORE_PAGE, latestJobStatus: "interrupted" }),
+    fetchRecordingSources({ limit: FOLDER_PAGE, latestJobStatus: "none", availability: "available" }),
+    fetchRecordingSources({ limit: CATALOG_COMPLETE_PAGE, latestJobStatus: "complete", availability: "available" }),
+  ]);
+  const restoredSources: RecordingCatalogSourceRecord[] = [queued, running, failed, interrupted].flatMap(
+    (page) => page?.items ?? [],
+  );
+  const restored = restoreImports(restoredSources, now).items;
+  const folder = never ? restoreImports(never.items, now).folder : null;
+  const captures: CaptureLinks = new Map();
+  for (const source of complete?.items ?? []) {
+    if (source.latest_job_run_id && source.available) {
+      captures.set(source.latest_job_run_id, { captureId: source.capture_id, version: source.download_version });
+    }
+  }
+  return { imports: { restored, folder, folderTotal: never?.total_count ?? 0 }, captures };
+}
+
+export async function loadLibrary(now: number = Date.now()): Promise<LibraryModel> {
   const [sessions, evidence, acquisition] = await Promise.all([
     fetchSessions(),
     fetchEvidenceSessions(),
     fetchAcquisition(),
   ]);
-  const status = acquisition ? telemetryStatus(acquisition) : shellFixture.telemetryLive;
-  const footer = acquisition
-    ? telemetryFooter(acquisition, shellFixture.telemetryFooter)
-    : shellFixture.telemetryFooter;
-  const imported = sessions ?? [];
-  const acquired = evidence ?? [];
-  if (imported.length === 0 && acquired.length === 0) {
+
+  // Nothing answered: the engine is not running. Only now are the design's
+  // example sessions shown, and the screen discloses it.
+  if (sessions === null && evidence === null && acquisition === null) {
     return {
-      live: sessions !== null || evidence !== null,
-      status,
-      footer,
-      header: acquisition ? connectionHeader(acquisition.state) : libraryFixture.header,
-      sessions: libraryFixture.sessions.map((session) => ({
-        ...session,
-        photo: trackPhotoUrl(session.track),
-      })),
+      mode: "reference",
+      live: false,
+      status: BACKEND_UNAVAILABLE,
+      footer: ENGINE_OFFLINE_FOOTER,
+      header: { items: ["Local engine offline"] },
+      sessions: referenceRows(),
+      warnings: [],
+      sessionsUnreadable: false,
+      imports: NO_IMPORTS,
     };
   }
+
+  const status = acquisition ? telemetryStatus(acquisition) : BACKEND_UNAVAILABLE;
+  const baseFooter = acquisition
+    ? telemetryFooter(acquisition, shellFixture.telemetryFooter)
+    : { tone: "red" as const, label: BACKEND_UNAVAILABLE.label, lines: ["F1", ""] };
+  const acquired = evidence ?? [];
+  const imported = sessions ?? [];
+  const warnings: string[] = [];
+  if (evidence === null && sessions !== null) warnings.push("Sessions recorded from the game could not be read.");
+  if (sessions === null && evidence !== null) warnings.push("Imported captures could not be read.");
+
+  const { imports, captures } = await readImports(now);
   // The v2 API records no wall-clock time, so acquired sessions (ordered by
   // journal position) come first and dated imports follow, newest first.
-  const rows = [...(await evidenceRows(acquired)), ...imported.map(toRow)];
+  // Dates come from `/summary` reads made earlier (Overview visits).
+  const rows = [...(await evidenceRows(acquired, cachedSummaryDates())), ...imported.map((record) => toRow(record, captures))];
   // The footer names the game of the newest session instead of the reference platform.
   const game = rows[0]?.meta[0] ?? "F1";
   return {
+    mode: "live",
     live: true,
     status,
-    footer: { ...footer, lines: [game, footer.lines[1] ?? ""] },
+    footer: { ...baseFooter, lines: [game, baseFooter.lines[1] ?? ""] },
     header: acquisition ? connectionHeader(acquisition.state) : { items: ["Local engine connected"] },
     sessions: rows,
+    warnings,
+    sessionsUnreadable: sessions === null && evidence === null,
+    imports,
   };
 }
