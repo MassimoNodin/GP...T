@@ -251,7 +251,7 @@ def dispatch_voice_request(question: str, controller: RadioController, voice: Vo
             controller.answer_radio_control("The message from when you started listening is no longer available.", now=now)
             emit({"event": "radio_repeat_unavailable", "reason": "captured_message_unavailable"})
             return
-    elif control in ("cancel", "cancel that", "stop", "resume", "repeat"):
+    elif control in ("cancel", "stop", "resume", "repeat"):
         scheduler.cancel()
         controller.answer_radio_control(
             "Say cancel speech, repeat that, resume coaching, or cancel task followed by its number.", now=now)

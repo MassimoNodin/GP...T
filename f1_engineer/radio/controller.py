@@ -11,7 +11,7 @@ from ..driver_names import display_driver_name, driver_name_aliases
 from .gaps import GAP_CHANGES, LapGapTracker
 from .questions import QuestionPlan, UNAVAILABLE_FACTS, plan_question, timing_fact
 from .scheduler import RadioMessage, RadioScheduler
-from .tasks import LapReportRegistry, parse_task_request
+from .tasks import LapReportRegistry, TaskAction, parse_task_request
 from .watches import RaceWatchTracker
 from .pace import PaceTracker
 from .lap_history import FieldLapHistory
@@ -643,6 +643,14 @@ class RadioController:
             if action is None:
                 self.answer_question(question, now=now, question_context=question_context)
                 return
+            if action.kind == "cancel_reference":
+                context = self.capture_task_context() if task_context is _LIVE_TASK_CONTEXT else task_context
+                if (not isinstance(context, TaskContext) or context.scope != self.scheduler.scope
+                        or context.revision != self.conversation.revision or context.selected is None
+                        or context.selected not in context.versions):
+                    raise ValueError("No single current tracking reference is available. Say cancel task followed by its number, or cancel speech to stop audio only.")
+                action = TaskAction("cancel", task_id=context.selected[0])
+                task_context = context
             if action.kind in ("update", "cancel") and task_context is not _LIVE_TASK_CONTEXT:
                 if (not isinstance(task_context, TaskContext) or task_context.scope != self.scheduler.scope
                         or task_context.revision != self.conversation.revision):

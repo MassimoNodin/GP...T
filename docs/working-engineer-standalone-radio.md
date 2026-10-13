@@ -1059,8 +1059,10 @@ terminal period, question mark or exclamation mark):
 | `cancel speech`, `stop speaking` | Stop current/queued speech without another spoken acknowledgement; keep tracking and quiet policy unchanged. |
 | `repeat that`, `repeat message` | Repeat only the eligible message frozen when this capture started. |
 
-Bare `cancel`, `cancel that`, `stop`, `resume` and `repeat` ask for audible
-clarification rather than guessing. Explicit typed task cancellation, such as
+Bare `cancel`, `stop`, `resume` and `repeat` ask for audible
+clarification rather than guessing. `cancel that` now cancels only one clearly
+captured active task; otherwise it clarifies (see the later guarded cancellation
+increment). Explicit typed task cancellation, such as
 `cancel task 2` or `cancel all tracking`, remains a separate supported task request.
 Cancelling speech or pausing coaching never silently cancels a tracking task.
 Arbitrary console, shell, configuration and shutdown commands remain unsupported.
@@ -1354,3 +1356,23 @@ pass. The legacy expired-watch test now expects refusal rather than revival.
 The combined radio/live-facts, region, CLI and engineer-facts selection passes
 1,167 tests with the existing Starlette/httpx warning; compilation and whitespace
 checks pass. Real-game acceptance is still pending.
+
+### Guarded “cancel that” tracking follow-up
+
+“Cancel that”, “cancel that task” and “cancel that tracking” now cancel only the
+single same-session active task/version selected at capture start. A newer
+instruction cannot redirect the cancellation. Multi-task or non-task speech,
+missing/forgotten context, ended tasks and stale selected versions clarify
+instead; use “cancel task” with a number or “cancel speech” explicitly. The
+follow-up never upgrades an old selected version to the current version.
+
+Validation: thirteen guarded cancellation cases pass, including scope loss,
+completed/changed tasks and ambiguity. The combined radio/live-facts selection
+passes 1,180 tests with the existing Starlette/httpx warning. Compilation and
+whitespace checks pass. Real-game speech/control acceptance remains pending.
+
+Final integrated validation for these conversation/capture/lifecycle increments:
+the complete repository suite passes 3,000 tests with sixteen skips and two
+existing deprecation warnings in 304.81 seconds. This includes all final code
+changes described above. These automated results do not establish real-game
+acceptance or acoustic latency.

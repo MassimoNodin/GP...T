@@ -29,6 +29,8 @@ def parse_task_request(request: str) -> TaskAction | None:
         return TaskAction("list")
     if text == "cancel all tracking":
         return TaskAction("cancel_all")
+    if text in ("cancel that", "cancel that tracking", "cancel that task"):
+        return TaskAction("cancel_reference")
     extension = re.fullmatch(r"(?:track that|keep tracking that|continue tracking that) for another ([1-9][0-9]?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty) laps?", text)
     explicit_extension = re.fullmatch(r"extend task ([1-9][0-9]{0,8}) by ([1-9][0-9]?) laps?", text)
     if extension or explicit_extension:
