@@ -561,3 +561,65 @@
     display: none;
   }
 }
+
+/* Session Context: last session numbers and the connection checklist */
+.lastStats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--divider);
+}
+
+.checklist {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.checklistTitle {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.checklistSteps {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+}
+
+.checklistSteps li {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+}
+
+.checklistSteps li > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.checklistText {
+  color: var(--text);
+}
+
+.checklistSteps li[data-done] .checklistText {
+  color: var(--muted);
+}
+
+.checklistHint {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}

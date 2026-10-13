@@ -820,3 +820,16 @@ test("session context model carries the id for the Review link", () => {
   assert.equal(model.typeLabel, "Practice 1");
   assert.deepEqual(model.subtitle, ["Practice 1", "Ended"], "the sidebar footer keeps the lifecycle wording");
 });
+
+test("connect checklist ticks off from live receiver state", async () => {
+  const steps = await import(await loadUrl("features/drive-diagnostics/connect-steps.ts"));
+  const idle = steps.checklistSteps({ reachable: true, acquisitionState: "stale", receiver: { host: "192.168.1.115", port: 20777 } });
+  assert.deepEqual(idle.map((step) => step.done), [true, true, false, false]);
+  assert.match(idle[2].hint, /192\.168\.1\.115, port 20777/);
+  const anyHost = steps.checklistSteps({ reachable: true, acquisitionState: "listening", receiver: { host: "0.0.0.0", port: null } });
+  assert.match(anyHost[2].hint, /this computer's IP address, port 20777/);
+  const live = steps.checklistSteps({ reachable: true, acquisitionState: "receiving", receiver: { host: null, port: 20777 } });
+  assert.ok(live.every((step) => step.done));
+  const off = steps.checklistSteps({ reachable: false, acquisitionState: null, receiver: { host: null, port: null } });
+  assert.deepEqual(off.map((step) => step.done), [false, false, false, false]);
+});

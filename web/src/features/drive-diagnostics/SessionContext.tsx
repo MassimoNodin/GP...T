@@ -4,23 +4,31 @@ import { StatusGlyph } from "@/features/ui-foundation/icons";
 import { EmptyState } from "@/features/ui-foundation/states";
 import { TrackMap } from "@/features/ui-foundation/TrackMap";
 import { TrackPhoto } from "@/features/ui-foundation/TrackPhoto";
-import type { DriveContext } from "./load";
+import { StatTile } from "@/features/ui-foundation/StatTile";
+import { ConnectChecklist } from "./ConnectChecklist";
+import type { ChecklistStep } from "./connect-steps";
+import type { DriveContext, SessionStats } from "./load";
 import styles from "./DriveDiagnostics.module.css";
 
 /**
  * Session Context card. Three states: a session (live or last), the
  * reference design while the engine is unreachable, and "No session yet" when
- * the engine answers with no usable session.
+ * the engine answers with no usable session. While no game data arrives, a
+ * checklist shows what is left to connect, and a past session shows its
+ * headline numbers.
  */
 export function SessionContext({
   context,
   photo,
   live,
+  checklist = null,
 }: {
   context: DriveContext;
   photo: string | null;
   /** True while packets are arriving (red "Live game data" pill). */
   live: boolean;
+  /** Steps to get the game connected; null hides the checklist. */
+  checklist?: ChecklistStep[] | null;
 }) {
   if (context.kind === "empty") {
     return (
@@ -28,13 +36,14 @@ export function SessionContext({
         <EmptyState
           icon={<TrackMap track="generic" className={styles.emptyMap} strokeWidth={2.4} />}
           title="No session yet"
-          body="Start a session in F1 with UDP telemetry sent to this computer on port 20777."
+          body="Your sessions appear here as soon as the game sends telemetry."
           action={
             <Link href="/settings?section=connections" className={styles.textLink}>
               Connection settings
             </Link>
           }
         />
+        {checklist && <ConnectChecklist steps={checklist} />}
       </Card>
     );
   }
@@ -73,12 +82,40 @@ export function SessionContext({
         </span>
       </div>
       {context.kind === "session" && !live && (
-        <p className={styles.contextNote}>
-          <Link href={`/review/${encodeURIComponent(context.sessionId)}`} className={styles.textLink}>
-            Open in Review
-          </Link>
-        </p>
+        <>
+          {context.stats && <LastSessionStats stats={context.stats} />}
+          <p className={styles.contextNote}>
+            <Link href={`/review/${encodeURIComponent(context.sessionId)}`} className={styles.textLink}>
+              Open in Review
+            </Link>
+            {context.stats?.analysisHref && (
+              <>
+                <span className={styles.dot} aria-hidden="true">
+                  •
+                </span>
+                <Link href={context.stats.analysisHref} className={styles.textLink}>
+                  Analyse best lap
+                </Link>
+              </>
+            )}
+          </p>
+        </>
       )}
+      {checklist && <ConnectChecklist steps={checklist} />}
     </Card>
+  );
+}
+
+function LastSessionStats({ stats }: { stats: SessionStats }) {
+  return (
+    <div className={styles.lastStats} aria-label="Last session summary" role="group">
+      <StatTile label="Laps" value={stats.laps} sub={stats.invalid ? `${stats.invalid} invalid` : undefined} />
+      <StatTile
+        label="Best lap"
+        value={stats.best?.time ?? "—"}
+        sub={stats.best ? `Lap ${stats.best.lap}` : "No timed laps"}
+      />
+      <StatTile label="Time driven" value={stats.timeDriven ?? "—"} />
+    </div>
   );
 }

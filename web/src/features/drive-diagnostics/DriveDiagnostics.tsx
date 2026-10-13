@@ -10,6 +10,7 @@ import { Card, PageHeader } from "@/features/ui-foundation/primitives";
 import { InlineAlert } from "@/features/ui-foundation/states";
 import { EventDetails } from "./EventDetails";
 import { RadioHistory } from "./RadioHistory";
+import { checklistSteps } from "./connect-steps";
 import { SessionContext } from "./SessionContext";
 import { SystemStatus } from "./SystemStatus";
 import type { DriveModel } from "./load";
@@ -205,7 +206,16 @@ export function DriveDiagnostics({ model }: { model: DriveModel }) {
       <PageHeader title="Drive Diagnostics" subtitle="Monitor voice, telemetry and assistant systems in real time." />
       <div className={styles.topGrid}>
         <SystemStatus rows={systemRows} activity={activity} />
-        <SessionContext context={model.context} photo={model.photo} live={liveData.live} />
+        <SessionContext
+          context={model.context}
+          photo={model.photo}
+          live={liveData.live}
+          checklist={
+            model.reference || liveData.live
+              ? null
+              : checklistSteps({ reachable, acquisitionState: acquisition?.state ?? null, receiver: model.receiver })
+          }
+        />
       </div>
 
       <div className={styles.bottomGrid}>

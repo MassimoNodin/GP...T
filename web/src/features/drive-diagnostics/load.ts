@@ -1,5 +1,7 @@
 import { driveFixture, type RadioEvent } from "@/features/review-data/fixtures";
-import { fetchEngineerEvents, fetchPreferences } from "@/features/review-data/backend";
+import { fetchEngineerEvents, fetchEvidenceAttempts, fetchPreferences } from "@/features/review-data/backend";
+import { formatDuration, formatLapTime } from "@/features/review-data/format";
+import { bestEvidenceLap, evidenceLaps, timeDrivenMs } from "@/features/review-data/session-evidence";
 import type { EngineerEvent } from "@/features/review-data/engineer-events";
 import {
   ENGINE_OFFLINE_FOOTER,
@@ -34,6 +36,8 @@ export type DriveContext =
       sessionId: string;
       /** True when the session is the one the receiver is serving now. */
       current: boolean;
+      /** Quick stats for a past session; null when its laps could not be read. */
+      stats: SessionStats | null;
     }
   | {
       /** Reference design content, shown only while the local engine is unreachable. */
@@ -45,7 +49,20 @@ export type DriveContext =
     }
   | { kind: "empty" };
 
+export type SessionStats = {
+  laps: number;
+  best: { lap: number; time: string } | null;
+  timeDriven: string | null;
+  invalid: number;
+  /** Lap Analysis link for the best lap, when there is one. */
+  analysisHref: string | null;
+};
+
+/** Where the game should send telemetry, from the receiver status. */
+export type ReceiverAddress = { host: string | null; port: number | null };
+
 export type DriveModel = {
+  receiver: ReceiverAddress;
   /** True when the local engine did not answer at all: reference content and a banner. */
   reference: boolean;
   header: { items: string[]; trailing?: string };
@@ -102,6 +119,32 @@ function evidenceSessions(body: unknown): EvidenceSession[] {
       },
     ];
   });
+}
+
+function receiverAddress(body: unknown): ReceiverAddress {
+  const status = (body ?? {}) as { host?: unknown; port?: unknown };
+  return {
+    host: typeof status.host === "string" && status.host.length <= 64 ? status.host : null,
+    port: typeof status.port === "number" && Number.isInteger(status.port) ? status.port : null,
+  };
+}
+
+/** Laps, best lap and time driven for a past session, from its attempts. */
+async function sessionStats(sessionId: string): Promise<SessionStats | null> {
+  const result = await fetchEvidenceAttempts(sessionId);
+  if (!result) return null;
+  const laps = evidenceLaps(result.attempts);
+  const best = bestEvidenceLap(laps);
+  const driven = timeDrivenMs(laps);
+  return {
+    laps: laps.length,
+    best: best ? { lap: best.lap, time: formatLapTime(best.ms) } : null,
+    timeDriven: driven === null ? null : formatDuration(driven),
+    invalid: laps.filter((lap) => !lap.valid).length,
+    analysisHref: best
+      ? `/review/${encodeURIComponent(sessionId)}/laps?target=${encodeURIComponent(best.id)}`
+      : null,
+  };
 }
 
 function statusSessionId(body: unknown): string | null {
@@ -168,6 +211,8 @@ export async function loadDrive(): Promise<DriveModel> {
     footerLines = ["Start the local engine", ""];
     track = driveFixture.context.track;
   } else if (real) {
+    // A past session gets quick stats; the live one changes too fast to cache.
+    const stats = real.current ? null : await sessionStats(real.id);
     context = {
       kind: "session",
       title: real.title,
@@ -176,6 +221,7 @@ export async function loadDrive(): Promise<DriveModel> {
       facts: real.facts,
       sessionId: real.id,
       current: real.current,
+      stats,
     };
     header = { items: real.headerItems };
     footerLines = real.footerLines;
@@ -204,6 +250,7 @@ export async function loadDrive(): Promise<DriveModel> {
 
   return {
     reference,
+    receiver: receiverAddress(statusBody),
     header,
     status: shell.status,
     footer: reference ? ENGINE_OFFLINE_FOOTER : shell.footer,
