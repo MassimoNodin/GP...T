@@ -1,10 +1,13 @@
-import { describeStorageReason, formatStorageBytes } from "@/lib/storage-usage.mjs";
 import { loadCurrentSession } from "@/features/drive-diagnostics/load";
 import type { SessionContextModel } from "@/features/drive-diagnostics/session";
-import { fetchStorage } from "@/features/review-data/backend";
-import { settingsFixture, shellFixture } from "@/features/review-data/fixtures";
+import { fetchPreferences, fetchStorage, fetchTrackModels } from "@/features/review-data/backend";
+import type { ReadResult } from "@/features/review-data/backend";
+import { settingsFixture } from "@/features/review-data/fixtures";
+import type { PreferencesRead } from "@/features/review-data/preferences";
+import type { TrackModelSummary } from "@/features/review-data/regions";
 import type { ShellStatus } from "@/features/ui-foundation/AppShell";
 import { forwardLocalRequest } from "@/lib/local-proxy";
+import { describeSpeech, type SpeechView } from "./connections";
 import {
   describeGameTile,
   describeReceiver,
@@ -16,30 +19,14 @@ import {
   type RuntimeInfo,
   type RuntimeView,
 } from "./display";
+import { buildStorageView, type StorageView } from "./storage-view";
+import { describeTrackModels, type TrackModelsView } from "./track-models";
 
-export type StorageScopeView = {
-  label: string;
-  value: string;
-  detail: string | null;
-  /** Share of the measured recordings total, 0 to 1; null when unmeasured. */
-  share: number | null;
-  unavailable: boolean;
-};
-
-export type StorageView = {
-  used: string;
-  available: string;
-  capacity: string | null;
-  /** Fraction of the volume in use, 0 to 1; null when the volume is unknown. */
-  volumeShare: number | null;
-  scopes: StorageScopeView[];
-  note: string;
-  complete: boolean;
-};
+export type { StorageScopeView, StorageView } from "./storage-view";
 
 export type SettingsModel = typeof settingsFixture & {
   pill: ShellStatus;
-  /** True when neither the runtime nor the receiver endpoint answered. */
+  /** True when no engine endpoint answered. */
   engineReachable: boolean;
   runtime: RuntimeView;
   receiver: ReceiverView;
@@ -47,13 +34,12 @@ export type SettingsModel = typeof settingsFixture & {
   storage: StorageView | null;
   /** Sidebar footer description of the current or most recent session. */
   footerLines: string[];
-};
-
-const SCOPE_LABELS: Record<string, string> = {
-  database: "Session database",
-  finalized_captures: "Recorded captures",
-  recorder_staging: "Recorder staging",
-  imported_traces: "Imported traces",
+  /** Saved engineer preferences as read on the server. */
+  preferences: PreferencesRead;
+  speech: SpeechView;
+  trackModels: TrackModelsView;
+  /** Outline key for the Track Models tile (current session's circuit, else generic). */
+  trackKey: string;
 };
 
 async function readJson(path: string): Promise<unknown> {
@@ -74,15 +60,26 @@ export function runtimePill(info: RuntimeInfo | null): ShellStatus {
 }
 
 export async function loadSettings(): Promise<SettingsModel> {
-  const [runtimeBody, receiverBody, storage] = await Promise.all([
+  const [runtimeBody, receiverBody, speechBody, storage, preferences, trackModels] = await Promise.all([
     readJson("/api/v1/engineer/runtime"),
     readJson("/api/v2/session-evidence/status"),
+    readJson("/api/v1/engineer/transcribe"),
     fetchStorage(),
+    fetchPreferences(),
+    fetchTrackModels({ timeoutMs: 2500 }),
   ]);
   const runtimeInfo = parseRuntimeInfo(runtimeBody);
   const receiverInfo = parseReceiverInfo(receiverBody);
   const session = await loadCurrentSession(receiverBody);
-  return buildSettingsModel({ runtimeInfo, receiverInfo, storage, session });
+  return buildSettingsModel({
+    runtimeInfo,
+    receiverInfo,
+    storage,
+    session,
+    preferences,
+    speechBody,
+    trackModels,
+  });
 }
 
 export function buildSettingsModel({
@@ -90,59 +87,39 @@ export function buildSettingsModel({
   receiverInfo,
   storage,
   session = null,
+  preferences = { state: "unreachable" },
+  speechBody = null,
+  trackModels = { state: "unreachable" },
 }: {
   runtimeInfo: RuntimeInfo | null;
   receiverInfo: ReceiverInfo | null;
   storage: Awaited<ReturnType<typeof fetchStorage>>;
   /** Current or most recent v2 session; null keeps the reference game and footer. */
   session?: SessionContextModel | null;
+  preferences?: PreferencesRead;
+  /** Body of `GET /api/v1/engineer/transcribe`; null when it could not be read. */
+  speechBody?: unknown;
+  trackModels?: ReadResult<TrackModelSummary[]>;
 }): SettingsModel {
-  const engineReachable = Boolean(runtimeInfo || receiverInfo || storage);
+  const speech = describeSpeech(speechBody);
+  const engineReachable = Boolean(
+    runtimeInfo ||
+      receiverInfo ||
+      storage ||
+      preferences.state !== "unreachable" ||
+      speech.state !== "unreachable" ||
+      trackModels.state !== "unreachable",
+  );
   const receiver = describeReceiver(receiverInfo);
   const gameName = session?.facts.find(([label]) => label === "Game")?.[1];
   const game = describeGameTile(receiverInfo, gameName ? { ...settingsFixture.status.game, name: gameName } : settingsFixture.status.game);
   const status = { ...settingsFixture.status };
 
-  // Microphone, audio output and track models have no backend source. Keep the
-  // reference devices, but never claim they are ready while the engine is down.
-  if (!engineReachable) {
-    status.microphone = { ...status.microphone, state: "Status unavailable" };
-    status.audio = { ...status.audio, state: "Status unavailable" };
-    status.trackModels = { ...status.trackModels, state: "Status unavailable" };
-  }
-
+  // Microphone, audio output and the track model tile are derived in the
+  // browser or from the catalog; the reference values are never shown as fact.
   let storageView: StorageView | null = null;
   if (storage) {
-    let used = 0;
-    let complete = true;
-    const measured = Object.entries(storage.scopes).map(([key, scope]) => {
-      const bytes = scope.logical_bytes;
-      if (bytes === null) complete = false;
-      else used += bytes;
-      return { key, scope, bytes };
-    });
-    const scopes = measured.map(({ key, scope, bytes }): StorageScopeView => {
-      const files = scope.regular_file_count;
-      return {
-        label: SCOPE_LABELS[key] ?? key,
-        value: bytes === null ? describeStorageReason(scope.reason) : formatStorageBytes(bytes),
-        detail: files === null ? null : `${files} ${files === 1 ? "file" : "files"}`,
-        share: bytes === null ? null : used > 0 ? bytes / used : 0,
-        unavailable: bytes === null,
-      };
-    });
-    const volume = storage.volumes.recordings_location;
-    const free = volume.free_bytes;
-    const total = volume.total_bytes;
-    storageView = {
-      used: `${formatStorageBytes(used)}${complete ? "" : "+"} used`,
-      available: free === null ? "Free space unknown" : `${formatStorageBytes(free)} available`,
-      capacity: total === null ? null : `${formatStorageBytes(total)} volume`,
-      volumeShare: total && free !== null ? (total - free) / total : null,
-      scopes,
-      note: storage.measurement_note,
-      complete,
-    };
+    storageView = buildStorageView(storage);
     status.storage = { used: storageView.used, available: storageView.available };
   } else {
     status.storage = { used: "Unavailable", available: "Not measured" };
@@ -150,7 +127,8 @@ export function buildSettingsModel({
 
   return {
     ...settingsFixture,
-    footerLines: session?.footerLines ?? shellFixture.sessionFooter.lines,
+    // Never the reference session: without one, say what is missing instead.
+    footerLines: session?.footerLines ?? (engineReachable ? ["No session yet", "Waiting for the game"] : ["Start the local engine", ""]),
     header: { items: [game.name, receiverInfo ? (game.state.startsWith("Connected") ? "Connected" : "Not connected") : "Engine unavailable"] },
     status,
     pill: runtimePill(runtimeInfo),
@@ -159,5 +137,9 @@ export function buildSettingsModel({
     receiver,
     game,
     storage: storageView,
+    preferences,
+    speech,
+    trackModels: describeTrackModels(trackModels),
+    trackKey: session?.track ?? "generic",
   };
 }

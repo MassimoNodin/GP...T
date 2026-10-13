@@ -73,11 +73,14 @@
 }
 
 .toggleRow {
+  min-width: 0;
+  margin: 0 0 14px;
+  padding: 0;
+  border: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 14px;
 }
 
 .toggleRow .help {
@@ -301,9 +304,14 @@
 
 .tileMap {
   flex: none;
-  width: 38px;
+  width: 44px;
   height: 44px;
   color: #2b3037;
+}
+
+/* Only the Monaco outline is drawn at the reference angle. */
+.tileMap.tileMapMonaco {
+  width: 38px;
   transform: rotate(-58deg);
 }
 
@@ -314,10 +322,13 @@
 }
 
 .tileName {
+  max-width: 21ch;
   margin-top: 2px;
+  overflow: hidden;
   color: var(--text);
   font-size: 12px;
   font-weight: 500;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -332,6 +343,7 @@
 }
 
 .tileState[data-tone="green"] { color: var(--green-text); }
+.tileState[data-tone="red-text"] { color: var(--red-text); }
 .tileState[data-tone="green-text"] { color: var(--green-text); }
 .tileState[data-tone="amber-text"] { color: var(--amber-text); }
 .tileState[data-tone="grey"],

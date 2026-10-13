@@ -46,7 +46,8 @@
     "test:lap-analysis-views": "node --test scripts/lap-analysis-views.test.mjs",
     "test:engineer-answer": "node --test scripts/engineer-answer.test.mjs",
     "test:library-import": "node --test scripts/library-import.test.mjs",
-    "test:drive-radio": "node --test scripts/drive-radio.test.mjs"
+    "test:drive-radio": "node --test scripts/drive-radio.test.mjs",
+    "test:settings-tabs": "node --test scripts/settings-tabs.test.mjs"
   },
   "dependencies": {
     "next": "16.3.8",
