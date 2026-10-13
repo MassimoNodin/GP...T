@@ -857,3 +857,10 @@ test("fetchRecordingSources builds a bounded query and validates the page", asyn
   respond(async () => json({ status: "unavailable", data: null, reason: "limit" }, 422));
   assert.equal(await backend.fetchRecordingSources({ limit: 1 }), null);
 });
+
+test("summary labels name the player's car as you", () => {
+  assert.equal(summary.personaliseLabel("Car 7 overtook Car 4", 7), "You overtook Car 4");
+  assert.equal(summary.personaliseLabel("Car 3 overtook Car 7", 7), "Car 3 overtook you");
+  assert.equal(summary.personaliseLabel("Car 17 pitted", 7), "Car 17 pitted");
+  assert.equal(summary.personaliseLabel("Fastest lap 1:33.303 - Car 7", 7), "Fastest lap 1:33.303 - you");
+});

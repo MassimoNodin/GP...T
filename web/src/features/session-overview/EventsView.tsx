@@ -16,6 +16,7 @@ import {
   filterEvents,
   relativeEventTime,
   scanStoppedText,
+  scopeEvents,
   type EventFilter,
 } from "./overview-data";
 import { EventGlyph } from "./shared";
@@ -25,9 +26,11 @@ import viewStyles from "./OverviewViews.module.css";
 export function EventsView({ data }: { data: ViewData }) {
   const { model, events, summary, laps, best } = data;
   const [filter, setFilter] = useState<EventFilter>("all");
-  const [onlyMine, setOnlyMine] = useState(false);
-  const counts = useMemo(() => eventCounts(events), [events]);
-  const visible = useMemo(() => filterEvents(events, filter, onlyMine), [events, filter, onlyMine]);
+  const [allCars, setAllCars] = useState(false);
+  const scoped = useMemo(() => scopeEvents(events, allCars), [events, allCars]);
+  const counts = useMemo(() => eventCounts(scoped), [scoped]);
+  const visible = useMemo(() => filterEvents(events, filter, allCars), [events, filter, allCars]);
+  const hidden = events.length - scoped.length;
   const origin = useMemo(() => eventOrigin(events), [events]);
   const loading = model.source === "v2" && summary.status === "loading";
   const loadedSummary = summary.status === "loaded" ? summary.value : null;
@@ -71,7 +74,7 @@ export function EventsView({ data }: { data: ViewData }) {
   const filterLabel = EVENT_FILTERS.find((entry) => entry.key === filter)?.label.toLowerCase() ?? "";
   return (
     <div className={viewStyles.stack}>
-      <Card title={`Events (${events.length})`} labelledBy="events-card">
+      <Card title={`Events (${scoped.length})`} labelledBy="events-card">
         {events.length === 0 ? (
           <EmptyState title="No notable events were found in this session." />
         ) : (
@@ -95,7 +98,7 @@ export function EventsView({ data }: { data: ViewData }) {
                 onChange={setFilter}
                 items={EVENT_FILTERS.map((entry) => ({ ...entry, count: counts[entry.key] }))}
               />
-              <Checkbox label="Only events involving me" checked={onlyMine} onChange={setOnlyMine} />
+              <Checkbox label="Show all cars" checked={allCars} onChange={setAllCars} />
             </div>
             <Timeline
               label="Session events"
@@ -103,11 +106,14 @@ export function EventsView({ data }: { data: ViewData }) {
               empty={
                 <EmptyState
                   size="inline"
-                  title={filter === "all" ? "No events involve you." : `No ${filterLabel} events.`}
+                  title={filter === "all" ? "No events involve you." : `No ${filterLabel} events${allCars ? "" : " involve you"}.`}
                 />
               }
             />
-            <p className={viewStyles.eventsFooter}>{eventsFooter(events.length, loadedSummary)}</p>
+            <p className={viewStyles.eventsFooter}>
+              {eventsFooter(events.length, loadedSummary)}
+              {!allCars && hidden > 0 && ` ${hidden} other-car and minor race control ${hidden === 1 ? "event is" : "events are"} hidden.`}
+            </p>
           </>
         )}
       </Card>

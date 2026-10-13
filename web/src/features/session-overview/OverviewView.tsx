@@ -15,6 +15,7 @@ import {
   METRIC_LABELS,
   metricOptions,
   scanStoppedText,
+  scopeEvents,
   totalLapsOf,
   type ChartMetric,
 } from "./overview-data";
@@ -204,7 +205,8 @@ function SummaryCard({ data }: { data: ViewData }) {
 }
 
 function EventsCard({ data, onShowAll }: { data: ViewData; onShowAll: () => void }) {
-  const { model, events, summary } = data;
+  const { model, summary } = data;
+  const events = scopeEvents(data.events, false);
   const loading = model.source === "v2" && summary.status === "loading";
   const shown = events.slice(0, COMPACT_EVENTS);
   return (

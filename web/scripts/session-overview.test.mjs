@@ -421,7 +421,7 @@ test("events merge: duplicates keep the summary wording, other drivers' overtake
   assert.ok(!labels.some((label) => label.includes("Session best")), "the lap-derived duplicate is replaced");
 });
 
-test("event filters, counts, only-mine switch and relative time", () => {
+test("event filters, counts, all-cars switch and relative time", () => {
   const events = data.mergeEvents([], parseSessionSummary(
     summaryPayload([
       summaryEvent("lights_out", "Lights out", 1, { session_time_s: 100 }),
@@ -433,7 +433,9 @@ test("event filters, counts, only-mine switch and relative time", () => {
   ).events);
   assert.deepEqual(data.eventCounts(events), { all: 5, race_control: 1, penalties: 1, pit: 1, my_laps: 1, incidents: 1 });
   assert.deepEqual(data.filterEvents(events, "penalties", false).map((e) => e.lap), [12]);
-  assert.deepEqual(data.filterEvents(events, "all", true).map((e) => e.lap), [1, 12, 15, 16]);
+  assert.deepEqual(data.filterEvents(events, "all", false).map((e) => e.lap), [1, 12, 15, 16]);
+  assert.deepEqual(data.filterEvents(events, "all", true).map((e) => e.lap), [1, 12, 14, 15, 16]);
+  assert.equal(data.isKeyEvent(events.find((e) => e.kind === "collision")), false);
   const origin = data.eventOrigin(events);
   assert.equal(origin, 100);
   assert.equal(data.relativeEventTime(events[1], origin), "28:20");
@@ -1096,7 +1098,7 @@ test("a v2 session whose sections loaded on the server shows derived summary, st
 
   const events = renderOverview(model, at("events", { selectedId: "3" }));
   assert.match(events, /aria-label="Filter events"/);
-  assert.match(events, /Only events involving me/);
+  assert.match(events, /Show all cars/);
   assert.match(events, /Player: \+5s time penalty \(corner cutting\)/);
   assert.match(events, /Showing \d+ of \d+ events\. 3 minor events/);
   assert.match(events, /View lap/);
@@ -1118,4 +1120,16 @@ test("a v2 session whose enrichment is unavailable hides sector and tyre columns
   assert.match(stints, /Tyre data was not recorded for this session\./);
   const events = renderOverview(model, at("events", { selectedId: "1" }));
   assert.match(events, /The session timeline is not available/);
+});
+
+test("speed traps are detail, not notable events", () => {
+  const events = data.mergeEvents([], parseSessionSummary(
+    summaryPayload([
+      summaryEvent("speed_trap", "Speed trap 318 km/h - You", 2, { is_player: true, session_time_s: 200 }),
+      summaryEvent("safety_car", "Safety car: deployed", 3, { session_time_s: 300 }),
+      summaryEvent("drs_enabled", "DRS enabled", 1, { session_time_s: 50 }),
+    ]),
+  ).events);
+  assert.deepEqual(data.scopeEvents(events, false).map((e) => e.kind), ["safety_car"]);
+  assert.equal(data.scopeEvents(events, true).length, 3);
 });

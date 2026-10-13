@@ -107,6 +107,17 @@ function parseByKind(value: unknown): Record<string, number> {
   return result;
 }
 
+/**
+ * Names the player's car "You" in event labels the engine wrote with a car
+ * number ("Car 7 overtook Car 4" -> "You overtook Car 4"). Labels that carry a
+ * driver name are left as they are.
+ */
+export function personaliseLabel(label: string, playerCarIndex: number): string {
+  return label.replace(new RegExp(`\\bCar ${playerCarIndex}\\b`, "g"), (_match, offset: number) =>
+    offset === 0 ? "You" : "you",
+  );
+}
+
 /** Parses a full `/summary` response body (`{ data: {...} }`). Null when malformed. */
 export function parseSessionSummary(body: unknown): SessionSummary | null {
   const data = asRecord(envelopeData(body));
@@ -116,10 +127,12 @@ export function parseSessionSummary(body: unknown): SessionSummary | null {
   const player = asRecord(data.player);
   const totals = asRecord(data.totals);
   const scan = asRecord(data.scan);
+  const playerCarIndex = integer(player?.car_index);
   const events = data.events
     .slice(0, MAX_SUMMARY_EVENTS)
     .map(parseEvent)
-    .filter((event): event is SummaryEvent => event !== null);
+    .filter((event): event is SummaryEvent => event !== null)
+    .map((event) => (playerCarIndex === null ? event : { ...event, label: personaliseLabel(event.label, playerCarIndex) }));
   const weather = (Array.isArray(data.weather) ? data.weather : [])
     .slice(0, MAX_SUMMARY_WEATHER)
     .map(parseWeather)

@@ -639,13 +639,33 @@ export function eventCounts(events: OverviewEvent[]): Record<EventFilter, number
   return counts;
 }
 
-/** Category chip plus the "only events involving me" switch (the player's own and race control). */
-export function filterEvents(events: OverviewEvent[], filter: EventFilter, onlyMine: boolean): OverviewEvent[] {
-  return events.filter((event) => {
-    if (filter !== "all" && event.category !== filter) return false;
-    if (onlyMine && !event.isPlayer && event.category !== "race_control") return false;
-    return true;
-  });
+/** Race control that changes how everyone drives; DRS toggles and session bookkeeping are left out. */
+const KEY_RACE_CONTROL = new Set([
+  "lights_out",
+  "chequered_flag",
+  "safety_car",
+  "virtual_safety_car",
+  "formation_lap_safety_car",
+  "red_flag",
+  "yellow_flag",
+  "race_winner",
+]);
+
+/** The player's own events plus race control that affected everyone. */
+export function isKeyEvent(event: OverviewEvent): boolean {
+  // A speed trap fires every lap; it is detail, not a notable event.
+  if (event.kind === "speed_trap") return false;
+  return event.isPlayer || KEY_RACE_CONTROL.has(event.kind);
+}
+
+/** Events shown by default; `allCars` adds other drivers and minor race control. */
+export function scopeEvents(events: OverviewEvent[], allCars: boolean): OverviewEvent[] {
+  return allCars ? events : events.filter(isKeyEvent);
+}
+
+/** Category chip plus the "all cars" switch. */
+export function filterEvents(events: OverviewEvent[], filter: EventFilter, allCars: boolean): OverviewEvent[] {
+  return scopeEvents(events, allCars).filter((event) => filter === "all" || event.category === filter);
 }
 
 /** 125 -> "02:05", 5000 -> "1:23:20" */
