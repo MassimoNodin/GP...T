@@ -57,6 +57,20 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
     if not isinstance(question, str) or not 1 <= len(question.encode("utf-8")) <= 1024:
         raise ValueError("Ask a question of at most 1024 bytes.")
     remaining = driver_name_key(question)
+    sector_only = re.fullmatch(r"only sector (one|two|three|[1-3])[?.!]*", remaining)
+    if sector_only:
+        if previous is None:
+            raise ValueError("Which lap and driver should sector-only refer to? Ask an explicit sector question first.")
+        sector = {"one": "1", "two": "2", "three": "3"}.get(sector_only.group(1), sector_only.group(1))
+        families = {"last" if metric == "last_lap" or metric.startswith("last_sector") else "current"
+                    for metric in previous.metrics if metric in ("last_lap", "current_lap")
+                    or metric.startswith(("last_sector", "current_sector"))}
+        if len(families) != 1:
+            raise ValueError("Sector-only is ambiguous; specify current lap or last lap and the driver.")
+        family = families.pop()
+        if family == "current" and sector == "3":
+            raise ValueError("Current-lap sector three is not a completed measurement. Ask for last-lap sector three after completing the lap.")
+        return QuestionPlan(previous.targets, (family + "_sector" + sector,), True)
     comparison = re.fullmatch(r"compare my (?:last|previous|latest)(?: completed)? lap(?: time)? with (.+?)[?.!]*", remaining)
     if comparison:
         remaining = comparison.group(1) + " last lap comparison"
@@ -113,6 +127,8 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
         raise ValueError("Please specify a driver to compare with your last lap.")
     if re.search(r"\b(?:their|his|her|them|him)\b", remaining) and (previous is None or targets):
         raise ValueError("Please specify a driver; that pronoun has no single supported reference.")
+    if re.search(r"\b(?:his|her|him)\b", remaining) and (len(previous.targets) != 1 or previous.targets == ("self",)):
+        raise ValueError("Please specify one other driver; that singular pronoun is ambiguous.")
     remaining = re.sub(r"\b(?:what|what's|is|are|the|a|and|also|please|tell|show|give|for|of|about|how|their|his|her|them|him|then)\b", " ", remaining)
     if re.sub(r"[\s?,.!']", "", remaining):
         raise ValueError("I can answer current or last lap times, retained observed numbered laps, measured current-lap sectors 1 and 2, fully observed last-lap sectors and best observed valid lap, last lap comparisons to you, positions, leader/front-car gaps, your lap-boundary gap changes and observed player speed or brake input. Use me, leader, car ahead, car behind, P1 to P24, or an available driver's full name or surname. Other facts and task instructions are not supported yet.")

@@ -39,8 +39,11 @@ Remaining implementation and scope decisions:
   eligible numbered laps and labelled same-compound radio-observed best retrieval
   now exist; these are not
   complete historical/session-best coverage.
-- Conversation context including prior answers, instructions and tracking results;
-  metric/target/task follow-ups with clarification and no cancelled-task revival.
+- Broader conversational wording and follow-ups beyond the bounded implemented
+  context. The radio now retains prior questions/answers, instructions and computed
+  tracking reports, supports sector-only follow-ups and version-bound task
+  extensions, and clarifies ambiguous references without reviving ended tasks.
+  This is deterministic conversation support, not unrestricted natural language.
 - Real-game acceptance of automatic scoped voice questions/tasks and the explicit
   spoken quiet/cancel-speech/repeat controls, preserving capture/playback echo
   safeguards. These controls now exist, with ambiguous commands clarified rather

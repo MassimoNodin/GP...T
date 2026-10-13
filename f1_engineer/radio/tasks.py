@@ -29,6 +29,20 @@ def parse_task_request(request: str) -> TaskAction | None:
         return TaskAction("list")
     if text == "cancel all tracking":
         return TaskAction("cancel_all")
+    extension = re.fullmatch(r"(?:track that|keep tracking that|continue tracking that) for another ([1-9][0-9]?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty) laps?", text)
+    explicit_extension = re.fullmatch(r"extend task ([1-9][0-9]{0,8}) by ([1-9][0-9]?) laps?", text)
+    if extension or explicit_extension:
+        if explicit_extension:
+            task_id, count = explicit_extension.groups()
+            task_id, count = int(task_id), int(count)
+        else:
+            task_id, count = None, extension.group(1)
+            words = ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+                     "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty")
+            count = int(count) if count.isdecimal() else words.index(count) + 1
+        if not 1 <= count <= 20:
+            raise ValueError("Please choose one to twenty additional laps.")
+        return TaskAction("extend", task_id=task_id, laps=count)
     cancel = re.fullmatch(r"cancel task ([1-9][0-9]{0,8})", text)
     if cancel:
         return TaskAction("cancel", task_id=int(cancel.group(1)))
@@ -204,6 +218,30 @@ class LapReportRegistry:
         self._tasks[identifier] = task
         self.notify({"event": "radio_task_updated" if existing else "radio_task_created", **task.view()})
         return task
+
+    def extend(self, task_id: int, version: int, *, additional_laps: int, cursor: int, lap: int) -> LapReportTask:
+        if (type(task_id) is not int or type(version) is not int or task_id < 1 or version < 1
+                or type(cursor) is not int or cursor < 0 or type(lap) is not int or not 1 <= lap <= 255):
+            raise ValueError("An extension requires a current task version and valid lap and event cursor.")
+        task = self._tasks.get(task_id)
+        if (task is None or task.state != "active" or task.version != version
+                or task.until_lap is not None and task.until_lap < lap):
+            raise ValueError("That task is no longer active or its version changed. Specify a current task; cancelled or expired tasks are not revived.")
+        if type(additional_laps) is not int or not 1 <= additional_laps <= 20:
+            raise ValueError("Please choose one to twenty additional laps.")
+        first = max(task.first_lap, lap + (1 if task.region_window is not None else 0))
+        until = task.until_lap + additional_laps if task.until_lap is not None else first + additional_laps - 1
+        if not 1 <= first <= until <= 255 or until - first + 1 > 20:
+            raise ValueError("The extended task must cover at most twenty upcoming laps, within lap 255.")
+        if task.region_window is None:
+            extended = replace(task, version=task.version + 1, until_lap=until)
+            self._tasks[task.task_id] = extended
+            self.notify({"event": "radio_task_updated", **extended.view()})
+            return extended
+        return self.install(task.plan, task.fixed_bindings, cursor=cursor, lap=first, laps=until - first + 1,
+                            task_id=task.task_id, pace_reference=task.pace_reference,
+                            pace_tolerance_ms=task.pace_tolerance_ms, region_window=task.region_window,
+                            region_reference=task.region_reference)
 
     def eligible(self, *, event_id: int, lap: int) -> tuple[LapReportTask, ...]:
         return tuple(task for task in self._tasks.values() if task.state == "active"

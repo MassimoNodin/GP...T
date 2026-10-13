@@ -15,6 +15,7 @@ from .tasks import LapReportRegistry, parse_task_request
 from .watches import RaceWatchTracker
 from .pace import PaceTracker
 from .lap_history import FieldLapHistory
+from .conversation import ConversationMemory, TaskContext
 from .pit_benchmark import PitBenchmarkTracker
 from .regions import RegionTracker, RegionWindow
 from .region_progress import RegionProgress
@@ -44,6 +45,9 @@ def lap_message(number: int, milliseconds: int) -> str:
     return f"Lap {number}: {clock}{remainder / 1000:.3f} seconds."
 
 
+_LIVE_TASK_CONTEXT = object()
+
+
 class RadioController:
     def __init__(self, scheduler: RadioScheduler, *, notify=None, backend_regions=False) -> None:
         self.scheduler = scheduler
@@ -58,6 +62,7 @@ class RadioController:
         self._observation_frame = None
         self._fact_age_s = None
         self._history = []
+        self.conversation = ConversationMemory()
         self.tasks = LapReportRegistry(notify=self.notify)
         self.gaps = LapGapTracker()
         self.watches = RaceWatchTracker()
@@ -77,6 +82,7 @@ class RadioController:
         self._player = None
         self._drivers = []
         self._history.clear()
+        self.conversation.clear()
         safe_reason = reason if re.fullmatch(r"[a-z0-9_]{1,96}", reason) else "unavailable"
         self._reset_gaps()
         self.tasks.clear(safe_reason)
@@ -136,6 +142,7 @@ class RadioController:
         self.scheduler.set_scope(binding)
         if changed:
             self._history.clear()
+            self.conversation.clear()
             self.tasks.clear("scope_changed")
             self.watches.clear()
             self.pace.clear()
@@ -188,6 +195,8 @@ class RadioController:
             if not changed and self._cursor is not None:
                 self.scheduler.cancel()
                 self.tasks.clear("event_history_gap")
+                self._history.clear()
+                self.conversation.clear()
                 self.watches.clear()
                 self.pace.clear()
                 self.lap_history.clear()
@@ -396,7 +405,12 @@ class RadioController:
 
     def forget_conversation(self) -> None:
         self._history.clear()
+        self.conversation.clear()
         self.notify({"event": "radio_conversation_cleared"})
+
+    def capture_task_context(self) -> TaskContext:
+        return self.conversation.capture_tasks(
+            self.scheduler.scope, self.tasks.active(), self.scheduler.active or self.scheduler.last_completed)
 
     def _participant_name(self, row: dict) -> str | None:
         participant = row.get("participant")
@@ -449,6 +463,8 @@ class RadioController:
 
     def _clear_tasks(self, reason: str) -> None:
         if reason != "cancelled":
+            self._history.clear()
+            self.conversation.clear()
             self.lap_history.clear()
             self.pit_benchmarks.clear()
             self.scheduler.cancel_owner("pit_benchmark")
@@ -591,16 +607,27 @@ class RadioController:
         self.scheduler.submit(RadioMessage(f"answer:{self._answer_id}", self.scheduler.scope,
                                           text, "answer", now + 15), now=now)
 
-    def _control_answer(self, text: str, *, now: float) -> None:
+    def _control_answer(self, text: str, *, now: float) -> bool:
         if len(text.encode("utf-8")) > 1024:
             text = "Task details are too long to speak. Use status to review them."
         self._answer_id += 1
         self.notify({"event": "radio_task_answer", "text": text, "tasks": self.tasks.views()})
-        self.scheduler.submit(RadioMessage(f"answer:{self._answer_id}", self.scheduler.scope,
+        return self.scheduler.submit(RadioMessage(f"answer:{self._answer_id}", self.scheduler.scope,
                                           text, "answer", now + 30), now=now)
 
-    def handle_request(self, question: str, *, now: float) -> None:
+    def handle_request(self, question: str, *, now: float, task_context=_LIVE_TASK_CONTEXT) -> None:
         self.check_freshness(now=now)
+        memory_query = " ".join(question.lower().split()).rstrip("?.!") if isinstance(question, str) else ""
+        if memory_query in ("what was my last request", "what did you last report"):
+            turn = (self.conversation.previous_request() if memory_query == "what was my last request"
+                    else self.conversation.previous_tracking_result())
+            text = "No retained conversation reference is available."
+            if turn is not None:
+                text = (f"Your last retained request was: {turn['request']}" if memory_query == "what was my last request"
+                        else f"Historical computed tracking report, not proof you heard it: {turn['response']}")
+            self._control_answer(text, now=now)
+            return
+        selected_tasks = ()
         try:
             action = parse_task_request(question)
             if action is None:
@@ -640,6 +667,33 @@ class RadioController:
                     text = f"Task {action.task_id} cancelled."
                 else:
                     text = "That task does not exist."
+            elif action.kind == "extend":
+                if self._player is None or not _integer(self._player["lap"].get("current_lap_number"), 1, 255):
+                    raise ValueError("Fresh player telemetry and a known lap number are required to extend tracking.")
+                context = self.capture_task_context() if task_context is _LIVE_TASK_CONTEXT else task_context
+                if not isinstance(context, TaskContext) or context.scope != self.scheduler.scope:
+                    raise ValueError("No same-session task reference was captured. Specify a current task number.")
+                reference = (context.selected if action.task_id is None else
+                             next((entry for entry in context.versions if entry[0] == action.task_id), None))
+                if reference is None:
+                    raise ValueError("Which active task should I extend? Say extend task followed by its number and lap count.")
+                original = next((task for task in self.tasks.active()
+                                 if (task.task_id, task.version) == reference), None)
+                if original is None:
+                    raise ValueError("The selected task changed or ended since listening began. Specify a current task.")
+                for target, identity in zip(original.plan.targets, original.fixed_bindings):
+                    if identity is not None and self._resolve_target(target, json.loads(identity)) is None:
+                        raise ValueError("The fixed driver is unavailable or replaced; I will not rebind this task.")
+                task = self.tasks.extend(*reference, additional_laps=action.laps, cursor=self._cursor or 0,
+                                         lap=self._player["lap"]["current_lap_number"])
+                self.regions.remove(task.task_id)
+                self.watches.extend_version(task.task_id, original.version, task.version)
+                self.scheduler.cancel_owner("lap_reports")
+                self.scheduler.cancel_owner("pace_sectors")
+                selected_tasks = (task,)
+                text = f"Task {task.task_id} extended through lap {task.until_lap}. Existing fixed references remain unchanged."
+                if task.region_window is not None:
+                    text += " Regional capture restarts next lap; the partial current capture is discarded."
             else:
                 if self._player is None or not _integer(self._player["lap"].get("current_lap_number"), 1, 255):
                     raise ValueError("Fresh player telemetry and a known lap number are required to create a report.")
@@ -676,6 +730,7 @@ class RadioController:
                                           laps=action.laps, task_id=action.task_id,
                                           pace_reference=pace_reference, pace_tolerance_ms=action.tolerance_ms,
                                           region_window=region_window, region_reference=region_reference)
+                selected_tasks = (task,)
                 if action.kind == "update":
                     self.regions.remove(task.task_id)
                 self.scheduler.cancel_owner("lap_reports")
@@ -710,7 +765,9 @@ class RadioController:
                              else " Sector feedback unavailable for this reference; lap feedback remains enabled.")
         except ValueError as error:
             text = str(error)
-        self._control_answer(text, now=now)
+        queued = self._control_answer(text, now=now)
+        self.conversation.record("instruction", request=question, response=text, tasks=selected_tasks,
+                                 message_key=f"answer:{self._answer_id}", queued=queued)
 
     def _report_pace_sector(self, event: dict, *, now: float, age: float) -> None:
         tasks = [task for task in self.tasks.eligible(event_id=event["id"], lap=event["lap_number"])
@@ -728,9 +785,11 @@ class RadioController:
         if len(text.encode("utf-8")) > 1024:
             text = "The sector pace reports are too long to speak safely. Request fewer tasks."
         self.scheduler.cancel_owner("pace_sectors")
-        self.scheduler.submit(RadioMessage(f"pace-sector:{event['id']}", self.scheduler.scope, text, "proactive",
+        queued = self.scheduler.submit(RadioMessage(f"pace-sector:{event['id']}", self.scheduler.scope, text, "proactive",
                                           now + 60, observation_age_s=age, dispatch_before=now + 3 - age,
                                           owner="pace_sectors"), now=now)
+        self.conversation.record("task_result", response=text, tasks=tasks,
+                                 message_key=f"pace-sector:{event['id']}", queued=queued)
 
     def _report_tasks(self, event: dict, *, now: float, age: float) -> bool:
         self._fact_age_s = None
@@ -801,10 +860,14 @@ class RadioController:
         self.notify({"event": "radio_task_report", "task_ids": [task.task_id for task in tasks],
                      "lap_number": event["lap_number"], "text": text})
         age = max(age, self._fact_age_s or 0)
-        self.scheduler.submit(RadioMessage(f"reports:{event['id']}", self.scheduler.scope, text, "proactive",
+        queued = self.scheduler.submit(RadioMessage(f"reports:{event['id']}", self.scheduler.scope, text, "proactive",
                                           now + 60, observation_age_s=age, dispatch_before=now + 3 - age,
                                           owner="lap_reports"), now=now)
         self.tasks.complete_lap(event["lap_number"])
+        identifiers = {task.task_id for task in tasks}
+        self.conversation.record("task_result", response=text,
+                                 tasks=[task for task in self.tasks.views() if task["task_id"] in identifiers],
+                                 message_key=f"reports:{event['id']}", queued=queued)
         return True
 
     def answer_question(self, question: str, *, now: float) -> None:
@@ -814,6 +877,8 @@ class RadioController:
         started = time.perf_counter()
         text = "No fresh player telemetry is available."
         results = []
+        plan = None
+        bindings = None
         gap_question = False
         if self._player is not None:
             try:
@@ -859,7 +924,9 @@ class RadioController:
         age = self._age_s + now - self._received_at if self._player is not None else None
         if self._fact_age_s is not None:
             age = max(age or 0, self._fact_age_s)
-        self.scheduler.submit(RadioMessage(f"answer:{self._answer_id}", self.scheduler.scope,
+        queued = self.scheduler.submit(RadioMessage(f"answer:{self._answer_id}", self.scheduler.scope,
                                           text, "answer", now + 60, observation_age_s=age,
                                           dispatch_before=now + 3 - (age or 0),
                                           owner="gap_changes" if gap_question else None), now=now)
+        self.conversation.record("question", request=question, response=text,
+                                 message_key=f"answer:{self._answer_id}", queued=queued, plan=plan, bindings=bindings)

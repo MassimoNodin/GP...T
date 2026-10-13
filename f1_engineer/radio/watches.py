@@ -33,6 +33,12 @@ class RaceWatchTracker:
     def remove(self, task_id):
         self.states = {key: state for key, state in self.states.items() if key[0] != task_id}
 
+    def extend_version(self, task_id, old_version, new_version):
+        state = self.states.pop((task_id, old_version), None)
+        if state is not None:
+            state.notice = None
+            self.states[(task_id, new_version)] = state
+
     def views(self):
         return [{"task_id": key[0], "version": key[1], "comparable_boundaries": len(state.history),
                  "notice_state": state.notice, "reason": state.reason,

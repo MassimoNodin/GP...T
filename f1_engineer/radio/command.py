@@ -141,7 +141,8 @@ def run_radio(args) -> int:
             voice.tick(scope=scheduler.scope, input_status=wheel.status())
             if pressed:
                 request_listening(scheduler, voice, source="wheel", binding=wheel.status()["binding"],
-                                  connection=wheel.status().get("connection_instance"))
+                                  connection=wheel.status().get("connection_instance"),
+                                  task_context=controller.capture_task_context())
             try:
                 command = commands.get_nowait()
                 if command == "quit":
@@ -150,7 +151,8 @@ def run_radio(args) -> int:
                     voice.cancel()
                     controller.answer_last_lap(now=now)
                 elif command == "listen":
-                    request_listening(scheduler, voice, source="console")
+                    request_listening(scheduler, voice, source="console",
+                                      task_context=controller.capture_task_context())
                 elif command == "finish":
                     voice.finish()
                 elif command == "tasks":
@@ -215,11 +217,12 @@ def run_radio(args) -> int:
                 client.close()
 
 
-def request_listening(scheduler: RadioScheduler, voice: VoiceInput, *, source: str, binding=None, connection=None) -> None:
+def request_listening(scheduler: RadioScheduler, voice: VoiceInput, *, source: str, binding=None, connection=None,
+                      task_context=None) -> None:
     reference = scheduler.capture_repeat_reference()
     scheduler.cancel()
     voice.request(source=source, scope=scheduler.scope, binding=binding, connection=connection,
-                  repeat_reference=reference)
+                  repeat_reference=reference, task_context=task_context)
 
 
 def dispatch_voice_request(question: str, controller: RadioController, voice: VoiceInput, *, now: float) -> None:
@@ -255,7 +258,7 @@ def dispatch_voice_request(question: str, controller: RadioController, voice: Vo
         return
     else:
         scheduler.cancel()
-        controller.handle_request(question, now=now)
+        controller.handle_request(question, now=now, task_context=voice.task_context)
         return
     emit({"event": "radio_voice_control", "action": action, "tracking_unchanged": True})
 

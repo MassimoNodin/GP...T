@@ -1268,3 +1268,52 @@ cases intentionally superseded), with the existing Starlette/httpx warning.
 Compilation and whitespace checks passed. The full suite and real-game
 wheel/headset/browser-free acceptance were not run. Complete session history,
 broader conversational context/follow-ups and remaining coaching are pending.
+
+## Bounded conversation and task extensions — October 14, 2026
+
+The standalone radio retains up to sixteen structured turns: questions and their
+answers, task instructions and acknowledgements, and computed lap/target-sector
+tracking results. Text fields are bounded to 1024 UTF-8 bytes. Typed question
+planning still retains eight independently identity-bound plans; task controls
+do not overwrite those question plans. Memory is local to this radio process,
+not persistent session history or an unrestricted model conversation.
+
+Supported examples:
+
+- After a current/last lap question, say “only sector two” to retain exactly the
+  selected drivers and the current/last lap family. Mixed families, missing
+  references and current sector three require clarification. Singular “his” or
+  “her” requires one previously selected other driver.
+- Say “what was my last request?” or “what did you last report?” to retrieve a
+  retained request or historical computed tracking result. A computed/queued
+  result is explicitly not proof that speech was heard.
+- Say “track that for another two laps” for a single captured task reference,
+  or “extend task 1 by 2 laps” for an explicit active task. The lap count is one
+  to twenty; the resulting horizon has at most twenty upcoming laps and cannot
+  exceed lap 255. Extending an indefinite task makes it finite.
+
+The microphone freezes active task versions and the single selected task before
+canceling speech. Active/recent speech selects its own task rather than a newer
+unheard instruction; multi-task reports require an explicit task number. A second
+button press ends capture without replacing its context. Missing/cross-session
+context, a task changed during transcription, completed/cancelled/past-horizon
+tasks and unavailable/replaced fixed drivers are refused without mutation.
+
+Extensions preserve fixed driver, target-pace and numeric-region references and
+tolerance. Consistency keeps its original observation cursor and first lap;
+watch boundaries retain their history under the new version. Regional leases
+instead restart next lap with the same window/reference, explicitly discarding
+the current partial capture. Superseded task speech/capture ownership is cleared.
+Scope loss, event-history gaps, discontinuities and explicit conversation forgetting
+clear retained references. Cancelling tracking retains historical conversation but
+does not restore cancelled tasks.
+
+Automated regression coverage exercises parsing, ambiguity, bounds, identity and
+version changes, origin/reference preservation, capture-context freezing, reset,
+memory retrieval and ended-task refusal. Real wheel/microphone gameplay and
+acoustic latency approval remain pending; this is not branch acceptance.
+
+Validation: 53 new conversation cases pass; the combined radio/live-facts,
+regional capture, CLI and engineer-facts selection passes 1,132 tests with one
+existing Starlette/httpx deprecation warning. Radio compilation and whitespace
+checks pass. Full-suite validation is recorded separately when available.
