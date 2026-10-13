@@ -3,7 +3,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import type { ShellFooter, ShellStatus } from "@/features/ui-foundation/AppShell";
 import { useAcquisitionFeed, useRuntimeFeed } from "./hooks";
-import { ENGINE_OFFLINE_FOOTER, engineerFooter, engineerStatus, telemetryFooter, telemetryStatus } from "./map";
+import { combinedStatus, sessionFooter, telemetryDetail } from "./map";
 import { ShellFooterBlock, StatusPill } from "./ShellParts";
 
 export type LiveMode = "telemetry" | "engineer";
@@ -15,7 +15,9 @@ const ShellContext = createContext<ShellState | null>(null);
 /**
  * Provides the header pill and sidebar footer for one shell. It starts from the
  * server-rendered props (so SSR and hydration match) and replaces them once the
- * browser has polled live state.
+ * browser has polled both the receiver and the engineer runtime. Every screen
+ * shows the same combined pill; `mode` only decides the footer's second line:
+ * the receiver detail on telemetry screens, the page's session lines otherwise.
  */
 export function LiveShellProvider({
   mode,
@@ -28,48 +30,17 @@ export function LiveShellProvider({
   footer: ShellFooter;
   children: ReactNode;
 }) {
-  return mode === "engineer" ? (
-    <EngineerProvider status={status} footer={footer}>
-      {children}
-    </EngineerProvider>
-  ) : (
-    <TelemetryProvider status={status} footer={footer}>
-      {children}
-    </TelemetryProvider>
-  );
-}
-
-type ProviderProps = { status: ShellStatus; footer: ShellFooter; children: ReactNode };
-
-function TelemetryProvider({ status, footer, children }: ProviderProps) {
   const acquisition = useAcquisitionFeed(undefined);
-  const firstLine = footer.lines[0] ?? "";
-  const state = useMemo<ShellState>(
-    () =>
-      acquisition === undefined
-        ? { status, footer }
-        : {
-            status: { ...telemetryStatus(acquisition), menu: status.menu },
-            footer: telemetryFooter(acquisition, firstLine),
-          },
-    [acquisition, status, footer, firstLine],
-  );
-  return <ShellContext.Provider value={state}>{children}</ShellContext.Provider>;
-}
-
-function EngineerProvider({ status, footer, children }: ProviderProps) {
   const runtime = useRuntimeFeed(undefined);
-  const state = useMemo<ShellState>(
-    () =>
-      runtime === undefined
-        ? { status, footer }
-        : {
-            status: { ...engineerStatus(runtime), menu: status.menu },
-            // Unreachable: the session lines are stale, so say what to do instead.
-            footer: runtime === null ? ENGINE_OFFLINE_FOOTER : engineerFooter(runtime, footer.lines),
-          },
-    [runtime, status, footer],
-  );
+  const state = useMemo<ShellState>(() => {
+    // Both halves are needed before the pill can say anything new.
+    if (acquisition === undefined || runtime === undefined) return { status, footer };
+    const lines = mode === "telemetry" ? [footer.lines[0] ?? "", telemetryDetail(acquisition)] : footer.lines;
+    return {
+      status: { ...combinedStatus(acquisition, runtime), menu: status.menu },
+      footer: sessionFooter(acquisition, runtime, lines),
+    };
+  }, [acquisition, runtime, mode, status, footer]);
   return <ShellContext.Provider value={state}>{children}</ShellContext.Provider>;
 }
 

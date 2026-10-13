@@ -129,6 +129,74 @@ export function engineerShell(
   return { status: engineerStatus(runtime), footer: engineerFooter(runtime, lines) };
 }
 
+/* ------------------------------------------------- shell: combined status */
+
+type Part = { tone: ShellTone; label: string; detail: string };
+
+const TONE_RANK: Record<ShellTone, number> = { green: 0, grey: 1, amber: 2, red: 3 };
+
+/** The game-connection half of the header pill. */
+export function telemetryPart(status: AcquisitionStatus | null): Part {
+  if (!status) return { tone: "red", label: "Telemetry unknown", detail: "Receiver status unavailable" };
+  switch (status.state) {
+    case "receiving":
+      return { tone: "green", label: "Telemetry live", detail: "Receiving game data" };
+    case "starting":
+    case "listening":
+      return { tone: "amber", label: "Waiting for game", detail: "Listening on UDP 20777" };
+    case "stale":
+      return { tone: "amber", label: "Telemetry stale", detail: "No recent packets" };
+    case "disabled":
+      return { tone: "grey", label: "Telemetry off", detail: "Acquisition is disabled" };
+    default:
+      return { tone: "red", label: "Telemetry offline", detail: "Receiver is not running" };
+  }
+}
+
+/** The engineer half of the header pill. */
+export function engineerPart(runtime: RuntimeInfo | null): Part {
+  if (!runtime) return { tone: "red", label: "Engineer offline", detail: "Runtime status unavailable" };
+  if (runtime.status === "ready") {
+    return { tone: "green", label: "Engineer ready", detail: runtime.model_name || runtime.runtime };
+  }
+  if (runtime.status === "not_configured") {
+    return { tone: "amber", label: "Engineer not set up", detail: humanReason(runtime.reason) };
+  }
+  return { tone: "red", label: "Engineer unavailable", detail: humanReason(runtime.reason) };
+}
+
+/**
+ * One header pill for every screen: game connection and engineer together, in
+ * the tone of whichever is worse, with both halves listed in its details.
+ */
+export function combinedStatus(acquisition: AcquisitionStatus | null, runtime: RuntimeInfo | null): ShellStatus {
+  const telemetry = telemetryPart(acquisition);
+  const engineer = engineerPart(runtime);
+  const details = [
+    { label: "Telemetry", value: `${telemetry.label.replace(/^Telemetry /, "")} · ${telemetry.detail}`, tone: telemetry.tone },
+    { label: "Engineer", value: `${engineer.label.replace(/^Engineer /, "")} · ${engineer.detail}`, tone: engineer.tone },
+  ];
+  if (!acquisition && !runtime) {
+    return { tone: "red", label: "Engine offline", details: [{ label: "Local engine", value: "Not reachable. Start the local engine.", tone: "red" }] };
+  }
+  const tone = TONE_RANK[telemetry.tone] >= TONE_RANK[engineer.tone] ? telemetry.tone : engineer.tone;
+  return { tone, label: `${telemetry.label} · ${engineer.label}`, details };
+}
+
+/**
+ * Sidebar footer shared by every live screen: the game connection on the head
+ * line and the page's session lines below.
+ */
+export function sessionFooter(
+  acquisition: AcquisitionStatus | null,
+  runtime: RuntimeInfo | null,
+  lines: string[],
+): ShellFooter {
+  if (!acquisition && !runtime) return ENGINE_OFFLINE_FOOTER;
+  const telemetry = telemetryPart(acquisition);
+  return { tone: telemetry.tone, label: telemetry.label, lines };
+}
+
 /* ------------------------------------------------------ drive: status rows */
 
 export function isReachable(

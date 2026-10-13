@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { ENGINE_OFFLINE_FOOTER } from "@/features/live-status/map";
+import { liveShellProps, loadShellState } from "@/features/live-status/shell-state";
 import { loadSettings } from "@/features/settings/load";
 import { parseSection } from "@/features/settings/sections";
 import { Settings } from "@/features/settings/Settings";
@@ -12,18 +12,15 @@ export default async function SettingsPage({
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
-  const [model, query] = await Promise.all([loadSettings(), searchParams]);
+  const [model, query, state] = await Promise.all([loadSettings(), searchParams, loadShellState()]);
+  const shell = liveShellProps(state, "engineer", { tone: model.pill.tone, label: model.pill.label, lines: model.footerLines });
   return (
     <AppShell
       active="settings"
       live="engineer"
-      status={model.pill}
+      status={shell.status}
       context={<HeaderContext items={model.header.items} />}
-      footer={
-        model.engineReachable
-          ? { tone: model.pill.tone, label: model.pill.label, lines: model.footerLines }
-          : ENGINE_OFFLINE_FOOTER
-      }
+      footer={shell.footer}
     >
       <Settings model={model} initialSection={parseSection(query.section)} />
     </AppShell>

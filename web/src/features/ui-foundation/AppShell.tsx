@@ -13,6 +13,8 @@ export type ShellStatus = {
   tone: ShellTone;
   label: string;
   menu?: boolean;
+  /** Rows for the hover and focus popover under the pill. */
+  details?: Array<{ label: string; value: string; tone: ShellTone }>;
 };
 
 export type ShellFooter = {

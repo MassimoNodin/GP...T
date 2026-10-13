@@ -300,3 +300,23 @@ test("session context is rejected without a track name", () => {
     null,
   );
 });
+
+test("one combined header pill across screens", () => {
+  const live = map.combinedStatus(acquisition("receiving"), runtime("ready"));
+  assert.equal(live.label, "Telemetry live · Engineer ready");
+  assert.equal(live.tone, "green");
+  assert.equal(live.details.length, 2);
+  const stale = map.combinedStatus(acquisition("stale"), runtime("ready"));
+  assert.equal(stale.tone, "amber");
+  const broken = map.combinedStatus(acquisition("receiving"), null);
+  assert.equal(broken.label, "Telemetry live · Engineer offline");
+  assert.equal(broken.tone, "red");
+  const offline = map.combinedStatus(null, null);
+  assert.equal(offline.label, "Engine offline");
+  assert.deepEqual(map.sessionFooter(null, null, ["x"]), map.ENGINE_OFFLINE_FOOTER);
+  assert.deepEqual(map.sessionFooter(acquisition("receiving"), null, ["Jeddah"]), {
+    tone: "green",
+    label: "Telemetry live",
+    lines: ["Jeddah"],
+  });
+});

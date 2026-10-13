@@ -89,6 +89,52 @@
   color: var(--muted);
 }
 
+.pillWrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.pillWrap .pill:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.pillDetails {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: var(--z-menu);
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 300px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.pillWrap:hover .pillDetails,
+.pillWrap:focus-within .pillDetails {
+  display: flex;
+}
+
+.pillDetail {
+  display: grid;
+  grid-template-columns: auto 76px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.pillDetailLabel {
+  color: var(--muted);
+}
+
 .pillChevron {
   margin-left: 2px;
   color: #5b4a1c;
