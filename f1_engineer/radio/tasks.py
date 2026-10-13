@@ -30,6 +30,16 @@ def parse_task_request(request: str) -> TaskAction | None:
     task_id = None
     if update:
         task_id, text = int(update.group(1)), update.group(2)
+    duration = re.fullmatch(r"(.+) for (?:the )?next ([1-9][0-9]?) laps?", text)
+    watch = re.fullmatch(r"(?:watch (.+)|tell me if (.+) starts closing)", duration.group(1) if duration else text)
+    if watch:
+        target = watch.group(1) or watch.group(2)
+        laps = None
+        if duration:
+            laps = int(duration.group(2))
+            if laps > 20:
+                raise ValueError("Please choose one to twenty upcoming laps.")
+        return TaskAction("update" if task_id is not None else "create", target + " catch or defend watch", task_id, laps)
     report = re.fullmatch(r"(?:tell me|report)(?: at)? (?:the )?end of (?:(each|next|every|the) )?lap (.+)", text)
     if not report:
         return None
@@ -59,7 +69,8 @@ class LapReportTask:
         return {"task_id": self.task_id, "version": self.version, "state": self.state,
                 "targets": list(self.plan.targets), "metrics": list(self.plan.metrics),
                 "first_lap": self.first_lap, "until_lap": self.until_lap,
-                "reference_policy": "named drivers fixed; race-position roles refreshed each lap"}
+                "reference_policy": ("watch driver identity fixed; pauses outside adjacency" if "race_watch" in self.plan.metrics
+                                     else "named drivers fixed; race-position roles refreshed each lap")}
 
 
 class LapReportRegistry:
@@ -70,6 +81,9 @@ class LapReportRegistry:
 
     def views(self) -> list[dict]:
         return [task.view() for task in self._tasks.values()]
+
+    def active(self) -> tuple[LapReportTask, ...]:
+        return tuple(task for task in self._tasks.values() if task.state == "active")
 
     def clear(self, reason: str) -> None:
         for task in self._tasks.values():
@@ -93,6 +107,9 @@ class LapReportRegistry:
             raise ValueError("Please choose one to twenty upcoming laps.")
         if len(bindings) != len(plan.targets):
             raise ValueError("Task references do not match its driver targets.")
+        if "race_watch" in plan.metrics and (plan.metrics != ("race_watch",) or len(plan.targets) != 1
+                                            or not isinstance(bindings[0], str)):
+            raise ValueError("A watch requires one driver with a fixed identity and no additional facts.")
         if task_id is None:
             for task in active:
                 if task.plan == plan and task.fixed_bindings == bindings and task.until_lap == (lap + laps - 1 if laps is not None else None):

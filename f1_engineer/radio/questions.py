@@ -13,6 +13,7 @@ class QuestionPlan:
 
 
 METRICS = {
+    "race_watch": r"catch or defend watch",
     "leader_gap_change": r"gap change to (?:the )?leader|(?:gap|delta|time) to (?:the )?leader change that lap|delta that lap",
     "front_gap_change": r"gap change to (?:the )?car (?:in front|ahead)|(?:gap|delta|time) to (?:the )?car (?:in front|ahead) change that lap",
     "lap_comparison": r"(?:last|previous|latest)(?: completed)? lap comparisons?",

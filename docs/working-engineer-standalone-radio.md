@@ -484,3 +484,68 @@ full suite passed 2,165 tests with 16 skipped tests and two existing deprecation
 warnings. Radio compilation, CLI help, staged whitespace and local documentation
 link checks passed. This is synthetic/mocked verification; in-game speech,
 wheel-only operation and real acoustic latency remain unverified.
+
+## Fixed-driver catch/defend watches
+
+The standalone radio can register a bounded adjacent-driver watch through a
+typed request or an explicitly submitted transcript:
+
+```text
+ask Tell me if Norris starts closing
+ask Watch the car ahead
+ask Watch Leclerc for the next 5 laps
+ask Update task 1 watch Norris
+ask What are you tracking?
+ask Cancel task 1
+```
+
+A watch shares the existing three-task/nine-fact budget, IDs, update, cancellation,
+expiry and scope-reset controls. It requires one explicitly resolved driver and
+cannot be combined with additional facts in that task. Names, initial race
+positions and initial ahead/behind roles all freeze the selected participant
+identity. The acknowledgement confirms the driver; an overtake does not silently
+retarget the watch. A non-adjacent named driver can be registered, but the watch
+pauses until the same driver is eligible and adjacent. `status` exposes the watch
+version, comparable-boundary count, role, notice state and current eligibility
+reason. Listing tasks identifies watches as fixed-identity references.
+
+Ahead watches use your gap to the car ahead. Behind watches use the watched
+driver's gap to their car ahead, only after verifying that you occupy that unique
+adjacent race position. No race gaps are invented by subtracting unrelated
+drivers' leader gaps. Both cars need known on-track/racing status, unique valid
+race positions, valid positive gap values and compatible lap progression. Ahead
+references must align with your new lap at the completion sample. A same-race-lap
+driver behind may still be on your just-completed lap until they cross the line;
+that expected phase difference is accepted, but additional lap separation is not.
+
+Three consecutive qualified player-lap boundaries provide two observed intervals.
+Both intervals must shrink by at least 0.100 seconds and the total reduction must
+be at least 0.300 seconds to announce closing. The mirrored rule announces
+opening. Otherwise the watch reports no consistent closing/opening trend, not
+that the driver has stopped closing. These are explicit noise-filter policies,
+not latency acceptance gates. They do not establish equal tyres, valid lap times,
+driving pace, future catching time or a recommended driving manoeuvre.
+
+The watch speaks once when collecting samples, when a supported trend changes,
+or when its eligibility changes to a paused condition. It does not repeat the
+same trend every lap. Ineligible/missing snapshots, pits, role/position changes,
+replacement, lap misalignment, discontinuities and observation interruptions
+discard the trend window; recovery needs fresh samples. Session/history scope
+failures follow the existing task invalidation rules. Obsolete bundled watch
+speech is cancelled and cannot be repeated when the reference becomes invalid.
+
+Watch notices and ordinary lap reports combine into one owned proactive utterance.
+A watch-only event with no new notice is silent rather than falling back to the
+default player lap call. Quiet/listening still consumes observations and notices
+without replaying a backlog. Finite watches consume each completion even during
+warm-up or ineligibility; very short watches may expire without enough evidence.
+`radio_watch_notice` logs task/version, lap and notice text, alongside existing
+dispatch timing events. No detailed telemetry demands, persistence, model/runtime
+changes or automatic transcript execution are added. Non-adjacent catch/defend
+analysis and real-game/audio acceptance remain outside this increment.
+
+Validation: 496 focused tests passed, including 51 new watch cases. The full
+suite passed 2,216 tests with 16 skipped tests and two existing deprecation
+warnings. Radio compilation, CLI help, local documentation links and staged
+whitespace checks passed. Evidence is synthetic/mocked; game-focused wheel
+activation, real audio, acoustic latency and user acceptance remain unverified.

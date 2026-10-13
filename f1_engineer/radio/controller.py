@@ -11,6 +11,7 @@ from .gaps import GAP_CHANGES, LapGapTracker
 from .questions import plan_question, timing_fact
 from .scheduler import RadioMessage, RadioScheduler
 from .tasks import LapReportRegistry, parse_task_request
+from .watches import RaceWatchTracker
 
 
 def _integer(value, minimum=0, maximum=2**64 - 1):
@@ -50,6 +51,7 @@ class RadioController:
         self._history = []
         self.tasks = LapReportRegistry(notify=self.notify)
         self.gaps = LapGapTracker()
+        self.watches = RaceWatchTracker()
 
     def _unavailable(self, reason: str) -> None:
         self.scheduler.set_scope(None)
@@ -60,6 +62,7 @@ class RadioController:
         safe_reason = reason if re.fullmatch(r"[a-z0-9_]{1,96}", reason) else "unavailable"
         self._reset_gaps()
         self.tasks.clear(safe_reason)
+        self.watches.clear()
         self._report("unavailable", safe_reason)
 
     def _report(self, status: str, reason=None) -> None:
@@ -110,6 +113,7 @@ class RadioController:
         if changed:
             self._history.clear()
             self.tasks.clear("scope_changed")
+            self.watches.clear()
             self._reset_gaps()
         elif not _integer(player["lap"].get("current_lap_number"), 1, 255):
             self._clear_tasks("lap_number_unavailable")
@@ -121,6 +125,8 @@ class RadioController:
         self._drivers = deepcopy(snapshot["drivers"])
         self._received_at = now
         self._age_s = age
+        if self.watches.observe(self.tasks.active(), self._player, self._resolve_target, now=now):
+            self.scheduler.cancel_owner("lap_reports")
         prior_gap_results = dict(self.gaps.results)
         self.gaps.observe(self._player, self._resolve_target, now=now)
         if prior_gap_results and prior_gap_results != self.gaps.results:
@@ -133,6 +139,7 @@ class RadioController:
             if not changed and self._cursor is not None:
                 self.scheduler.cancel()
                 self.tasks.clear("event_history_gap")
+                self.watches.clear()
                 self._reset_gaps()
                 self.notify({"event": "radio_resynchronised", "reason": "event_history_gap"})
             self._cursor = cursor
@@ -212,6 +219,7 @@ class RadioController:
                 "reason": self._status[1] if self._status else "not_connected",
                 "conversation_turns": len(self._history),
                 "tasks": self.tasks.views(),
+                "watches": self.watches.views(),
                 "quiet": self.scheduler.muted, "pending_messages": len(self.scheduler.pending),
                 "active_message": self.scheduler.active.key if self.scheduler.active else None}
 
@@ -270,14 +278,18 @@ class RadioController:
 
     def _clear_tasks(self, reason: str) -> None:
         self.tasks.clear(reason)
+        self.watches.clear()
         self._reset_gaps()
 
     def _reset_gaps(self) -> None:
         self.gaps.clear()
+        self.watches.reset_intervals()
         self.scheduler.cancel_owner("gap_changes")
         self.scheduler.cancel_owner("lap_reports")
 
     def _timing_fact(self, metric: str, row: dict) -> str:
+        if metric == "race_watch":
+            return "use watch followed by one driver to create a catch or defend watch"
         if metric in GAP_CHANGES:
             return self.gaps.answer(metric, is_player=row["identity"] == self._player["identity"])
         return timing_fact(metric, row["lap"], self._player["lap"])
@@ -303,6 +315,8 @@ class RadioController:
                 for task in active:
                     targets = ", ".join(target.removeprefix("name:").replace("position:", "P") for target in task["targets"])
                     metrics = ", ".join(metric.replace("_", " ") for metric in task["metrics"])
+                    if "race_watch" in task["metrics"]:
+                        targets += " (fixed driver identity, not a refreshed race-position role)"
                     expiry = f"through lap {task['until_lap']}" if task["until_lap"] is not None else "until cancelled or session change"
                     lines.append(f"Task {task['task_id']}: {targets}; {metrics}; {expiry}.")
                 text = " ".join(lines) if lines else "No active lap reports."
@@ -311,6 +325,7 @@ class RadioController:
                 text = "All lap-report tracking cancelled."
             elif action.kind == "cancel":
                 if self.tasks.cancel(action.task_id):
+                    self.watches.remove(action.task_id)
                     self.scheduler.cancel_owner("lap_reports")
                     text = f"Task {action.task_id} cancelled."
                 else:
@@ -321,17 +336,28 @@ class RadioController:
                 aliases = tuple(alias for row in self._drivers if isinstance(row, dict)
                                 and (name := self._participant_name(row)) is not None for alias in driver_name_aliases(name))
                 plan = plan_question(action.question, names=aliases)
+                watching = "race_watch" in plan.metrics
+                if watching and (len(plan.targets) != 1 or plan.metrics != ("race_watch",)):
+                    raise ValueError("Watch one explicit driver at a time without additional facts.")
+                if watching and plan.targets == ("self",):
+                    raise ValueError("Choose another driver to watch.")
                 bindings = []
                 for target in plan.targets:
-                    row = self._resolve_target(target) if target.startswith("name:") else None
-                    if target.startswith("name:") and row is None:
+                    row = self._resolve_target(target) if watching or target.startswith("name:") else None
+                    if (watching or target.startswith("name:")) and row is None:
                         raise ValueError("A named report target is unavailable or ambiguous. Use a full name or race position.")
+                    if watching and row["identity"] == self._player["identity"]:
+                        raise ValueError("Choose another driver to watch.")
                     bindings.append(json.dumps(row["identity"], sort_keys=True) if row is not None else None)
                 task = self.tasks.install(plan, tuple(bindings), cursor=self._cursor or 0,
                                           lap=self._player["lap"]["current_lap_number"], laps=action.laps, task_id=action.task_id)
                 self.scheduler.cancel_owner("lap_reports")
+                self.watches.observe(self.tasks.active(), self._player, self._resolve_target, now=now)
                 expiry = f"through lap {task.until_lap}" if task.until_lap is not None else "until cancelled or the session changes"
                 text = f"Task {task.task_id} active: end-of-lap report from lap {task.first_lap}, {expiry}."
+                if watching:
+                    name = self._participant_name(row) or plan.targets[0].removeprefix("name:").replace("position:", "P")
+                    text += f" Watching {name}; driver identity fixed. Three comparable adjacent-driver boundaries required. Alerts report trend changes."
         except ValueError as error:
             text = str(error)
         self._control_answer(text, now=now)
@@ -346,6 +372,16 @@ class RadioController:
             return False
         reports = []
         for task in tasks:
+            if "race_watch" in task.plan.metrics:
+                watch = self.watches.complete(task, event["lap_number"])
+                if watch is not None:
+                    row = self._resolve_target(task.plan.targets[0], json.loads(task.fixed_bindings[0]))
+                    label = self._participant_name(row) if row is not None else None
+                    label = label or task.plan.targets[0].removeprefix("name:").replace("position:", "P")
+                    reports.append(f"Task {task.task_id}, {label}: " + watch)
+                    self.notify({"event": "radio_watch_notice", "task_id": task.task_id,
+                                 "version": task.version, "lap_number": event["lap_number"], "text": watch})
+                continue
             pieces = []
             for target, fixed in zip(task.plan.targets, task.fixed_bindings):
                 row = self._resolve_target(target, json.loads(fixed)) if fixed is not None else self._resolve_target(target)
@@ -358,6 +394,9 @@ class RadioController:
                         label = name
                     pieces.append(f"{label}: " + ", ".join(self._timing_fact(metric, row) for metric in task.plan.metrics) + ".")
             reports.append(f"Task {task.task_id}: " + " ".join(pieces))
+        if not reports:
+            self.tasks.complete_lap(event["lap_number"])
+            return True
         text = f"Lap {event['lap_number']} reports. " + " ".join(reports)
         if len(text.encode("utf-8")) > 1024:
             text = "The lap reports are too long to speak safely. Request fewer drivers or facts."
