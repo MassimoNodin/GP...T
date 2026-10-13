@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { LiveShellFooter, LiveShellProvider, LiveStatusPill } from "@/features/live-status/LiveShell";
+import { ReviewBadge } from "@/features/live-status/ReviewBadge";
+import { SessionWatcher } from "@/features/live-status/SessionWatcher";
 import { ShellFooterBlock, StatusPill } from "@/features/live-status/ShellParts";
 import { F1Logo } from "./F1Logo";
 import { DriveIcon, ReviewIcon, SettingsIcon } from "./icons";
@@ -79,6 +81,7 @@ export function AppShell({
                 >
                   <Icon size={17} className={styles.navIcon} />
                   {label}
+                  {key === "review" && <ReviewBadge />}
                 </Link>
               </li>
             ))}
@@ -87,7 +90,10 @@ export function AppShell({
         {live ? <LiveShellFooter fallback={footer} /> : <ShellFooterBlock footer={footer} />}
       </aside>
       <main id="main" className={styles.main} tabIndex={-1}>
-        <ToastProvider>{children}</ToastProvider>
+        <ToastProvider>
+          {children}
+          <SessionWatcher />
+        </ToastProvider>
       </main>
     </div>
   );

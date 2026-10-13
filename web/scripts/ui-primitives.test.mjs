@@ -744,7 +744,7 @@ test("toast durations, stacking limit and the no-provider fallback", () => {
 test("AppShell mounts ToastProvider around the page content", async () => {
   const shell = await readFile(new URL(`${dir}/AppShell.tsx`, sourceRootUrl), "utf8");
   assert.match(shell, /import \{ ToastProvider \} from "\.\/Toast";/);
-  assert.match(shell, /<main id="main" className=\{styles\.main\} tabIndex=\{-1\}>\s*<ToastProvider>\{children\}<\/ToastProvider>\s*<\/main>/);
+  assert.match(shell, /<main id="main" className=\{styles\.main\} tabIndex=\{-1\}>\s*<ToastProvider>\s*\{children\}\s*<SessionWatcher \/>\s*<\/ToastProvider>\s*<\/main>/);
 });
 
 // --- Dropzone ---------------------------------------------------------------

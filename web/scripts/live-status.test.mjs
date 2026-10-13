@@ -328,3 +328,35 @@ test("one combined header pill across screens", () => {
     lines: ["Jeddah"],
   });
 });
+
+/** Transpiles a module to a data URL, rewriting the given import specifiers. */
+async function loadUrl(relativePath, replacements = {}) {
+  let source = await readFile(new URL(relativePath, sourceRoot), "utf8");
+  for (const [from, to] of Object.entries(replacements)) source = source.replaceAll(`"${from}"`, `"${to}"`);
+  const output = typescript.transpileModule(source, {
+    fileName: relativePath,
+    compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 },
+  }).outputText;
+  return `data:text/javascript;base64,${Buffer.from(output).toString("base64")}`;
+}
+
+test("finished sessions are announced once, and visits mark them read", async () => {
+  const formatUrl = await loadUrl("features/review-data/format.ts");
+  const watch = await import(await loadUrl("features/live-status/session-watch.ts", { "@/features/review-data/format": formatUrl }));
+  const session = (id, lifecycle, trackName = "Jeddah", sessionType = "race") => ({
+    id,
+    lifecycle,
+    generation: "",
+    uid: "",
+    acquisition: "",
+    occurrence: 1,
+    context: { trackName, sessionType },
+  });
+  const list = [session("a", "ended"), session("b", "active"), session("c", "interrupted", "Sakhir (Bahrain)", "qualifying_1")];
+  assert.deepEqual(watch.newlyFinished(null, list), [], "nothing is new on the first visit");
+  assert.deepEqual(watch.finishedIds(list), ["a", "c"]);
+  assert.deepEqual(watch.newlyFinished(new Set(["a"]), list), [{ id: "c", title: "Sakhir (Bahrain) · Qualifying 1" }]);
+  assert.deepEqual(watch.readAfterVisit(["a", "c"], "/review"), []);
+  assert.deepEqual(watch.readAfterVisit(["a", "c"], "/review/a/laps"), ["c"]);
+  assert.deepEqual(watch.readAfterVisit(["a", "c"], "/drive"), ["a", "c"]);
+});
