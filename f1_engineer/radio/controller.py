@@ -49,6 +49,8 @@ class RadioController:
         self._answer_id = 0
         self._status = None
         self._drivers = []
+        self._observation_frame = None
+        self._fact_age_s = None
         self._history = []
         self.tasks = LapReportRegistry(notify=self.notify)
         self.gaps = LapGapTracker()
@@ -129,6 +131,10 @@ class RadioController:
         self._drivers = deepcopy(snapshot["drivers"])
         self._received_at = now
         self._age_s = age
+        self._observation_frame = {**scope, "frame_identifier": snapshot.get("frame_identifier"),
+                                   "frame_ordinal": snapshot.get("frame_ordinal"),
+                                   "session_time_s": snapshot.get("session_time_s"),
+                                   "lap_received_monotonic_ns": snapshot.get("received_monotonic_ns")}
         if self.pace.observe(self._player, now=now):
             self.scheduler.cancel_owner("pace_sectors")
             if any("consistency" in task.plan.metrics for task in self.tasks.active()):
@@ -323,7 +329,38 @@ class RadioController:
         self.scheduler.cancel_owner("lap_reports")
         self.scheduler.cancel_owner("pace_sectors")
 
-    def _timing_fact(self, metric: str, row: dict) -> str:
+    def _timing_fact(self, metric: str, row: dict, *, now: float) -> str:
+        if metric in ("speed", "brake_input"):
+            observation = row.get("observation")
+            if (row["identity"] != self._player["identity"] or not isinstance(observation, dict)
+                    or observation.get("status") != "available" or observation.get("identity") != row["identity"]
+                    or not isinstance(observation.get("value"), dict)):
+                return "aligned player telemetry unavailable; opponent detail is not exposed by this radio feed"
+            source = observation.get("source")
+            expected = self._observation_frame
+            if (not isinstance(source, dict) or expected is None
+                    or any(value is None or source.get(key) != value for key, value in expected.items())
+                    or any(not _integer(source.get(key), 0, 2**64 - 1) for key in
+                           ("session_uid", "packet_format", "epoch", "frame_identifier", "frame_ordinal",
+                            "lap_received_monotonic_ns", "telemetry_received_monotonic_ns", "telemetry_captured_at_ns"))
+                    or type(source.get("session_time_s")) not in (int, float) or not math.isfinite(source["session_time_s"])
+                    or any(observation["value"].get(key) is None
+                           or type(observation["value"].get(key)) is not type(row["lap"].get(field))
+                           or observation["value"].get(key) != row["lap"].get(field) for key, field in
+                           (("lap_number", "current_lap_number"), ("lap_distance_m", "lap_distance_m"),
+                            ("current_lap_time_ms", "current_lap_time_ms")))):
+                return "aligned player telemetry unavailable"
+            telemetry_age = (self._age_s + now - self._received_at
+                             + (source["lap_received_monotonic_ns"] - source["telemetry_received_monotonic_ns"]) / 1e9)
+            if not 0 <= telemetry_age < 3:
+                return "aligned player telemetry unavailable"
+            self._fact_age_s = max(self._fact_age_s or 0, telemetry_age)
+            value = observation["value"].get("speed_kph" if metric == "speed" else "brake")
+            if metric == "speed" and _integer(value, 0, 65535):
+                return f"observed speed {value} kilometres per hour"
+            if metric == "brake_input" and type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 1:
+                return f"observed brake input {value * 100:.1f} percent, not a braking point"
+            return "aligned player telemetry unavailable"
         if metric == "consistency":
             return "use coach my consistency to track three consecutive valid observed laps"
         if metric == "target_pace":
@@ -442,6 +479,7 @@ class RadioController:
                                           owner="pace_sectors"), now=now)
 
     def _report_tasks(self, event: dict, *, now: float, age: float) -> bool:
+        self._fact_age_s = None
         tasks = self.tasks.eligible(event_id=event["id"], lap=event["lap_number"])
         if not tasks or self._player["lap"].get("current_lap_number") != event["lap_number"] + 1:
             return False
@@ -484,7 +522,7 @@ class RadioController:
                     name = self._participant_name(row)
                     if name is not None and target != "self":
                         label = name
-                    pieces.append(f"{label}: " + ", ".join(self._timing_fact(metric, row) for metric in task.plan.metrics) + ".")
+                    pieces.append(f"{label}: " + ", ".join(self._timing_fact(metric, row, now=now) for metric in task.plan.metrics) + ".")
             reports.append(f"Task {task.task_id}: " + " ".join(pieces))
         if not reports:
             self.tasks.complete_lap(event["lap_number"])
@@ -494,6 +532,7 @@ class RadioController:
             text = "The lap reports are too long to speak safely. Request fewer drivers or facts."
         self.notify({"event": "radio_task_report", "task_ids": [task.task_id for task in tasks],
                      "lap_number": event["lap_number"], "text": text})
+        age = max(age, self._fact_age_s or 0)
         self.scheduler.submit(RadioMessage(f"reports:{event['id']}", self.scheduler.scope, text, "proactive",
                                           now + 60, observation_age_s=age, dispatch_before=now + 3 - age,
                                           owner="lap_reports"), now=now)
@@ -501,6 +540,7 @@ class RadioController:
         return True
 
     def answer_question(self, question: str, *, now: float) -> None:
+        self._fact_age_s = None
         self.check_freshness(now=now)
         previous = self._history[-1] if self._history else None
         started = time.perf_counter()
@@ -540,7 +580,7 @@ class RadioController:
                             result += " Use a full name or P1 to P24."
                     else:
                         result = f"{label} (car slot {row['car_index']}): " + ", ".join(
-                            self._timing_fact(metric, row) for metric in plan.metrics) + "."
+                            self._timing_fact(metric, row, now=now) for metric in plan.metrics) + "."
                     results.append(result)
                 text = " ".join(results)
                 self._history.append({"question": question, "plan": plan, "bindings": bindings})
@@ -549,6 +589,8 @@ class RadioController:
         self.notify({"event": "radio_question_answer", "question": question, "text": text,
                      "results": results, "planning_s": time.perf_counter() - started})
         age = self._age_s + now - self._received_at if self._player is not None else None
+        if self._fact_age_s is not None:
+            age = max(age or 0, self._fact_age_s)
         self.scheduler.submit(RadioMessage(f"answer:{self._answer_id}", self.scheduler.scope,
                                           text, "answer", now + 60, observation_age_s=age,
                                           dispatch_before=now + 3 - (age or 0),

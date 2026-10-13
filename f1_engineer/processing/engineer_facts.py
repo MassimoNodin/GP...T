@@ -10,9 +10,68 @@ from ..driver_names import display_driver_name
 from ..sessions.car_lap_inventory import VerifiedCarParticipant
 from .detail_policy import DetailPolicyFrame
 from ..udp.car_status import CarStatusData
+from ..udp.models import PacketId
 
 
 EVENT_LIMIT = 128
+
+
+def _context(frame):
+    context = frame.context
+    reason = "session_context_missing"
+    if context is not None:
+        reason = "session_context_scope_mismatch"
+        if context.session_uid == frame.session_uid and int(context.packet_format) == frame.packet_format:
+            return {"status": "available", "reason": None, "value": context.to_dict(),
+                    "layout_verified": False, "coaching_eligible": False}
+    return {"status": "unavailable", "reason": reason, "value": None,
+            "layout_verified": False, "coaching_eligible": False}
+
+
+def _player_observation(frame, frame_identifier, session_time_s, received_monotonic_ns, packets):
+    result = {"status": "unavailable", "reason": "player_telemetry_missing", "value": None,
+              "source": None, "coaching_eligible": False}
+    matches = [(packet, data) for packet, data in packets
+               if packet.packet_kind is PacketId.CAR_TELEMETRY
+               and int(packet.packet_format) == frame.packet_format
+               and packet.header.session_uid == frame.session_uid
+               and packet.header.overall_frame_identifier == frame_identifier
+               and packet.header.player_car_index == frame.player_car_index]
+    if not matches:
+        return result
+    if any(not math.isfinite(packet.header.session_time) or packet.header.session_time != session_time_s
+           for packet, data in matches):
+        return {**result, "reason": "player_telemetry_clock_mismatch"}
+    if any(data.cars != matches[0][1].cars for packet, data in matches[1:]):
+        return {**result, "reason": "player_telemetry_conflicted"}
+    if any(type(packet.received_monotonic_ns) is not int or packet.received_monotonic_ns < 0
+           or type(packet.captured_at_ns) is not int or packet.captured_at_ns < 0
+           or abs(packet.received_monotonic_ns - received_monotonic_ns) >= 3_000_000_000
+           for packet, data in matches):
+        return {**result, "reason": "player_telemetry_provenance_unavailable"}
+    packet, data = matches[-1]
+    car = frame.player_car_index
+    if type(car) is not int or not 0 <= car < len(data.cars):
+        return {**result, "reason": "player_telemetry_slot_unavailable"}
+    telemetry = data.cars[car]
+    values = {"speed_kph": telemetry.speed_kph, "brake": telemetry.brake,
+              "throttle": telemetry.throttle, "steering": telemetry.steering, "gear": telemetry.gear}
+    if (type(telemetry.speed_kph) is not int or not 0 <= telemetry.speed_kph <= 65535
+            or type(telemetry.gear) is not int or not -1 <= telemetry.gear <= 8
+            or any(type(values[key]) not in (int, float) or not math.isfinite(values[key])
+                   or not low <= values[key] <= high
+                   for key, low, high in (("brake", 0, 1), ("throttle", 0, 1), ("steering", -1, 1)))):
+        return {**result, "reason": "player_telemetry_values_invalid"}
+    values.update(lap_number=frame.lap_data[car].current_lap_number,
+                  lap_distance_m=frame.lap_data[car].lap_distance_m,
+                  current_lap_time_ms=frame.lap_data[car].current_lap_time_ms)
+    return {**result, "status": "available", "reason": None, "value": values,
+            "source": {"session_uid": frame.session_uid, "packet_format": frame.packet_format,
+                       "epoch": frame.lifecycle_epoch, "frame_identifier": frame_identifier,
+                       "frame_ordinal": frame.frame_ordinal, "session_time_s": session_time_s,
+                       "lap_received_monotonic_ns": received_monotonic_ns,
+                       "telemetry_received_monotonic_ns": packet.received_monotonic_ns,
+                       "telemetry_captured_at_ns": packet.captured_at_ns}}
 
 
 def qualify_snapshot(snapshot: dict[str, Any], *, now_ns: int,
@@ -30,6 +89,8 @@ def qualify_snapshot(snapshot: dict[str, Any], *, now_ns: int,
         reason = "lap_observations_stale"
     if reason is not None:
         result.update(status="unavailable", reason=reason, drivers=[], events=[])
+        result["context"] = {"status": "unavailable", "reason": reason, "value": None,
+                             "layout_verified": False, "coaching_eligible": False}
     return result
 
 
@@ -71,7 +132,7 @@ class LiveEngineerFacts:
                 session_time_s: float, received_monotonic_ns: int | None,
                 captured_at_ns: int | None,
                 statuses: dict[int, tuple[CarStatusData | None, str | None]] | None = None,
-                participants: tuple[VerifiedCarParticipant, ...] = ()) -> None:
+                participants: tuple[VerifiedCarParticipant, ...] = (), telemetry_packets=()) -> None:
         self.begin_frame(frame.session_uid, frame.lifecycle_epoch)
         if not frame.association_scope_assessable or frame.lap_data_conflicted:
             self.invalidate("lap_association_unavailable")
@@ -96,7 +157,7 @@ class LiveEngineerFacts:
             "frame_identifier": frame_identifier, "session_time_s": session_time_s,
             "received_monotonic_ns": received_monotonic_ns,
             "captured_at_ns": captured_at_ns, "player_car_index": frame.player_car_index,
-            "drivers": [],
+            "drivers": [], "context": _context(frame),
         }
         counts = Counter(item.car_index for item in frame.verified_tenures)
         participant_counts = Counter(item.tenure.car_index for item in participants)
@@ -144,6 +205,10 @@ class LiveEngineerFacts:
             driver["participant"] = {"identity": dict(identity), "value": participant_value,
                                      "status": "available" if participant_value is not None else "unavailable",
                                      "reason": None if participant_value is not None else participant_reason}
+            if car == frame.player_car_index:
+                driver["observation"] = {**_player_observation(frame, frame_identifier, session_time_s,
+                                                              received_monotonic_ns, telemetry_packets),
+                                         "identity": dict(identity)}
             current["drivers"].append(driver)
             prior = prior_drivers.get(car)
             if prior is None or prior["identity"] != identity:
@@ -194,6 +259,8 @@ class LiveEngineerFacts:
 
     def snapshot(self) -> dict[str, Any]:
         result = {"schema_version": 1,
+                  "context": {"status": "unavailable", "reason": self._reason, "value": None,
+                              "layout_verified": False, "coaching_eligible": False},
                   "status": "available" if self._current and self._current["drivers"] else "unavailable",
                   "reason": self._reason, "scope": None, "drivers": [],
                   "received_monotonic_ns": None, "captured_at_ns": None,

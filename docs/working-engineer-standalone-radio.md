@@ -701,3 +701,55 @@ full suite passed 2,361 tests with 16 skipped tests and two existing deprecation
 warnings. Radio compilation, CLI help, local documentation links and staged
 whitespace checks passed. Evidence is synthetic/mocked; in-game speech,
 wheel/audio behaviour and measured acoustic latency remain unverified.
+
+## Live player observations for corner-work foundations
+
+The authenticated live feed now carries last-reported canonical session context
+bound to the current session UID and packet format, and a player-only observation
+with speed, brake, throttle, steering and gear, alongside lap number, elapsed
+time and distance. The observation includes verified driver identity, epoch,
+frame ordinal/identifier, session time and separate lap/telemetry receipt
+provenance. This is measurement access, not corner authority or coaching.
+
+The standalone radio can retrieve observed speed and brake input with:
+
+```text
+ask What is my speed and brake input?
+ask My and the leader speed
+```
+
+Speed is reported in kilometres per hour and brake input as a percentage,
+explicitly not a braking point. Multi-driver requests retain partial results;
+opponent detail is unavailable through this feed. Detailed opponent acquisition
+still requires the existing detail-demand policies and ownership. No opponent
+demands are created and no Gate A selection rules are expanded by this increment.
+
+Player telemetry must match the lap packet session, format, frame, player slot
+and exact session clock, and have bounded known receipt provenance. Missing,
+conflicting, clock-mismatched or invalid channel values produce unavailable
+observations without breaking otherwise valid lap facts. No prior-frame
+telemetry is filled forward. The radio additionally checks driver identity,
+scope/frame provenance, lap values and telemetry age independently of lap age.
+Queued answers and lap reports expire against the oldest included fact, so a
+newer lap packet cannot extend the dispatch lifetime of older speed/brake data.
+Existing three-second freshness safeguards remain safety checks, not latency
+acceptance targets. Stale/failed runtime snapshots suppress both observations
+and context, without mutating the cached source.
+
+Session context does not identify a verified layout, an approved corner model
+or stable conditions throughout a lap; unknown decoded fields remain unknown.
+Both context and observations explicitly remain non-coaching evidence. Existing
+time-trial corner ranking and diagnostic session-comparison gates are unchanged.
+Focus-corner selection, fixed references, connected regional measurement,
+braking/minimum-speed tracking and proactive progress feedback remain unfinished.
+No runtime/model pins, persistence, deployment or automatic voice submission
+behaviour change. Real-game availability and acoustic latency remain unverified.
+
+Validation: 702 focused tests passed, including 50 new live-observation cases.
+The full rerun passed 2,411 tests with 16 skipped tests and two existing
+deprecation warnings. An initial full run hit a recording-inbox HTTP 503 in
+the recording start/stop test; the 63-test recording/observation isolation run
+and full rerun both passed without changes to recording code. Compilation,
+radio CLI help, local documentation links and staged whitespace checks passed.
+Evidence is synthetic/mocked, not live-game, wheel/audio or acoustic-latency
+acceptance, and does not complete the focus-corner coaching requirement.
