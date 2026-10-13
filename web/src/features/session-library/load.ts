@@ -153,6 +153,7 @@ async function evidenceRows(sessions: EvidenceSession[], dates: ReadonlyMap<stri
       photo: trackPhotoUrl(track),
       kind: "v2",
       bestMs: bestEvidenceLap(laps)?.ms ?? null,
+      bestLapId: bestEvidenceLap(laps)?.id ?? null,
       groupKey: v2GroupKey(session, context),
       notes: highlightLines(laps).join(" "),
       highlights: highlightLines(laps),

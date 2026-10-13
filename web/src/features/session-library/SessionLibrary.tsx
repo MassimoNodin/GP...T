@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ReviewIcon, SearchIcon, SortIcon } from "@/features/ui-foundation/icons";
 import { Dropzone } from "@/features/ui-foundation/Dropzone";
@@ -151,7 +152,14 @@ function LibraryBody({ model }: { model: LibraryModel }) {
       <PageHeader
         title="Session Library"
         subtitle="Browse, search and manage your recorded sessions."
-        actions={<ImportSessionButton />}
+        actions={
+          <span className={styles.headerActions}>
+            <Link href="/review/tracks" className={styles.bestsLink}>
+              Personal bests
+            </Link>
+            <ImportSessionButton />
+          </span>
+        }
       />
       <Dropzone
         accept={[".f1ecap"]}

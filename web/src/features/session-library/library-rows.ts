@@ -31,6 +31,8 @@ export type LibraryRow = LibrarySession & {
   download: { captureId: string; version: string } | null;
   /** Fastest valid lap, when the attempts were read. */
   bestMs?: number | null;
+  /** Lap id of that lap, for Lap Analysis links. */
+  bestLapId?: string | null;
   /** Rows sharing this key belong to one race weekend (see `weekends.ts`). */
   groupKey?: string | null;
 };

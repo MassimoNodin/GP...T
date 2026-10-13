@@ -51,6 +51,7 @@ const weekendsUrl = await urlOf("session-library/weekends.ts", {
 const state = await import(importStateUrl);
 const rows = await import(rowsUrl);
 const weekends = await import(weekendsUrl);
+const bests = await import(await urlOf("session-library/personal-bests.ts"));
 
 /* ----------------------------------------------------------------- helpers */
 
@@ -746,4 +747,42 @@ test("sessions group into race weekends in weekend order", () => {
   assert.equal(weekends.shortSessionLabel("Qualifying 3"), "Q3");
   assert.equal(weekends.shortSessionLabel("Practice 2"), "P2");
   assert.equal(weekends.weekendDateLabel(weekend.weekend), "4 Jun 2024");
+});
+
+test("personal bests per circuit, per session type and over time", () => {
+  const session = (key, label, bestMs, title = "Jeddah") =>
+    row({
+      key,
+      kind: "v2",
+      title,
+      meta: ["F1 25"],
+      bestMs,
+      bestLapId: bestMs === null ? null : "3",
+      href: `/review/${key}`,
+      type: { label, tone: "blue" },
+    });
+  const list = [
+    session("race", "Race", 93303),
+    session("q2", "Qualifying 2", 89049),
+    session("q1", "Qualifying 1", 90258),
+    session("p1", "Practice 1", 92252),
+    session("empty", "Practice 2", null),
+    session("bah", "Race", 93189, "Sakhir (Bahrain)"),
+    session("unknown", "Race", 90000, "Unknown circuit"),
+  ];
+  const tracks = bests.personalBests(list);
+  assert.deepEqual(tracks.map((track) => track.title), ["Jeddah", "Sakhir (Bahrain)"]);
+  const [jeddah] = tracks;
+  assert.equal(jeddah.best.ms, 89049);
+  assert.equal(jeddah.best.href, "/review/q2/laps?target=3");
+  assert.equal(jeddah.sessions, 4);
+  assert.deepEqual(jeddah.byFamily.map((entry) => [entry.family, entry.best.ms, entry.sessions]), [
+    ["Practice", 92252, 1],
+    ["Qualifying", 89049, 2],
+    ["Race", 93303, 1],
+  ]);
+  assert.deepEqual(jeddah.trend.map((ref) => ref.row.key), ["p1", "q1", "q2", "race"], "oldest first");
+  assert.deepEqual(bests.trendPoints([90000]), [[0.5, 0.5]]);
+  assert.deepEqual(bests.runningBest(jeddah.trend), [92252, 90258, 89049, 89049]);
+  assert.equal(bests.sessionFamily("Sprint Shootout 1"), "Qualifying");
 });
