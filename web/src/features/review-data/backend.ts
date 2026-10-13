@@ -202,9 +202,10 @@ export function telemetryStatus(status: AcquisitionStatus): ShellStatus {
       return { tone: "green", label: "Telemetry live" };
     case "starting":
     case "listening":
-      return { tone: "amber", label: "Waiting for game" };
     case "stale":
-      return { tone: "amber", label: "Telemetry stale" };
+      // A server read cannot tell a quiet session from a closed game; the
+      // browser's live shell refines this once it has seen packets.
+      return { tone: "grey", label: "Waiting for game" };
     case "disabled":
       return { tone: "grey", label: "Telemetry disabled" };
     default:
@@ -220,7 +221,7 @@ export function telemetryFooter(status: AcquisitionStatus, fallback: ShellFooter
       : status.state === "listening" || status.state === "starting"
         ? "Listening on UDP 20777"
         : status.state === "stale"
-          ? "No recent packets"
+          ? "Listening on UDP 20777"
           : "Not receiving";
   return { tone: pill.tone, label: pill.label, lines: [fallback.lines[0] ?? "", detail] };
 }

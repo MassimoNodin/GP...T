@@ -175,6 +175,8 @@ export function proactiveRow(state: ProactiveState): StatusRow {
 
 export type DriveRowsInput = {
   acquisition: AcquisitionStatus | null;
+  /** Packets arrived in the last few minutes, so "stale" means the session went quiet. */
+  recentlyLive?: boolean;
   runtime: RuntimeInfo | null;
   microphone: MicrophoneState;
   speech: SpeechState;
@@ -191,7 +193,7 @@ export function buildDriveRows(input: DriveRowsInput): StatusRow[] {
   const reachable = isReachable(input.acquisition, input.runtime);
   return [
     reachable ? engineerRuntimeRow(input.runtime) : unavailableRow(ROW_ENGINEER),
-    reachable ? telemetryRow(input.acquisition) : unavailableRow(ROW_TELEMETRY),
+    reachable ? telemetryRow(input.acquisition, input.recentlyLive) : unavailableRow(ROW_TELEMETRY),
     microphoneRow(input.microphone),
     reachable ? speechRow(input.speech) : unavailableRow(ROW_SPEECH),
     reachable ? questionProcessingRow(input.runtime) : unavailableRow(ROW_QUESTIONS),
@@ -217,6 +219,7 @@ export type Activity = {
 
 export type ActivityInput = {
   acquisition: AcquisitionStatus | null;
+  recentlyLive?: boolean;
   runtime: RuntimeInfo | null;
   /** Preview text of the call being read aloud, or null. */
   speaking: string | null;
@@ -244,11 +247,11 @@ export function driveActivity(input: ActivityInput): Activity {
       ? { text: "Following live telemetry", tone: "green", wave: { kind: "static", tone: "green", dim: true } }
       : { text: "Telemetry live, engineer not ready", tone: "amber", wave: { kind: "flat", tone: "amber" } };
   }
-  if (state === "listening" || state === "starting") {
-    return { text: "Waiting for the game", tone: "amber", wave: { kind: "flat", tone: "amber" } };
+  if (state === "listening" || state === "starting" || (state === "stale" && !input.recentlyLive)) {
+    return { text: "Waiting for the game", tone: "grey", wave: { kind: "flat", tone: "grey" } };
   }
   if (state === "stale") {
-    return { text: "Telemetry stale", tone: "amber", wave: { kind: "flat", tone: "amber" } };
+    return { text: "Telemetry went quiet", tone: "amber", wave: { kind: "flat", tone: "amber" } };
   }
   if (state === null) {
     return { text: "Telemetry unavailable", tone: "grey", wave: { kind: "flat", tone: "grey" } };

@@ -60,9 +60,9 @@ const reference = [
 
 test("acquisition state maps to header pill and footer", () => {
   assert.deepEqual(map.telemetryStatus(acquisition("receiving")), { tone: "green", label: "Telemetry live" });
-  assert.deepEqual(map.telemetryStatus(acquisition("listening")), { tone: "amber", label: "Waiting for game" });
-  assert.deepEqual(map.telemetryStatus(acquisition("starting")), { tone: "amber", label: "Waiting for game" });
-  assert.deepEqual(map.telemetryStatus(acquisition("stale")), { tone: "amber", label: "Telemetry stale" });
+  assert.deepEqual(map.telemetryStatus(acquisition("listening")), { tone: "grey", label: "Waiting for game" });
+  assert.deepEqual(map.telemetryStatus(acquisition("starting")), { tone: "grey", label: "Waiting for game" });
+  assert.deepEqual(map.telemetryStatus(acquisition("stale")), { tone: "grey", label: "Waiting for game" });
   assert.deepEqual(map.telemetryStatus(acquisition("disabled")), { tone: "grey", label: "Telemetry disabled" });
   assert.deepEqual(map.telemetryStatus(acquisition("stopped")), { tone: "red", label: "Telemetry offline" });
   assert.deepEqual(map.telemetryStatus(acquisition("failed")), { tone: "red", label: "Telemetry offline" });
@@ -74,9 +74,9 @@ test("acquisition state maps to header pill and footer", () => {
     lines: ["F1 25", "Ready"],
   });
   assert.deepEqual(map.telemetryFooter(acquisition("listening"), "F1 25").lines, ["F1 25", "Listening on UDP 20777"]);
-  assert.deepEqual(map.telemetryFooter(acquisition("stale"), "F1 25").lines, ["F1 25", "No recent packets"]);
+  assert.deepEqual(map.telemetryFooter(acquisition("stale"), "F1 25").lines, ["F1 25", "Listening on UDP 20777"]);
   assert.deepEqual(map.telemetryFooter(null, "F1 25").lines, ["F1 25", "Not reachable"]);
-  assert.equal(map.telemetryShell(acquisition("stale"), "x").status.label, "Telemetry stale");
+  assert.equal(map.telemetryShell(acquisition("stale"), "x").status.label, "Waiting for game");
 });
 
 test("engineer runtime maps to header pill and footer", () => {
@@ -129,7 +129,8 @@ test("system rows take live telemetry, runtime and question state", () => {
   assert.equal(degraded[0].status, "Not configured");
   assert.equal(degraded[0].tone, "amber");
   assert.equal(degraded[0].detail, "Codex login required");
-  assert.equal(degraded[1].status, "Stale");
+  assert.equal(degraded[1].status, "Waiting");
+  assert.equal(map.telemetryRow(acquisition("stale"), true).status, "Stale");
   assert.equal(degraded[3].status, "Unavailable");
   assert.equal(degraded[3].tone, "red");
 
@@ -306,8 +307,15 @@ test("one combined header pill across screens", () => {
   assert.equal(live.label, "Telemetry live · Engineer ready");
   assert.equal(live.tone, "green");
   assert.equal(live.details.length, 2);
-  const stale = map.combinedStatus(acquisition("stale"), runtime("ready"));
-  assert.equal(stale.tone, "amber");
+  // "stale" with no recent live data is just a closed game.
+  const idle = map.combinedStatus(acquisition("stale"), runtime("ready"));
+  assert.equal(idle.label, "Waiting for game · Engineer ready");
+  assert.equal(idle.tone, "grey");
+  const quiet = map.combinedStatus(acquisition("stale"), runtime("ready"), true);
+  assert.equal(quiet.label, "Telemetry stale · Engineer ready");
+  assert.equal(quiet.tone, "amber");
+  assert.equal(map.telemetryDetail(acquisition("stale")), "Listening on UDP 20777");
+  assert.equal(map.telemetryDetail(acquisition("stale"), true), "Packets stopped arriving");
   const broken = map.combinedStatus(acquisition("receiving"), null);
   assert.equal(broken.label, "Telemetry live · Engineer offline");
   assert.equal(broken.tone, "red");

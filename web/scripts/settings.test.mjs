@@ -168,9 +168,9 @@ test("telemetry receiver maps state, address, mode, counters and delay", () => {
   assert.equal(info.port, 20777);
   const view = display.describeReceiver(info);
   assert.equal(view.available, true);
-  assert.equal(view.stateLabel, "Stale");
-  assert.equal(view.tone, "amber");
-  assert.equal(row(view, "Receiver").value, "Stale");
+  assert.equal(view.stateLabel, "Waiting");
+  assert.equal(view.tone, "grey");
+  assert.equal(row(view, "Receiver").value, "Waiting");
   assert.equal(row(view, "Address").value, "192.168.1.115:20777");
   assert.equal(row(view, "Receiver mode").value, "Isolated process");
   assert.equal(row(view, "Packets received").value, "156");
@@ -229,7 +229,7 @@ test("game connection tile only claims Connected while packets are arriving", ()
   assert.deepEqual(receiving, { name: "F1 24 (PC)", state: "Connected (23 ms)", tone: "green-text" });
   const stale = display.describeGameTile(display.parseReceiverInfo(acquisition), reference);
   assert.equal(stale.state, "Not connected");
-  assert.equal(stale.tone, "amber-text");
+  assert.equal(stale.tone, "grey-text");
   const disabled = display.describeGameTile(display.parseReceiverInfo({ state: "disabled" }), reference);
   assert.equal(disabled.state, "Disabled");
   const offline = display.describeGameTile(null, reference);

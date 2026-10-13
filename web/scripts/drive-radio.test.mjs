@@ -737,7 +737,7 @@ test("browser rows are unaffected by the engine; engine rows read unavailable wh
 test("one failing engine endpoint only affects its own rows", () => {
   const result = rows.buildDriveRows({ acquisition: acquisition("listening"), runtime: null, ...sources });
   const byLabel = Object.fromEntries(result.map((row) => [row.label, row]));
-  assert.equal(byLabel["Telemetry (Game Data)"].status, "Listening");
+  assert.equal(byLabel["Telemetry (Game Data)"].status, "Waiting");
   assert.equal(byLabel["Engineer Runtime"].status, "Unavailable");
   assert.equal(byLabel["Speech Recognition"].status, "Ready");
 });
@@ -772,12 +772,13 @@ test("current activity states and waveform modes", () => {
   });
   assert.deepEqual(activity({ acquisition: acquisition("listening") }), {
     text: "Waiting for the game",
-    tone: "amber",
-    wave: { kind: "flat", tone: "amber" },
+    tone: "grey",
+    wave: { kind: "flat", tone: "grey" },
   });
   assert.equal(activity({ acquisition: acquisition("starting") }).text, "Waiting for the game");
-  assert.deepEqual(activity({ acquisition: acquisition("stale") }), {
-    text: "Telemetry stale",
+  assert.equal(activity({ acquisition: acquisition("stale") }).text, "Waiting for the game");
+  assert.deepEqual(activity({ acquisition: acquisition("stale"), recentlyLive: true }), {
+    text: "Telemetry went quiet",
     tone: "amber",
     wave: { kind: "flat", tone: "amber" },
   });

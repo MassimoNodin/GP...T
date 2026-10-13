@@ -4,6 +4,7 @@ import { createContext, useContext, useMemo, type ReactNode } from "react";
 import type { ShellFooter, ShellStatus } from "@/features/ui-foundation/AppShell";
 import { useAcquisitionFeed, useRuntimeFeed } from "./hooks";
 import { combinedStatus, sessionFooter, telemetryDetail } from "./map";
+import { useRecentlyLive } from "./recent-live";
 import { ShellFooterBlock, StatusPill } from "./ShellParts";
 
 export type LiveMode = "telemetry" | "engineer";
@@ -32,15 +33,17 @@ export function LiveShellProvider({
 }) {
   const acquisition = useAcquisitionFeed(undefined);
   const runtime = useRuntimeFeed(undefined);
+  const recentlyLive = useRecentlyLive(acquisition);
   const state = useMemo<ShellState>(() => {
     // Both halves are needed before the pill can say anything new.
     if (acquisition === undefined || runtime === undefined) return { status, footer };
-    const lines = mode === "telemetry" ? [footer.lines[0] ?? "", telemetryDetail(acquisition)] : footer.lines;
+    const lines =
+      mode === "telemetry" ? [footer.lines[0] ?? "", telemetryDetail(acquisition, recentlyLive)] : footer.lines;
     return {
-      status: { ...combinedStatus(acquisition, runtime), menu: status.menu },
-      footer: sessionFooter(acquisition, runtime, lines),
+      status: { ...combinedStatus(acquisition, runtime, recentlyLive), menu: status.menu },
+      footer: sessionFooter(acquisition, runtime, lines, recentlyLive),
     };
-  }, [acquisition, runtime, mode, status, footer]);
+  }, [acquisition, runtime, recentlyLive, mode, status, footer]);
   return <ShellContext.Provider value={state}>{children}</ShellContext.Provider>;
 }
 

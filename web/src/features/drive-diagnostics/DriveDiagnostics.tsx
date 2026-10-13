@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useAcquisitionFeed, useRuntimeFeed } from "@/features/live-status/hooks";
+import { useRecentlyLive } from "@/features/live-status/recent-live";
 import { isReachable, liveDataPill } from "@/features/live-status/map";
 import { Drawer } from "@/features/ui-foundation/Drawer";
 import { Card, PageHeader } from "@/features/ui-foundation/primitives";
@@ -64,6 +65,7 @@ export function DriveDiagnostics({ model }: { model: DriveModel }) {
   // Start from the server-read state (identical SSR output), then follow the
   // backend while the tab is visible. null = the backend did not answer.
   const acquisition = useAcquisitionFeed(model.initial.acquisition) ?? null;
+  const recentlyLive = useRecentlyLive(acquisition);
   const runtime = useRuntimeFeed(model.initial.runtime) ?? null;
   const speech = useSpeechStatus(model.speech);
   const microphone = useMicrophone();
@@ -162,15 +164,16 @@ export function DriveDiagnostics({ model }: { model: DriveModel }) {
     () =>
       buildDriveRows({
         acquisition,
+        recentlyLive,
         runtime,
         microphone,
         speech,
         audio: readAloud.audio,
         proactive: model.proactive,
       }),
-    [acquisition, runtime, microphone, speech, readAloud.audio, model.proactive],
+    [acquisition, recentlyLive, runtime, microphone, speech, readAloud.audio, model.proactive],
   );
-  const activity = driveActivity({ acquisition, runtime, speaking: readAloud.speaking, answering });
+  const activity = driveActivity({ acquisition, recentlyLive, runtime, speaking: readAloud.speaking, answering });
 
   // On the reference path, re-read the page as soon as the engine answers.
   useEffect(() => {
