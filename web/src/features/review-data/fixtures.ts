@@ -11,7 +11,7 @@ export const FIXTURE_SESSION_KEY = "monaco-2024-race";
 export const shellFixture = {
   engineerRunning: { tone: "green", label: "Engineer running" } satisfies ShellStatus,
   telemetryLive: { tone: "green", label: "Telemetry live" } satisfies ShellStatus,
-  replayMode: { tone: "amber", label: "Replay Mode", menu: true } satisfies ShellStatus,
+  replayMode: { tone: "amber", label: "Replay Mode" } satisfies ShellStatus,
   sessionFooter: {
     tone: "green",
     label: "Engineer running",

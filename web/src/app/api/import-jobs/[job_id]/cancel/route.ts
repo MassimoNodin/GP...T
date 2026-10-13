@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { forwardLocalRequest, isTrustedLocalMutation } from "@/lib/local-proxy";
+import { acceptsJson, proxyError, proxyImportJob } from "@/lib/proxy-json";
 import {
   appScreenFrom,
   appScreenPath,
@@ -33,11 +34,20 @@ export async function POST(
   { params }: { params: Promise<{ job_id: string }> },
 ) {
   const { job_id } = await params;
+  const wantsJson = acceptsJson(request);
   if (!isTrustedLocalMutation(request)) {
-    return NextResponse.json(
-      { error: "same_origin_request_required" },
-      { status: 403 },
-    );
+    return wantsJson
+      ? proxyError(403, "same_origin_request_required")
+      : NextResponse.json(
+          { error: "same_origin_request_required" },
+          { status: 403 },
+        );
+  }
+  if (wantsJson) {
+    if (!/^[a-f0-9]{32}$/.test(job_id)) {
+      return proxyError(404, "job_unavailable");
+    }
+    return proxyImportJob("cancel", `/api/v1/import-jobs/${job_id}/cancel`);
   }
   let form: FormData | null = null;
   try {

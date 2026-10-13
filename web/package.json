@@ -39,7 +39,9 @@
     "test:settings": "node --test scripts/settings.test.mjs",
     "test:ui-routes": "node --test scripts/ui-routes.test.mjs",
     "test:lap-analysis": "node --test scripts/lap-analysis.test.mjs",
-    "test:ui-primitives": "node --test scripts/ui-primitives.test.mjs"
+    "test:ui-primitives": "node --test scripts/ui-primitives.test.mjs",
+    "test:review-data-backend-ui": "node --test scripts/review-data-backend-ui.test.mjs",
+    "test:ui-proxy-routes": "node --test scripts/ui-proxy-routes.test.mjs"
   },
   "dependencies": {
     "next": "16.3.8",
