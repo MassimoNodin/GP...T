@@ -707,3 +707,16 @@ test("the library page is wired to the loader and the empty state copy matches t
   const loader = await readFile(new URL("load.ts", libraryRoot), "utf8");
   assert.doesNotMatch(loader, /shellFixture\.telemetryLive/, "the unreachable fallback must not be the green pill");
 });
+
+test("sessions with no timed laps are hidden until asked for", () => {
+  const list = [
+    row({ key: "a", laps: 7, detailed: true, kind: "v2" }),
+    row({ key: "b", laps: 0, detailed: true, kind: "v2" }),
+    row({ key: "c", laps: 0, detailed: false, kind: "v2" }),
+    row({ key: "d", laps: 0, detailed: true, kind: "v2", status: { label: "Processing 40%", tone: "blue" } }),
+  ];
+  assert.deepEqual(list.map((entry) => rows.isEmptySession(entry)), [false, true, false, false]);
+  assert.deepEqual(rows.filterRows(list, rows.NO_FILTERS).map((entry) => entry.key), ["a", "c", "d"]);
+  assert.equal(rows.filterRows(list, { ...rows.NO_FILTERS, showEmpty: true }).length, 4);
+  assert.equal(rows.filtersActive({ ...rows.NO_FILTERS, showEmpty: true }), false, "showing empty sessions is not a filter");
+});

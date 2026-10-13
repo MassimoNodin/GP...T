@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ReviewIcon, SearchIcon, SortIcon } from "@/features/ui-foundation/icons";
 import { Dropzone } from "@/features/ui-foundation/Dropzone";
-import { Badge, Button, IconButton, PageHeader, Select, StatusBadge } from "@/features/ui-foundation/primitives";
+import { Badge, Button, Checkbox, IconButton, PageHeader, Select, StatusBadge } from "@/features/ui-foundation/primitives";
 import { EmptyState, InlineAlert, NotAvailable } from "@/features/ui-foundation/states";
 import { TrackPhoto } from "@/features/ui-foundation/TrackPhoto";
 import { ImportActivityDrawer } from "./imports/ImportActivityDrawer";
@@ -12,7 +12,15 @@ import { ImportProvider, useImports } from "./imports/ImportProvider";
 import { ImportRow } from "./imports/ImportRow";
 import { listItems } from "./imports/import-state";
 import { ImportSessionButton } from "./ImportSessionButton";
-import { NO_FILTERS, PAGE_SIZE, filterRows, filtersActive, paginate, type RowFilters } from "./library-rows";
+import {
+  NO_FILTERS,
+  PAGE_SIZE,
+  filterRows,
+  filtersActive,
+  isEmptySession,
+  paginate,
+  type RowFilters,
+} from "./library-rows";
 import type { LibraryModel, LibraryRow } from "./load";
 import { SessionRowMenu } from "./SessionRowMenu";
 import styles from "./SessionLibrary.module.css";
@@ -80,6 +88,7 @@ function LibraryBody({ model }: { model: LibraryModel }) {
   );
 
   const rows = useMemo(() => filterRows(model.sessions, filters), [model.sessions, filters]);
+  const emptyCount = useMemo(() => model.sessions.filter(isEmptySession).length, [model.sessions]);
   const page = paginate(rows, shown);
   const inFlight = listItems(imports.items);
   const hasSessions = model.sessions.length > 0;
@@ -167,6 +176,15 @@ function LibraryBody({ model }: { model: LibraryModel }) {
                 <SortIcon size={16} />
               </IconButton>
             </div>
+            {emptyCount > 0 && (
+              <div className={styles.listTools}>
+                <Checkbox
+                  label={`Show empty sessions (${emptyCount})`}
+                  checked={filters.showEmpty}
+                  onChange={(showEmpty) => change({ showEmpty })}
+                />
+              </div>
+            )}
           </>
         )}
 
@@ -205,11 +223,22 @@ function LibraryBody({ model }: { model: LibraryModel }) {
             {rows.length === 0 && hasSessions && (
               <EmptyState
                 size="card"
-                title="No sessions match these filters."
+                title={
+                  !filtersActive(filters) && !filters.showEmpty && emptyCount > 0
+                    ? "Every session so far has no timed laps."
+                    : "No sessions match these filters."
+                }
                 action={
                   filtersActive(filters) ? (
-                    <Button variant="muted" onClick={() => change({ ...NO_FILTERS, oldestFirst: filters.oldestFirst })}>
+                    <Button
+                      variant="muted"
+                      onClick={() => change({ ...NO_FILTERS, oldestFirst: filters.oldestFirst, showEmpty: filters.showEmpty })}
+                    >
                       Clear filters
+                    </Button>
+                  ) : !filters.showEmpty && emptyCount > 0 ? (
+                    <Button variant="muted" onClick={() => change({ showEmpty: true })}>
+                      Show empty sessions
                     </Button>
                   ) : undefined
                 }

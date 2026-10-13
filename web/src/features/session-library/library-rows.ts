@@ -89,9 +89,30 @@ export type RowFilters = {
   source: string;
   status: string;
   oldestFirst: boolean;
+  /** Include sessions with no timed laps (see `isEmptySession`). */
+  showEmpty: boolean;
 };
 
-export const NO_FILTERS: RowFilters = { query: "", track: "", type: "", source: "", status: "", oldestFirst: false };
+export const NO_FILTERS: RowFilters = {
+  query: "",
+  track: "",
+  type: "",
+  source: "",
+  status: "",
+  oldestFirst: false,
+  showEmpty: false,
+};
+
+/**
+ * Sessions with nothing to review: attempts were read and none is a timed lap,
+ * or the circuit is unknown and no lap was recorded. Rows still processing are
+ * never empty, since their laps are not counted yet.
+ */
+export function isEmptySession(row: LibraryRow): boolean {
+  if (row.kind === "reference" || !row.detailed) return false;
+  if (row.status.label.startsWith("Processing")) return false;
+  return row.laps === 0;
+}
 
 export function filtersActive(filters: RowFilters): boolean {
   return Boolean(filters.query.trim() || filters.track || filters.type || filters.source || filters.status);
@@ -106,6 +127,7 @@ export function searchText(row: LibraryRow): string {
 export function filterRows(rows: LibraryRow[], filters: RowFilters): LibraryRow[] {
   const needle = filters.query.trim().toLowerCase();
   const filtered = rows.filter((row) => {
+    if (!filters.showEmpty && isEmptySession(row)) return false;
     if (filters.track && row.title !== filters.track) return false;
     if (filters.type && row.type.label !== filters.type) return false;
     if (filters.source && row.source.label !== filters.source) return false;
