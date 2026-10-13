@@ -606,3 +606,42 @@
     overflow-x: auto;
   }
 }
+
+/* Answer footer pills beyond the reference's Answered / Unavailable */
+.answered[data-tone="grey"] {
+  background: var(--grey-soft);
+  color: var(--muted);
+}
+
+.answered[data-tone="amber"] {
+  background: var(--amber-soft);
+  color: var(--amber-text);
+}
+
+.answered[data-tone="red"] {
+  background: var(--red-soft);
+  color: var(--red-text);
+}
+
+.telemetry[data-interactive="true"] {
+  cursor: crosshair;
+  touch-action: pan-y;
+}
+
+.telemetry:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+
+/* Real sessions: tabs with their own card layouts use the full width. */
+.content[data-real="true"][data-view="map"],
+.content[data-real="true"][data-view="sectors"],
+.content[data-real="true"][data-view="quality"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.content[tabindex]:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 4px;
+}

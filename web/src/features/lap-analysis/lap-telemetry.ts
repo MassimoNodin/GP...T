@@ -7,17 +7,25 @@ import type { AnalysisLap } from "./load";
 //
 // v2 attempt detail (`GET /api/v2/session-evidence/sessions/{id}/attempts/{revision}`):
 //   data.samples[]  lap_distance_m, speed_mps, throttle (0..1), brake (0..1),
-//                   steering (-1..1), frame_ordinal
+//                   steering (-1..1), frame_ordinal, and when recorded gear and
+//                   world_position_x_m / world_position_z_m (motion packets)
 // v1 trace preview (`GET /api/v1/attempts/{key}/traces`):
 //   data.channels.{speed,throttle,brake,steering}.segments[].points[]
 //   with lap_distance_m and value (km/h, percent, percent, -1..1)
 
-export type ChannelKey = "speed" | "throttle" | "brake" | "steering";
+export type ChannelKey = "speed" | "throttle" | "brake" | "steering" | "gear";
+/** Channels every recorded lap is expected to carry; gear is optional. */
 export const CHANNEL_KEYS: readonly ChannelKey[] = ["speed", "throttle", "brake", "steering"];
+export const ALL_CHANNEL_KEYS: readonly ChannelKey[] = [...CHANNEL_KEYS, "gear"];
 
 export type TracePoint = [number, number];
 /** Unbroken stretches of one channel; a gap in the data starts a new run. */
 export type ChannelRuns = TracePoint[][];
+
+/** Distance covered by one channel (before thinning) and how many unbroken runs it had. */
+export type ChannelCoverage = { metres: number; runs: number };
+/** Recorded car positions as [lap distance, world x, world z]. */
+export type TracePath = Array<[number, number, number]>;
 
 export type LapTrace =
   | {
@@ -26,10 +34,21 @@ export type LapTrace =
       samples: number;
       /** Furthest lap distance covered, in metres. */
       length: number;
-      /** Speed in km/h, throttle and brake in percent, steering in percent of full lock. */
+      /** Speed in km/h, throttle and brake in percent, steering in percent of full lock, gear as a number. */
       channels: Partial<Record<ChannelKey, ChannelRuns>>;
+      /** Per channel: metres covered and number of unbroken runs (runs - 1 = gaps). */
+      coverage: Partial<Record<ChannelKey, ChannelCoverage>>;
+      /** World positions when the samples carried them; null otherwise. */
+      path: TracePath | null;
     }
-  | { state: "unavailable"; reason: string };
+  | {
+      state: "unavailable";
+      reason: string;
+      /** Backend or local reason code, when there is one. */
+      code: string | null;
+      /** True when the lap's detail was deferred and can be processed on request. */
+      processable: boolean;
+    };
 
 export type LapTelemetry =
   /** Fixture session: the illustrative reference traces drawn by the chart. */
@@ -64,8 +83,15 @@ export function traceUnavailableReason(code: string | null | undefined): string 
   return "Telemetry samples for this lap could not be read.";
 }
 
+const PROCESSABLE_CODES = new Set(["not_processed", "trace_not_selected"]);
+
 export function unavailableTrace(code: string | null | undefined): LapTrace {
-  return { state: "unavailable", reason: traceUnavailableReason(code) };
+  return {
+    state: "unavailable",
+    reason: traceUnavailableReason(code),
+    code: code ?? null,
+    processable: code !== null && code !== undefined && PROCESSABLE_CODES.has(code),
+  };
 }
 
 /* ----------------------------------------------------------------- parsing */
@@ -91,14 +117,60 @@ function thin(run: TracePoint[]): TracePoint[] {
   return kept;
 }
 
-function finishTrace(runsByChannel: Partial<Record<ChannelKey, TracePoint[][]>>, samples: number, length: number): LapTrace {
+/** Minimum recorded positions before a measured track line is drawn. */
+const MIN_PATH_POINTS = 20;
+/** Positions closer than this along the lap are thinned from the measured line. */
+const PATH_METRES = 4;
+
+function finishTrace(
+  runsByChannel: Partial<Record<ChannelKey, TracePoint[][]>>,
+  samples: number,
+  length: number,
+  path: TracePath | null = null,
+): LapTrace {
   const channels: Partial<Record<ChannelKey, ChannelRuns>> = {};
-  for (const key of CHANNEL_KEYS) {
-    const runs = (runsByChannel[key] ?? []).filter((run) => run.length >= 2).map(thin);
-    if (runs.length) channels[key] = runs;
+  const coverage: Partial<Record<ChannelKey, ChannelCoverage>> = {};
+  for (const key of ALL_CHANNEL_KEYS) {
+    const raw = (runsByChannel[key] ?? []).filter((run) => run.length >= 2);
+    if (raw.length === 0) continue;
+    coverage[key] = {
+      metres: raw.reduce((total, run) => total + (run[run.length - 1][0] - run[0][0]), 0),
+      runs: raw.length,
+    };
+    channels[key] = raw.map(thin);
   }
-  if (Object.keys(channels).length === 0) return unavailableTrace("no_samples");
-  return { state: "available", samples, length, channels };
+  if (!CHANNEL_KEYS.some((key) => channels[key])) return unavailableTrace("no_samples");
+  return {
+    state: "available",
+    samples,
+    length,
+    channels,
+    coverage,
+    path: path && path.length >= MIN_PATH_POINTS ? path : null,
+  };
+}
+
+function thinPath(points: TracePath): TracePath {
+  const kept: TracePath = [];
+  for (const point of points) {
+    if (!kept.length || point[0] - kept[kept.length - 1][0] >= PATH_METRES) kept.push(point);
+  }
+  return kept;
+}
+
+/** World x/z of one v2 sample: separate fields, or the `world_position_m` tuple. */
+function samplePosition(sample: Record<string, unknown>): [number, number] | null {
+  if (sample.motion_available === false) return null;
+  const x = finite(sample.world_position_x_m);
+  const z = finite(sample.world_position_z_m);
+  if (x !== null && z !== null) return [x, z];
+  const tuple = sample.world_position_m;
+  if (Array.isArray(tuple) && tuple.length >= 3) {
+    const tupleX = finite(tuple[0]);
+    const tupleZ = finite(tuple[2]);
+    if (tupleX !== null && tupleZ !== null) return [tupleX, tupleZ];
+  }
+  return null;
 }
 
 /** Maps a v2 attempt-detail response (`{data: {attempt, samples}}`) onto chart series. */
@@ -106,7 +178,12 @@ export function traceFromEvidence(body: unknown): LapTrace {
   const samples = asRecord(asRecord(body)?.data)?.samples;
   if (!Array.isArray(samples)) return unavailableTrace("no_samples");
 
-  type Row = { d: number; order: number; values: Record<ChannelKey, number | null> };
+  type Row = {
+    d: number;
+    order: number;
+    values: Record<ChannelKey, number | null>;
+    position: [number, number] | null;
+  };
   const rows: Row[] = [];
   samples.forEach((item, index) => {
     const sample = asRecord(item);
@@ -117,6 +194,7 @@ export function traceFromEvidence(body: unknown): LapTrace {
     const brake = finite(sample.brake);
     const steering = finite(sample.steering);
     rows.push({
+      position: samplePosition(sample),
       d: distance,
       order: finite(sample.frame_ordinal) ?? index,
       values: {
@@ -124,6 +202,7 @@ export function traceFromEvidence(body: unknown): LapTrace {
         throttle: throttle === null ? null : throttle * 100,
         brake: brake === null ? null : brake * 100,
         steering: steering === null ? null : steering * 100,
+        gear: finite(sample.gear),
       },
     });
   });
@@ -141,8 +220,10 @@ export function traceFromEvidence(body: unknown): LapTrace {
 
   const runs: Partial<Record<ChannelKey, TracePoint[][]>> = {};
   const open: Partial<Record<ChannelKey, TracePoint[]>> = {};
+  const positions: TracePath = [];
   for (const row of ordered) {
-    for (const key of CHANNEL_KEYS) {
+    if (row.position) positions.push([row.d, row.position[0], row.position[1]]);
+    for (const key of ALL_CHANNEL_KEYS) {
       const value = row.values[key];
       if (value === null) {
         open[key] = undefined;
@@ -157,7 +238,7 @@ export function traceFromEvidence(body: unknown): LapTrace {
       run.push([row.d, value]);
     }
   }
-  return finishTrace(runs, ordered.length, furthest);
+  return finishTrace(runs, ordered.length, furthest, positions.length ? thinPath(positions) : null);
 }
 
 /** Maps a v1 trace preview (`{data: {channels}}`) onto chart series. */
@@ -213,15 +294,88 @@ export function axisFor(traces: Array<LapTrace | undefined>): Axis | null {
   return { from: 0, to, ticks };
 }
 
+/** A distance window in metres. */
+export type DistanceRange = { from: number; to: number };
+
+/** Round tick positions for any window, at most about eight. */
+export function ticksBetween(from: number, to: number): number[] {
+  const width = to - from;
+  if (!(width > 0)) return [from];
+  const step = [10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000].find((candidate) => width / candidate <= 8) ?? 2000;
+  const ticks: number[] = [];
+  for (let tick = Math.ceil(from / step) * step; tick <= to + 1e-6; tick += step) ticks.push(tick);
+  return ticks;
+}
+
+/**
+ * Value of a channel at lap distance `d`, interpolated between neighbouring
+ * samples of the run that spans it. `null` when no run covers `d` or the
+ * neighbours are further apart than `maxGapM` (a hole in the data). `step`
+ * holds the previous value instead of interpolating (gear).
+ */
+export function valueAt(runs: ChannelRuns | undefined, d: number, options: { maxGapM?: number; step?: boolean } = {}): number | null {
+  if (!runs) return null;
+  const maxGap = options.maxGapM ?? 40;
+  for (const run of runs) {
+    if (run.length === 0 || d < run[0][0] || d > run[run.length - 1][0]) continue;
+    let low = 0;
+    let high = run.length - 1;
+    while (high - low > 1) {
+      const mid = (low + high) >> 1;
+      if (run[mid][0] <= d) low = mid;
+      else high = mid;
+    }
+    const [d0, v0] = run[low];
+    const [d1, v1] = run[high];
+    if (d1 - d0 > maxGap) return null;
+    if (options.step || d1 === d0) return d >= d1 ? v1 : v0;
+    return v0 + ((v1 - v0) * (d - d0)) / (d1 - d0);
+  }
+  return null;
+}
+
+/** Runs clipped to a window; the cut ends are interpolated so no data outside leaks in. */
+export function clipRuns(runs: ChannelRuns | undefined, range: DistanceRange | null): ChannelRuns {
+  if (!runs) return [];
+  if (!range) return runs;
+  const clipped: ChannelRuns = [];
+  for (const run of runs) {
+    if (run.length < 2 || run[run.length - 1][0] < range.from || run[0][0] > range.to) continue;
+    const points: TracePoint[] = [];
+    for (let i = 0; i < run.length; i += 1) {
+      const [d, v] = run[i];
+      if (d < range.from) {
+        const next = run[i + 1];
+        if (next && next[0] > range.from) points.push([range.from, v + ((next[1] - v) * (range.from - d)) / (next[0] - d)]);
+        continue;
+      }
+      if (d > range.to) {
+        const previous = run[i - 1];
+        if (previous && previous[0] < range.to) {
+          points.push([range.to, previous[1] + ((v - previous[1]) * (range.to - previous[0])) / (d - previous[0])]);
+        }
+        break;
+      }
+      points.push([d, v]);
+    }
+    if (points.length >= 2) clipped.push(points);
+  }
+  return clipped;
+}
+
 /* ---------------------------------------------------------------- insights */
 
-function span(trace: LapTrace | undefined, key: ChannelKey): { min: number; max: number } | null {
+function span(
+  trace: LapTrace | undefined,
+  key: ChannelKey,
+  range: DistanceRange | null = null,
+): { min: number; max: number } | null {
   if (trace?.state !== "available") return null;
   const runs = trace.channels[key];
   if (!runs) return null;
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
-  for (const run of runs) {
+  for (const run of clipRuns(runs, range)) {
     for (const [, value] of run) {
       if (value < min) min = value;
       if (value > max) max = value;
@@ -231,13 +385,13 @@ function span(trace: LapTrace | undefined, key: ChannelKey): { min: number; max:
 }
 
 /** Share of the recorded throttle distance spent at (nearly) full throttle, 0..100. */
-function fullThrottleShare(trace: LapTrace | undefined): number | null {
+function fullThrottleShare(trace: LapTrace | undefined, range: DistanceRange | null = null): number | null {
   if (trace?.state !== "available") return null;
   const runs = trace.channels.throttle;
   if (!runs) return null;
   let total = 0;
   let full = 0;
-  for (const run of runs) {
+  for (const run of clipRuns(runs, range)) {
     for (let i = 1; i < run.length; i += 1) {
       const length = run[i][0] - run[i - 1][0];
       total += length;
@@ -260,31 +414,47 @@ export function lapDifferences(
   reference: AnalysisLap | null,
   targetTrace: LapTrace | undefined,
   referenceTrace: LapTrace | undefined,
+  options: {
+    /** Scope the trace-derived differences to this window instead of the whole lap. */
+    range?: DistanceRange | null;
+    /** Time difference over the window in seconds (positive = target slower); replaces the lap-time line. */
+    timeDeltaS?: number | null;
+  } = {},
 ): Difference[] {
   if (!target || !reference) return [];
   if (target.id === reference.id) return [{ text: "Target and reference are the same lap." }];
+  const range = options.range ?? null;
   const items: Difference[] = [];
-  const delta = target.ms - reference.ms;
-  items.push({
-    text:
-      delta === 0
-        ? "Same lap time as the reference lap"
-        : `${delta > 0 ? "+" : "-"}${seconds(delta)}s (Lap ${target.lap} ${delta > 0 ? "slower" : "faster"})`,
-    emphasis: true,
-  });
+  const delta = range ? (options.timeDeltaS === null || options.timeDeltaS === undefined ? null : options.timeDeltaS * 1000) : target.ms - reference.ms;
+  if (delta !== null) {
+    const rounded = Math.round(delta);
+    items.push({
+      text:
+        rounded === 0
+          ? range
+            ? "No measurable time difference in this region"
+            : "Same lap time as the reference lap"
+          : `${rounded > 0 ? "+" : "-"}${seconds(rounded)}s (Lap ${target.lap} ${rounded > 0 ? "slower" : "faster"})`,
+      emphasis: true,
+    });
+  }
 
-  const minimum = [span(targetTrace, "speed"), span(referenceTrace, "speed")];
+  const minimum = [span(targetTrace, "speed", range), span(referenceTrace, "speed", range)];
   if (minimum[0] && minimum[1]) {
     const lowest = Math.round(minimum[0].min - minimum[1].min);
     if (lowest !== 0) items.push({ text: `${lowest < 0 ? "Lower" : "Higher"} minimum speed (${lowest > 0 ? "+" : "-"}${Math.abs(lowest)} km/h)` });
     const top = Math.round(minimum[0].max - minimum[1].max);
     if (top !== 0) items.push({ text: `${top < 0 ? "Lower" : "Higher"} top speed (${top > 0 ? "+" : "-"}${Math.abs(top)} km/h)` });
   }
-  const targetFull = fullThrottleShare(targetTrace);
-  const referenceFull = fullThrottleShare(referenceTrace);
+  const targetFull = fullThrottleShare(targetTrace, range);
+  const referenceFull = fullThrottleShare(referenceTrace, range);
   if (targetFull !== null && referenceFull !== null) {
     const share = Math.round(targetFull - referenceFull);
-    if (share !== 0) items.push({ text: `${share < 0 ? "Less" : "More"} time at full throttle (${share > 0 ? "+" : "-"}${Math.abs(share)}% of lap)` });
+    if (share !== 0) {
+      items.push({
+        text: `${share < 0 ? "Less" : "More"} time at full throttle (${share > 0 ? "+" : "-"}${Math.abs(share)}% of ${range ? "region" : "lap"})`,
+      });
+    }
   }
   return items;
 }

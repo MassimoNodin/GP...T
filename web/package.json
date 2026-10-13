@@ -42,7 +42,9 @@
     "test:ui-primitives": "node --test scripts/ui-primitives.test.mjs",
     "test:review-data-backend-ui": "node --test scripts/review-data-backend-ui.test.mjs",
     "test:ui-proxy-routes": "node --test scripts/ui-proxy-routes.test.mjs",
-    "test:session-overview": "node --test scripts/session-overview.test.mjs"
+    "test:session-overview": "node --test scripts/session-overview.test.mjs",
+    "test:lap-analysis-views": "node --test scripts/lap-analysis-views.test.mjs",
+    "test:engineer-answer": "node --test scripts/engineer-answer.test.mjs"
   },
   "dependencies": {
     "next": "16.3.8",

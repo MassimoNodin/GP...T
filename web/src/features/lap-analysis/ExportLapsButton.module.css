@@ -1,18 +1,40 @@
-.button {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  height: 34px;
+.menu {
   margin-left: 6px;
-  padding: 0 16px 0 14px;
+}
+
+.menu .trigger {
+  width: auto;
+  height: 34px;
+  gap: 10px;
+  padding: 0 12px 0 14px;
   border: 1px solid var(--border-strong);
   border-radius: 7px;
-  background: #fff;
-  color: #3d424a;
+  background: var(--surface);
+  color: var(--text-2);
   font-size: 12.5px;
   white-space: nowrap;
 }
 
-.button:hover {
+.menu .trigger:hover {
   background: var(--surface-hover);
+}
+
+.panel {
+  min-width: 270px;
+}
+
+.reason {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: normal;
+}
+
+.note {
+  margin: 4px 0 2px;
+  padding: 8px 10px 4px;
+  border-top: 1px solid var(--divider);
+  color: var(--muted);
+  font-size: 11.5px;
 }

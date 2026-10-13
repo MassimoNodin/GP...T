@@ -21,6 +21,7 @@ import {
 import { FIXTURE_SESSION_KEY, lapAnalysisFixture, shellFixture } from "@/features/review-data/fixtures";
 import { formatGame, formatSessionType } from "@/features/review-data/format";
 import { fixtureLaps } from "@/features/session-overview/load";
+import type { RegionModel } from "@/features/review-data/regions";
 import type { ShellFooter, ShellStatus } from "@/features/ui-foundation/AppShell";
 import { trackKeyFromName } from "@/features/ui-foundation/TrackMap";
 import { unavailableTrace, type LapTelemetry, type LapTrace } from "./lap-telemetry";
@@ -50,7 +51,31 @@ export type AnalysisLap = {
   pit?: boolean;
   /** False when the start of the lap was not observed. */
   startObserved?: boolean | null;
+  /** Why sector times are missing (humanised); set by the v2 `/laps` enrichment. */
+  sectorsReason?: string | null;
+  /** Where the sector times came from. */
+  sectorsSource?: "session_history" | "lap_data" | "timing_evidence" | null;
+  /** Tyre fitted on this lap (v2 enrichment). */
+  tyre?: LapTyre | null;
+  tyreReason?: string | null;
 };
+
+export type LapTyre = { label: string; actual: string | null; ageLaps: number | null };
+
+/** Corner regions of the circuit for this session. */
+export type RegionSource =
+  | { state: "available"; model: RegionModel }
+  /** The client reads them through the proxy (v2 only). */
+  | { state: "deferred" }
+  | { state: "none"; reason: string }
+  | { state: "reference" };
+
+/** Sector and tyre enrichment of v2 laps. */
+export type EnrichmentState =
+  | { state: "none" }
+  | { state: "loaded"; truncated: boolean }
+  | { state: "deferred" }
+  | { state: "unavailable"; reason: string };
 
 export type LapAnalysisModel = {
   sessionKey: string;
@@ -73,6 +98,18 @@ export type LapAnalysisModel = {
   telemetry: LapTelemetry;
   /** Registered track model for the circuit of a real session; null when none matches. */
   trackModel: string | null;
+  /** Track length when the recording reports it. */
+  trackLengthM: number | null;
+  /** Raw v1 session type (`time_trial`, ...), for the v1 comparison policy. */
+  sessionType: string | null;
+  /** v1 processing run id, to find the original capture. */
+  runId: string | null;
+  regions: RegionSource;
+  enrichment: EnrichmentState;
+  /** The engineer runtime reports `ready`, so a model may answer. */
+  runtimeReady: boolean;
+  /** Original capture download (v1 sessions whose capture is in the catalog). */
+  capture: { captureId: string; version: string } | null;
 };
 
 function fixtureModel(footer: ShellFooter): LapAnalysisModel {
@@ -105,6 +142,13 @@ function fixtureModel(footer: ShellFooter): LapAnalysisModel {
     lapDataNote: null,
     telemetry: { kind: "reference" },
     trackModel: null,
+    trackLengthM: null,
+    sessionType: null,
+    runId: null,
+    regions: { state: "reference" },
+    enrichment: { state: "none" },
+    runtimeReady: false,
+    capture: null,
   };
 }
 
@@ -146,6 +190,7 @@ export async function loadLapAnalysis(
       footer: acquisition ? telemetryFooter(acquisition, picked.footer) : picked.footer,
       telemetry: await selectedTraces(picked, readTrace),
       trackModel: await fetchTrackModelLabel(picked.track === UNKNOWN_CIRCUIT ? null : picked.track, trackLengthM),
+      trackLengthM,
     };
   };
 
@@ -189,6 +234,8 @@ export async function loadLapAnalysis(
       referenceId: best?.attempt_key ?? null,
       bestId: best?.attempt_key ?? null,
       source: "v1",
+      sessionType: session.context?.session_type ?? null,
+      runId: session.run_id ?? null,
     },
     (lap) => (lap.attemptKey ? fetchPreviewTrace(lap.attemptKey) : Promise.resolve(unavailableTrace(null))),
     session.context?.track_length_m ?? null,
@@ -222,7 +269,7 @@ function realShell(sessionKey: string, title: string, type: string, game: string
     // Replaced from telemetry acquisition by loadLapAnalysis.
     status: TELEMETRY_OFFLINE,
     header: [title, type],
-    footer: { ...TELEMETRY_OFFLINE, lines: [game, "Not receiving"] },
+    footer: { ...TELEMETRY_OFFLINE, lines: [game, "Not reachable"] },
     track: title,
     trackKey: trackKeyFromName(title),
     laps: [],
@@ -233,6 +280,14 @@ function realShell(sessionKey: string, title: string, type: string, game: string
     lapDataNote: null,
     telemetry: { kind: "real", traces: {} },
     trackModel: null,
+    trackLengthM: null,
+    sessionType: null,
+    runId: null,
+    // Filled in by `extendLapAnalysis` (load-extras.ts) on the server.
+    regions: { state: "none", reason: "compatible_track_model_unavailable" },
+    enrichment: { state: "none" },
+    runtimeReady: false,
+    capture: null,
   };
 }
 
@@ -265,6 +320,7 @@ export function evidenceAnalysisModel(
     referenceId: best?.id ?? null,
     bestId: best?.id ?? null,
     source: "v2",
+    enrichment: { state: "deferred" },
     lapDataNote: truncated ? "Only the first attempts of this session could be read, so some laps may be missing." : null,
   };
 }
