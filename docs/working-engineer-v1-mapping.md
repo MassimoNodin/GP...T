@@ -12,8 +12,9 @@ The original inventory and proposed slices below are historical planning context
 The standalone radio now has recurring reports, basic multi-driver live questions,
 adjacent catch/defend watches, observed sector consistency, fixed lap/sector target
 pace, backend player-region capture and explicit fixed previous-region diagnostic
-comparisons. Dynamic wheel binding, capture/cues and browser-independent radio
-controls also exist. Automated coverage does not establish complete acceptance.
+comparisons. Dynamic wheel binding, capture/cues, automatic scoped voice question/
+task submission and browser-independent radio controls also exist. Automated
+coverage does not establish complete acceptance.
 
 Remaining implementation and scope decisions:
 
@@ -30,8 +31,9 @@ Remaining implementation and scope decisions:
   requests, rather than whole-request rejection for unsupported facts.
 - Conversation context including prior answers, instructions and tracking results;
   metric/target/task follow-ups with clarification and no cancelled-task revival.
-- Safe wheel-only transcript execution without console submission and unambiguous
-  spoken quiet/cancel/repeat controls, preserving capture/playback echo safeguards.
+- Unambiguous spoken quiet/cancel/repeat controls, preserving capture/playback echo
+  safeguards. Automatic scoped question/task submission now exists, but still
+  requires the real-game wheel/headset acceptance evidence below.
 - Resolve or explicitly agree existing limits: named-driver watches currently
   pause outside meaningful adjacency; target pace uses eligible laps observed by
   the radio connection, not complete historical session-best evidence.

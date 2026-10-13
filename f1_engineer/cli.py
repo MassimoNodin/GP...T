@@ -872,6 +872,7 @@ def build_parser() -> argparse.ArgumentParser:
     radio.add_argument("--cue-volume", type=float, default=0.08, help="listening cue amplitude (greater than 0, up to 0.3)")
     radio.add_argument("--capture-seconds", type=float, default=12, help="maximum capture duration (1 to 12 seconds)")
     radio.add_argument("--capture-test", action="store_true", help="test wheel/console capture and cues without backend access or saving/uploading audio")
+    radio.add_argument("--manual-submit", action="store_true", help="keep voice transcripts as drafts until the console submit command")
     radio.set_defaults(handler=_radio)
 
     radio_input = commands.add_parser("radio-input", help="list, learn, change or test the listening button without audio")

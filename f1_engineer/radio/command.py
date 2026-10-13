@@ -116,6 +116,8 @@ def run_radio(args) -> int:
         emit({"event": "radio_ready", "dry_run": args.dry_run, "voice": getattr(playback, "voice", None),
               "rate": args.rate, "volume": args.volume,
               "capture_test": args.capture_test,
+              "voice_submission": ("disabled" if args.capture_test else
+                                   "manual" if getattr(args, "manual_submit", False) else "automatic"),
               "commands": ["lap", "listen", "finish", "ask <question>", "submit", "tasks", "forget",
                            "quiet", "resume", "cancel", "repeat", "status", "quit"]})
         snapshots: queue.Queue = queue.Queue(maxsize=1)
@@ -184,6 +186,9 @@ def run_radio(args) -> int:
             except queue.Empty:
                 pass
             if not stop.is_set():
+                now = time.monotonic()
+                if not args.capture_test and not getattr(args, "manual_submit", False):
+                    submit_ready_question(controller, voice, now=now, input_status=wheel.status())
                 if captures is not None:
                     captures.replace(controller.region_capture_requests())
                 scheduler.suspended = voice.blocks_playback
@@ -213,6 +218,19 @@ def run_radio(args) -> int:
 def request_listening(scheduler: RadioScheduler, voice: VoiceInput, *, source: str, binding=None, connection=None) -> None:
     scheduler.cancel()
     voice.request(source=source, scope=scheduler.scope, binding=binding, connection=connection)
+
+
+def submit_ready_question(controller: RadioController, voice: VoiceInput, *, now: float, input_status=None) -> bool:
+    controller.check_freshness(now=now)
+    submission = voice.take_ready_draft(scope=controller.scheduler.scope, input_status=input_status)
+    if submission is None:
+        return False
+    controller.scheduler.cancel()
+    controller.handle_request(submission["question"], now=now)
+    emit({"event": "radio_voice_submitted", "capture_id": submission["capture_id"],
+          "source": submission["source"], "submitted": True, "verified": False,
+          "submission_wait_s": submission["submission_wait_s"]})
+    return True
 
 
 def submit_question(command: str, controller: RadioController, voice: VoiceInput, *, now: float) -> None:

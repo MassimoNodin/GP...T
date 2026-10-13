@@ -9,7 +9,7 @@ import time
 import uuid
 import wave
 
-from ..analysis.local_speech import SPEECH_MAX_SECONDS, SPEECH_MAX_SAMPLES, SPEECH_SAMPLE_RATE
+from ..analysis.local_speech import SPEECH_MAX_SECONDS, SPEECH_MAX_SAMPLES, SPEECH_SAMPLE_RATE, SPEECH_MAX_TRANSCRIPT_BYTES
 from .audio import NativeRadioAudio, RadioAudioUnavailable
 
 
@@ -57,6 +57,9 @@ class VoiceInput:
         self._capture_started_at = None
         self._stop_at = None
         self._cleanup_failed = False
+        self._transcript_seen = False
+        self._consumed_capture_id = None
+        self._draft_ready_at = None
 
     @property
     def blocks_playback(self) -> bool:
@@ -90,6 +93,8 @@ class VoiceInput:
         self._watchdog_reported = False
         self._draft = None
         self._state = "starting"
+        self._transcript_seen = False
+        self._draft_ready_at = None
         requested_at = self._clock()
         self._requested_at = requested_at
         self._capture_started_at = None
@@ -109,8 +114,35 @@ class VoiceInput:
         if scope is None or scope != self._scope or self._discard:
             self._draft = None
             return None
+        if self._capture_id is not None and self._capture_id == self._consumed_capture_id:
+            self._draft = None
+            return None
         draft, self._draft = self._draft, None
+        if draft is not None and self._capture_id is not None:
+            self._consumed_capture_id = self._capture_id
         return draft
+
+    def take_ready_draft(self, *, scope: str | None, input_status=None) -> dict | None:
+        if (self._draft is None or self.blocks_playback or self._state != "idle"
+                or self._worker is None or self._worker.is_alive()):
+            return None
+        if self._source not in ("wheel", "console") or self._capture_id is None:
+            self._draft = None
+            self._notify({"event": "radio_voice_submission_unavailable", "reason": "capture_origin_unavailable"})
+            return None
+        if self._source == "wheel" and (not isinstance(input_status, dict)
+                or not isinstance(self._binding, dict) or not self._binding or self._connection is None
+                or input_status.get("status") != "ready" or input_status.get("binding") != self._binding
+                or input_status.get("connection_instance") != self._connection):
+            self.cancel("wheel_binding_changed_or_unavailable")
+            return None
+        question = self.take_draft(scope=scope)
+        if question is None:
+            self._notify({"event": "radio_voice_submission_unavailable", "reason": "no_current_draft"})
+            return None
+        wait = self._clock() - self._draft_ready_at if self._draft_ready_at is not None else None
+        return {"question": question, "capture_id": self._capture_id, "source": self._source,
+                "submission_wait_s": max(0, wait) if wait is not None else None}
 
     def cancel(self, reason="cancelled") -> None:
         self._draft = None
@@ -145,7 +177,22 @@ class VoiceInput:
             if self._discard:
                 continue
             if event["event"] == "radio_transcript":
-                self._draft = event["transcript"]
+                if self._transcript_seen or (self._capture_id is not None
+                                             and self._capture_id == self._consumed_capture_id):
+                    continue
+                self._transcript_seen = True
+                transcript = event.get("transcript")
+                try:
+                    valid = (isinstance(transcript, str) and bool(transcript.strip())
+                             and len(transcript.encode("utf-8")) <= SPEECH_MAX_TRANSCRIPT_BYTES)
+                except UnicodeError:
+                    valid = False
+                if not valid:
+                    self._notify({"event": "radio_transcription_unavailable", "capture_id": self._capture_id,
+                                  "reason": "transcription_response_invalid"})
+                    continue
+                self._draft = transcript
+                self._draft_ready_at = self._clock()
             self._notify(event)
         if self._worker is not None and not self._worker.is_alive():
             self._state = "unavailable" if self._cleanup_failed else "idle"

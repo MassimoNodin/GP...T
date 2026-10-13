@@ -54,7 +54,7 @@ Enter one command per line; an optional leading `/` is accepted.
 | `listen` | Start capture, or end the current capture when issued again. |
 | `finish` | End the current capture and request transcription (except in capture-test mode). |
 | `ask <question>` | Answer a supported live timing question; cancel any capture or older draft. |
-| `submit` | Submit the current session-bound draft once, as a supported question or lap-report instruction. |
+| `submit` | Submit the current session-bound draft once in optional `--manual-submit` mode, as a supported question or task instruction. |
 | `tasks` | Speak the active lap-report tasks, targets, facts and expiry. |
 | `forget` | Clear conversation references and cancel capture, drafts and queued/active speech. |
 | `quiet` | Cancel capture, drafts, speech and queued calls; suppress proactive calls, not explicit answers. |
@@ -153,13 +153,20 @@ deploys no model/service. Backend temporary transcription files follow the
 existing cleanup policy; the radio itself persists no audio or transcripts.
 
 The console prints `radio_transcript` with `verified: false` and
-`submitted: false`. It is a **draft**, not an automatically submitted question
-or an executable control command. Text may still be retained by your terminal
-or logging setup. Review the text and use `submit` to send it as a timing question,
-or `ask <corrected question>` to replace it. Explicit submission accepts supported
-timing questions and lap-report task instructions, never arbitrary console controls.
-It does not automatically submit a transcript. This prevents mistranscriptions or tones
-from automatically becoming actions.
+`submitted: false` at recognition delivery. Normal radio operation then
+automatically submits that capture once, after the audio/transcription worker
+has finished cleanly and its session/player and wheel binding are still current.
+No console `submit` is required. Supported questions and task instructions use
+the existing bounded typed dispatcher; arbitrary console/configuration controls
+are not executable transcript commands. Task acknowledgements confirm the result.
+Recognition is still unverified and acoustic echo/cue isolation needs the full
+headset test; automatic submission does not make the transcript ground truth.
+
+For deliberate review before execution, launch `radio --manual-submit`. Then
+review the draft and use `submit`, or `ask <corrected question>` to replace it.
+Capture-test mode never submits or uploads audio. Text may still be retained by
+your terminal or logging setup. `radio_voice_submitted` identifies automatic
+delivery to the dispatcher, not proof that a request was supported or accepted.
 
 Native audio work and transcription run off the radio loop. Cancellation aborts
 the asynchronous HTTP request and suppresses late results. New capture cannot
@@ -995,3 +1002,45 @@ The full suite was not rerun. Evidence is synthetic/mocked, including multi-lap
 backend capture with an unchanged reference, explicit updates, eligibility and
 uncertainty gates, cancellation, bounded history and polling compatibility.
 No real-game, wheel/audio or acoustic-latency acceptance is claimed.
+
+## Automatic scoped voice question/task execution
+
+Finished wheel- or console-initiated captures now submit supported questions and
+task instructions automatically by default. `--manual-submit` retains the previous
+draft-review workflow; capture-test mode reports submission as disabled. Merely
+starting the radio still cannot start a recording, and dry-run has no capture or
+transcription. No browser or console submission is needed to execute a supported
+question/task after deliberately operating the bound listening button.
+
+Automatic delivery waits for idle capture state, a finished worker and successful
+microphone cleanup. It rechecks fresh controller scope, deliberate capture origin
+and the wheel's current nonempty binding/reconnect instance before consuming the
+draft. Session loss, cancellation, disconnection or rebinding discards the old
+intent. Duplicate transcript deliveries cannot replace a pending question or
+revive a consumed capture; a new deliberate capture has a new one-shot identity.
+Malformed, empty, non-text, oversized and invalid-Unicode transcripts abstain.
+
+Explicit console actions run first in the loop, so cancellation/replacement and
+shutdown do not automatically dispatch their discarded draft. Supported task
+creation/update/cancellation remains in the existing bounded registry, while
+answers use fresh live facts and the existing speech-priority/expiry pipeline.
+Spoken `quiet`/`cancel that`/`repeat that` console controls are **not** added by
+this increment; they still need a separate unambiguous voice-control policy.
+No shell command, wheel reassignment, deployment or arbitrary application control
+can be executed by this transcript path.
+
+`radio_ready` reports automatic/manual/disabled submission policy.
+`radio_voice_submitted` logs capture ID, source and local draft-delivery-to-submit
+wait, with `verified: false`. Submission means handoff to the typed dispatcher,
+not acceptance of unsupported text. Existing capture/transcription and speech
+queue timings remain separate from real end-to-end/acoustic latency; there is
+no new numeric latency gate. Audio/runtime/model pins and OS defaults are unchanged.
+
+Validation: 832 focused radio/backend-capture and CLI tests passed, including 40 new
+automatic-submission cases, with one existing Starlette/httpx deprecation warning.
+Compilation, radio CLI help and whitespace checks passed. The full suite was
+not rerun. Evidence is synthetic/mocked, including actual capture-thread lifecycle
+with mock audio, duplicate/late result suppression, source/session/cleanup guards,
+registered task execution and automatic/manual/capture-test loop modes. Real
+game-focused MOZA activation, microphone/headset acoustic isolation, audible
+answers, browser-closed acceptance and user-approved latency remain unverified.
