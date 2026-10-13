@@ -14,8 +14,8 @@ from .events import (
     bounded_threshold_event_examples,
     detect_sustained_threshold_events,
 )
-from .interval_delta import evaluate_interval_delta
-from .resampling import ResampledTrace, ResamplingConfig, TraceSample
+from .interval_delta import evaluate_interval_delta, has_connected_source_session_time
+from .resampling import ResampledTrace, ResamplingConfig, TraceSample, resample_trace
 
 
 CORNER_ANALYSIS_VERSION = "distance-regions-v2"
@@ -29,6 +29,95 @@ _EVENT_THRESHOLDS = {
     "throttle_90": 0.9,
     "throttle_99": 0.99,
 }
+
+
+MAX_DISTANCE_WINDOW_SAMPLES = 4096
+MAX_DISTANCE_WINDOW_WIDTH_M = 1000
+
+
+def analyze_distance_window(
+    samples: Sequence[TraceSample],
+    start_m: float,
+    end_m: float,
+    *,
+    track_length_m: float,
+) -> dict[str, object]:
+    """Measure one explicit numeric window without asserting layout or coaching authority."""
+    if any(type(value) not in (int, float) or not math.isfinite(value)
+           for value in (start_m, end_m, track_length_m)):
+        raise ValueError("distance_window_bounds_invalid")
+    if not 0 <= start_m < end_m <= track_length_m <= 20_000:
+        raise ValueError("distance_window_bounds_invalid")
+    if end_m - start_m > MAX_DISTANCE_WINDOW_WIDTH_M:
+        raise ValueError("distance_window_width_limit_exceeded")
+    if len(samples) > MAX_DISTANCE_WINDOW_SAMPLES:
+        raise ValueError("distance_window_sample_limit_exceeded")
+    for sample in samples:
+        if (not isinstance(sample, TraceSample) or type(sample.frame_identifier) is not int
+                or not 0 <= sample.frame_identifier <= 0xFFFFFFFF):
+            raise ValueError("distance_window_sample_invalid")
+        for value, upper in ((sample.distance_m, track_length_m),
+                             (sample.time_s, 86_400), (sample.session_time_s, 86_400),
+                             (sample.speed_mps, 65535 / 3.6),
+                             (sample.brake, 1), (sample.throttle, 1)):
+            if value is not None and (type(value) not in (int, float)
+                                      or not math.isfinite(value) or not 0 <= value <= upper):
+                raise ValueError("distance_window_sample_invalid")
+        if sample.steering is not None and (type(sample.steering) not in (int, float)
+                                            or not math.isfinite(sample.steering)
+                                            or not -1 <= sample.steering <= 1):
+            raise ValueError("distance_window_sample_invalid")
+        if sample.gear is not None and (type(sample.gear) is not int or not -1 <= sample.gear <= 8):
+            raise ValueError("distance_window_sample_invalid")
+        if sample.drs_active is not None and type(sample.drs_active) is not bool:
+            raise ValueError("distance_window_sample_invalid")
+    config = ResamplingConfig()
+    grid = tuple(float(distance) for distance in range(math.floor(start_m), math.ceil(end_m) + 1))
+    resampled = resample_trace(samples, grid, config, track_length_m=track_length_m)
+    connected = has_connected_source_session_time(
+        samples, start_m, end_m, max_gap_s=config.max_bracket_time_s
+    )
+    coverage = {
+        channel: _requested_window_coverage(resampled, start_m, end_m, config.grid_step_m,
+                                            channel=channel)
+        for channel in ("time_s", "speed_mps", "brake")
+    }
+    entry_time = _grid_value(grid, resampled.values["time_s"], resampled.masks["time_s"],
+                            start_m, channel="time_s", excluded_spans=resampled.excluded_spans)
+    exit_time = _grid_value(grid, resampled.values["time_s"], resampled.masks["time_s"],
+                           end_m, channel="time_s", excluded_spans=resampled.excluded_spans)
+    elapsed_supported = (connected and coverage["time_s"] >= 1.0
+                         and entry_time is not None and exit_time is not None
+                         and exit_time > entry_time)
+    definition = CornerDefinition(
+        identifier="numeric-window", label=f"{start_m:g} to {end_m:g} metres",
+        start_distance_m=start_m, end_distance_m=end_m,
+        braking_search_window_m=(start_m, end_m),
+    )
+    observations = _analyze_attempt_region(
+        samples, resampled, definition, start_m, end_m, config,
+        "unverified_numeric_window", 0, track_length_m,
+        event_example_limit=REGION_EVENT_EXAMPLE_LIMIT,
+    )
+    minimum = observations["minimum_speed"]
+    if not connected and minimum["status"] == "observed_minimum_complete_window":
+        minimum["status"] = "observed_minimum_partial_window"
+    return {
+        "analysis_version": "numeric-distance-window-v1",
+        "analysis_window_m": [start_m, end_m],
+        "track_length_m": track_length_m,
+        "layout_verified": False, "diagnostic_only": True,
+        "coaching_eligible": False, "ranking_eligible": False,
+        "source_session_time_connected": connected,
+        "supported_grid_coverage": coverage,
+        "elapsed": {
+            "status": "supported" if elapsed_supported else "unavailable_disconnected_window",
+            "elapsed_s": exit_time - entry_time if elapsed_supported else None,
+        },
+        "observations": observations,
+        "source_sample_count": len(samples),
+        "resampling_config": config.to_dict(),
+    }
 
 
 def analyze_attempt_regions(

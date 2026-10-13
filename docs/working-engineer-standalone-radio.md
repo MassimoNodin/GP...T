@@ -753,3 +753,42 @@ and full rerun both passed without changes to recording code. Compilation,
 radio CLI help, local documentation links and staged whitespace checks passed.
 Evidence is synthetic/mocked, not live-game, wheel/audio or acoustic-latency
 acceptance, and does not complete the focus-corner coaching requirement.
+
+## Bounded numeric-region measurement prerequisite
+
+`analysis.corners.analyze_distance_window` measures one explicitly selected numeric
+distance window without inventing a named corner or using a draft model as
+layout authority. It reuses the existing distance resampling, source-session
+continuity, sampled minimum-speed and sustained brake-onset machinery. No
+time-trial ranking or diagnostic comparison policy is broadened.
+
+The result contains elapsed time only when both boundaries, the complete
+interior time grid and the underlying source session chronology are supported.
+Unknown channels remain unknown. Minimum speed is the minimum of observed raw
+samples in the half-open window, with its source anchor and coverage, not an
+estimated true continuous minimum. A disconnected source cannot be labelled a
+complete-window minimum. Brake onset requires a sustained sampled threshold
+episode and retains its distance bracket; braking already active at the window
+entrance is censored rather than presented as a measured braking point.
+
+The window is limited to 1,000 metres, 4,096 source samples and a fixed one-metre
+grid, with the existing 0.1-second/25-metre interpolation limits. Bounds, finite
+channel ranges and source frame chronology are validated before measurement.
+Input samples are not modified. Missing boundaries, gaps and clock/distance
+regressions cannot be bridged into a regional elapsed-time claim.
+
+This is an analysis-library prerequisite, not a newly available radio command.
+Its caller must supply a single identity/lap/session-bound trace and enforce
+validity, pit status, receipt freshness and detail-demand ownership. This helper
+does not infer those facts from raw samples or establish condition equivalence.
+Every result explicitly remains diagnostic, layout-unverified, non-ranking and
+non-coaching evidence. Live task-owned collection, fixed-reference comparisons,
+spoken focus/progress reports and opponent next-lap tracking remain unfinished.
+No wheel, speech runtime, deployment, persistence or model configuration changes.
+
+Validation: 187 focused tests passed, including 50 new numeric-window cases.
+The full suite passed 2,461 tests with 16 skipped tests and two existing
+deprecation warnings. Analysis/test compilation, radio CLI help and whitespace
+checks passed. All measurement evidence is synthetic; this does not verify
+live collection, in-game speech, hardware behaviour or acoustic latency, and
+does not complete focus-corner coaching acceptance.
