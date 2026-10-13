@@ -366,8 +366,9 @@ Reports trigger only from a new, verified player lap-completion event matching
 the current player lap; an available event time must agree with the current last
 lap time. Each driver's completed lap number is spoken separately, since drivers
 may be on different laps. Missing own/opponent timing produces partial unavailable
-results. Last-lap comparisons use the guarded computed fact described below;
-race-gap change that lap, best-lap coaching and predictions are not implemented.
+results. Last-lap comparisons use the guarded computed fact described below.
+Player lap-boundary race-gap changes are described below; best-lap coaching
+and predictions are not implemented.
 
 All due tasks form one bounded proactive utterance. It replaces the default
 player-only lap call for that event and uses the shared speech scheduler. If the
@@ -433,3 +434,53 @@ full suite passed 2,114 tests with 16 skipped tests and two existing deprecation
 warnings. Radio compilation, CLI help and local documentation-link checks passed.
 These checks use synthetic/mocked inputs; live-game speech and acoustic latency
 have not been measured for this increment.
+
+## Lap-boundary race-gap changes
+
+The standalone radio observes your reported gap to the leader and the car ahead
+at qualified player lap completions, independently of active report tasks:
+
+```text
+ask Tell me at the end of each lap my time to the leader and delta that lap
+ask Tell me at the end of each lap my gap change to the car ahead
+ask My gap change to the leader
+```
+
+Here `delta that lap` explicitly means your gap-to-leader change. A reduced gap
+is spoken as gained time, an increased gap as lost time, and equal gaps as
+unchanged. Output identifies the completed lap and says the change was measured
+between observed player-lap boundaries. This is not a subtraction of two drivers
+lap times, a prediction, or proof that driving pace caused the change. The sample
+is taken from the snapshot carrying the qualified event, not an exact line-crossing
+measurement. Observation age is exposed with `radio_gap_change_observed`; existing
+dispatch latency diagnostics and freshness limits still apply.
+
+Two consecutive comparable completions are required. The first completion seeds
+a reference and reports unavailable rather than labelling a mid-lap sample as a
+whole-lap change. References must have the same participant identity and race
+position throughout observed snapshots. Player and reference must have known
+on-track pit status and racing result status, valid positive gaps, and the same
+current lap number at both completion samples. A reference may cross the line
+before you between samples without breaking the interval. Lapped references,
+leader/ahead changes, position changes, pits, missing data, unknown status,
+rewinds, discontinuities, skipped/missing completions, event-history gaps and
+three-second observation interruptions invalidate the affected interval. Any
+reported driver discontinuity conservatively resets both intervals. Session,
+player, generation and epoch changes clear them entirely.
+
+Only your own gap changes are supported in this increment; requests for an
+opponent gap change return a partial unavailable result while other facts remain
+usable. Results expire when you move to another lap or the relevant reference
+becomes ineligible. Obsolete owned answers and bundled lap reports are cancelled
+and cannot be repeated. Missing results are not filled from question history.
+Quiet/listening suppresses speech without stopping observations or building a
+backlog. No data is persisted, no additional detail demands are acquired and no
+model/runtime settings are changed. `Cancel all tracking` also resets these
+in-memory boundary references. This is a foundation for, not completion of,
+multi-lap catch/defend coaching.
+
+Validation: 445 focused tests passed, including 51 new gap-change cases. The
+full suite passed 2,165 tests with 16 skipped tests and two existing deprecation
+warnings. Radio compilation, CLI help, staged whitespace and local documentation
+link checks passed. This is synthetic/mocked verification; in-game speech,
+wheel-only operation and real acoustic latency remain unverified.

@@ -7,6 +7,7 @@ import time
 from copy import deepcopy
 
 from ..driver_names import display_driver_name, driver_name_aliases
+from .gaps import GAP_CHANGES, LapGapTracker
 from .questions import plan_question, timing_fact
 from .scheduler import RadioMessage, RadioScheduler
 from .tasks import LapReportRegistry, parse_task_request
@@ -48,6 +49,7 @@ class RadioController:
         self._drivers = []
         self._history = []
         self.tasks = LapReportRegistry(notify=self.notify)
+        self.gaps = LapGapTracker()
 
     def _unavailable(self, reason: str) -> None:
         self.scheduler.set_scope(None)
@@ -56,6 +58,7 @@ class RadioController:
         self._drivers = []
         self._history.clear()
         safe_reason = reason if re.fullmatch(r"[a-z0-9_]{1,96}", reason) else "unavailable"
+        self._reset_gaps()
         self.tasks.clear(safe_reason)
         self._report("unavailable", safe_reason)
 
@@ -107,6 +110,7 @@ class RadioController:
         if changed:
             self._history.clear()
             self.tasks.clear("scope_changed")
+            self._reset_gaps()
         elif not _integer(player["lap"].get("current_lap_number"), 1, 255):
             self._clear_tasks("lap_number_unavailable")
         elif _integer(previous_lap, 1, 255) and _integer(player["lap"].get("current_lap_number"), 1, 255):
@@ -117,6 +121,11 @@ class RadioController:
         self._drivers = deepcopy(snapshot["drivers"])
         self._received_at = now
         self._age_s = age
+        prior_gap_results = dict(self.gaps.results)
+        self.gaps.observe(self._player, self._resolve_target, now=now)
+        if prior_gap_results and prior_gap_results != self.gaps.results:
+            self.scheduler.cancel_owner("gap_changes")
+            self.scheduler.cancel_owner("lap_reports")
         cursor = snapshot["event_cursor"]
         self._report("available")
         if (changed or self._cursor is None or cursor < self._cursor
@@ -124,10 +133,15 @@ class RadioController:
             if not changed and self._cursor is not None:
                 self.scheduler.cancel()
                 self.tasks.clear("event_history_gap")
+                self._reset_gaps()
                 self.notify({"event": "radio_resynchronised", "reason": "event_history_gap"})
             self._cursor = cursor
             return
         seen_events = set()
+        if any(isinstance(event, dict) and event.get("kind") == "driver_discontinuity"
+                    and _integer(event.get("id"), 1) and self._cursor < event["id"] <= cursor
+                    and event.get("scope") == scope for event in snapshot["events"]):
+            self._reset_gaps()
         for event in snapshot["events"]:
             if (not isinstance(event, dict) or not _integer(event.get("id"), 1)
                     or not self._cursor < event["id"] <= cursor
@@ -148,6 +162,16 @@ class RadioController:
             if elapsed_ns < 0:
                 continue
             event_age = age + elapsed_ns / 1e9
+            elapsed = event.get("lap_time_ms")
+            if (event_age < 3 and player["lap"].get("current_lap_number") == event["lap_number"] + 1
+                    and (elapsed is None or _integer(elapsed, 1, 2**32 - 1)
+                         and elapsed == player["lap"].get("last_lap_time_ms"))):
+                self.gaps.complete(event["lap_number"])
+                self.notify({"event": "radio_gap_change_observed", "lap_number": event["lap_number"],
+                             "changes_ms": {metric: result[1] for metric, result in self.gaps.results.items()},
+                             "observation_age_s": event_age})
+            else:
+                self._reset_gaps()
             reported = self._report_tasks(event, now=now, age=event_age)
             if reported or not _integer(event.get("lap_time_ms"), 1, 2**32 - 1):
                 continue
@@ -246,7 +270,17 @@ class RadioController:
 
     def _clear_tasks(self, reason: str) -> None:
         self.tasks.clear(reason)
+        self._reset_gaps()
+
+    def _reset_gaps(self) -> None:
+        self.gaps.clear()
+        self.scheduler.cancel_owner("gap_changes")
         self.scheduler.cancel_owner("lap_reports")
+
+    def _timing_fact(self, metric: str, row: dict) -> str:
+        if metric in GAP_CHANGES:
+            return self.gaps.answer(metric, is_player=row["identity"] == self._player["identity"])
+        return timing_fact(metric, row["lap"], self._player["lap"])
 
     def _control_answer(self, text: str, *, now: float) -> None:
         if len(text.encode("utf-8")) > 1024:
@@ -322,7 +356,7 @@ class RadioController:
                     name = self._participant_name(row)
                     if name is not None and target != "self":
                         label = name
-                    pieces.append(f"{label}: " + ", ".join(timing_fact(metric, row["lap"], self._player["lap"]) for metric in task.plan.metrics) + ".")
+                    pieces.append(f"{label}: " + ", ".join(self._timing_fact(metric, row) for metric in task.plan.metrics) + ".")
             reports.append(f"Task {task.task_id}: " + " ".join(pieces))
         text = f"Lap {event['lap_number']} reports. " + " ".join(reports)
         if len(text.encode("utf-8")) > 1024:
@@ -341,6 +375,7 @@ class RadioController:
         started = time.perf_counter()
         text = "No fresh player telemetry is available."
         results = []
+        gap_question = False
         if self._player is not None:
             try:
                 aliases = tuple(alias for row in self._drivers if isinstance(row, dict)
@@ -350,6 +385,7 @@ class RadioController:
             except ValueError as error:
                 text = str(error)
             else:
+                gap_question = any(metric in GAP_CHANGES for metric in plan.metrics)
                 bindings = []
                 for index, target in enumerate(plan.targets):
                     if plan.inherited_targets:
@@ -373,7 +409,7 @@ class RadioController:
                             result += " Use a full name or P1 to P24."
                     else:
                         result = f"{label} (car slot {row['car_index']}): " + ", ".join(
-                            timing_fact(metric, row["lap"], self._player["lap"]) for metric in plan.metrics) + "."
+                            self._timing_fact(metric, row) for metric in plan.metrics) + "."
                     results.append(result)
                 text = " ".join(results)
                 self._history.append({"question": question, "plan": plan, "bindings": bindings})
@@ -384,4 +420,5 @@ class RadioController:
         age = self._age_s + now - self._received_at if self._player is not None else None
         self.scheduler.submit(RadioMessage(f"answer:{self._answer_id}", self.scheduler.scope,
                                           text, "answer", now + 60, observation_age_s=age,
-                                          dispatch_before=now + 3 - (age or 0)), now=now)
+                                          dispatch_before=now + 3 - (age or 0),
+                                          owner="gap_changes" if gap_question else None), now=now)

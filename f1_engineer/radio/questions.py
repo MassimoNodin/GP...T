@@ -13,6 +13,8 @@ class QuestionPlan:
 
 
 METRICS = {
+    "leader_gap_change": r"gap change to (?:the )?leader|(?:gap|delta|time) to (?:the )?leader change that lap|delta that lap",
+    "front_gap_change": r"gap change to (?:the )?car (?:in front|ahead)|(?:gap|delta|time) to (?:the )?car (?:in front|ahead) change that lap",
     "lap_comparison": r"(?:last|previous|latest)(?: completed)? lap comparisons?",
     "last_lap": r"(?:last|previous|latest)(?: completed)? lap(?: time)?s?",
     "current_lap": r"current lap(?: time)?s?",
@@ -84,7 +86,7 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
         raise ValueError("Please specify a driver; that pronoun has no single supported reference.")
     remaining = re.sub(r"\b(?:what|what's|is|are|the|a|and|also|please|tell|show|give|for|of|about|how|their|his|her|them|him|then)\b", " ", remaining)
     if re.sub(r"[\s?,.!']", "", remaining):
-        raise ValueError("I can answer current or last lap times, last lap comparisons to you, positions, and leader/front-car gaps. Use me, leader, car ahead, car behind, P1 to P24, or an available driver's full name or surname. Other facts and task instructions are not supported yet.")
+        raise ValueError("I can answer current or last lap times, last lap comparisons to you, positions, leader/front-car gaps and your lap-boundary gap changes. Use me, leader, car ahead, car behind, P1 to P24, or an available driver's full name or surname. Other facts and task instructions are not supported yet.")
     if not metrics and not targets:
         raise ValueError("Please specify a driver or timing fact.")
     inherited_targets = not targets and previous is not None
