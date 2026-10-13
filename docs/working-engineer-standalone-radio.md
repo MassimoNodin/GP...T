@@ -894,3 +894,50 @@ with one existing Starlette/httpx deprecation warning. The full suite was not
 rerun for this backend-only increment. Compilation, radio CLI help and whitespace
 checks passed. Evidence is synthetic/mocked; model/runtime pins, deployment and
 OS audio defaults are unchanged.
+
+## Standalone radio capture lease integration
+
+The standalone radio now uses backend capture leases for the existing numeric
+player-region tracking commands. This supersedes the polling-only collection
+limitation and the client-integration prerequisite in the two preceding sections.
+The polling interval still controls snapshot/report delivery, but no longer
+controls how many assembled player frames the backend can collect for a region.
+Full measurement still depends on actual connected, valid source data; missing
+or partial coverage remains disclosed rather than interpolated beyond the
+existing guards. No named-corner, fixed-reference or opponent feature is added.
+
+Each task version receives a run-unique lease ID and immutable session/player,
+upcoming-lap schedule and window binding. Task creation acknowledges admission
+as pending, not already collecting. The existing backend worker admits and reads
+leases alongside polling, renewing every ten seconds; the wheel/audio control loop only exchanges
+detached desired requests and completed responses. Admission latency and consumed
+result completion age/request latency are emitted as diagnostic events. There is
+no new numeric latency acceptance gate or live acoustic-latency measurement.
+
+Updates release the old version before admitting a new lease. Cancellation,
+finite completion, stale runtime and binding changes withdraw desired captures;
+shutdown releases owned leases before closing the worker's HTTP client. A
+cancellation during an in-flight admission prevents publication of its result
+and triggers release. Release is best-effort if the backend is unreachable;
+the existing thirty-second backend TTL provides cleanup without successful
+renewal, and failed release is logged rather than claimed as successful.
+
+Temporary admission/read transport failures can retry the same immutable ID.
+Rejected admission does not silently retarget a later lap or reactivate an ended
+lease. A matching fresh lap event is required for speech: task/version, lease,
+request, runtime/player binding, window, schedule and event identity must agree.
+Backend-computed completion age includes request and local delivery age before
+dispatch qualification, without comparing cross-process monotonic clocks.
+Duplicate or stale results, malformed text and evidence claiming coaching or
+ranking authority are rejected. Missing capture evidence produces an explicit
+unavailable report; this mode never quietly substitutes sparse polling evidence.
+Quiet/listening consume finite tasks without creating a speech backlog.
+
+Validation: 740 focused radio/backend-capture tests passed, including 41 new
+lease-integration cases, with one existing Starlette/httpx deprecation warning.
+Compilation, radio CLI help and whitespace checks passed. The full suite was
+not rerun for this increment. All evidence is synthetic/mocked, including the
+complete regional report produced without intermediate radio polls inside the
+window. Real-game frame capture, wheel-only voice execution, browser-closed
+wheel/audio acceptance and live acoustic latency remain unverified. The branch
+is not complete; deployment, model/runtime pins and OS audio defaults are unchanged.

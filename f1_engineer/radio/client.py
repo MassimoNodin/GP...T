@@ -67,6 +67,31 @@ class RadioClient:
         except (httpx.RequestError, ValueError, RecursionError, RuntimeError):
             return {"status": "unavailable", "reason": "backend_response_unavailable"}
 
+    def region_capture(self, method: str, lease_id: str, body=None) -> dict:
+        if (method not in ("POST", "GET", "DELETE") or not isinstance(lease_id, str)
+                or re.fullmatch(r"[a-f0-9]{32}", lease_id) is None):
+            return {"status": "unavailable", "reason": "region_capture_request_invalid"}
+        started = time.monotonic()
+        try:
+            options = {"json": body} if method == "POST" else {}
+            with self._client.stream(method, f"/api/v2/engineer/region-captures/{lease_id}", **options) as response:
+                raw = bytearray()
+                for chunk in response.iter_bytes():
+                    raw.extend(chunk)
+                    if len(raw) > 1_048_576 or time.monotonic() - started >= 5:
+                        raise ValueError("oversized response")
+                decoded = json.loads(raw)
+                if not isinstance(decoded, dict):
+                    raise ValueError("invalid response")
+                if response.status_code != (202 if method == "POST" else 200):
+                    return {"status": "unavailable", "reason": "region_capture_rejected",
+                            "status_code": response.status_code}
+                if not isinstance(decoded.get("data"), dict):
+                    raise ValueError("invalid response")
+                return {"status": "available", "data": decoded["data"]}
+        except (httpx.RequestError, ValueError, RecursionError, RuntimeError):
+            return {"status": "unavailable", "reason": "region_capture_response_unavailable"}
+
     def close(self) -> None:
         self._client.close()
 

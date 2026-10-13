@@ -13,6 +13,7 @@ from .client import RadioClient
 from .controller import RadioController
 from .input_settings import DEFAULT_INPUT_SETTINGS
 from .listening import VoiceInput
+from .region_captures import RadioRegionCaptures
 from .scheduler import RadioScheduler
 from .wheel_input import WheelButtonMonitor
 from .windows_speech import WindowsSpeech
@@ -51,16 +52,24 @@ def _commands(inbox: queue.Queue, stream) -> None:
             inbox.put("ask " + text[4:] if text[:4].lower() == "ask " else text.lower())
 
 
-def _poll(client: RadioClient, inbox: queue.Queue, stop: threading.Event, interval: float) -> None:
-    while not stop.is_set():
-        started = time.monotonic()
-        snapshot = client.fetch()
+def _poll(client: RadioClient, inbox: queue.Queue, stop: threading.Event, interval: float, captures=None) -> None:
+    try:
+        while not stop.is_set():
+            started = time.monotonic()
+            snapshot = client.fetch()
+            results = captures.poll() if captures is not None else []
+            try:
+                inbox.get_nowait()
+            except queue.Empty:
+                pass
+            inbox.put((snapshot, started, results))
+            stop.wait(interval)
+    finally:
         try:
-            inbox.get_nowait()
-        except queue.Empty:
-            pass
-        inbox.put((snapshot, started))
-        stop.wait(interval)
+            if captures is not None:
+                captures.close()
+        finally:
+            client.close()
 
 
 def run_radio(args) -> int:
@@ -89,11 +98,12 @@ def run_radio(args) -> int:
     voice = None
     stop = threading.Event()
     worker = None
+    captures = RadioRegionCaptures(client, notify=emit) if client is not None else None
     try:
         playback = DryRunPlayback() if args.dry_run or args.once or args.capture_test else WindowsSpeech(
             voice=args.voice, rate=args.rate, volume=args.volume)
         scheduler = RadioScheduler(playback, notify=emit)
-        controller = RadioController(scheduler, notify=emit)
+        controller = RadioController(scheduler, notify=emit, backend_regions=client is not None)
         started = time.monotonic()
         snapshot = client.fetch() if client else {"status": "unavailable", "reason": "capture_test"}
         controller.feed(snapshot, now=time.monotonic(), transport_age_s=time.monotonic() - started)
@@ -111,7 +121,7 @@ def run_radio(args) -> int:
         snapshots: queue.Queue = queue.Queue(maxsize=1)
         commands: queue.Queue = queue.Queue(maxsize=16)
         if client is not None:
-            worker = threading.Thread(target=_poll, args=(client, snapshots, stop, args.poll_interval),
+            worker = threading.Thread(target=_poll, args=(client, snapshots, stop, args.poll_interval, captures),
                                       name="radio-backend", daemon=True)
             worker.start()
         threading.Thread(target=_commands, args=(commands, sys.stdin), name="radio-commands", daemon=True).start()
@@ -119,8 +129,9 @@ def run_radio(args) -> int:
             now = time.monotonic()
             scheduler.suspended = voice.blocks_playback
             try:
-                snapshot, started = snapshots.get_nowait()
-                controller.feed(snapshot, now=now, transport_age_s=now - started)
+                snapshot, started, results = snapshots.get_nowait()
+                now = time.monotonic()
+                controller.feed(snapshot, now=now, transport_age_s=now - started, region_captures=results)
             except queue.Empty:
                 pass
             controller.check_freshness(now=now)
@@ -173,6 +184,8 @@ def run_radio(args) -> int:
             except queue.Empty:
                 pass
             if not stop.is_set():
+                if captures is not None:
+                    captures.replace(controller.region_capture_requests())
                 scheduler.suspended = voice.blocks_playback
                 scheduler.tick(now=now)
             stop.wait(0.05)
@@ -193,7 +206,7 @@ def run_radio(args) -> int:
         finally:
             if worker is not None:
                 worker.join(timeout=7)
-            if client is not None:
+            if client is not None and worker is None:
                 client.close()
 
 

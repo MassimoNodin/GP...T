@@ -4,6 +4,7 @@ import json
 import math
 import re
 import time
+import uuid
 from copy import deepcopy
 
 from ..driver_names import display_driver_name, driver_name_aliases
@@ -41,7 +42,7 @@ def lap_message(number: int, milliseconds: int) -> str:
 
 
 class RadioController:
-    def __init__(self, scheduler: RadioScheduler, *, notify=None) -> None:
+    def __init__(self, scheduler: RadioScheduler, *, notify=None, backend_regions=False) -> None:
         self.scheduler = scheduler
         self.notify = notify or (lambda event: None)
         self._cursor: int | None = None
@@ -60,6 +61,9 @@ class RadioController:
         self.pace = PaceTracker()
         self.regions = RegionTracker()
         self._track_length_m = None
+        self._backend_regions = backend_regions
+        self._capture_namespace = uuid.uuid4()
+        self._capture_results = []
 
     def _unavailable(self, reason: str) -> None:
         self.scheduler.set_scope(None)
@@ -80,7 +84,8 @@ class RadioController:
             self._status = (status, reason)
             self.notify({"event": "radio_backend", "status": status, "reason": reason})
 
-    def feed(self, snapshot: dict, *, now: float, transport_age_s: float = 0.0) -> None:
+    def feed(self, snapshot: dict, *, now: float, transport_age_s: float = 0.0, region_captures=None) -> None:
+        self._capture_results = region_captures if isinstance(region_captures, list) else []
         if snapshot.get("status") != "available":
             self._unavailable(str(snapshot.get("reason", "unavailable")))
             return
@@ -149,7 +154,7 @@ class RadioController:
         if self._track_length_m is not None and length != self._track_length_m:
             self.regions.interrupt()
         self._track_length_m = length if type(length) in (int, float) and math.isfinite(length) and 0 < length <= 20_000 else None
-        self.regions.observe(self.tasks.active(), self._player, self._region_sample(now=now),
+        self.regions.observe(() if self._backend_regions else self.tasks.active(), self._player, self._region_sample(now=now),
                              track_length_m=self._track_length_m)
         if self.pace.observe(self._player, now=now):
             self.scheduler.cancel_owner("pace_sectors")
@@ -250,6 +255,86 @@ class RadioController:
                 self.scheduler.cancel_owner("lap_reports")
             self.tasks.complete_lap(number - 1)
         self.regions.prune(self.tasks.active())
+
+    def region_capture_requests(self):
+        if not self._backend_regions or self._player is None or self.scheduler.scope is None:
+            return []
+        generation, session_id, scope, player = json.loads(self.scheduler.scope)
+        requests = []
+        for task in self.tasks.active():
+            if task.region_window is None:
+                continue
+            lease_id = uuid.uuid5(self._capture_namespace,
+                                 f"{self.scheduler.scope}:{task.task_id}:{task.version}").hex
+            requests.append({"task_id": task.task_id, "version": task.version, "lease_id": lease_id,
+                             "body": {"generation": generation, "session_id": session_id,
+                                      "scope": scope, "player": player, "first_lap": task.first_lap,
+                                      "laps": task.until_lap - task.first_lap + 1,
+                                      "window_m": [task.region_window.start_m, task.region_window.end_m]}})
+        return requests
+
+    def _captured_region(self, task, event, *, now):
+        unavailable = ("Regional observations unavailable: no fresh matching backend capture.", None)
+        expected = next((request for request in self.region_capture_requests()
+                         if request["task_id"] == task.task_id and request["version"] == task.version), None)
+        matches = [item for item in self._capture_results if isinstance(item, dict)
+                   and item.get("task_id") == task.task_id and item.get("version") == task.version]
+        if expected is None or len(matches) != 1:
+            return unavailable
+        item = matches[0]
+        response = item.get("response")
+        if (type(item.get("task_id")) is not int or type(item.get("version")) is not int
+                or any(item.get(key) != expected[key] for key in ("lease_id", "body"))
+                or not isinstance(response, dict) or response.get("status") != "available"
+                or not _number(item.get("request_age_s"))
+                or type(item.get("received_at")) not in (int, float)
+                or not math.isfinite(item["received_at"]) or item["received_at"] < 0
+                or now < item["received_at"]):
+            return unavailable
+        data = response.get("data")
+        binding = {key: expected["body"][key] for key in ("generation", "session_id", "scope", "player")}
+        if (not isinstance(data, dict) or data.get("lease_id") != expected["lease_id"]
+                or data.get("state") not in ("active", "complete") or data.get("binding") != binding
+                or data.get("window") != task.region_window.view()
+                or type(data.get("first_lap")) is not int or type(data.get("until_lap")) is not int
+                or data.get("first_lap") != task.first_lap
+                or data.get("until_lap") != task.until_lap or not isinstance(data.get("results"), list)
+                or len(data["results"]) > 20):
+            return unavailable
+        results = [result for result in data["results"] if isinstance(result, dict)
+                   and type(result.get("event_id")) is int and result["event_id"] == event["id"]
+                   and type(result.get("lap_number")) is int and result["lap_number"] == event["lap_number"]]
+        if len(results) != 1:
+            return unavailable
+        result = results[0]
+        if (not _number(result.get("completion_age_s"))
+                or type(result.get("received_monotonic_ns")) is not int
+                or result["received_monotonic_ns"] != event.get("received_monotonic_ns")
+                or not isinstance(result.get("text"), str) or not result["text"]):
+            return unavailable
+        try:
+            text_length = len(result["text"].encode("utf-8"))
+        except UnicodeError:
+            return unavailable
+        if text_length > 900:
+            return unavailable
+        age = result["completion_age_s"] + item["request_age_s"] + now - item["received_at"]
+        if age >= 3:
+            return unavailable
+        evidence = result.get("evidence")
+        if evidence is not None:
+            measurement = evidence.get("measurement") if isinstance(evidence, dict) else None
+            if (not isinstance(measurement, dict) or evidence.get("lap_number") != event["lap_number"]
+                    or measurement.get("diagnostic_only") is not True
+                    or any(measurement.get(key) is not False for key in
+                           ("layout_verified", "coaching_eligible", "ranking_eligible"))):
+                return unavailable
+        self._fact_age_s = max(self._fact_age_s or 0, age)
+        self.notify({"event": "radio_region_capture_consumed", "task_id": task.task_id,
+                     "version": task.version, "lease_id": expected["lease_id"],
+                     "event_id": event["id"], "completion_age_s": age,
+                     "request_latency_s": item["request_age_s"]})
+        return result["text"], deepcopy(evidence)
 
     def check_freshness(self, *, now: float) -> None:
         if self._player is not None and self._age_s + now - self._received_at >= 3:
@@ -506,9 +591,12 @@ class RadioController:
                              "Sector 1 and 2 fastest-to-slowest spreads, not pace deficits. "
                              "Missing evidence restarts warm-up; short tasks may expire before three samples.")
                 if region_window is not None:
+                    capture_policy = ("Backend capture admission pending; incomplete data may leave partial coverage. "
+                                      if self._backend_regions else
+                                      "Sparse polling may leave partial coverage or unavailable onset and region time. ")
                     text += (f" Tracking your sampled braking and minimum speed from {region_window.start_m:g} "
                              f"to {region_window.end_m:g} metres on upcoming laps, not this partial lap. "
-                             "Sparse polling may leave partial coverage or unavailable onset and region time. "
+                             f"{capture_policy}"
                              "Numeric observations only, not corner coaching or opponent tracking.")
                 if watching:
                     name = self._participant_name(row) or plan.targets[0].removeprefix("name:").replace("position:", "P")
@@ -555,7 +643,8 @@ class RadioController:
         reports = []
         for task in tasks:
             if task.region_window is not None:
-                feedback, evidence = self.regions.complete(task, event)
+                feedback, evidence = (self._captured_region(task, event, now=now) if self._backend_regions
+                                      else self.regions.complete(task, event))
                 reports.append(f"Task {task.task_id}: " + feedback)
                 self.notify({"event": "radio_region_report", "task_id": task.task_id, "version": task.version,
                              "lap_number": event["lap_number"], "event_id": event["id"],
