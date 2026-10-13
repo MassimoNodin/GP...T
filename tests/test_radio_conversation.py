@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from f1_engineer.radio.command import dispatch_voice_request, request_listening
-from f1_engineer.radio.conversation import ConversationMemory, TaskContext
+from f1_engineer.radio.conversation import ConversationMemory, QuestionContext, TaskContext
 from f1_engineer.radio.listening import VoiceInput
 from f1_engineer.radio.pace import PaceReference
 from f1_engineer.radio.questions import QuestionPlan, plan_question
@@ -146,7 +146,7 @@ def test_stale_capture_refuses_extension_after_task_update():
 def test_missing_or_cross_session_voice_reference_never_uses_live_task(context):
     controller, radio, events, value = named_live()
     install(controller, radio)
-    voice = SimpleNamespace(task_context=context)
+    voice = SimpleNamespace(task_context=context, question_context=None)
     dispatch_voice_request("track that for another two laps", controller, voice, now=10)
     assert controller.tasks.active()[0].version == 1
     assert "No same-session" in radio.pending[-1].text
@@ -296,3 +296,107 @@ def test_active_speech_reference_wins_over_newer_unheard_instruction():
                   tasks=[{"task_id": 2, "version": 1}], message_key="answer:2")
     context = memory.capture_tasks("session", (), SimpleNamespace(key="report:1"))
     assert context.selected == (1, 1)
+
+
+def test_voice_question_keeps_driver_selected_when_listening_started():
+    controller, radio, events, value = named_live()
+    controller.handle_request("Leclerc last lap", now=10)
+    captured = controller.capture_question_context()
+    controller.handle_request("my last lap", now=10)
+    dispatch_voice_request("his previous lap", controller,
+                           SimpleNamespace(task_context=None, question_context=captured), now=10)
+    assert "Previously selected Charles Leclerc" in radio.pending[-1].text
+    assert "101.000 seconds" in radio.pending[-1].text
+    assert controller._history[-1]["plan"].targets == ("name:leclerc",)
+
+
+def test_voice_without_prior_question_does_not_adopt_a_later_reference():
+    controller, radio, events, value = named_live()
+    captured = controller.capture_question_context()
+    assert captured is None
+    controller.handle_request("Leclerc last lap", now=10)
+    dispatch_voice_request("his previous lap", controller,
+                           SimpleNamespace(task_context=None, question_context=captured), now=10)
+    assert "Please specify a driver" in radio.pending[-1].text
+
+
+@pytest.mark.parametrize("reset", ["forget", "unavailable", "history_gap"])
+def test_question_capture_cannot_survive_conversation_reset(reset):
+    controller, radio, events, value = named_live()
+    controller.handle_request("Leclerc last lap", now=10)
+    captured = controller.capture_question_context()
+    if reset == "forget":
+        controller.forget_conversation()
+    elif reset == "unavailable":
+        controller.feed({"status": "unavailable", "reason": "no_telemetry"}, now=10.1)
+    else:
+        value["event_floor"] = value["event_cursor"] = 10
+        controller.feed(value, now=10.1)
+    controller.feed(value, now=10.2)
+    controller.handle_request("Leclerc last lap", now=10.2)
+    dispatch_voice_request("only sector two", controller,
+                           SimpleNamespace(task_context=None, question_context=captured), now=10.2)
+    assert "Which lap and driver" in radio.pending[-1].text
+
+
+def test_forgetting_invalidates_task_context_even_when_task_is_still_active():
+    controller, radio, events, value = named_live()
+    install(controller, radio)
+    captured = controller.capture_task_context()
+    controller.forget_conversation()
+    controller.handle_request("extend task 1 by 2 laps", now=10, task_context=captured)
+    assert controller.tasks.active()[0].version == 1 and "No same-session" in radio.pending[-1].text
+
+
+def test_frozen_question_bindings_are_independent_of_live_history():
+    controller, radio, events, value = named_live()
+    controller.handle_request("Leclerc last lap", now=10)
+    captured = controller.capture_question_context()
+    controller._history[-1]["bindings"][0]["tenure_ordinal"] += 1
+    controller.handle_request("his previous lap", now=10, question_context=captured)
+    assert "101.000 seconds" in radio.pending[-1].text
+
+
+def test_captured_question_still_works_after_raw_history_eviction():
+    controller, radio, events, value = named_live()
+    controller.handle_request("Leclerc last lap", now=10)
+    captured = controller.capture_question_context()
+    for index in range(20):
+        controller.handle_request("my position", now=10)
+    controller.handle_request("his previous lap", now=10, question_context=captured)
+    assert "Previously selected Charles Leclerc" in radio.pending[-1].text
+
+
+def test_cross_scope_question_context_never_supplies_a_pronoun_reference():
+    controller, radio, events, value = named_live()
+    controller.handle_request("Leclerc last lap", now=10)
+    captured = controller.capture_question_context()
+    foreign = QuestionContext("different scope", captured.revision, captured.plan, captured.bindings)
+    controller.handle_request("his previous lap", now=10, question_context=foreign)
+    assert "Please specify a driver" in radio.pending[-1].text
+
+
+def test_explicit_voice_question_works_without_any_prior_question_context():
+    controller, radio, events, value = named_live()
+    controller.handle_request("Leclerc last lap", now=10, question_context=None)
+    assert "101.000 seconds" in radio.pending[-1].text
+
+
+def test_second_press_preserves_both_question_and_task_context(monkeypatch):
+    monkeypatch.setattr("f1_engineer.radio.listening.threading.Thread",
+                        lambda **fields: SimpleNamespace(start=lambda: None, is_alive=lambda: True))
+    voice = VoiceInput(transcribe=lambda *args: None)
+    task = TaskContext("session", (1, 1), ((1, 1),))
+    question = QuestionContext("session", 0, QuestionPlan(("self",), ("last_lap",)), (None,))
+    voice.request(source="console", scope="session", task_context=task, question_context=question)
+    voice.request(source="console", scope="session", task_context=None, question_context=None)
+    assert voice.task_context is task and voice.question_context is question
+
+
+def test_listening_request_forwards_frozen_question_context():
+    calls = []
+    question = QuestionContext("session", 0, QuestionPlan(("self",), ("last_lap",)), (None,))
+    request_listening(SimpleNamespace(scope="session", capture_repeat_reference=lambda: None, cancel=lambda: None),
+                      SimpleNamespace(request=lambda **fields: calls.append(fields)),
+                      source="console", question_context=question)
+    assert calls[0]["question_context"] is question

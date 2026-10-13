@@ -15,7 +15,7 @@ from .tasks import LapReportRegistry, parse_task_request
 from .watches import RaceWatchTracker
 from .pace import PaceTracker
 from .lap_history import FieldLapHistory
-from .conversation import ConversationMemory, TaskContext
+from .conversation import ConversationMemory, QuestionContext, TaskContext
 from .pit_benchmark import PitBenchmarkTracker
 from .regions import RegionTracker, RegionWindow
 from .region_progress import RegionProgress
@@ -46,6 +46,7 @@ def lap_message(number: int, milliseconds: int) -> str:
 
 
 _LIVE_TASK_CONTEXT = object()
+_LIVE_QUESTION_CONTEXT = object()
 
 
 class RadioController:
@@ -412,6 +413,14 @@ class RadioController:
         return self.conversation.capture_tasks(
             self.scheduler.scope, self.tasks.active(), self.scheduler.active or self.scheduler.last_completed)
 
+    def capture_question_context(self) -> QuestionContext | None:
+        if not self._history:
+            return None
+        previous = self._history[-1]
+        return QuestionContext(self.scheduler.scope, self.conversation.revision, previous["plan"],
+                               tuple(json.dumps(identity, sort_keys=True) if identity is not None else None
+                                     for identity in previous["bindings"]))
+
     def _participant_name(self, row: dict) -> str | None:
         participant = row.get("participant")
         if (not isinstance(participant, dict) or participant.get("status") != "available"
@@ -615,7 +624,8 @@ class RadioController:
         return self.scheduler.submit(RadioMessage(f"answer:{self._answer_id}", self.scheduler.scope,
                                           text, "answer", now + 30), now=now)
 
-    def handle_request(self, question: str, *, now: float, task_context=_LIVE_TASK_CONTEXT) -> None:
+    def handle_request(self, question: str, *, now: float, task_context=_LIVE_TASK_CONTEXT,
+                       question_context=_LIVE_QUESTION_CONTEXT) -> None:
         self.check_freshness(now=now)
         memory_query = " ".join(question.lower().split()).rstrip("?.!") if isinstance(question, str) else ""
         if memory_query in ("what was my last request", "what did you last report"):
@@ -631,7 +641,7 @@ class RadioController:
         try:
             action = parse_task_request(question)
             if action is None:
-                self.answer_question(question, now=now)
+                self.answer_question(question, now=now, question_context=question_context)
                 return
             if action.kind == "list":
                 active = [task for task in self.tasks.views() if task["state"] == "active"]
@@ -671,7 +681,8 @@ class RadioController:
                 if self._player is None or not _integer(self._player["lap"].get("current_lap_number"), 1, 255):
                     raise ValueError("Fresh player telemetry and a known lap number are required to extend tracking.")
                 context = self.capture_task_context() if task_context is _LIVE_TASK_CONTEXT else task_context
-                if not isinstance(context, TaskContext) or context.scope != self.scheduler.scope:
+                if (not isinstance(context, TaskContext) or context.scope != self.scheduler.scope
+                        or context.revision != self.conversation.revision):
                     raise ValueError("No same-session task reference was captured. Specify a current task number.")
                 reference = (context.selected if action.task_id is None else
                              next((entry for entry in context.versions if entry[0] == action.task_id), None))
@@ -870,10 +881,17 @@ class RadioController:
                                  message_key=f"reports:{event['id']}", queued=queued)
         return True
 
-    def answer_question(self, question: str, *, now: float) -> None:
+    def answer_question(self, question: str, *, now: float, question_context=_LIVE_QUESTION_CONTEXT) -> None:
         self._fact_age_s = None
         self.check_freshness(now=now)
-        previous = self._history[-1] if self._history else None
+        previous = None
+        if question_context is _LIVE_QUESTION_CONTEXT:
+            previous = self._history[-1] if self._history else None
+        elif (isinstance(question_context, QuestionContext) and question_context.scope == self.scheduler.scope
+              and question_context.revision == self.conversation.revision):
+            previous = {"plan": question_context.plan,
+                        "bindings": [json.loads(identity) if identity is not None else None
+                                     for identity in question_context.bindings]}
         started = time.perf_counter()
         text = "No fresh player telemetry is available."
         results = []

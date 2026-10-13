@@ -4,12 +4,23 @@ from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass
 
+from .questions import QuestionPlan
+
 
 @dataclass(frozen=True, slots=True)
 class TaskContext:
     scope: str | None
     selected: tuple[int, int] | None
     versions: tuple[tuple[int, int], ...]
+    revision: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class QuestionContext:
+    scope: str | None
+    revision: int
+    plan: QuestionPlan
+    bindings: tuple[str | None, ...]
 
 
 class ConversationMemory:
@@ -17,6 +28,7 @@ class ConversationMemory:
         self.clear()
 
     def clear(self):
+        self.revision = getattr(self, "revision", -1) + 1
         self.turns = deque(maxlen=16)
         self.task_reference = None
 
@@ -47,7 +59,7 @@ class ConversationMemory:
             selected = turn["task_reference"] if turn else None
         elif self.turns and self.turns[-1]["kind"] != "instruction":
             selected = None
-        return TaskContext(scope, selected, tuple((task.task_id, task.version) for task in tasks))
+        return TaskContext(scope, selected, tuple((task.task_id, task.version) for task in tasks), self.revision)
 
     def previous_request(self):
         return deepcopy(next((turn for turn in reversed(self.turns) if turn["kind"] in ("question", "instruction")

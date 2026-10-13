@@ -62,6 +62,7 @@ class VoiceInput:
         self._draft_ready_at = None
         self.repeat_reference = None
         self.task_context = None
+        self.question_context = None
 
     @property
     def blocks_playback(self) -> bool:
@@ -72,7 +73,7 @@ class VoiceInput:
                 "maximum_seconds": self._maximum_seconds, "draft_available": self._draft is not None}
 
     def request(self, *, source: str, scope: str | None, binding=None, connection=None,
-                repeat_reference=None, task_context=None) -> None:
+                repeat_reference=None, task_context=None, question_context=None) -> None:
         self._notify({"event": "radio_listen_requested", "source": source})
         if not self._enabled:
             self._notify({"event": "radio_listen_unavailable", "reason": "dry_run"})
@@ -91,6 +92,7 @@ class VoiceInput:
         self._connection = connection
         self.repeat_reference = repeat_reference
         self.task_context = task_context
+        self.question_context = question_context
         self._finish = threading.Event()
         self._cancelled = threading.Event()
         self._discard = False

@@ -1317,3 +1317,21 @@ Validation: 53 new conversation cases pass; the combined radio/live-facts,
 regional capture, CLI and engineer-facts selection passes 1,132 tests with one
 existing Starlette/httpx deprecation warning. Radio compilation and whitespace
 checks pass. Full-suite validation is recorded separately when available.
+
+### Frozen question context during microphone capture
+
+Question follow-ups also freeze the previous typed plan and immutable driver
+identity bindings at listening start. A later question cannot redirect “his
+previous lap” to a different driver during transcription, and missing capture
+context never adopts a later-created reference. Explicit new questions still
+work without prior context. Selected structured context survives bounded raw
+history eviction, but scope/continuity reset or explicit forgetting invalidates
+it. Forgetting also invalidates captured task references even if a task remains
+active. The second button press cannot replace either captured context.
+
+Validation: twelve additional capture-context regressions pass; the combined
+radio/live-facts selection now passes 1,144 tests with the same existing warning.
+Compilation and whitespace checks pass. The preceding full-suite run passed
+2,952 tests, skipped sixteen and reported two existing deprecation warnings in
+287.68 seconds; that run preceded these final capture-context refinements.
+Real-game microphone/wheel evidence remains pending.
