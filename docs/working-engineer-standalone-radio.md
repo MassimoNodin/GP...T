@@ -602,11 +602,54 @@ dispatch timing. At most sixteen compound bests are retained in memory. Session,
 player, epoch/generation, unavailable telemetry, history-gap and player-lap
 discontinuity resets discard the inventory. `Cancel all tracking` also clears it.
 No new detail demand, persistence, model/runtime change or automatic transcript
-execution is added. Sector-progress feedback, whole-session best retrieval,
-consistency coaching and live-game/audio acceptance remain unfinished.
+execution is added. Observed sector-progress feedback is described below.
+Whole-session best retrieval, consistency coaching and live-game/audio
+acceptance remain unfinished.
 
 Validation: 558 focused tests passed, including 62 new target-pace cases. The
 full suite passed 2,278 tests with 16 skipped tests and two existing deprecation
 warnings. Radio compilation, CLI help, local documentation links and staged
 whitespace checks passed. This is synthetic/mocked evidence, not verification
 of in-game speech, acoustic latency or the full target-pace acceptance criterion.
+
+## Observed sector target-pace feedback
+
+The same target-pace requests now include progress after sectors 1 and 2 when
+the frozen reference has complete observed sector timings. Both timings must
+come from that single fully observed valid reference lap; the radio never mixes
+best sectors from different laps or infers sector 3. The acknowledgement and
+task status identify whether sector feedback is available. A reference without
+sector metadata still provides lap-end feedback and explicitly reports sector
+comparison as unavailable.
+
+At each boundary, the radio compares cumulative elapsed time with the same
+boundary of the fixed reference. The whole-lap tolerance is the allowance
+so far, not a per-sector allocation or a predicted lap result. For example,
+after sector 2 it can report that you are cumulatively 0.200 seconds behind
+the reference and within the 0.300 second lap allowance so far.
+
+Current timings require fresh player-bound sector events aligned with the
+current lap, sector index and reported duration. Sector 2 also requires an
+observed sector 1 whose reported value has not changed. Invalid/unknown flags,
+pits, missing evidence, observation interruptions and changed compounds never
+produce a numeric deficit. A known different compound pauses the comparison.
+Missing or inconsistent sector metadata does not invalidate otherwise eligible
+lap-end feedback. An equally fast newly observed whole lap with complete sector
+metadata can replace an inventory best that lacked metadata, but active tasks
+retain their original reference until explicitly updated.
+
+Sector speech shares existing quiet/listening and freshness safeguards. New
+sector progress replaces older owned sector speech, and lap completion, task
+controls, eligibility loss and observation/scope interruptions invalidate it.
+Duplicate observations are silent; quiet/listening still collects evidence
+without building a speech backlog. Sector progress never consumes a finite
+lap schedule. Multiple eligible target tasks combine into one bounded utterance.
+`radio_target_pace_sector` records task/version, reference, lap, sector and text
+alongside existing dispatch timing evidence. No new detail demand, model/runtime
+change or automatic transcript execution is added.
+
+Validation: 607 focused tests passed, including 49 new sector-pace cases. The
+full suite passed 2,327 tests with 16 skipped tests and two existing deprecation
+warnings. Radio compilation, CLI help, local documentation links and staged
+whitespace checks passed. Evidence remains synthetic/mocked; in-game speech,
+wheel/audio behaviour and acoustic latency still require the deferred full test.

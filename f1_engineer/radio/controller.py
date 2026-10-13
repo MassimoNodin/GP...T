@@ -129,7 +129,8 @@ class RadioController:
         self._drivers = deepcopy(snapshot["drivers"])
         self._received_at = now
         self._age_s = age
-        self.pace.observe(self._player, now=now)
+        if self.pace.observe(self._player, now=now):
+            self.scheduler.cancel_owner("pace_sectors")
         if self.watches.observe(self.tasks.active(), self._player, self._resolve_target, now=now):
             self.scheduler.cancel_owner("lap_reports")
         prior_gap_results = dict(self.gaps.results)
@@ -166,6 +167,25 @@ class RadioController:
             if event.get("kind") == "driver_discontinuity":
                 self._clear_tasks("driver_discontinuity")
                 continue
+            if event.get("kind") == "sector_completed":
+                if (not _integer(event.get("lap_number"), 1, 255)
+                        or not _integer(event.get("received_monotonic_ns"))):
+                    self.pace.reset_sectors()
+                    self.scheduler.cancel_owner("pace_sectors")
+                    continue
+                elapsed_ns = snapshot["received_monotonic_ns"] - event["received_monotonic_ns"]
+                event_age = age + elapsed_ns / 1e9
+                if elapsed_ns < 0 or event_age >= 3:
+                    self.pace.reset_sectors()
+                    self.scheduler.cancel_owner("pace_sectors")
+                    continue
+                captured = self.pace.sector(event, self._player)
+                if captured is None:
+                    continue
+                if not captured:
+                    self.scheduler.cancel_owner("pace_sectors")
+                self._report_pace_sector(event, now=now, age=event_age)
+                continue
             if (event.get("kind") != "lap_completed"
                     or event.get("qualification") != "observed_lap_transition"
                     or not _integer(event.get("lap_number"), 1, 255)
@@ -175,6 +195,7 @@ class RadioController:
             if elapsed_ns < 0:
                 continue
             event_age = age + elapsed_ns / 1e9
+            self.scheduler.cancel_owner("pace_sectors")
             elapsed = event.get("lap_time_ms")
             if (event_age < 3 and player["lap"].get("current_lap_number") == event["lap_number"] + 1
                     and (elapsed is None or _integer(elapsed, 1, 2**32 - 1)
@@ -298,6 +319,7 @@ class RadioController:
         self.pace.interrupt()
         self.scheduler.cancel_owner("gap_changes")
         self.scheduler.cancel_owner("lap_reports")
+        self.scheduler.cancel_owner("pace_sectors")
 
     def _timing_fact(self, metric: str, row: dict) -> str:
         if metric == "target_pace":
@@ -346,6 +368,7 @@ class RadioController:
                 if self.tasks.cancel(action.task_id):
                     self.watches.remove(action.task_id)
                     self.scheduler.cancel_owner("lap_reports")
+                    self.scheduler.cancel_owner("pace_sectors")
                     text = f"Task {action.task_id} cancelled."
                 else:
                     text = "That task does not exist."
@@ -373,6 +396,7 @@ class RadioController:
                                           lap=self._player["lap"]["current_lap_number"], laps=action.laps, task_id=action.task_id,
                                           pace_reference=pace_reference, pace_tolerance_ms=action.tolerance_ms)
                 self.scheduler.cancel_owner("lap_reports")
+                self.scheduler.cancel_owner("pace_sectors")
                 self.watches.observe(self.tasks.active(), self._player, self._resolve_target, now=now)
                 expiry = f"through lap {task.until_lap}" if task.until_lap is not None else "until cancelled or the session changes"
                 text = f"Task {task.task_id} active: end-of-lap report from lap {task.first_lap}, {expiry}."
@@ -383,9 +407,31 @@ class RadioController:
                     text += (f" Fixed reference: best fully observed valid radio lap {pace_reference.lap_number}, "
                              f"{pace_reference.elapsed_ms / 1000:.3f} seconds on compound {pace_reference.compound}. "
                              f"Stay within {task.pace_tolerance_ms / 1000:.3f} seconds; reference does not update automatically.")
+                    text += (" Observed sector feedback enabled." if pace_reference.sector_times_ms is not None
+                             else " Sector feedback unavailable for this reference; lap feedback remains enabled.")
         except ValueError as error:
             text = str(error)
         self._control_answer(text, now=now)
+
+    def _report_pace_sector(self, event: dict, *, now: float, age: float) -> None:
+        tasks = [task for task in self.tasks.eligible(event_id=event["id"], lap=event["lap_number"])
+                 if "target_pace" in task.plan.metrics]
+        if not tasks:
+            return
+        reports = []
+        for task in tasks:
+            feedback = self.pace.answer_sector(event, task.pace_reference, task.pace_tolerance_ms, self._player)
+            reports.append(f"Task {task.task_id}: " + feedback)
+            self.notify({"event": "radio_target_pace_sector", "task_id": task.task_id, "version": task.version,
+                         "lap_number": event["lap_number"], "sector": event.get("sector"),
+                         "reference": task.pace_reference.view(), "text": feedback})
+        text = f"Lap {event['lap_number']} sector progress. " + " ".join(reports)
+        if len(text.encode("utf-8")) > 1024:
+            text = "The sector pace reports are too long to speak safely. Request fewer tasks."
+        self.scheduler.cancel_owner("pace_sectors")
+        self.scheduler.submit(RadioMessage(f"pace-sector:{event['id']}", self.scheduler.scope, text, "proactive",
+                                          now + 60, observation_age_s=age, dispatch_before=now + 3 - age,
+                                          owner="pace_sectors"), now=now)
 
     def _report_tasks(self, event: dict, *, now: float, age: float) -> bool:
         tasks = self.tasks.eligible(event_id=event["id"], lap=event["lap_number"])
