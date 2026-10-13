@@ -1,7 +1,9 @@
 import type { ProgressionPoint } from "@/features/review-data/fixtures";
 import { formatDelta, formatLapTime } from "@/features/review-data/format";
-import { formatAxisValue, formatMetricValue, type ChartMetric } from "./overview-data";
+import { formatAxisValue, formatMetricValue, type ChartMetric, type LapMarker } from "./overview-data";
 import styles from "./SessionOverview.module.css";
+
+const MARKER_LABELS: Record<LapMarker["kind"], string> = { pit: "PIT", sc: "SC", vsc: "VSC" };
 
 const W = 470;
 const H = 232;
@@ -26,6 +28,7 @@ export function LapTimeChart({
   metric = "lap",
   selectedValue,
   reference,
+  markers = [],
 }: {
   points: ProgressionPoint[];
   yMin: number;
@@ -40,6 +43,8 @@ export function LapTimeChart({
   selectedValue?: number;
   /** Compare mode: the reference lap, drawn as a ring. */
   reference?: { lap: number; value: number } | null;
+  /** Pit and safety car laps, tagged along the bottom of the plot. */
+  markers?: LapMarker[];
 }) {
   const plotW = W - PAD.left - PAD.right;
   const plotH = H - PAD.top - PAD.bottom;
@@ -57,7 +62,8 @@ export function LapTimeChart({
   // Selected marker: the plotted point for the lap, or the curve position.
   const own = selectedValue ?? selected.ms;
   const plotted = points.find((point) => point.lap === selected.lap);
-  let markerValue = plotted?.ms;
+  // A lap left off the curve (an excluded outlier) still sits at its own value.
+  let markerValue = plotted?.ms ?? selectedValue;
   if (markerValue === undefined) {
     const before = [...points].reverse().find((point) => point.lap < selected.lap);
     const after = points.find((point) => point.lap > selected.lap);
@@ -120,6 +126,21 @@ export function LapTimeChart({
             <circle key={point.lap} cx={x(point.lap)} cy={y(point.ms)} r="2.9" fill={TONES[point.tone]} />
           ),
         )}
+        {markers.map((marker) => {
+          // Stack a lap's tags upward from the axis.
+          const stack = markers.filter((other) => other.lap === marker.lap).indexOf(marker);
+          const label = MARKER_LABELS[marker.kind];
+          const width = label.length * 5.4 + 8;
+          const top = H - PAD.bottom - 14 - stack * 15;
+          return (
+            <g key={`${marker.kind}-${marker.lap}`} className={styles.lapMarker} data-kind={marker.kind}>
+              <rect x={x(marker.lap) - width / 2} y={top} width={width} height={12} rx={3} />
+              <text x={x(marker.lap)} y={top + 9} textAnchor="middle">
+                {label}
+              </text>
+            </g>
+          );
+        })}
         <circle cx={mx} cy={my} r="6" fill="#2563eb" stroke="#fff" strokeWidth="1.6" />
         {showReference && (
           <circle

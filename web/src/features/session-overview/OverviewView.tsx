@@ -1,10 +1,10 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Bone } from "@/features/route-states/Skeleton";
 import { StatusGlyph } from "@/features/ui-foundation/icons";
-import { Card, Select } from "@/features/ui-foundation/primitives";
+import { Card, Checkbox, Select } from "@/features/ui-foundation/primitives";
 import { EmptyState, InlineAlert } from "@/features/ui-foundation/states";
 import { LapTimeChart } from "./LapTimeChart";
 import {
@@ -15,6 +15,8 @@ import {
   METRIC_LABELS,
   metricOptions,
   scanStoppedText,
+  lapMarkers,
+  outlierLapIds,
   scopeEvents,
   totalLapsOf,
   type ChartMetric,
@@ -50,15 +52,25 @@ export function OverviewView({
 }
 
 function ProgressionCard({ data, onMetric }: { data: ViewData; onMetric: (metric: ChartMetric) => void }) {
-  const { model, laps, best, selectedId, referenceId, metric } = data;
+  const { model, laps, best, selectedId, referenceId, metric, summary } = data;
+  const [excludeOutliers, setExcludeOutliers] = useState(true);
+  const summaryEvents = summary.status === "loaded" ? summary.value.events : null;
+  const markers = useMemo(
+    () => (model.progression.illustrative ? [] : lapMarkers(laps, summaryEvents)),
+    [laps, model.progression.illustrative, summaryEvents],
+  );
+  const outliers = useMemo(() => outlierLapIds(laps, markers), [laps, markers]);
   const selected = laps.find((lap) => lap.id === selectedId) ?? null;
   const reference = referenceId ? (laps.find((lap) => lap.id === referenceId) ?? null) : null;
   const illustrative = model.progression.illustrative;
   const options = metricOptions(laps, illustrative);
   const activeMetric = options.includes(metric) ? metric : "lap";
   const series = useMemo(
-    () => (illustrative ? null : buildSeries(laps, activeMetric, selectedId, model.bestId)),
-    [activeMetric, illustrative, laps, model.bestId, selectedId],
+    () =>
+      illustrative
+        ? null
+        : buildSeries(laps, activeMetric, selectedId, model.bestId, excludeOutliers ? outliers : new Set<string>()),
+    [activeMetric, excludeOutliers, illustrative, laps, model.bestId, outliers, selectedId],
   );
   const chart =
     series ??
@@ -100,6 +112,15 @@ function ProgressionCard({ data, onMetric }: { data: ViewData; onMetric: (metric
             Reference Lap
           </span>
         )}
+        {!illustrative && outliers.size > 0 && (
+          <span className={viewStyles.outlierToggle}>
+            <Checkbox
+              label={`Exclude outliers (${outliers.size})`}
+              checked={excludeOutliers}
+              onChange={setExcludeOutliers}
+            />
+          </span>
+        )}
       </div>
       {selected ? (
         <LapTimeChart
@@ -109,6 +130,7 @@ function ProgressionCard({ data, onMetric }: { data: ViewData; onMetric: (metric
           metric={activeMetric}
           selectedValue={chart.values[selected.lap]}
           reference={reference && chart.values[reference.lap] !== undefined ? { lap: reference.lap, value: chart.values[reference.lap] } : null}
+          markers={markers}
         />
       ) : (
         <EmptyState size="inline" title="No timed laps were recorded for this session." />

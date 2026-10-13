@@ -237,6 +237,30 @@
   position: relative;
 }
 
+.lapMarker rect {
+  fill: var(--grey-soft);
+  stroke: var(--border-strong);
+  stroke-width: 0.6;
+}
+
+.lapMarker text {
+  fill: var(--muted);
+  font-size: 7.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.lapMarker[data-kind="sc"] rect,
+.lapMarker[data-kind="vsc"] rect {
+  fill: var(--amber-soft);
+  stroke: var(--amber);
+}
+
+.lapMarker[data-kind="sc"] text,
+.lapMarker[data-kind="vsc"] text {
+  fill: var(--amber-text);
+}
+
 .chart {
   display: block;
   width: 100%;

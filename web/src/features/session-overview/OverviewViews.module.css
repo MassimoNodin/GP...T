@@ -346,3 +346,9 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Lap chart: the outlier switch sits at the end of the legend row. */
+.outlierToggle {
+  margin-left: auto;
+  font-size: 12px;
+}

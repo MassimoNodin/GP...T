@@ -441,16 +441,109 @@ export const EMPTY_SERIES: ChartSeries = {
   values: {},
 };
 
-/** Chart points for the chosen metric over the real laps (valid laps, outliers left off). */
-export function buildSeries(laps: OverviewLap[], metric: ChartMetric, selectedId: string, bestId: string | null): ChartSeries {
+/* ------------------------------------------------------------ lap markers */
+
+export type LapMarkerKind = "pit" | "sc" | "vsc";
+export type LapMarker = { lap: number; kind: LapMarkerKind };
+
+const SC_KINDS: Record<string, LapMarkerKind> = { safety_car: "sc", virtual_safety_car: "vsc" };
+
+/**
+ * The lap a session time fell in, from the player's own events that carry
+ * both. Safety car messages have a time but no lap.
+ */
+export function lapAtTime(events: readonly SummaryEvent[], timeS: number): number | null {
+  let lap: number | null = null;
+  let bestTime = Number.NEGATIVE_INFINITY;
+  for (const event of events) {
+    if (!event.isPlayer || event.lap === null || event.sessionTimeS === null) continue;
+    if (event.sessionTimeS <= timeS && event.sessionTimeS >= bestTime) {
+      bestTime = event.sessionTimeS;
+      lap = event.lap;
+    }
+  }
+  return lap;
+}
+
+/**
+ * Laps run under a safety car or virtual safety car, from "deployed" to
+ * "returned" (or to the end of the session). Periods whose lap cannot be
+ * placed are left out rather than guessed.
+ */
+export function neutralisedLaps(events: readonly SummaryEvent[] | null, lastLap: number): Map<number, LapMarkerKind> {
+  const result = new Map<number, LapMarkerKind>();
+  if (!events) return result;
+  const placed = (event: SummaryEvent) =>
+    event.lap ?? (event.sessionTimeS === null ? null : lapAtTime(events, event.sessionTimeS));
+  let open: { kind: LapMarkerKind; from: number } | null = null;
+  const close = (to: number) => {
+    if (!open) return;
+    for (let lap = open.from; lap <= to; lap += 1) if (!result.has(lap)) result.set(lap, open.kind);
+    open = null;
+  };
+  const ordered = events
+    .filter((event) => SC_KINDS[event.kind])
+    .sort((a, b) => (a.sessionTimeS ?? 0) - (b.sessionTimeS ?? 0));
+  for (const event of ordered) {
+    const lap = placed(event);
+    if (lap === null) continue;
+    const phase = typeof event.detail.event === "string" ? event.detail.event : "";
+    if (phase === "deployed") {
+      close(lap);
+      open = { kind: SC_KINDS[event.kind], from: lap };
+    } else if (phase === "returned" || phase === "race resumes") {
+      close(lap);
+    }
+  }
+  close(lastLap);
+  return result;
+}
+
+/** Pit, safety car and virtual safety car markers for the lap chart. */
+export function lapMarkers(laps: readonly OverviewLap[], events: readonly SummaryEvent[] | null): LapMarker[] {
+  const lastLap = laps.reduce((max, lap) => Math.max(max, lap.lap), 0);
+  const neutralised = neutralisedLaps(events, lastLap);
+  const markers: LapMarker[] = [];
+  for (const lap of laps) {
+    if (lap.pit) markers.push({ lap: lap.lap, kind: "pit" });
+    const sc = neutralised.get(lap.lap);
+    if (sc) markers.push({ lap: lap.lap, kind: sc });
+  }
+  return markers;
+}
+
+/**
+ * Laps that are not representative of pace: pit laps, laps under a safety car
+ * and anything more than 3% slower than the median valid lap.
+ */
+export function outlierLapIds(laps: readonly OverviewLap[], markers: readonly LapMarker[]): Set<string> {
+  const flagged = new Set(markers.map((marker) => marker.lap));
+  const valid = laps.filter((lap) => lap.valid);
+  const limit = median(valid.map((lap) => lap.ms)) * 1.03;
+  return new Set(valid.filter((lap) => flagged.has(lap.lap) || lap.ms > limit).map((lap) => lap.id));
+}
+
+/**
+ * Chart points for the chosen metric over the real laps. `excluded` laps
+ * (outliers) are left off so the racing laps keep their scale; with nothing
+ * excluded every valid lap is drawn.
+ */
+export function buildSeries(
+  laps: OverviewLap[],
+  metric: ChartMetric,
+  selectedId: string,
+  bestId: string | null,
+  excluded?: ReadonlySet<string>,
+): ChartSeries {
   const best = laps.find((lap) => lap.id === bestId)?.ms ?? null;
-  if (metric === "lap") {
+  if (metric === "lap" && excluded === undefined) {
     const progression = progressionFrom(laps, selectedId, bestId);
     const values: Record<number, number> = {};
     for (const lap of laps) values[lap.lap] = lap.ms;
     return { ...progression, values };
   }
-  const timed = laps.filter((lap) => lap.valid && (metric !== "delta" || !lap.pit));
+  if (metric === "lap") return lapTimeSeries(laps, selectedId, bestId, excluded ?? new Set());
+  const timed = laps.filter((lap) => lap.valid && (metric !== "delta" || !lap.pit) && !excluded?.has(lap.id));
   const measured = timed.flatMap((lap) => {
     const value = metricValue(lap, metric, best);
     return value === null ? [] : [{ lap, value }];
@@ -458,7 +551,8 @@ export function buildSeries(laps: OverviewLap[], metric: ChartMetric, selectedId
   if (measured.length === 0) return EMPTY_SERIES;
   // Slow neutralised and pit laps would flatten the racing laps.
   const cutoff = metric === "delta" ? median(timed.map((lap) => lap.ms)) + 6000 - (best ?? 0) : median(measured.map((m) => m.value)) * 1.25;
-  const plotted = measured.filter((entry) => entry.value <= cutoff);
+  // An explicit exclusion set replaces the cutoff; an empty one draws every lap.
+  const plotted = excluded === undefined ? measured.filter((entry) => entry.value <= cutoff) : measured;
   const used = plotted.length > 0 ? plotted : measured;
   const lowest = Math.min(...used.map((entry) => entry.value));
   const highest = Math.max(...used.map((entry) => entry.value));
@@ -479,11 +573,41 @@ export function buildSeries(laps: OverviewLap[], metric: ChartMetric, selectedId
   return { points, ...scale, xMax: Math.max(10, ...used.map((entry) => entry.lap.lap)), illustrative: false, values };
 }
 
+function lapTimeSeries(
+  laps: OverviewLap[],
+  selectedId: string,
+  bestId: string | null,
+  excluded: ReadonlySet<string>,
+): ChartSeries {
+  const valid = laps.filter((lap) => lap.valid);
+  const plotted = valid.filter((lap) => !excluded.has(lap.id));
+  const used = plotted.length > 0 ? plotted : valid;
+  if (used.length === 0) return EMPTY_SERIES;
+  const scale = niceScale(Math.min(...used.map((lap) => lap.ms)), Math.max(...used.map((lap) => lap.ms)));
+  const values: Record<number, number> = {};
+  for (const lap of laps) values[lap.lap] = lap.ms;
+  let personalBest = Number.POSITIVE_INFINITY;
+  const points: ProgressionPoint[] = used.map((lap) => {
+    let tone: ProgressionPoint["tone"] = "orange";
+    if (lap.ms < personalBest) {
+      personalBest = lap.ms;
+      tone = "green";
+    }
+    if (lap.id === bestId) tone = "purple";
+    if (lap.id === selectedId) tone = "blue";
+    return { lap: lap.lap, ms: lap.ms, tone };
+  });
+  return { points, ...scale, xMax: Math.max(10, ...laps.map((lap) => lap.lap)), illustrative: false, values };
+}
+
 export function formatAxisValue(metric: ChartMetric, value: number): string {
   if (metric === "delta") return `+${(value / 1000).toFixed(1)}`;
   if (metric === "lap") {
     const minutes = Math.floor(value / 60000);
-    return `${minutes}:${String(Math.round((value - minutes * 60000) / 1000)).padStart(2, "0")}`;
+    const seconds = (value - minutes * 60000) / 1000;
+    // Half-second steps keep their decimal so ticks stay distinct.
+    const text = Number.isInteger(seconds) ? String(seconds) : seconds.toFixed(1);
+    return `${minutes}:${text.padStart(Number.isInteger(seconds) ? 2 : 4, "0")}`;
   }
   return (value / 1000).toFixed(1);
 }

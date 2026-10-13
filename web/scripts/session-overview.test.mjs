@@ -1133,3 +1133,38 @@ test("speed traps are detail, not notable events", () => {
   assert.deepEqual(data.scopeEvents(events, false).map((e) => e.kind), ["safety_car"]);
   assert.equal(data.scopeEvents(events, true).length, 3);
 });
+
+test("lap chart markers place pit and safety car laps, and outliers can be excluded", () => {
+  const laps = [
+    lap(1, 1, 93500),
+    lap(2, 2, 93300),
+    lap(3, 3, 93400, { pit: true }),
+    lap(4, 4, 101000),
+    lap(5, 5, 93600),
+  ];
+  const events = parseSessionSummary(
+    summaryPayload([
+      summaryEvent("pit_entry", "Pit entry", 3, { is_player: true, session_time_s: 280 }),
+      summaryEvent("collision", "You and Car 2 collided", 4, { is_player: true, session_time_s: 300 }),
+      summaryEvent("safety_car", "Safety car: deployed", null, { session_time_s: 310, detail: { event: "deployed" } }),
+      summaryEvent("safety_car", "Safety car: returned", null, { session_time_s: 400, detail: { event: "returned" } }),
+      summaryEvent("overtake", "You overtook Car 3", 5, { is_player: true, session_time_s: 390 }),
+    ]),
+  ).events;
+  assert.equal(data.lapAtTime(events, 310), 4);
+  const markers = data.lapMarkers(laps, events);
+  assert.deepEqual(markers, [
+    { lap: 3, kind: "pit" },
+    { lap: 4, kind: "sc" },
+    { lap: 5, kind: "sc" },
+  ]);
+  const outliers = data.outlierLapIds(laps, markers);
+  assert.deepEqual([...outliers].sort(), ["3", "4", "5"]);
+  const tight = data.buildSeries(laps, "lap", "1", "2", outliers);
+  assert.deepEqual(tight.points.map((point) => point.lap), [1, 2]);
+  const all = data.buildSeries(laps, "lap", "1", "2", new Set());
+  assert.equal(all.points.length, 5);
+  assert.ok(all.yMax >= 101000);
+  assert.equal(data.formatAxisValue("lap", 93500), "1:33.5");
+  assert.equal(data.formatAxisValue("lap", 94000), "1:34");
+});
