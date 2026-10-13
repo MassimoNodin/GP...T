@@ -322,7 +322,7 @@ class RadioController:
                     name = self._participant_name(row)
                     if name is not None and target != "self":
                         label = name
-                    pieces.append(f"{label}: " + ", ".join(timing_fact(metric, row["lap"]) for metric in task.plan.metrics) + ".")
+                    pieces.append(f"{label}: " + ", ".join(timing_fact(metric, row["lap"], self._player["lap"]) for metric in task.plan.metrics) + ".")
             reports.append(f"Task {task.task_id}: " + " ".join(pieces))
         text = f"Lap {event['lap_number']} reports. " + " ".join(reports)
         if len(text.encode("utf-8")) > 1024:
@@ -373,7 +373,7 @@ class RadioController:
                             result += " Use a full name or P1 to P24."
                     else:
                         result = f"{label} (car slot {row['car_index']}): " + ", ".join(
-                            timing_fact(metric, row["lap"]) for metric in plan.metrics) + "."
+                            timing_fact(metric, row["lap"], self._player["lap"]) for metric in plan.metrics) + "."
                     results.append(result)
                 text = " ".join(results)
                 self._history.append({"question": question, "plan": plan, "bindings": bindings})

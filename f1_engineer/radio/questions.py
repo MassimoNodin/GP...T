@@ -13,6 +13,7 @@ class QuestionPlan:
 
 
 METRICS = {
+    "lap_comparison": r"(?:last|previous|latest)(?: completed)? lap comparisons?",
     "last_lap": r"(?:last|previous|latest)(?: completed)? lap(?: time)?s?",
     "current_lap": r"current lap(?: time)?s?",
     "position": r"(?:race )?positions?",
@@ -31,6 +32,9 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
     if not isinstance(question, str) or not 1 <= len(question.encode("utf-8")) <= 1024:
         raise ValueError("Ask a question of at most 1024 bytes.")
     remaining = driver_name_key(question)
+    comparison = re.fullmatch(r"compare my (?:last|previous|latest)(?: completed)? lap(?: time)? with (.+?)[?.!]*", remaining)
+    if comparison:
+        remaining = comparison.group(1) + " last lap comparison"
     if "__named_" in remaining:
         raise ValueError("Please specify a supported driver name or timing fact.")
     named_targets = []
@@ -74,11 +78,13 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
         return " "
     target_pattern = r"\b(?:" + "|".join(f"(?P<{target}>{pattern})" for target, pattern in patterns.items()) + r")\b"
     remaining = re.sub(target_pattern, driver_target, remaining)
+    if comparison is not None and not targets:
+        raise ValueError("Please specify a driver to compare with your last lap.")
     if re.search(r"\b(?:their|his|her|them|him)\b", remaining) and (previous is None or targets):
         raise ValueError("Please specify a driver; that pronoun has no single supported reference.")
     remaining = re.sub(r"\b(?:what|what's|is|are|the|a|and|also|please|tell|show|give|for|of|about|how|their|his|her|them|him|then)\b", " ", remaining)
     if re.sub(r"[\s?,.!']", "", remaining):
-        raise ValueError("I can answer current or last lap times, positions, and leader/front-car gaps. Use me, leader, car ahead, car behind, P1 to P24, or an available driver's full name or surname. Other facts and task instructions are not supported yet.")
+        raise ValueError("I can answer current or last lap times, last lap comparisons to you, positions, and leader/front-car gaps. Use me, leader, car ahead, car behind, P1 to P24, or an available driver's full name or surname. Other facts and task instructions are not supported yet.")
     if not metrics and not targets:
         raise ValueError("Please specify a driver or timing fact.")
     inherited_targets = not targets and previous is not None
@@ -94,7 +100,29 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
     return QuestionPlan(tuple(targets), tuple(metrics), inherited_targets)
 
 
-def timing_fact(metric: str, lap: dict) -> str:
+def lap_comparison(lap: dict, player_lap: dict | None) -> str:
+    unavailable = "last lap comparison unavailable"
+    if not isinstance(player_lap, dict):
+        return unavailable + "; player reference missing"
+    number, player_number = lap.get("current_lap_number"), player_lap.get("current_lap_number")
+    if not all(type(value) is int and 2 <= value <= 255 for value in (number, player_number)):
+        return unavailable + "; completed lap number missing"
+    if number != player_number:
+        return unavailable + f"; driver last completed lap {number - 1}, your last completed lap {player_number - 1}"
+    elapsed, player_elapsed = lap.get("last_lap_time_ms"), player_lap.get("last_lap_time_ms")
+    if not all(type(value) is int and 1 <= value <= 2**32 - 1 for value in (elapsed, player_elapsed)):
+        return unavailable + "; reported lap time missing"
+    delta = elapsed - player_elapsed
+    prefix = f"reported lap {number - 1} "
+    if delta == 0:
+        return prefix + "matched your time"
+    direction = "slower" if delta > 0 else "faster"
+    return prefix + f"{abs(delta) / 1000:.3f} seconds {direction} than you"
+
+
+def timing_fact(metric: str, lap: dict, player_lap: dict | None = None) -> str:
+    if metric == "lap_comparison":
+        return lap_comparison(lap, player_lap)
     labels = {"last_lap": "last lap", "current_lap": "current lap elapsed",
               "position": "position", "leader_gap": "gap to leader",
               "front_gap": "gap to car ahead"}

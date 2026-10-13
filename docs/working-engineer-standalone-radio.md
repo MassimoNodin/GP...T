@@ -366,8 +366,8 @@ Reports trigger only from a new, verified player lap-completion event matching
 the current player lap; an available event time must agree with the current last
 lap time. Each driver's completed lap number is spoken separately, since drivers
 may be on different laps. Missing own/opponent timing produces partial unavailable
-results. These are side-by-side timing reports, not yet computed lap-time
-comparisons, race-gap change that lap, best-lap coaching or predictions.
+results. Last-lap comparisons use the guarded computed fact described below;
+race-gap change that lap, best-lap coaching and predictions are not implemented.
 
 All due tasks form one bounded proactive utterance. It replaces the default
 player-only lap call for that event and uses the shared speech scheduler. If the
@@ -399,3 +399,37 @@ The 50 new task cases cover scheduling, reference binding, lifecycle, partial
 facts and invalidation. Radio compilation, CLI help and local documentation-link
 checks also passed. This is synthetic/mocked evidence, not verification of
 in-game speech, wheel input, microphone capture or acoustic latency.
+
+## Computed last-lap comparisons
+
+Questions and configured lap reports can now compare an opponent reported
+last-lap time with your reported time using integer milliseconds. Examples:
+
+```text
+ask Compare my last lap with Leclerc and Norris
+ask Leclerc last lap comparison and position
+ask Tell me at the end of each lap compare my last lap with the leader
+ask Tell me at the end of each lap Leclerc last lap comparison for the next 3 laps
+```
+
+The comparison is always relative to you: an opponent taking less time is
+described as faster than you, and equal reported times are described as matched.
+Both drivers must have a known, identical completed lap number and positive
+bounded integer times. Otherwise the comparison is explicitly unavailable;
+different lap numbers are spoken so the missing comparison is understandable.
+An opponent who has not yet completed your latest lap is not compared to a
+different lap or to cached historical values. Other requested facts still work
+when the comparison is unavailable.
+
+The same name/role binding, follow-up, freshness and report lifecycle rules
+apply. No extra telemetry or model calls are required. These are reported-time
+comparisons, not verified valid-lap records, like-for-like tyre/weather/stint
+benchmarks or estimates of race-gap changes. Lap validity and comparable driving
+conditions are not established by this coarse timing fact. This does not add
+best-lap coaching or opponent lap history.
+
+Validation: 359 focused tests passed, including 42 new comparison cases. The
+full suite passed 2,114 tests with 16 skipped tests and two existing deprecation
+warnings. Radio compilation, CLI help and local documentation-link checks passed.
+These checks use synthetic/mocked inputs; live-game speech and acoustic latency
+have not been measured for this increment.
