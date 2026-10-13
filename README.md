@@ -32,7 +32,8 @@ npm run dev
 Open `http://127.0.0.1:3000`. Set the game's UDP destination to this computer,
 port `20777`. The API listens on `127.0.0.1:8765` and automatically acquires
 telemetry on `0.0.0.0:20777`; do not start another receiver on that port.
-Add `--manual-acquisition` for diagnostic recording controls.
+`--manual-acquisition` turns automatic acquisition off for legacy manual capture
+diagnostics; do not use it for normal sessions.
 
 The dashboard has three areas: **Drive** shows engineer and telemetry status with
 the current or most recent session; **Review** lists acquired and imported
