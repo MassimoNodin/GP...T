@@ -585,3 +585,16 @@ test("sector and tyre enrichment merges into v2 laps by revision id", () => {
   assert.equal(merged[2], laps[2], "laps without a revision id are untouched");
   assert.deepEqual(enrich.sectorReasons(merged), ["Sector times were not in the recorded packets."]);
 });
+
+test("the chart cursor maps to a point on the measured line", () => {
+  const points = [
+    [0, 10, 10],
+    [100, 20, 10],
+    [200, 20, 30],
+  ];
+  assert.deepEqual(geometry.pointAt(points, 50), [15, 10]);
+  assert.deepEqual(geometry.pointAt(points, 150), [20, 20]);
+  assert.deepEqual(geometry.pointAt(points, 200), [20, 30]);
+  assert.equal(geometry.pointAt(points, 250), null);
+  assert.equal(geometry.pointAt([], 10), null);
+});

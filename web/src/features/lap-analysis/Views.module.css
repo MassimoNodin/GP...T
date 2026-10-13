@@ -414,3 +414,11 @@
     align-items: flex-start;
   }
 }
+
+/* Chart cursor position on the circuit */
+.mapCursor {
+  fill: var(--blue);
+  stroke: var(--surface);
+  stroke-width: 0.8;
+  pointer-events: none;
+}

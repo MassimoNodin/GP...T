@@ -81,6 +81,7 @@ export function TrackCard() {
           title={`${model.track} circuit map`}
           className={viewStyles.cardMap}
           strokeWidth={4}
+          cursor={state.cursor}
         />
       ) : (
         <TrackMap track={model.trackKey} className={styles.trackMap} strokeWidth={2} title={`${model.track} circuit map`} />

@@ -82,6 +82,8 @@ export function TrackMapView() {
           className={styles.bigMap}
           strokeWidth={4}
           focusId={focused && canFocus ? (selectedChoice?.id ?? null) : null}
+          // No chart here, so only a cursor pinned on another tab is shown.
+          cursor={state.pinned ? state.cursor : null}
         />
         <p className={styles.mapNote}>
           {path

@@ -16,6 +16,7 @@ export function MeasuredCharts({
   zoom,
   band = null,
   interactive = false,
+  hover = false,
   width,
   rowHeights,
 }: {
@@ -26,6 +27,8 @@ export function MeasuredCharts({
   /** Shaded region of the zoom. */
   band?: DistanceRange | null;
   interactive?: boolean;
+  /** Hover moves the shared cursor (and the track map dot) without brushing a range. */
+  hover?: boolean;
   width?: number;
   rowHeights?: Partial<Record<RowKey, number>>;
 }) {
@@ -55,8 +58,8 @@ export function MeasuredCharts({
         delta={wantsDelta ? (referenceReady ? delta : { unavailable: "Delta needs complete speed traces for both laps." }) : null}
         width={width}
         rowHeights={rowHeights}
-        cursor={interactive ? cursor : null}
-        onCursor={interactive ? onCursor : undefined}
+        cursor={interactive || hover ? cursor : null}
+        onCursor={interactive || hover ? onCursor : undefined}
         onBrush={interactive ? setBrush : undefined}
       />
       {reference && referenceTrace?.state === "unavailable" && (

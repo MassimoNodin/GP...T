@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { trackOutlinePath } from "@/features/ui-foundation/TrackMap";
 import type { Heat, RegionChoice } from "./regions";
 import type { TracePath } from "./lap-telemetry";
-import { MAP_HEIGHT, MAP_WIDTH, outlineDash, pathSegment, pointsAttribute, projectPath } from "./track-geometry";
+import { MAP_HEIGHT, MAP_WIDTH, outlineDash, pathSegment, pointAt, pointsAttribute, projectPath } from "./track-geometry";
 import styles from "./Views.module.css";
 
 const HEAT_COLOR: Record<Heat | "neutral", string> = {
@@ -33,6 +33,7 @@ export function TrackMapDrawing({
   className,
   strokeWidth = 5,
   focusId = null,
+  cursor = null,
 }: {
   trackKey: string;
   path: TracePath | null;
@@ -45,6 +46,8 @@ export function TrackMapDrawing({
   strokeWidth?: number;
   /** Zoom the measured line to this region (no effect on the schematic outline). */
   focusId?: string | null;
+  /** Lap distance of the chart cursor, drawn as a dot on the line. */
+  cursor?: number | null;
 }) {
   const projected = useMemo(() => (path ? projectPath(path) : null), [path]);
   const outline = trackOutlinePath(trackKey);
@@ -52,6 +55,22 @@ export function TrackMapDrawing({
   const drawn = regions.filter((region) => !region.choice.complex);
   const selected = regions.find((region) => region.choice.id === selectedId) ?? null;
   const interactive = !!onSelect;
+  const outlineRef = useRef<SVGPathElement>(null);
+  const [outlinePoint, setOutlinePoint] = useState<[number, number] | null>(null);
+  const measuredPoint = projected && cursor !== null ? pointAt(projected, cursor) : null;
+  // The schematic outline has no distances, so place the dot by its share of the lap.
+  useEffect(() => {
+    const element = outlineRef.current;
+    if (projected || !element || cursor === null || !length) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setOutlinePoint(null);
+      return;
+    }
+    const share = Math.min(1, Math.max(0, cursor / length));
+    const point = element.getPointAtLength(element.getTotalLength() * share);
+    setOutlinePoint([point.x, point.y]);
+  }, [cursor, length, projected]);
+  const cursorPoint = measuredPoint ?? outlinePoint;
   const focus = projected && focusId ? regions.find((region) => region.choice.id === focusId) : null;
   const box = (() => {
     if (!projected || !focus) return null;
@@ -85,7 +104,7 @@ export function TrackMapDrawing({
           <circle cx={projected[0][1]} cy={projected[0][2]} r="1.6" fill="var(--text)" stroke="var(--surface)" strokeWidth="0.6" />
         </>
       ) : (
-        <path d={outline} stroke="currentColor" strokeWidth="1.2" vectorEffect="non-scaling-stroke" opacity="0.55" />
+        <path ref={outlineRef} d={outline} stroke="currentColor" strokeWidth="1.2" vectorEffect="non-scaling-stroke" opacity="0.55" />
       )}
       {length &&
         [...drawn, ...(selected && selected.choice.complex ? [selected] : [])].map((region) => {
@@ -124,6 +143,15 @@ export function TrackMapDrawing({
             </g>
           );
         })}
+      {cursorPoint && (
+        <circle
+          className={styles.mapCursor}
+          cx={cursorPoint[0]}
+          cy={cursorPoint[1]}
+          r={box ? 1.4 : 2.2}
+          aria-hidden="true"
+        />
+      )}
     </svg>
   );
 }

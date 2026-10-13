@@ -35,6 +35,22 @@ export function pathSegment(points: readonly ProjectedPoint[], from: number, to:
   return points.filter(([d]) => d >= from && d <= to);
 }
 
+/** The point at lap distance `d` on the measured line, interpolated; null off the line. */
+export function pointAt(points: readonly ProjectedPoint[], d: number): [number, number] | null {
+  if (points.length === 0 || d < points[0][0] || d > points[points.length - 1][0]) return null;
+  let low = 0;
+  let high = points.length - 1;
+  while (high - low > 1) {
+    const mid = (low + high) >> 1;
+    if (points[mid][0] <= d) low = mid;
+    else high = mid;
+  }
+  const [d0, x0, y0] = points[low];
+  const [d1, x1, y1] = points[high];
+  const t = d1 > d0 ? (d - d0) / (d1 - d0) : 0;
+  return [x0 + (x1 - x0) * t, y0 + (y1 - y0) * t];
+}
+
 export function pointsAttribute(points: readonly ProjectedPoint[]): string {
   return points.map(([, x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(" ");
 }

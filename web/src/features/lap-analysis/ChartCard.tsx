@@ -38,7 +38,7 @@ export function ChartCard({ rows }: { rows: RowKey[] }) {
   const zoom = brush ?? (selectedChoice && axis ? paddedWindow(selectedChoice.range, axis.to) : null);
   return (
     <Card className={styles.chartCard}>
-      <MeasuredCharts rows={rows} zoom={zoom} band={brush ? null : (selectedChoice?.range ?? null)} />
+      <MeasuredCharts rows={rows} zoom={zoom} band={brush ? null : (selectedChoice?.range ?? null)} hover />
     </Card>
   );
 }
