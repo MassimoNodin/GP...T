@@ -27,8 +27,11 @@ Remaining implementation and scope decisions:
   permissions, aligned player/opponent lap windows and guarded spoken comparisons.
 - Confirmed post-pit same-session/same-compound benchmarking, retained eligible
   lap sets, pre-pit-position ranking/tie-breaks, exclusions and one-off reporting.
-- Sector/best/older-lap retrieval and partial supported answers for mixed multi-fact
-  requests, rather than whole-request rejection for unsupported facts.
+- Complete session-best/older-lap and opponent historical-sector retrieval,
+  plus partial supported answers when a mixed request contains unsupported facts.
+  Current-lap sectors 1/2, fully observed player last-lap sectors and explicitly
+  labelled same-compound radio-observed best retrieval now exist; these are not
+  complete historical/session-best coverage.
 - Conversation context including prior answers, instructions and tracking results;
   metric/target/task follow-ups with clarification and no cancelled-task revival.
 - Real-game acceptance of automatic scoped voice questions/tasks and the explicit

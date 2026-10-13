@@ -13,6 +13,12 @@ class QuestionPlan:
 
 
 METRICS = {
+    "last_sector1": r"(?:last|previous|latest)(?: completed)? lap sector (?:1|one)(?: time)?",
+    "last_sector2": r"(?:last|previous|latest)(?: completed)? lap sector (?:2|two)(?: time)?",
+    "last_sector3": r"(?:last|previous|latest)(?: completed)? lap sector (?:3|three)(?: time)?",
+    "current_sector1": r"current lap sector (?:1|one)(?: time)?",
+    "current_sector2": r"current lap sector (?:2|two)(?: time)?",
+    "observed_best": r"best observed(?: valid)? lap(?: time)?",
     "speed": r"(?:current )?speed",
     "brake_input": r"(?:current )?brake input",
     "consistency": r"consistency",
@@ -45,7 +51,7 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
     if "__named_" in remaining:
         raise ValueError("Please specify a supported driver name or timing fact.")
     named_targets = []
-    reserved = set("what is are the a and also please tell show give for of about how their his her them him then my me mine myself lap last current quiet resume cancel repeat status quit submit forget ask listen finish".split())
+    reserved = set("what is are the a and also please tell show give for of about how their his her them him then my me mine myself lap last current quiet resume cancel repeat status quit submit forget ask listen finish sector one two three best observed valid time".split())
     reserved_patterns = "|".join((*TARGETS.values(), *METRICS.values(), r"p(?:[1-9]|1[0-9]|2[0-4])"))
     name_patterns = []
     known_names = {driver_name_key(name) for name in names}
@@ -91,7 +97,7 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
         raise ValueError("Please specify a driver; that pronoun has no single supported reference.")
     remaining = re.sub(r"\b(?:what|what's|is|are|the|a|and|also|please|tell|show|give|for|of|about|how|their|his|her|them|him|then)\b", " ", remaining)
     if re.sub(r"[\s?,.!']", "", remaining):
-        raise ValueError("I can answer current or last lap times, last lap comparisons to you, positions, leader/front-car gaps, your lap-boundary gap changes and observed player speed or brake input. Use me, leader, car ahead, car behind, P1 to P24, or an available driver's full name or surname. Other facts and task instructions are not supported yet.")
+        raise ValueError("I can answer current or last lap times, measured current-lap sectors 1 and 2, your fully observed last-lap sectors and best observed valid lap, last lap comparisons to you, positions, leader/front-car gaps, your lap-boundary gap changes and observed player speed or brake input. Use me, leader, car ahead, car behind, P1 to P24, or an available driver's full name or surname. Other facts and task instructions are not supported yet.")
     if not metrics and not targets:
         raise ValueError("Please specify a driver or timing fact.")
     inherited_targets = not targets and previous is not None
@@ -128,6 +134,22 @@ def lap_comparison(lap: dict, player_lap: dict | None) -> str:
 
 
 def timing_fact(metric: str, lap: dict, player_lap: dict | None = None) -> str:
+    if metric in ("current_sector1", "current_sector2"):
+        sector = int(metric[-1])
+        label = f"current lap measured sector {sector}"
+        number, stage = lap.get("current_lap_number"), lap.get("sector_id")
+        timings = [lap.get(f"sector{index}_time_ms") for index in range(1, sector + 1)]
+        elapsed = lap.get("current_lap_time_ms")
+        if (type(number) is not int or not 1 <= number <= 255
+                or type(stage) is not int or not sector <= stage <= 2
+                or not all(type(value) is int and 1 <= value <= 2**32 - 1 for value in timings)
+                or type(elapsed) is not int or not 1 <= elapsed <= 2**32 - 1
+                or sum(timings) > elapsed):
+            return label + " unavailable; no aligned completed sector in this lap"
+        invalid = lap.get("current_lap_invalid_id")
+        qualifier = ("; lap observed invalid" if type(invalid) is int and invalid == 1 else
+                     "" if type(invalid) is int and invalid == 0 else "; lap validity unknown")
+        return f"lap {number} measured sector {sector} {timings[-1] / 1000:.3f} seconds" + qualifier
     if metric == "lap_comparison":
         return lap_comparison(lap, player_lap)
     labels = {"last_lap": "last lap", "current_lap": "current lap elapsed",

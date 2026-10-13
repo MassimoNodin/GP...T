@@ -488,6 +488,28 @@ class RadioController:
                            brake=values["brake"], throttle=None, steering=None, gear=None, drs_active=None)
 
     def _timing_fact(self, metric: str, row: dict, *, now: float) -> str:
+        if metric in ("observed_best", "last_sector1", "last_sector2", "last_sector3"):
+            if row["identity"] != self._player["identity"]:
+                return "observed lap history unavailable for this opponent"
+            if metric == "observed_best":
+                try:
+                    reference = self.pace.reference(self._player)
+                except ValueError as error:
+                    return str(error)
+                return (f"best fully observed valid radio lap on current compound {reference.compound}: "
+                        f"lap {reference.lap_number} {reference.elapsed_ms / 1000:.3f} seconds; "
+                        "not the complete session best")
+            reference = self.pace.last_completed
+            number = row["lap"].get("current_lap_number")
+            sector = int(metric[-1])
+            if (reference is None or type(number) is not int or reference.lap_number != number - 1
+                    or reference.sector_times_ms is None
+                    or row["lap"].get("last_lap_time_ms") != reference.elapsed_ms):
+                return f"last lap sector {sector} unavailable; complete observed player sector history missing"
+            elapsed = (reference.sector_times_ms[sector - 1] if sector < 3
+                       else reference.elapsed_ms - sum(reference.sector_times_ms))
+            source = "derived from lap minus sectors 1 and 2" if sector == 3 else "observed"
+            return f"lap {reference.lap_number} sector {sector} {elapsed / 1000:.3f} seconds ({source})"
         if metric in ("speed", "brake_input"):
             aligned = self._aligned_observation(row, now=now)
             if aligned is None:

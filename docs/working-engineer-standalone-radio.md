@@ -1085,3 +1085,47 @@ Validation: 862 focused radio/backend-capture and CLI tests passed, including
 httpx deprecation warning. Compilation and whitespace checks passed. The full
 suite was not rerun. Evidence is synthetic/mocked, not real wheel/headset/game
 acceptance or measured acoustic latency; the branch remains unfinished.
+
+## Explicit measured-sector and observed-history questions
+
+Supported question examples (spoken or prefixed with console `ask`):
+
+- `my and leader current lap sector one time and current lap sector two time`
+- `my last lap sector one time and last lap sector two time and last lap sector three time`
+- `my and leader best observed valid lap time`
+
+Current-lap sectors 1 and 2 use the requested driver's fresh lap-data fields,
+not partial elapsed-sector estimates. The sector must already be completed
+according to the current sector index; all required timings must be positive
+integer milliseconds, and their sum cannot exceed current lap elapsed time.
+The answer identifies the active lap and discloses known invalidity or unknown
+validity. Missing/zero/misaligned data is unavailable, not a zero-second sector.
+
+Player last-lap sectors require one complete eligible lap observed by this radio,
+including aligned sector-completion events and a matching reported last-lap
+number/time. Sectors 1 and 2 are observed; sector 3 is explicitly labelled as
+derived from that lap's total minus its two observed sectors. The radio never
+mixes sectors across laps or fills missing sectors from a previous best.
+Opponent completed-sector history is not yet retained by this radio and is
+explicitly unavailable, not borrowed from their current-lap fields.
+
+`best observed valid lap` uses the existing eligible player reference on the
+current compound and explicitly says it is **not the complete session best**.
+First/partially observed laps, missing eligibility and other-compound records
+cannot substitute. Opponent observed-best history remains unavailable. Generic
+`best lap`, numbered older laps, historical/condition filters and ambiguous
+`sector one` are not silently interpreted as these narrower supported facts.
+
+Supported multi-driver/multi-fact requests retain available results when another
+supported metric lacks evidence. This does not yet implement partial parsing of
+arbitrary unsupported facts in a mixed request. Existing three-driver/three-fact
+bounds, identity-bound follow-ups, session resets and freshness gates remain.
+Driver aliases colliding with sector/number words require quotes, preserving
+the explicit quoted-name path without consuming question keywords.
+
+Validation: 914 focused radio/backend-capture and CLI tests passed, including
+52 new timing-retrieval cases, with one existing Starlette/httpx deprecation
+warning. Compilation and whitespace checks passed; the full suite was not rerun.
+Evidence remains synthetic/mocked. Full session history, opponent history,
+complete coaching and real-game wheel/headset/browser-free acceptance remain
+pending; this is a retrieval increment, not branch completion.
