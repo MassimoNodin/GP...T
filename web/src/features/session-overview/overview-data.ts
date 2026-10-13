@@ -352,6 +352,34 @@ export function sessionBestSectors(laps: OverviewLap[]): [number | null, number 
   return best;
 }
 
+export type TheoreticalBest = {
+  /** Sum of the best valid sector times. */
+  ms: number;
+  /** How much faster than the best lap, or null without a valid best lap. */
+  gainMs: number | null;
+  sectors: [number, number, number];
+};
+
+/**
+ * The lap the driver's best sectors add up to. Null unless all three sectors
+ * have a valid time, so a missing sector never makes it look faster.
+ */
+export function theoreticalBest(laps: OverviewLap[], bestMs: number | null): TheoreticalBest | null {
+  const sectors = sessionBestSectors(laps);
+  if (sectors.some((value) => value === null)) return null;
+  const [s1, s2, s3] = sectors as [number, number, number];
+  const ms = s1 + s2 + s3;
+  return { ms, gainMs: bestMs === null ? null : Math.max(0, bestMs - ms), sectors: [s1, s2, s3] };
+}
+
+/** "1:32.981, 0.322 s quicker than your best lap" */
+export function theoreticalBestText(theory: TheoreticalBest): string {
+  const gain = theory.gainMs;
+  if (gain === null) return formatLapTime(theory.ms);
+  if (gain < 1) return `${formatLapTime(theory.ms)}, matching your best lap`;
+  return `${formatLapTime(theory.ms)}, ${(gain / 1000).toFixed(3)} s quicker than your best lap`;
+}
+
 /** One footnote line per distinct reason: "— Sector times were not … (laps 1–3)." */
 export function reasonFootnote(
   laps: OverviewLap[],
@@ -889,6 +917,10 @@ export function deriveSummary(input: {
   }
   const items: SummaryItem[] = [];
   if (best) items.push({ tone: "green", glyph: "check", text: `Best lap ${formatLapTime(best.ms)} (lap ${best.lap})` });
+  const theory = theoreticalBest(laps, best?.ms ?? null);
+  if (theory && theory.gainMs !== null && theory.gainMs >= 1) {
+    items.push({ tone: "blue", glyph: "info", text: `Theoretical best ${theoreticalBestText(theory)}` });
+  }
   const invalid = laps.filter((lap) => !lap.valid).length;
   if (invalid > 0) items.push({ tone: "amber", glyph: "alert", text: `${plural(invalid, "lap")} invalidated by the game` });
   if (summary) {

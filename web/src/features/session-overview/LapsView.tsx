@@ -9,6 +9,7 @@ import { DataTable, type Column } from "@/features/ui-foundation/DataTable";
 import { FilterChips } from "@/features/ui-foundation/FilterChips";
 import { Badge, Card, Checkbox, DeltaPill, Select } from "@/features/ui-foundation/primitives";
 import { EmptyState, InlineAlert, NotAvailable } from "@/features/ui-foundation/states";
+import { StatTile } from "@/features/ui-foundation/StatTile";
 import {
   analysisHref,
   compareDeltaToBest,
@@ -21,6 +22,7 @@ import {
   metricOptions,
   reasonFootnote,
   sessionBestSectors,
+  theoreticalBest,
   tyreLabel,
   type ChartMetric,
   type LapFilter,
@@ -49,6 +51,7 @@ export function LapsView({
   const counts = useMemo(() => lapCounts(laps), [laps]);
   const rows = useMemo(() => filterLaps(laps, filter, hideInOut), [laps, filter, hideInOut]);
   const bestSectors = useMemo(() => sessionBestSectors(laps), [laps]);
+  const theory = useMemo(() => theoreticalBest(laps, best?.ms ?? null), [best, laps]);
   const loading = enrichment.status === "loading";
   const hasSectors = loading || laps.some((lap) => lap.sectors);
   const hasTyres = loading || laps.some((lap) => lap.tyre);
@@ -205,6 +208,29 @@ export function LapsView({
           <InlineAlert tone="warning">Sector and tyre details are partial. {enrichment.partialReason}</InlineAlert>
         </div>
       )}
+      <div className={viewStyles.paceStrip} role="group" aria-label="Pace summary">
+        <StatTile label="Best lap" value={best ? formatLapTime(best.ms) : "—"} sub={best ? `Lap ${best.lap}` : "No valid lap"} />
+        <StatTile
+          label="Theoretical best"
+          value={theory ? formatLapTime(theory.ms) : "—"}
+          sub={
+            theory
+              ? theory.gainMs !== null && theory.gainMs >= 1
+                ? `${(theory.gainMs / 1000).toFixed(3)} s from your best sectors`
+                : "Your best lap holds every best sector"
+              : loading
+                ? "Waiting for sector times"
+                : "Needs a valid time in all three sectors"
+          }
+        />
+        {theory && (
+          <StatTile
+            label="Best sectors"
+            value={theory.sectors.map((value) => formatSectorTime(value)).join(" · ")}
+            sub="S1 · S2 · S3"
+          />
+        )}
+      </div>
       <div className={viewStyles.tools}>
         <FilterChips
           label="Filter laps"

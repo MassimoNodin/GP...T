@@ -1168,3 +1168,18 @@ test("lap chart markers place pit and safety car laps, and outliers can be exclu
   assert.equal(data.formatAxisValue("lap", 93500), "1:33.5");
   assert.equal(data.formatAxisValue("lap", 94000), "1:34");
 });
+
+test("theoretical best adds the best valid sectors", () => {
+  const laps = [
+    lap(1, 1, 93500, { sectors: [30000, 33000, 30500] }),
+    lap(2, 2, 93300, { sectors: [30200, 32800, 30300] }),
+    lap(3, 3, 92900, { valid: false, sectors: [29000, 32000, 30000] }),
+  ];
+  const theory = data.theoreticalBest(laps, 93300);
+  assert.equal(theory.ms, 30000 + 32800 + 30300);
+  assert.equal(theory.gainMs, 200);
+  assert.equal(data.theoreticalBestText(theory), "1:33.100, 0.200 s quicker than your best lap");
+  assert.equal(data.theoreticalBest([lap(1, 1, 93500, { sectors: null })], 93500), null);
+  const summary = data.deriveSummary({ laps, bestId: "2", stintCount: null, summary: null });
+  assert.ok(summary.items.some((item) => item.text.startsWith("Theoretical best 1:33.100")));
+});
