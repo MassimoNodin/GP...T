@@ -792,3 +792,64 @@ deprecation warnings. Analysis/test compilation, radio CLI help and whitespace
 checks passed. All measurement evidence is synthetic; this does not verify
 live collection, in-game speech, hardware behaviour or acoustic latency, and
 does not complete focus-corner coaching acceptance.
+
+## Next-lap numeric-region radio tracking
+
+The standalone radio now accepts bounded player-only observation tasks:
+
+```text
+ask Track my braking and minimum speed from 100 to 250 metres for next lap
+ask Track my braking and minimum speed from 100 to 250 metres for next 3 laps
+ask Update task 1 track my braking and minimum speed from 150 to 300 metres for next lap
+ask List tasks
+ask Cancel task 1
+```
+
+The first tracked lap is the upcoming lap, not the partially observed current
+lap. Each task owns an immutable numeric window and track length, its existing
+task/version identity and a finite one-to-twenty-lap schedule. Standard task
+limits, update/cancel, session/driver bindings and history-gap resets apply.
+Unknown or scope-mismatched track context prevents installation. Updates discard
+the old version's samples and start on the next lap; expiry releases buffers.
+
+Collection retains only one pre-window sample and the selected window through
+its first exit sample, capped at 4,096 samples per task/lap. No additional UDP
+receiver, opponent detail demand, persistence or automatic transcript submission
+is introduced. Fresh aligned speed/brake observations use the same source,
+identity and independent telemetry-age checks as instantaneous radio retrieval.
+Invalid/pit/non-racing observations, unknown or changed compound, conflicting
+duplicates, rewinds, changed track length and missing aligned telemetry inside
+the selected window poison the lap's result. Identical frame duplicates do not
+create additional samples. Measurement never spans task versions or lap numbers.
+
+A fresh matching lap-completion event produces one combined owned lap-report
+utterance, with sampled minimum speed, sustained brake-onset bracket and measured
+region elapsed time when supported. Partial source/grid coverage is disclosed;
+missing or censored onset and unsupported elapsed time remain unavailable. The
+sampled minimum is retrospective lap evidence, not current speed or a claim
+about the true continuous minimum. Logs include task/version, lap/event, player
+and session binding, compound, source frame bounds and diagnostic measurement.
+Quiet/listening still consume finite tasks without accumulating speech backlog;
+queued reports use the existing fresh lap-completion dispatch deadline.
+
+The current HTTP polling default is 0.25 seconds. That is coarser than the
+existing 0.1-second connected-measurement requirement and will commonly yield
+partial minimum-speed coverage and unavailable onset/elapsed time. The existing
+`--poll-interval 0.1` option may improve capture, but network/scheduling gaps can
+still prevent complete support. No defaults or continuity guards were weakened.
+Task-owned high-rate backend buffering remains a prerequisite for dependable
+full-resolution live tracking; sparse polling must not be advertised as that.
+
+These are explicit numeric diagnostic observations, not named-corner coaching,
+fixed-reference progress comparisons or opponent braking/minimum-speed tracking.
+Those features, wheel-only voice execution and live-game/audio acceptance remain
+unfinished. Model/runtime pins, deployment and OS audio defaults are unchanged.
+
+Validation: 750 focused tests passed, including 53 new regional-radio cases.
+The final saved full run passed 2,514 tests with 16 skipped tests and two existing
+deprecation warnings. An initial completed full run hit the previously observed
+recording-inbox HTTP 503; the 66-test recording/regional isolation run passed
+without recording-code changes. An intervening full run lost its final tool
+output and is not counted as successful verification. Compilation, radio CLI
+help and staged whitespace checks passed. Evidence remains synthetic/mocked;
+live-game capture, wheel/audio output and acoustic latency are not verified.

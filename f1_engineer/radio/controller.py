@@ -8,11 +8,13 @@ from copy import deepcopy
 
 from ..driver_names import display_driver_name, driver_name_aliases
 from .gaps import GAP_CHANGES, LapGapTracker
-from .questions import plan_question, timing_fact
+from .questions import QuestionPlan, plan_question, timing_fact
 from .scheduler import RadioMessage, RadioScheduler
 from .tasks import LapReportRegistry, parse_task_request
 from .watches import RaceWatchTracker
 from .pace import PaceTracker
+from .regions import RegionTracker, RegionWindow
+from ..analysis.resampling import TraceSample
 
 
 def _integer(value, minimum=0, maximum=2**64 - 1):
@@ -56,6 +58,8 @@ class RadioController:
         self.gaps = LapGapTracker()
         self.watches = RaceWatchTracker()
         self.pace = PaceTracker()
+        self.regions = RegionTracker()
+        self._track_length_m = None
 
     def _unavailable(self, reason: str) -> None:
         self.scheduler.set_scope(None)
@@ -68,6 +72,7 @@ class RadioController:
         self.tasks.clear(safe_reason)
         self.watches.clear()
         self.pace.clear()
+        self.regions.clear()
         self._report("unavailable", safe_reason)
 
     def _report(self, status: str, reason=None) -> None:
@@ -120,6 +125,7 @@ class RadioController:
             self.tasks.clear("scope_changed")
             self.watches.clear()
             self.pace.clear()
+            self.regions.clear()
             self._reset_gaps()
         elif not _integer(player["lap"].get("current_lap_number"), 1, 255):
             self._clear_tasks("lap_number_unavailable")
@@ -135,6 +141,16 @@ class RadioController:
                                    "frame_ordinal": snapshot.get("frame_ordinal"),
                                    "session_time_s": snapshot.get("session_time_s"),
                                    "lap_received_monotonic_ns": snapshot.get("received_monotonic_ns")}
+        context = snapshot.get("context")
+        length = (context["value"].get("track_length_m") if isinstance(context, dict)
+                  and context.get("status") == "available" and isinstance(context.get("value"), dict)
+                  and all(type(context["value"].get(key)) is int and context["value"][key] == scope[key]
+                          for key in ("session_uid", "packet_format")) else None)
+        if self._track_length_m is not None and length != self._track_length_m:
+            self.regions.interrupt()
+        self._track_length_m = length if type(length) in (int, float) and math.isfinite(length) and 0 < length <= 20_000 else None
+        self.regions.observe(self.tasks.active(), self._player, self._region_sample(now=now),
+                             track_length_m=self._track_length_m)
         if self.pace.observe(self._player, now=now):
             self.scheduler.cancel_owner("pace_sectors")
             if any("consistency" in task.plan.metrics for task in self.tasks.active()):
@@ -155,6 +171,7 @@ class RadioController:
                 self.tasks.clear("event_history_gap")
                 self.watches.clear()
                 self.pace.clear()
+                self.regions.clear()
                 self._reset_gaps()
                 self.notify({"event": "radio_resynchronised", "reason": "event_history_gap"})
             self._cursor = cursor
@@ -232,6 +249,7 @@ class RadioController:
                    and task["until_lap"] <= number - 1 for task in self.tasks.views()):
                 self.scheduler.cancel_owner("lap_reports")
             self.tasks.complete_lap(number - 1)
+        self.regions.prune(self.tasks.active())
 
     def check_freshness(self, *, now: float) -> None:
         if self._player is not None and self._age_s + now - self._received_at >= 3:
@@ -319,41 +337,69 @@ class RadioController:
         self.tasks.clear(reason)
         self.watches.clear()
         self.pace.clear()
+        self.regions.clear()
         self._reset_gaps()
 
     def _reset_gaps(self) -> None:
         self.gaps.clear()
         self.watches.reset_intervals()
         self.pace.interrupt()
+        self.regions.interrupt()
         self.scheduler.cancel_owner("gap_changes")
         self.scheduler.cancel_owner("lap_reports")
         self.scheduler.cancel_owner("pace_sectors")
 
+    def _aligned_observation(self, row: dict, *, now: float):
+        observation = row.get("observation")
+        if (row["identity"] != self._player["identity"] or not isinstance(observation, dict)
+                or observation.get("status") != "available" or observation.get("identity") != row["identity"]
+                or not isinstance(observation.get("value"), dict)):
+            return None
+        source = observation.get("source")
+        expected = self._observation_frame
+        if (not isinstance(source, dict) or expected is None
+                or any(value is None or source.get(key) != value for key, value in expected.items())
+                or any(not _integer(source.get(key), 0, 2**64 - 1) for key in
+                       ("session_uid", "packet_format", "epoch", "frame_identifier", "frame_ordinal",
+                        "lap_received_monotonic_ns", "telemetry_received_monotonic_ns", "telemetry_captured_at_ns"))
+                or type(source.get("session_time_s")) not in (int, float) or not math.isfinite(source["session_time_s"])
+                or any(observation["value"].get(key) is None
+                       or type(observation["value"].get(key)) is not type(row["lap"].get(field))
+                       or observation["value"].get(key) != row["lap"].get(field) for key, field in
+                       (("lap_number", "current_lap_number"), ("lap_distance_m", "lap_distance_m"),
+                        ("current_lap_time_ms", "current_lap_time_ms")))):
+            return None
+        telemetry_age = (self._age_s + now - self._received_at
+                         + (source["lap_received_monotonic_ns"] - source["telemetry_received_monotonic_ns"]) / 1e9)
+        return (observation, telemetry_age) if 0 <= telemetry_age < 3 else None
+
+    def _region_sample(self, *, now: float):
+        aligned = self._aligned_observation(self._player, now=now)
+        if aligned is None:
+            return None
+        observation = aligned[0]
+        values, source = observation["value"], observation["source"]
+        if (not _integer(source["frame_identifier"], 0, 2**32 - 1)
+                or not _integer(values.get("speed_kph"), 0, 65535)
+                or not _integer(values.get("current_lap_time_ms"), 0, 86_400_000)
+                or not _number(source["session_time_s"])
+                or type(values.get("lap_distance_m")) not in (int, float)
+                or not math.isfinite(values["lap_distance_m"])
+                or self._track_length_m is None or not 0 <= values["lap_distance_m"] <= self._track_length_m
+                or type(values.get("brake")) not in (int, float) or not math.isfinite(values["brake"])
+                or not 0 <= values["brake"] <= 1):
+            return None
+        return TraceSample(frame_identifier=source["frame_identifier"], distance_m=values["lap_distance_m"],
+                           time_s=values["current_lap_time_ms"] / 1000,
+                           session_time_s=source["session_time_s"], speed_mps=values["speed_kph"] / 3.6,
+                           brake=values["brake"], throttle=None, steering=None, gear=None, drs_active=None)
+
     def _timing_fact(self, metric: str, row: dict, *, now: float) -> str:
         if metric in ("speed", "brake_input"):
-            observation = row.get("observation")
-            if (row["identity"] != self._player["identity"] or not isinstance(observation, dict)
-                    or observation.get("status") != "available" or observation.get("identity") != row["identity"]
-                    or not isinstance(observation.get("value"), dict)):
+            aligned = self._aligned_observation(row, now=now)
+            if aligned is None:
                 return "aligned player telemetry unavailable; opponent detail is not exposed by this radio feed"
-            source = observation.get("source")
-            expected = self._observation_frame
-            if (not isinstance(source, dict) or expected is None
-                    or any(value is None or source.get(key) != value for key, value in expected.items())
-                    or any(not _integer(source.get(key), 0, 2**64 - 1) for key in
-                           ("session_uid", "packet_format", "epoch", "frame_identifier", "frame_ordinal",
-                            "lap_received_monotonic_ns", "telemetry_received_monotonic_ns", "telemetry_captured_at_ns"))
-                    or type(source.get("session_time_s")) not in (int, float) or not math.isfinite(source["session_time_s"])
-                    or any(observation["value"].get(key) is None
-                           or type(observation["value"].get(key)) is not type(row["lap"].get(field))
-                           or observation["value"].get(key) != row["lap"].get(field) for key, field in
-                           (("lap_number", "current_lap_number"), ("lap_distance_m", "lap_distance_m"),
-                            ("current_lap_time_ms", "current_lap_time_ms")))):
-                return "aligned player telemetry unavailable"
-            telemetry_age = (self._age_s + now - self._received_at
-                             + (source["lap_received_monotonic_ns"] - source["telemetry_received_monotonic_ns"]) / 1e9)
-            if not 0 <= telemetry_age < 3:
-                return "aligned player telemetry unavailable"
+            observation, telemetry_age = aligned
             self._fact_age_s = max(self._fact_age_s or 0, telemetry_age)
             value = observation["value"].get("speed_kph" if metric == "speed" else "brake")
             if metric == "speed" and _integer(value, 0, 65535):
@@ -399,6 +445,9 @@ class RadioController:
                         metrics += (f"; fixed observed lap {reference['lap_number']} "
                                     f"{reference['elapsed_ms'] / 1000:.3f} seconds, compound {reference['actual_compound']}, "
                                     f"tolerance {task['pace_tolerance_ms'] / 1000:.3f} seconds")
+                    if task["region_window"] is not None:
+                        window = task["region_window"]
+                        metrics += f"; numeric region {window['start_m']:g} to {window['end_m']:g} metres"
                     expiry = f"through lap {task['until_lap']}" if task["until_lap"] is not None else "until cancelled or session change"
                     lines.append(f"Task {task['task_id']}: {targets}; {metrics}; {expiry}.")
                 text = " ".join(lines) if lines else "No active lap reports."
@@ -408,6 +457,7 @@ class RadioController:
             elif action.kind == "cancel":
                 if self.tasks.cancel(action.task_id):
                     self.watches.remove(action.task_id)
+                    self.regions.remove(action.task_id)
                     self.scheduler.cancel_owner("lap_reports")
                     self.scheduler.cancel_owner("pace_sectors")
                     text = f"Task {action.task_id} cancelled."
@@ -418,7 +468,13 @@ class RadioController:
                     raise ValueError("Fresh player telemetry and a known lap number are required to create a report.")
                 aliases = tuple(alias for row in self._drivers if isinstance(row, dict)
                                 and (name := self._participant_name(row)) is not None for alias in driver_name_aliases(name))
-                plan = plan_question(action.question, names=aliases)
+                plan = (QuestionPlan(("self",), ("regional_observations",)) if action.region_bounds_m is not None
+                        else plan_question(action.question, names=aliases))
+                region_window = None
+                if action.region_bounds_m is not None:
+                    if self._track_length_m is None:
+                        raise ValueError("Regional tracking requires a known current track length.")
+                    region_window = RegionWindow(*action.region_bounds_m, self._track_length_m)
                 pace_reference = self.pace.reference(self._player) if "target_pace" in plan.metrics else None
                 watching = "race_watch" in plan.metrics
                 if watching and (len(plan.targets) != 1 or plan.metrics != ("race_watch",)):
@@ -434,8 +490,12 @@ class RadioController:
                         raise ValueError("Choose another driver to watch.")
                     bindings.append(json.dumps(row["identity"], sort_keys=True) if row is not None else None)
                 task = self.tasks.install(plan, tuple(bindings), cursor=self._cursor or 0,
-                                          lap=self._player["lap"]["current_lap_number"], laps=action.laps, task_id=action.task_id,
-                                          pace_reference=pace_reference, pace_tolerance_ms=action.tolerance_ms)
+                                          lap=self._player["lap"]["current_lap_number"] + (1 if region_window else 0),
+                                          laps=action.laps, task_id=action.task_id,
+                                          pace_reference=pace_reference, pace_tolerance_ms=action.tolerance_ms,
+                                          region_window=region_window)
+                if action.kind == "update":
+                    self.regions.remove(task.task_id)
                 self.scheduler.cancel_owner("lap_reports")
                 self.scheduler.cancel_owner("pace_sectors")
                 self.watches.observe(self.tasks.active(), self._player, self._resolve_target, now=now)
@@ -445,6 +505,11 @@ class RadioController:
                     text += (" Rolling three consecutive fully observed valid laps on one compound since this request. "
                              "Sector 1 and 2 fastest-to-slowest spreads, not pace deficits. "
                              "Missing evidence restarts warm-up; short tasks may expire before three samples.")
+                if region_window is not None:
+                    text += (f" Tracking your sampled braking and minimum speed from {region_window.start_m:g} "
+                             f"to {region_window.end_m:g} metres on upcoming laps, not this partial lap. "
+                             "Sparse polling may leave partial coverage or unavailable onset and region time. "
+                             "Numeric observations only, not corner coaching or opponent tracking.")
                 if watching:
                     name = self._participant_name(row) or plan.targets[0].removeprefix("name:").replace("position:", "P")
                     text += f" Watching {name}; driver identity fixed. Three comparable adjacent-driver boundaries required. Alerts report trend changes."
@@ -489,6 +554,14 @@ class RadioController:
             return False
         reports = []
         for task in tasks:
+            if task.region_window is not None:
+                feedback, evidence = self.regions.complete(task, event)
+                reports.append(f"Task {task.task_id}: " + feedback)
+                self.notify({"event": "radio_region_report", "task_id": task.task_id, "version": task.version,
+                             "lap_number": event["lap_number"], "event_id": event["id"],
+                             "binding": self.scheduler.scope, "player": deepcopy(self._player["identity"]),
+                             "evidence": evidence, "text": feedback})
+                continue
             if "consistency" in task.plan.metrics:
                 feedback, samples = self.pace.consistency(task)
                 reports.append(f"Task {task.task_id}: " + feedback)
