@@ -7,17 +7,17 @@
   margin-top: -2px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  background: #fff;
+  background: var(--surface);
 }
 
 .search:focus-within {
-  border-color: #b9c2cc;
+  border-color: var(--line-mid);
 }
 
 .searchIcon {
   position: absolute;
   left: 13px;
-  color: #3f444c;
+  color: var(--text-2);
 }
 
 .search input {
@@ -32,7 +32,7 @@
 }
 
 .search input::placeholder {
-  color: #9aa1aa;
+  color: var(--faint-2);
 }
 
 .filters {
@@ -77,11 +77,11 @@
   padding: 9px 12px 9px 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: #fff;
+  background: var(--surface);
 }
 
 .row[data-openable]:hover {
-  border-color: #d6dce2;
+  border-color: var(--border-strong);
   box-shadow: 0 2px 6px rgba(16, 24, 40, 0.05);
 }
 
@@ -127,7 +127,7 @@
 
 .date,
 .meta {
-  color: #868d96;
+  color: var(--muted-2);
   font-size: 12px;
   line-height: 1.6;
   white-space: nowrap;
@@ -138,7 +138,7 @@
 .dot {
   margin: 0 7px;
   font-size: 8px;
-  color: #a7adb5;
+  color: var(--faint);
 }
 
 .laps {
@@ -161,13 +161,13 @@
 }
 
 .laps span {
-  color: #8d949d;
+  color: var(--chart-axis);
   font-size: 11.5px;
 }
 
 .notes {
   padding-left: 17px;
-  color: #848b94;
+  color: var(--muted-2);
   font-size: 11.5px;
   line-height: 1.6;
 }
@@ -194,7 +194,7 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #3f444c;
+  color: var(--text-2);
 }
 
 .rowMenu .more:hover {

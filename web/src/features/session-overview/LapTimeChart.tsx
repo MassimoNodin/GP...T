@@ -98,7 +98,7 @@ export function LapTimeChart({
       >
         {yTicks.map((tick) => (
           <g key={tick}>
-            <line x1={PAD.left} x2={W - PAD.right} y1={y(tick)} y2={y(tick)} stroke="#eef1f4" />
+            <line x1={PAD.left} x2={W - PAD.right} y1={y(tick)} y2={y(tick)} stroke="var(--chart-grid)" />
             <text x={PAD.left - 8} y={y(tick) + 3.5} textAnchor="end" className={styles.axis}>
               {formatAxisValue(metric, tick)}
             </text>
@@ -106,16 +106,16 @@ export function LapTimeChart({
         ))}
         {xTicks.map((tick) => (
           <g key={tick}>
-            <line x1={x(tick)} x2={x(tick)} y1={PAD.top} y2={H - PAD.bottom} stroke="#f1f3f6" />
+            <line x1={x(tick)} x2={x(tick)} y1={PAD.top} y2={H - PAD.bottom} stroke="var(--divider)" />
             <text x={x(tick)} y={H - 10} textAnchor="middle" className={styles.axis}>
               {tick}
             </text>
           </g>
         ))}
-        <line x1={mx} x2={mx} y1={PAD.top} y2={H - PAD.bottom} stroke="#8fb7f3" strokeWidth="1.2" />
+        <line x1={mx} x2={mx} y1={PAD.top} y2={H - PAD.bottom} stroke="var(--blue-mid)" strokeWidth="1.2" />
         {points.slice(1).map((point, index) => {
           const previous = points[index];
-          const tone = previous.tone === "orange" || previous.tone === "navy" ? "#cdd2d8" : TONES[previous.tone];
+          const tone = previous.tone === "orange" || previous.tone === "navy" ? "var(--line-strong)" : TONES[previous.tone];
           return (
             <line
               key={`seg-${point.lap}`}
@@ -149,7 +149,7 @@ export function LapTimeChart({
             </g>
           );
         })}
-        <circle cx={mx} cy={my} r="6" fill="#2563eb" stroke="#fff" strokeWidth="1.6" />
+        <circle cx={mx} cy={my} r="6" fill="#2563eb" stroke="var(--surface)" strokeWidth="1.6" />
         {onPick &&
           points.map((point) => (
             <circle

@@ -1,10 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { applyTheme, readTheme, type Theme } from "@/features/ui-foundation/theme";
 import { Card } from "@/features/ui-foundation/primitives";
 import { Segmented } from "@/features/ui-foundation/Segmented";
 import { DEFAULT_UNITS, saveUnits, useUnits, type Units } from "@/features/ui-foundation/units";
 import styles from "./Settings.module.css";
+
+const THEME = [
+  { key: "light", label: "Light" },
+  { key: "dark", label: "Dark" },
+  { key: "system", label: "System" },
+] as const;
 
 const SPEED = [
   { key: "kmh", label: "km/h" },
@@ -25,13 +32,28 @@ const DELTA = [
 export function UnitsCard() {
   const units = useUnits();
   const [failed, setFailed] = useState(false);
+  // The server renders Light; the saved appearance is read after hydration.
+  const [theme, setTheme] = useState<Theme>("light");
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTheme(readTheme());
+  }, []);
+  const changeTheme = (next: Theme) => {
+    setTheme(next);
+    setFailed(!applyTheme(next));
+  };
   const change = (patch: Partial<Units>) => setFailed(!saveUnits({ ...units, ...patch }));
   const isDefault =
     units.speed === DEFAULT_UNITS.speed && units.temperature === DEFAULT_UNITS.temperature && units.delta === DEFAULT_UNITS.delta;
 
   return (
-    <Card title="Units & Format" labelledBy="units-format">
-      <p className={styles.cardDesc}>How speeds, temperatures and time gaps are shown across the app.</p>
+    <Card title="Display" labelledBy="units-format">
+      <p className={styles.cardDesc}>Appearance, and how speeds, temperatures and time gaps are shown across the app.</p>
+      <div className={styles.field}>
+        <div className={styles.label}>Appearance</div>
+        <Segmented items={[...THEME]} value={theme} onChange={changeTheme} label="Appearance" />
+        <p className={styles.help}>System follows your computer&apos;s light or dark setting.</p>
+      </div>
       <div className={styles.field}>
         <div className={styles.label}>Speed</div>
         <Segmented items={[...SPEED]} value={units.speed} onChange={(speed) => change({ speed })} label="Speed unit" />

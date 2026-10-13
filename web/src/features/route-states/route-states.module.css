@@ -4,7 +4,7 @@
   display: block;
   overflow: hidden;
   border-radius: 6px;
-  background: #eef1f4;
+  background: var(--divider);
 }
 
 .skeleton[data-round="true"] {
@@ -17,7 +17,7 @@
     position: absolute;
     inset: 0;
     transform: translateX(-100%);
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+    background: linear-gradient(90deg, transparent, var(--shimmer), transparent);
     animation: shimmer 1.5s ease-in-out infinite;
   }
 }
@@ -203,7 +203,7 @@
 }
 
 .stateText {
-  color: #7b828c;
+  color: var(--muted);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -245,10 +245,10 @@
 .linkButton[data-variant="primary"] {
   border-color: var(--red);
   background: var(--red);
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 600;
 }
 
 .linkButton[data-variant="primary"]:hover {
-  background: #cc1018;
+  background: var(--red-strong);
 }

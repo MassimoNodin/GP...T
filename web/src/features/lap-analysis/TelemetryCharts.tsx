@@ -236,9 +236,9 @@ export function TelemetryCharts({
       </defs>
       {band && (
         <g>
-          <rect x={x(band.from)} y={0} width={Math.max(0, x(band.to) - x(band.from))} height={plotBottom + 4} fill="#dfe9fd" opacity="0.75" />
+          <rect x={x(band.from)} y={0} width={Math.max(0, x(band.to) - x(band.from))} height={plotBottom + 4} fill="var(--blue-soft)" opacity="0.75" />
           {band.inner !== undefined && (
-            <rect x={x(band.inner)} y={0} width={x(band.to) - x(band.inner)} height={plotBottom + 4} fill="#cddcfb" opacity="0.6" />
+            <rect x={x(band.inner)} y={0} width={x(band.to) - x(band.inner)} height={plotBottom + 4} fill="var(--selected-bg)" opacity="0.6" />
           )}
         </g>
       )}
@@ -260,14 +260,14 @@ export function TelemetryCharts({
             )}
             {row.ticks.map((tick, tickIndex) => (
               <g key={tick}>
-                <line x1={plotLeft} x2={width - RIGHT} y1={y(tick)} y2={y(tick)} stroke="#edf0f3" />
+                <line x1={plotLeft} x2={width - RIGHT} y1={y(tick)} y2={y(tick)} stroke="var(--chart-grid)" />
                 <text x={plotLeft - 8} y={y(tick) + 3.5} textAnchor="end" className={styles.tick}>
                   {row.tickLabels?.[tickIndex] ?? (key === "delta" && tick > 0 ? `+${tick}` : tick)}
                 </text>
               </g>
             ))}
             {ticks.map((tick) => (
-              <line key={tick} x1={x(tick)} x2={x(tick)} y1={row.y0} y2={row.y0 + row.height} stroke="#f0f2f5" />
+              <line key={tick} x1={x(tick)} x2={x(tick)} y1={row.y0} y2={row.y0 + row.height} stroke="var(--divider)" />
             ))}
             {missing && (
               <text x={plotLeft + plotW / 2} y={row.y0 + row.height / 2 + 4} textAnchor="middle" className={styles.tick}>

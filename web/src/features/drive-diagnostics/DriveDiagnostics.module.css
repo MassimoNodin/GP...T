@@ -18,7 +18,7 @@
 .dot {
   margin: 0 8px;
   font-size: 9px;
-  color: #a7adb5;
+  color: var(--faint);
 }
 
 /* System status */
@@ -44,7 +44,7 @@
 }
 
 .systemLabel {
-  color: #30353c;
+  color: var(--ink);
   font-size: 13px;
 }
 
@@ -60,7 +60,7 @@
 
 .systemDetail {
   justify-self: end;
-  color: #9198a1;
+  color: var(--chart-axis);
   font-size: 11.5px;
   white-space: nowrap;
 }
@@ -71,7 +71,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
-  color: #9198a1;
+  color: var(--chart-axis);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -98,7 +98,7 @@
 
 .contextSub {
   margin-top: 6px;
-  color: #7b828c;
+  color: var(--muted);
   font-size: 12.5px;
 }
 
@@ -108,7 +108,7 @@
   top: -24px;
   width: 124px;
   height: 84px;
-  color: #23272e;
+  color: var(--ink-strong);
 }
 
 .contextBody {
@@ -138,13 +138,13 @@
 }
 
 .fact dt {
-  color: #3a3f47;
+  color: var(--text-2);
   font-weight: 500;
 }
 
 .fact dd {
   margin: 0;
-  color: #848b94;
+  color: var(--muted-2);
 }
 
 .liveWrap {
@@ -160,7 +160,7 @@
   height: 33px;
   padding: 0 16px 0 13px;
   border-radius: 9px;
-  background: #fdeced;
+  background: var(--red-soft);
   color: var(--red-text);
   font-size: 11.5px;
   font-weight: 600;
@@ -192,15 +192,15 @@
   padding: 0 11px;
   border: 1px solid transparent;
   border-radius: 7px;
-  background: #f2f4f6;
-  color: #8a919a;
+  background: var(--surface-muted);
+  color: var(--chart-axis);
   font-size: 11.5px;
   font-weight: 500;
 }
 
 .filter[aria-pressed="true"] {
   border-color: var(--border-strong);
-  background: #fff;
+  background: var(--surface);
   color: var(--text);
   font-weight: 600;
   box-shadow: var(--shadow-raised);
@@ -240,11 +240,11 @@
 .radioRow[aria-pressed="true"] {
   border-bottom-color: transparent;
   border-radius: 6px;
-  background: #ecf3fe;
+  background: var(--selected-bg);
 }
 
 .radioTime {
-  color: #5c636d;
+  color: var(--muted-deep);
   font-variant-numeric: tabular-nums;
 }
 
@@ -257,19 +257,19 @@
 
 .radioKind[data-kind="proactive"] { color: var(--green-text); }
 .radioKind[data-kind="question"] { color: var(--blue-text); }
-.radioKind[data-kind="response"] { color: #4a5059; }
+.radioKind[data-kind="response"] { color: var(--ink-3); }
 .radioKind[data-kind="issue"] { color: var(--red-text); }
 
 .radioText {
   overflow: hidden;
-  color: #3d424a;
+  color: var(--text-2);
   white-space: nowrap;
   text-overflow: ellipsis;
   padding-right: 14px;
 }
 
 .radioOutcome {
-  color: #9aa1aa;
+  color: var(--faint-2);
   font-size: 11.5px;
 }
 
@@ -300,7 +300,7 @@
 
 .detailTime {
   margin-top: 2px;
-  color: #848b94;
+  color: var(--muted-2);
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
@@ -314,10 +314,10 @@
   line-height: 23px;
 }
 
-.outcomeBadge[data-tone="green"] { background: var(--green-soft); color: #1b8b52; }
-.outcomeBadge[data-tone="amber"] { background: var(--amber-soft); color: #9a6a06; }
+.outcomeBadge[data-tone="green"] { background: var(--green-soft); color: var(--green-strong); }
+.outcomeBadge[data-tone="amber"] { background: var(--amber-soft); color: var(--amber-strong); }
 .outcomeBadge[data-tone="red"] { background: var(--red-soft); color: var(--red-text); }
-.outcomeBadge[data-tone="grey"] { background: var(--grey-soft); color: #6b727c; }
+.outcomeBadge[data-tone="grey"] { background: var(--grey-soft); color: var(--muted-strong); }
 
 .detailSection {
   padding: 10px 0;
@@ -336,17 +336,17 @@
   margin-bottom: 4px;
   font-size: 12.5px;
   font-weight: 600;
-  color: #2b3037;
+  color: var(--ink);
 }
 
 .detailBody {
-  color: #7d848d;
+  color: var(--muted-2);
   font-size: 12px;
   line-height: 1.5;
 }
 
 .bullets {
-  color: #7d848d;
+  color: var(--muted-2);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -364,7 +364,7 @@
   width: 3px;
   height: 3px;
   border-radius: 50%;
-  background: #9aa1aa;
+  background: var(--faint-2);
 }
 
 @media (max-width: 900px) {

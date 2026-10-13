@@ -744,7 +744,7 @@ test("toast durations, stacking limit and the no-provider fallback", () => {
 test("AppShell mounts ToastProvider around the page content", async () => {
   const shell = await readFile(new URL(`${dir}/AppShell.tsx`, sourceRootUrl), "utf8");
   assert.match(shell, /import \{ ToastProvider \} from "\.\/Toast";/);
-  assert.match(shell, /<main id="main" className=\{styles\.main\} tabIndex=\{-1\}>\s*<ToastProvider>\s*<UnitsProvider>\{children\}<\/UnitsProvider>\s*<SessionWatcher \/>\s*<\/ToastProvider>\s*<\/main>/);
+  assert.match(shell, /<main id="main" className=\{styles\.main\} tabIndex=\{-1\}>\s*<ToastProvider>\s*<UnitsProvider>\{children\}<\/UnitsProvider>\s*<SessionWatcher \/>\s*<\/ToastProvider>\s*<ThemeSync \/>\s*<\/main>/);
 });
 
 // --- Dropzone ---------------------------------------------------------------
@@ -834,4 +834,45 @@ test("display units convert text and flip delta signs only on request", async ()
   assert.equal(units.displayDelta("Personal best", imperial), "Personal best");
   assert.deepEqual(units.parseUnits("not json"), metric);
   assert.deepEqual(units.parseUnits(JSON.stringify({ speed: "mph" })), { ...metric, speed: "mph" });
+});
+
+test("dark theme defines every colour token, and styles only use defined tokens", async () => {
+  const { readdir } = await import("node:fs/promises");
+  const globals = await readFile(new URL("app/globals.css", sourceRootUrl), "utf8");
+  const block = (selector) => {
+    const start = globals.indexOf(selector);
+    assert.ok(start >= 0, `${selector} block`);
+    return globals.slice(start, globals.indexOf("}", start));
+  };
+  const names = (css) => new Set([...css.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((match) => match[1]));
+  const root = block(":root {");
+  const dark = names(block(':root[data-theme="dark"] {'));
+  const colours = [...root.matchAll(/(--[a-z0-9-]+)\s*:\s*#[0-9a-fA-F]{3,8}\s*;/g)].map((match) => match[1]);
+  // Tyre compound colours read the same on both backgrounds.
+  const shared = new Set(["--stint-soft", "--stint-medium", "--stint-hard", "--stint-inter", "--stint-wet"]);
+  const missing = colours.filter((name) => !shared.has(name) && !dark.has(name));
+  assert.deepEqual(missing, [], "colour tokens without a dark value");
+
+  const defined = names(root);
+  const undefinedUses = new Set();
+  async function walk(url) {
+    for (const entry of await readdir(url, { withFileTypes: true })) {
+      const child = new URL(entry.name + (entry.isDirectory() ? "/" : ""), url);
+      if (entry.isDirectory()) await walk(child);
+      else if (entry.name.endsWith(".module.css")) {
+        const css = await readFile(child, "utf8");
+        for (const match of css.matchAll(/var\((--[a-z0-9-]+)\)/g)) {
+          if (!defined.has(match[1]) && !css.includes(`${match[1]}:`)) undefinedUses.add(`${entry.name} ${match[1]}`);
+        }
+        assert.doesNotMatch(css, /#[0-9a-fA-F]{6}\b/, `${entry.name} still has a raw hex colour`);
+      }
+    }
+  }
+  await walk(new URL("features/", sourceRootUrl));
+  assert.deepEqual([...undefinedUses], []);
+
+  const theme = await importModule(`${dir}/theme-script.ts`);
+  assert.equal(theme.parseTheme("dark"), "dark");
+  assert.equal(theme.parseTheme("nonsense"), "light");
+  assert.match(theme.THEME_SCRIPT, /f1-engineer:theme/);
 });

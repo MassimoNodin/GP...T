@@ -48,7 +48,7 @@ function PillBody({ status, details }: { status: ShellStatus; details: boolean }
       {status.tone === "amber" ? (
         <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
           <circle cx="8" cy="8" r="7.5" fill="var(--amber)" />
-          <path d="M6.3 5.2v5.6L10.8 8z" fill="#fff" />
+          <path d="M6.3 5.2v5.6L10.8 8z" fill="var(--on-accent)" />
         </svg>
       ) : (
         <ToneDot tone={status.tone} />

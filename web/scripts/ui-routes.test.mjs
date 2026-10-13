@@ -232,7 +232,7 @@ test("skeleton shimmer only animates when reduced motion is not requested", asyn
   assert.ok(guard >= 0);
   assert.doesNotMatch(css.slice(0, guard), /animation:/);
   assert.match(css.slice(guard), /animation: shimmer/);
-  assert.match(css, /#eef1f4/);
+  assert.match(css, /var\(--divider\)/);
 });
 
 test("TrackMap returns distinct closed single-path outlines", () => {

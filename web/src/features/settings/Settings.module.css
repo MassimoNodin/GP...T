@@ -26,7 +26,7 @@
   margin: -8px 0 12px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--divider);
-  color: #8d949d;
+  color: var(--chart-axis);
   font-size: 12px;
 }
 
@@ -35,12 +35,12 @@
   padding: 0;
   font-size: 12.5px;
   font-weight: 500;
-  color: #2b3037;
+  color: var(--ink);
 }
 
 .help {
   margin-top: 7px;
-  color: #9aa1aa;
+  color: var(--faint-2);
   font-size: 11.5px;
 }
 
@@ -101,7 +101,7 @@
 }
 
 .applyNote {
-  color: #9aa1aa;
+  color: var(--faint-2);
   font-size: 11.5px;
   line-height: 1.5;
 }
@@ -130,7 +130,7 @@
 }
 
 .kv dt {
-  color: #6e757f;
+  color: var(--muted-strong);
 }
 
 .kv dd {
@@ -141,7 +141,7 @@
 .kv dd[data-tone="green"] { color: var(--green-text); }
 .kv dd[data-tone="amber"] { color: var(--amber-text); }
 .kv dd[data-tone="red"] { color: var(--red-text); }
-.kv dd[data-tone="grey"] { color: #8d949d; }
+.kv dd[data-tone="grey"] { color: var(--chart-axis); }
 
 .kv dd {
   overflow-wrap: anywhere;
@@ -158,7 +158,7 @@
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid var(--divider);
-  color: #9aa1aa;
+  color: var(--faint-2);
   font-size: 11.5px;
   line-height: 1.5;
 }
@@ -173,7 +173,7 @@
 .cmdNote {
   display: block;
   margin-top: 5px;
-  color: #9aa1aa;
+  color: var(--faint-2);
   font-size: 11.5px;
   line-height: 1.5;
 }
@@ -223,7 +223,7 @@
 }
 
 .meter[data-small] > span {
-  background: #8d949d;
+  background: var(--chart-axis);
 }
 
 .scopes {
@@ -249,7 +249,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  color: #6e757f;
+  color: var(--muted-strong);
 }
 
 .scopeValue {
@@ -260,7 +260,7 @@
 
 .scopeDetail {
   margin-top: 4px;
-  color: #9aa1aa;
+  color: var(--faint-2);
   font-size: 11.5px;
 }
 
@@ -294,19 +294,19 @@
   padding: 10px 10px 10px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .tileIcon {
   flex: none;
-  color: #2b3037;
+  color: var(--ink);
 }
 
 .tileMap {
   flex: none;
   width: 44px;
   height: 44px;
-  color: #2b3037;
+  color: var(--ink);
 }
 
 /* Only the Monaco outline is drawn at the reference angle. */
@@ -316,7 +316,7 @@
 }
 
 .tileLabel {
-  color: #6e757f;
+  color: var(--muted-strong);
   font-size: 11.5px;
   white-space: nowrap;
 }
@@ -337,7 +337,7 @@
   align-items: center;
   gap: 5px;
   margin-top: 3px;
-  color: #8d949d;
+  color: var(--chart-axis);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -347,7 +347,7 @@
 .tileState[data-tone="green-text"] { color: var(--green-text); }
 .tileState[data-tone="amber-text"] { color: var(--amber-text); }
 .tileState[data-tone="grey"],
-.tileState[data-tone="grey-text"] { color: #8d949d; }
+.tileState[data-tone="grey-text"] { color: var(--chart-axis); }
 
 .tileState i {
   width: 5px;
@@ -363,7 +363,7 @@
   padding: 2px 6px;
   border-radius: 4px;
   background: var(--grey-soft);
-  color: #6b727c;
+  color: var(--muted-strong);
   font-size: 11px;
 }
 

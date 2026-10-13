@@ -7,6 +7,7 @@ import { ShellFooterBlock, StatusPill } from "@/features/live-status/ShellParts"
 import { F1Logo } from "./F1Logo";
 import { DriveIcon, ReviewIcon, SettingsIcon } from "./icons";
 import { ToastProvider } from "./Toast";
+import { ThemeSync } from "./theme";
 import { UnitsProvider } from "./units";
 import styles from "./AppShell.module.css";
 
@@ -95,6 +96,7 @@ export function AppShell({
           <UnitsProvider>{children}</UnitsProvider>
           <SessionWatcher />
         </ToastProvider>
+        <ThemeSync />
       </main>
     </div>
   );

@@ -242,8 +242,8 @@ export function StatusGlyph({
     amber: "var(--amber)",
     red: "var(--red)",
     blue: "var(--blue)",
-    grey: "#c3c8ce",
-    dark: "#3a3f47",
+    grey: "var(--line-strong)",
+    dark: "var(--text-2)",
     purple: "var(--purple)",
   }[tone];
   if (glyph === "ring") {
