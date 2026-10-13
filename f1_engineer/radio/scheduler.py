@@ -30,6 +30,12 @@ class RadioMessage:
         return 1 if self.kind == "answer" else 0
 
 
+@dataclass(frozen=True, slots=True)
+class RepeatReference:
+    message: RadioMessage
+    revision: int
+
+
 class RadioScheduler:
     def __init__(self, playback: Playback, *, queue_limit: int = 16,
                  notify: Callable[[dict], None] | None = None) -> None:
@@ -47,9 +53,11 @@ class RadioScheduler:
         self._seen: OrderedDict[str, None] = OrderedDict()
         self._started_at = 0.0
         self._repeat_id = 0
+        self._repeat_revision = 0
 
     def set_scope(self, scope: str | None) -> None:
         if scope != self.scope:
+            self._repeat_revision += 1
             self.cancel()
             self.scope = scope
             self.last_completed = None
@@ -135,6 +143,7 @@ class RadioScheduler:
         self.pending.clear()
 
     def cancel_owner(self, owner: str) -> None:
+        self._repeat_revision += 1
         if self.active is not None and self.active.owner == owner:
             self.playback.cancel()
             self.active = None
@@ -149,6 +158,24 @@ class RadioScheduler:
     def repeat(self, *, now: float) -> bool:
         source = self.active or self.last_completed
         if source is None or source.scope != self.scope:
+            return False
+        self.cancel()
+        self._repeat_id += 1
+        return self.submit(replace(source, key=f"repeat:{self._repeat_id}", kind="answer",
+                                   expires_at=now + 15, observation_age_s=None), now=now)
+
+    def capture_repeat_reference(self) -> RepeatReference | None:
+        source = self.active or self.last_completed
+        if source is None or source.scope != self.scope:
+            return None
+        return RepeatReference(source, self._repeat_revision)
+
+    def repeat_captured(self, reference: RepeatReference | None, *, now: float) -> bool:
+        if not isinstance(reference, RepeatReference) or reference.revision != self._repeat_revision:
+            return False
+        source = reference.message
+        if (source.scope != self.scope or source.expires_at <= now
+                or (source.dispatch_before is not None and source.dispatch_before <= now)):
             return False
         self.cancel()
         self._repeat_id += 1

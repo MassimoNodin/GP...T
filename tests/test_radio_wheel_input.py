@@ -300,9 +300,11 @@ def test_failed_learning_preserves_previous_binding_and_closes_device(tmp_path, 
 def test_listening_request_cancels_radio_and_forwards_session_binding():
     calls = []
     voice = SimpleNamespace(request=lambda **fields: calls.append(fields))
-    command.request_listening(SimpleNamespace(cancel=lambda: calls.append("cancel"), scope="session"),
+    command.request_listening(SimpleNamespace(cancel=lambda: calls.append("cancel"), scope="session",
+                                             capture_repeat_reference=lambda: "frozen"),
                               voice, source="wheel", binding="button", connection=7)
-    assert calls == ["cancel", {"source": "wheel", "scope": "session", "binding": "button", "connection": 7}]
+    assert calls == ["cancel", {"source": "wheel", "scope": "session", "binding": "button", "connection": 7,
+                               "repeat_reference": "frozen"}]
 
 
 def test_radio_loop_routes_bound_button_request_and_closes_input(tmp_path, monkeypatch, capsys):

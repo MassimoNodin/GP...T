@@ -60,6 +60,7 @@ class VoiceInput:
         self._transcript_seen = False
         self._consumed_capture_id = None
         self._draft_ready_at = None
+        self.repeat_reference = None
 
     @property
     def blocks_playback(self) -> bool:
@@ -69,7 +70,8 @@ class VoiceInput:
         return {"state": self._state, "capture_id": self._capture_id,
                 "maximum_seconds": self._maximum_seconds, "draft_available": self._draft is not None}
 
-    def request(self, *, source: str, scope: str | None, binding=None, connection=None) -> None:
+    def request(self, *, source: str, scope: str | None, binding=None, connection=None,
+                repeat_reference=None) -> None:
         self._notify({"event": "radio_listen_requested", "source": source})
         if not self._enabled:
             self._notify({"event": "radio_listen_unavailable", "reason": "dry_run"})
@@ -86,6 +88,7 @@ class VoiceInput:
         self._capture_id = str(uuid.uuid4())
         self._scope, self._binding, self._source = scope, binding, source
         self._connection = connection
+        self.repeat_reference = repeat_reference
         self._finish = threading.Event()
         self._cancelled = threading.Event()
         self._discard = False

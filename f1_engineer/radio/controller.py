@@ -510,6 +510,15 @@ class RadioController:
             return self.gaps.answer(metric, is_player=row["identity"] == self._player["identity"])
         return timing_fact(metric, row["lap"], self._player["lap"])
 
+    def answer_radio_control(self, text: str, *, now: float) -> None:
+        self.check_freshness(now=now)
+        if self.scheduler.scope is None:
+            self.notify({"event": "radio_voice_control_unavailable", "reason": "session_unavailable"})
+            return
+        self._answer_id += 1
+        self.scheduler.submit(RadioMessage(f"answer:{self._answer_id}", self.scheduler.scope,
+                                          text, "answer", now + 15), now=now)
+
     def _control_answer(self, text: str, *, now: float) -> None:
         if len(text.encode("utf-8")) > 1024:
             text = "Task details are too long to speak. Use status to review them."

@@ -159,7 +159,7 @@ def test_invalid_transcripts_never_become_automatic_requests(transcript):
     assert any(event["event"] == "radio_transcription_unavailable" for event in voice_events)
 
 
-@pytest.mark.parametrize("question", ["quit", "quiet", "run powershell", "change the wheel button to three"])
+@pytest.mark.parametrize("question", ["quit", "status", "run powershell", "change the wheel button to three"])
 def test_voice_submission_does_not_execute_arbitrary_console_or_configuration_controls(question):
     controller, radio, events, value, voice, hardware, voice_events, clock = prepared(question)
     assert command.submit_ready_question(controller, voice, now=10, input_status=WHEEL)

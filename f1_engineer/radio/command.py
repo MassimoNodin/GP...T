@@ -216,8 +216,48 @@ def run_radio(args) -> int:
 
 
 def request_listening(scheduler: RadioScheduler, voice: VoiceInput, *, source: str, binding=None, connection=None) -> None:
+    reference = scheduler.capture_repeat_reference()
     scheduler.cancel()
-    voice.request(source=source, scope=scheduler.scope, binding=binding, connection=connection)
+    voice.request(source=source, scope=scheduler.scope, binding=binding, connection=connection,
+                  repeat_reference=reference)
+
+
+def dispatch_voice_request(question: str, controller: RadioController, voice: VoiceInput, *, now: float) -> None:
+    control = " ".join(question.lower().split()).rstrip(".!?").rstrip()
+    scheduler = controller.scheduler
+    action = {
+        "quiet": "quiet", "quiet radio": "quiet", "pause coaching": "quiet",
+        "resume coaching": "resume", "resume radio": "resume",
+        "cancel speech": "cancel", "stop speaking": "cancel",
+        "repeat that": "repeat", "repeat message": "repeat",
+    }.get(control)
+    if action == "quiet":
+        scheduler.quiet()
+        controller.answer_radio_control("Proactive coaching paused. Tracking continues.", now=now)
+    elif action == "resume":
+        scheduler.muted = False
+        scheduler.cancel()
+        controller.answer_radio_control("Proactive coaching resumed.", now=now)
+    elif action == "cancel":
+        scheduler.cancel()
+    elif action == "repeat":
+        if not scheduler.repeat_captured(voice.repeat_reference, now=now):
+            scheduler.cancel()
+            controller.answer_radio_control("The message from when you started listening is no longer available.", now=now)
+            emit({"event": "radio_repeat_unavailable", "reason": "captured_message_unavailable"})
+            return
+    elif control in ("cancel", "cancel that", "stop", "resume", "repeat"):
+        scheduler.cancel()
+        controller.answer_radio_control(
+            "Say cancel speech, repeat that, resume coaching, or cancel task followed by its number.", now=now)
+        emit({"event": "radio_voice_control_unavailable", "reason": "ambiguous_control",
+              "guidance": "Say cancel speech, repeat that, resume coaching, or cancel task with its number."})
+        return
+    else:
+        scheduler.cancel()
+        controller.handle_request(question, now=now)
+        return
+    emit({"event": "radio_voice_control", "action": action, "tracking_unchanged": True})
 
 
 def submit_ready_question(controller: RadioController, voice: VoiceInput, *, now: float, input_status=None) -> bool:
@@ -225,8 +265,7 @@ def submit_ready_question(controller: RadioController, voice: VoiceInput, *, now
     submission = voice.take_ready_draft(scope=controller.scheduler.scope, input_status=input_status)
     if submission is None:
         return False
-    controller.scheduler.cancel()
-    controller.handle_request(submission["question"], now=now)
+    dispatch_voice_request(submission["question"], controller, voice, now=now)
     emit({"event": "radio_voice_submitted", "capture_id": submission["capture_id"],
           "source": submission["source"], "submitted": True, "verified": False,
           "submission_wait_s": submission["submission_wait_s"]})
@@ -243,5 +282,8 @@ def submit_question(command: str, controller: RadioController, voice: VoiceInput
     else:
         question = command[4:]
         voice.cancel()
-    controller.scheduler.cancel()
-    controller.handle_request(question, now=now)
+    if command == "submit":
+        dispatch_voice_request(question, controller, voice, now=now)
+    else:
+        controller.scheduler.cancel()
+        controller.handle_request(question, now=now)

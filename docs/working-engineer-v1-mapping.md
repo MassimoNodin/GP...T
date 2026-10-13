@@ -31,9 +31,10 @@ Remaining implementation and scope decisions:
   requests, rather than whole-request rejection for unsupported facts.
 - Conversation context including prior answers, instructions and tracking results;
   metric/target/task follow-ups with clarification and no cancelled-task revival.
-- Unambiguous spoken quiet/cancel/repeat controls, preserving capture/playback echo
-  safeguards. Automatic scoped question/task submission now exists, but still
-  requires the real-game wheel/headset acceptance evidence below.
+- Real-game acceptance of automatic scoped voice questions/tasks and the explicit
+  spoken quiet/cancel-speech/repeat controls, preserving capture/playback echo
+  safeguards. These controls now exist, with ambiguous commands clarified rather
+  than guessed, but still require the wheel/headset acceptance evidence below.
 - Resolve or explicitly agree existing limits: named-driver watches currently
   pause outside meaningful adjacency; target pace uses eligible laps observed by
   the radio connection, not complete historical session-best evidence.

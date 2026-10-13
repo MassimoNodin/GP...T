@@ -158,7 +158,8 @@ automatically submits that capture once, after the audio/transcription worker
 has finished cleanly and its session/player and wheel binding are still current.
 No console `submit` is required. Supported questions and task instructions use
 the existing bounded typed dispatcher; arbitrary console/configuration controls
-are not executable transcript commands. Task acknowledgements confirm the result.
+are not executable transcript commands. The narrow spoken radio-control allowlist
+below is also supported. Task acknowledgements confirm the result.
 Recognition is still unverified and acoustic echo/cue isolation needs the full
 headset test; automatic submission does not make the transcript ground truth.
 
@@ -1044,3 +1045,43 @@ with mock audio, duplicate/late result suppression, source/session/cleanup guard
 registered task execution and automatic/manual/capture-test loop modes. Real
 game-focused MOZA activation, microphone/headset acoustic isolation, audible
 answers, browser-closed acceptance and user-approved latency remain unverified.
+
+## Scoped spoken radio controls
+
+Automatic voice submission and manual transcript submission now share a narrow
+exact-phrase control policy (case and whitespace insensitive, with optional
+terminal period, question mark or exclamation mark):
+
+| Spoken phrase | Effect |
+| --- | --- |
+| `quiet`, `quiet radio`, `pause coaching` | Stop current/queued speech and pause proactive coaching; acknowledge that tracking continues. |
+| `resume coaching`, `resume radio` | Resume proactive coaching and acknowledge it. |
+| `cancel speech`, `stop speaking` | Stop current/queued speech without another spoken acknowledgement; keep tracking and quiet policy unchanged. |
+| `repeat that`, `repeat message` | Repeat only the eligible message frozen when this capture started. |
+
+Bare `cancel`, `cancel that`, `stop`, `resume` and `repeat` ask for audible
+clarification rather than guessing. Explicit typed task cancellation, such as
+`cancel task 2` or `cancel all tracking`, remains a separate supported task request.
+Cancelling speech or pausing coaching never silently cancels a tracking task.
+Arbitrary console, shell, configuration and shutdown commands remain unsupported.
+
+Repeat freezes the active message (including interrupted speech), or the last
+completed message if nothing is active, before listening cancels playback. It
+does not falsely record interrupted speech as completed and never substitutes
+newer proactive output heard during transcription. A second button press ending
+the same capture does not replace its reference. Original expiry and observation
+dispatch deadlines still apply. Session changes and any task-owned speech
+invalidation conservatively invalidate frozen references, including a scope
+change away and back; unavailable references receive an audible explanation.
+The reference is bounded to one message per capture and is not persisted.
+
+All automatic capture/session/wheel/cleanup and one-shot guards continue to
+apply. Quiet/resume acknowledgements are explicit answers and can speak while
+proactive coaching is muted. Spoken controls do not bypass freshness checks or
+add a recording trigger, change wheel bindings, or alter audio/model settings.
+
+Validation: 862 focused radio/backend-capture and CLI tests passed, including
+30 new spoken-control and frozen-reference cases, with the existing Starlette/
+httpx deprecation warning. Compilation and whitespace checks passed. The full
+suite was not rerun. Evidence is synthetic/mocked, not real wheel/headset/game
+acceptance or measured acoustic latency; the branch remains unfinished.

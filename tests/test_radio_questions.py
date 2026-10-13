@@ -239,11 +239,11 @@ def test_commands_preserve_question_text():
     assert inbox.get_nowait() == "status"
 
 
-def test_draft_is_explicit_one_shot_and_not_a_control_command():
+def test_draft_is_explicit_one_shot_and_not_an_arbitrary_control_command():
     controller, radio, events, value = live()
     voice = VoiceInput(enabled=False)
     voice._scope = radio.scope
-    voice._draft = "quiet"
+    voice._draft = "quit"
     submit_question("submit", controller, voice, now=10)
     assert not radio.muted and not voice.status()["draft_available"]
     assert "not supported yet" in radio.pending[-1].text
