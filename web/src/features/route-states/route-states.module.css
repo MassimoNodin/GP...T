@@ -102,6 +102,50 @@
   gap: 12px;
 }
 
+/* Overview tabs use the real 545fr/323fr columns. */
+.gridOverview {
+  display: grid;
+  grid-template-columns: minmax(0, 545fr) minmax(0, 323fr);
+  gap: 16px;
+}
+
+/* Lap Analysis: main column beside the questions column. */
+.lapsLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 388px);
+  gap: 16px;
+  align-items: start;
+}
+
+.tableRow {
+  display: grid;
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+}
+
+.tileRow {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 1280px) {
+  .lapsLayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1024px) {
+  .gridOverview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tileRow {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 860px) {
   .grid,
   .gridWide {
@@ -109,6 +153,10 @@
   }
 
   .statRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tileRow {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

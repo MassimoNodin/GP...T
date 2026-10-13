@@ -34,7 +34,7 @@ export function StatusPill({ status }: { status: ShellStatus }) {
 
 export function ShellFooterBlock({ footer }: { footer: ShellFooter }) {
   return (
-    <div className={styles.footer} role="status">
+    <div className={styles.footer}>
       <div className={styles.footerHead}>
         <ToneDot tone={footer.tone} />
         {footer.label}

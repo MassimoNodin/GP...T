@@ -3,7 +3,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import type { ShellFooter, ShellStatus } from "@/features/ui-foundation/AppShell";
 import { useAcquisitionFeed, useRuntimeFeed } from "./hooks";
-import { engineerFooter, engineerStatus, telemetryFooter, telemetryStatus } from "./map";
+import { ENGINE_OFFLINE_FOOTER, engineerFooter, engineerStatus, telemetryFooter, telemetryStatus } from "./map";
 import { ShellFooterBlock, StatusPill } from "./ShellParts";
 
 export type LiveMode = "telemetry" | "engineer";
@@ -65,7 +65,8 @@ function EngineerProvider({ status, footer, children }: ProviderProps) {
         ? { status, footer }
         : {
             status: { ...engineerStatus(runtime), menu: status.menu },
-            footer: engineerFooter(runtime, footer.lines),
+            // Unreachable: the session lines are stale, so say what to do instead.
+            footer: runtime === null ? ENGINE_OFFLINE_FOOTER : engineerFooter(runtime, footer.lines),
           },
     [runtime, status, footer],
   );

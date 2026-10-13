@@ -15,6 +15,41 @@ import {
 import { ChevronDownIcon, StatusGlyph } from "./icons";
 import styles from "./primitives.module.css";
 
+/**
+ * Pure arrow-key navigation shared by Menu, Segmented, DataTable and
+ * FilterChips. Returns the index to focus next, or null when the key is not a
+ * navigation key for the given orientation (so the caller does not
+ * preventDefault).
+ */
+export type RovingOrientation = "vertical" | "horizontal" | "both";
+
+export function nextRovingIndex(
+  key: string,
+  current: number,
+  count: number,
+  orientation: RovingOrientation = "vertical",
+  wrap = true,
+): number | null {
+  if (count <= 0) return null;
+  const forward =
+    ((orientation === "vertical" || orientation === "both") && key === "ArrowDown") ||
+    ((orientation === "horizontal" || orientation === "both") && key === "ArrowRight");
+  const backward =
+    ((orientation === "vertical" || orientation === "both") && key === "ArrowUp") ||
+    ((orientation === "horizontal" || orientation === "both") && key === "ArrowLeft");
+  if (key === "Home") return 0;
+  if (key === "End") return count - 1;
+  if (forward) {
+    if (current < 0) return 0;
+    return wrap ? (current + 1) % count : Math.min(current + 1, count - 1);
+  }
+  if (backward) {
+    if (current < 0) return count - 1;
+    return wrap ? (current - 1 + count) % count : Math.max(current - 1, 0);
+  }
+  return null;
+}
+
 export type Tone = "green" | "amber" | "red" | "blue" | "purple" | "grey";
 
 function cx(...names: Array<string | false | null | undefined>) {
@@ -111,6 +146,8 @@ export function DeltaPill({ ms, children }: { ms: number; children: ReactNode })
     </span>
   );
 }
+
+const MENU_ITEM_SELECTOR = "a[href], button:not(:disabled)";
 
 export type TabItem<K extends string> = { key: K; label: string };
 
@@ -309,6 +346,10 @@ export function Toggle({
  * when keyboard focus leaves the menu. Put `<Link>`s or `<MenuItem>`s in
  * `children`; any `a[href]`, enabled `button` or `[data-menu-close]` element
  * closes the menu when clicked.
+ *
+ * Keyboard: ArrowDown/ArrowUp on the trigger open the menu and focus the first
+ * or last item; with focus on an item, Up/Down/Home/End move between the
+ * enabled links and buttons in the panel (wrapping), Escape closes.
  */
 export function Menu({
   label,
@@ -318,6 +359,7 @@ export function Menu({
   className,
   triggerClassName,
   panelClassName,
+  disabled,
 }: {
   /** Accessible name of the trigger button (required: the trigger is icon-only). */
   label: string;
@@ -328,11 +370,25 @@ export function Menu({
   className?: string;
   triggerClassName?: string;
   panelClassName?: string;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const pendingFocus = useRef<"first" | "last" | null>(null);
   const panelId = useId();
+
+  function menuItems() {
+    return Array.from(panelRef.current?.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR) ?? []);
+  }
+
+  useEffect(() => {
+    if (!open || !pendingFocus.current) return;
+    const items = menuItems();
+    (pendingFocus.current === "first" ? items[0] : items[items.length - 1])?.focus();
+    pendingFocus.current = null;
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -353,7 +409,26 @@ export function Menu({
       event.preventDefault();
       event.stopPropagation();
       closeAndRestoreFocus();
+      return;
     }
+    if (event.altKey || event.ctrlKey || event.metaKey || disabled) return;
+    const onTrigger = event.target === triggerRef.current;
+    if (!open) {
+      if (onTrigger && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+        event.preventDefault();
+        pendingFocus.current = event.key === "ArrowDown" ? "first" : "last";
+        setOpen(true);
+      }
+      return;
+    }
+    const items = menuItems();
+    const current = items.findIndex((item) => item.contains(event.target as Node));
+    if (current < 0 && !onTrigger) return;
+    if (onTrigger && event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    const next = nextRovingIndex(event.key, current, items.length);
+    if (next === null) return;
+    event.preventDefault();
+    items[next]?.focus();
   }
 
   function onBlur(event: FocusEvent<HTMLDivElement>) {
@@ -383,12 +458,14 @@ export function Menu({
         title={label}
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
+        disabled={disabled}
         onClick={() => setOpen((current) => !current)}
       >
         {trigger}
       </button>
       {open && (
         <div
+          ref={panelRef}
           id={panelId}
           className={cx(styles.menuPanel, panelClassName)}
           data-align={align}

@@ -225,6 +225,11 @@
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.02);
 }
 
+/* Focus lands here from the skip link; the page needs no ring around it. */
+.main:focus {
+  outline: none;
+}
+
 @media (max-width: 860px) {
   .app {
     grid-template-columns: minmax(0, 1fr);

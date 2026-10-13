@@ -95,6 +95,13 @@ export function telemetryFooter(status: AcquisitionStatus | null, firstLine: str
   return { tone: pill.tone, label: pill.label, lines: [firstLine, telemetryDetail(status)] };
 }
 
+/** Sidebar footer for every screen while the local engine cannot be reached. */
+export const ENGINE_OFFLINE_FOOTER: ShellFooter = {
+  tone: "red",
+  label: "Engine offline",
+  lines: ["Start the local engine", ""],
+};
+
 export function telemetryShell(
   status: AcquisitionStatus | null,
   firstLine: string,
