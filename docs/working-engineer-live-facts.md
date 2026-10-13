@@ -111,3 +111,40 @@ checks are not run for this backend-only increment.
 This is not real-game or MOZA/audio acceptance. No production deployment or
 runtime/model substitution is performed. Next work connects these facts/events
 to the standalone radio path, then driver resolution, conversation and tasks.
+
+## Demand-owned opponent observation prerequisite — October 14, 2026
+
+The live driver row can now include an opponent `observation` when a current
+explicit detail demand owns that verified participant. Automatic nearby-car
+selection and the full-trace profile do not implicitly authorize this live
+field. The player observation retains its existing shape and behavior.
+
+The opponent field uses the same `status`/`reason`/`value`/`source`/`identity`
+shape and adds sorted, unique `detail_task_ids` (at most four demand owners).
+The value includes the selected opponent's own lap number, distance and lap
+clock, together with its measured wire speed/brake/throttle/steering/gear; the
+player's lap clock is never substituted. Source packet format, session, frame,
+session clock, receipt provenance and lap/telemetry association must match.
+Missing, conflicting or invalid telemetry returns unavailable values, not zeros.
+Non-racing/unknown result status is also unavailable. The field remains diagnostic
+and `coaching_eligible` is false.
+
+Every owner is independently matched to the current scope/tenure/fingerprint;
+a valid demand cannot make a stale demand for the same car eligible. Conflicting
+owner IDs, malformed IDs, over-budget demands and conflicted frames fail closed.
+When the owner releases/expires, the next processed frame omits the observation
+rather than carrying forward the old sample. Snapshot copies remain isolated.
+Consumers must still enforce demand activation, ownership, age and lap-window
+eligibility; a current observation is not complete-lap evidence.
+
+The pipeline supplies active demands only under `demand_v1`. This change does
+not broaden detailed trace selection, create extra persisted rows or expose all
+field telemetry by default. It prepares the data path for bounded opponent
+region collection; standalone radio detail-demand ownership, independent
+player/opponent capture windows, pairing and spoken comparison remain pending.
+
+Validation: 43 new opponent-observation cases plus existing player observation,
+pipeline, detail policy/demand/API and radio suites pass in a 1,350-test selection.
+Two existing Starlette/httpx deprecation warnings remain. Compilation and
+whitespace checks pass. This selection is not a new full-suite run or real-game
+acceptance evidence.

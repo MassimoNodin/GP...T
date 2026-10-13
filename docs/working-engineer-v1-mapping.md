@@ -26,6 +26,9 @@ Remaining implementation and scope decisions:
   Numeric diagnostic differences are not this completed capability.
 - Opponent braking/minimum-speed task-owned collection through existing detail
   permissions, aligned player/opponent lap windows and guarded spoken comparisons.
+  A backend prerequisite now exposes same-frame opponent observations only for
+  current explicit detail-demand owners, with owner IDs and identity/provenance
+  guards. This is not yet radio-owned paired capture or a spoken tracking task.
 - Real-game validation of post-pit benchmarking and retained-lap eligibility.
   Stop-count/tyre-change confirmation, pre-pit ranking/tie-breaks, clean observed
   lap-set averages, age/condition disclosures and one-off reporting now exist.

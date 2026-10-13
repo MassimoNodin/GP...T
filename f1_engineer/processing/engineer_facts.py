@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import copy
 import math
+import re
 from collections import Counter, deque
 from dataclasses import asdict
 from typing import Any
 
 from ..driver_names import display_driver_name
 from ..sessions.car_lap_inventory import VerifiedCarParticipant
-from .detail_policy import DetailPolicyFrame
+from .detail_policy import DetailPolicyFrame, select_detail
+from .detail_demand import MAX_ACTIVE_DETAIL_TASKS
 from ..udp.car_status import CarStatusData
 from ..udp.models import PacketId
 
@@ -28,8 +30,8 @@ def _context(frame):
             "layout_verified": False, "coaching_eligible": False}
 
 
-def _player_observation(frame, frame_identifier, session_time_s, received_monotonic_ns, packets):
-    result = {"status": "unavailable", "reason": "player_telemetry_missing", "value": None,
+def _car_observation(frame, frame_identifier, session_time_s, received_monotonic_ns, packets, *, car, role):
+    result = {"status": "unavailable", "reason": f"{role}_telemetry_missing", "value": None,
               "source": None, "coaching_eligible": False}
     matches = [(packet, data) for packet, data in packets
                if packet.packet_kind is PacketId.CAR_TELEMETRY
@@ -41,18 +43,17 @@ def _player_observation(frame, frame_identifier, session_time_s, received_monoto
         return result
     if any(not math.isfinite(packet.header.session_time) or packet.header.session_time != session_time_s
            for packet, data in matches):
-        return {**result, "reason": "player_telemetry_clock_mismatch"}
+        return {**result, "reason": f"{role}_telemetry_clock_mismatch"}
     if any(data.cars != matches[0][1].cars for packet, data in matches[1:]):
-        return {**result, "reason": "player_telemetry_conflicted"}
+        return {**result, "reason": f"{role}_telemetry_conflicted"}
     if any(type(packet.received_monotonic_ns) is not int or packet.received_monotonic_ns < 0
            or type(packet.captured_at_ns) is not int or packet.captured_at_ns < 0
            or abs(packet.received_monotonic_ns - received_monotonic_ns) >= 3_000_000_000
            for packet, data in matches):
-        return {**result, "reason": "player_telemetry_provenance_unavailable"}
+        return {**result, "reason": f"{role}_telemetry_provenance_unavailable"}
     packet, data = matches[-1]
-    car = frame.player_car_index
-    if type(car) is not int or not 0 <= car < len(data.cars):
-        return {**result, "reason": "player_telemetry_slot_unavailable"}
+    if type(car) is not int or not 0 <= car < min(len(data.cars), len(frame.lap_data)):
+        return {**result, "reason": f"{role}_telemetry_slot_unavailable"}
     telemetry = data.cars[car]
     values = {"speed_kph": telemetry.speed_kph, "brake": telemetry.brake,
               "throttle": telemetry.throttle, "steering": telemetry.steering, "gear": telemetry.gear}
@@ -61,7 +62,7 @@ def _player_observation(frame, frame_identifier, session_time_s, received_monoto
             or any(type(values[key]) not in (int, float) or not math.isfinite(values[key])
                    or not low <= values[key] <= high
                    for key, low, high in (("brake", 0, 1), ("throttle", 0, 1), ("steering", -1, 1)))):
-        return {**result, "reason": "player_telemetry_values_invalid"}
+        return {**result, "reason": f"{role}_telemetry_values_invalid"}
     values.update(lap_number=frame.lap_data[car].current_lap_number,
                   lap_distance_m=frame.lap_data[car].lap_distance_m,
                   current_lap_time_ms=frame.lap_data[car].current_lap_time_ms)
@@ -72,6 +73,28 @@ def _player_observation(frame, frame_identifier, session_time_s, received_monoto
                        "lap_received_monotonic_ns": received_monotonic_ns,
                        "telemetry_received_monotonic_ns": packet.received_monotonic_ns,
                        "telemetry_captured_at_ns": packet.captured_at_ns}}
+
+
+def _opponent_detail_owners(frame):
+    if frame.frame_conflicted or not frame.demands or len(frame.demands) > MAX_ACTIVE_DETAIL_TASKS:
+        return {}
+    selected = select_detail(frame)
+    owners = {}
+    seen = {}
+    for demand in frame.demands:
+        if not isinstance(demand.task_id, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", demand.task_id) is None:
+            return {}
+        previous = seen.setdefault(demand.task_id, demand.tenure)
+        if previous != demand.tenure:
+            return {}
+        car = demand.tenure.car_index
+        keys = ("session_uid", "packet_format", "lifecycle_epoch", "car_index", "tenure_ordinal",
+                "participant_identity_fingerprint")
+        current = any(all(getattr(tenure, key) == getattr(demand.tenure, key) for key in keys)
+                      for tenure in frame.verified_tenures)
+        if current and car != frame.player_car_index and "task" in selected.reasons_for(car):
+            owners.setdefault(car, set()).add(demand.task_id)
+    return {car: tuple(sorted(tasks)) for car, tasks in owners.items()}
 
 
 def qualify_snapshot(snapshot: dict[str, Any], *, now_ns: int,
@@ -167,6 +190,7 @@ class LiveEngineerFacts:
         participant_counts = Counter(item.tenure.car_index for item in participants)
         participant_rows = {item.tenure.car_index: item for item in participants}
         prior_drivers = {row["car_index"]: row for row in previous["drivers"]} if previous else {}
+        detail_owners = _opponent_detail_owners(frame)
         for tenure in frame.verified_tenures:
             car = tenure.car_index
             if (counts[car] != 1 or tenure.close_reason != "active"
@@ -210,9 +234,17 @@ class LiveEngineerFacts:
                                      "status": "available" if participant_value is not None else "unavailable",
                                      "reason": None if participant_value is not None else participant_reason}
             if car == frame.player_car_index:
-                driver["observation"] = {**_player_observation(frame, frame_identifier, session_time_s,
-                                                              received_monotonic_ns, telemetry_packets),
+                driver["observation"] = {**_car_observation(frame, frame_identifier, session_time_s,
+                                                              received_monotonic_ns, telemetry_packets,
+                                                              car=car, role="player"),
                                          "identity": dict(identity)}
+            elif car in detail_owners:
+                observation = _car_observation(frame, frame_identifier, session_time_s,
+                                               received_monotonic_ns, telemetry_packets, car=car, role="opponent")
+                if type(lap.result_status_id) is not int or lap.result_status_id != 2:
+                    observation.update(status="unavailable", reason="opponent_not_racing", value=None, source=None)
+                driver["observation"] = {**observation, "identity": dict(identity),
+                                         "detail_task_ids": list(detail_owners[car])}
             current["drivers"].append(driver)
             prior = prior_drivers.get(car)
             if prior is None or prior["identity"] != identity:

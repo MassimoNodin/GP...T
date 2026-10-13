@@ -120,7 +120,7 @@ def test_conflicts_fail_closed_but_identical_duplicates_are_safe():
     assert observation(facts(packets=((packet, data), (packet, other))))["reason"] == "player_telemetry_conflicted"
 
 
-def test_other_drivers_never_receive_detailed_observations():
+def test_other_drivers_without_demands_do_not_receive_detailed_observations():
     value = frame([lap(), lap()], player=1)
     result = facts(value).snapshot()
     assert "observation" not in result["drivers"][0]

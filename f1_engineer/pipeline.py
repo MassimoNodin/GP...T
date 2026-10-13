@@ -645,6 +645,8 @@ class TelemetryPipeline:
                     context=inventory_context, association_scope_assessable=association_scope_assessable,
                     lap_data_conflicted=lap_data_conflicted,
                     verified_tenures=self.car_lap_inventory.active_tenures({frame.session_uid: frame_ordinal}),
+                    demands=self.detail_demands if self.detail_profile == "demand_v1" else (),
+                    frame_conflicted=frame_observation_conflicted,
                 ), frame_identifier=frame.overall_frame_identifier,
                     session_time_s=fact_packet.header.session_time,
                     received_monotonic_ns=fact_packet.received_monotonic_ns,
