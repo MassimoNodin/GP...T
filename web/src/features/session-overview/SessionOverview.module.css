@@ -580,6 +580,13 @@
   line-height: 1.5;
 }
 
+/* 1024: the overview columns stack (plan 3.0.5). */
+@media (max-width: 1024px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 980px) {
   .heroTop {
     grid-template-columns: minmax(0, 1fr);
@@ -609,10 +616,6 @@
 
   .toolbar > div:first-child::-webkit-scrollbar {
     display: none;
-  }
-
-  .grid {
-    grid-template-columns: minmax(0, 1fr);
   }
 
   .heroDetails {
