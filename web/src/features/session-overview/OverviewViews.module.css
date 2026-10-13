@@ -368,3 +368,8 @@
   padding-bottom: 14px;
   border-bottom: 1px solid var(--divider);
 }
+
+.consistencyRating {
+  color: var(--muted);
+  font-size: 11px;
+}

@@ -23,6 +23,8 @@ import {
   reasonFootnote,
   sessionBestSectors,
   theoreticalBest,
+  consistencyOf,
+  formatSpread,
   tyreLabel,
   type ChartMetric,
   type LapFilter,
@@ -52,6 +54,7 @@ export function LapsView({
   const rows = useMemo(() => filterLaps(laps, filter, hideInOut), [laps, filter, hideInOut]);
   const bestSectors = useMemo(() => sessionBestSectors(laps), [laps]);
   const theory = useMemo(() => theoreticalBest(laps, best?.ms ?? null), [best, laps]);
+  const consistency = useMemo(() => consistencyOf(laps), [laps]);
   const loading = enrichment.status === "loading";
   const hasSectors = loading || laps.some((lap) => lap.sectors);
   const hasTyres = loading || laps.some((lap) => lap.tyre);
@@ -222,6 +225,11 @@ export function LapsView({
                 ? "Waiting for sector times"
                 : "Needs a valid time in all three sectors"
           }
+        />
+        <StatTile
+          label="Consistency"
+          value={consistency ? formatSpread(consistency) : "—"}
+          sub={consistency ? `${consistency.rating} over ${consistency.laps} clean laps` : "Needs at least three clean laps"}
         />
         {theory && (
           <StatTile

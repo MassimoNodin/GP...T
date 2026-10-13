@@ -177,7 +177,44 @@ export type StintStats = {
   /** Seconds per lap; null with fewer than four clean laps. */
   degradation: number | null;
   cleanLaps: number;
+  /** Lap-time spread of the clean laps; null with fewer than three. */
+  consistency: Consistency | null;
 };
+
+export type ConsistencyRating = "Very consistent" | "Consistent" | "Variable" | "Inconsistent";
+
+export type Consistency = {
+  /** Standard deviation of the counted laps, in milliseconds. */
+  spreadMs: number;
+  laps: number;
+  rating: ConsistencyRating;
+};
+
+/** Laps more than this much slower than the median are mistakes or traffic, not spread. */
+const CONSISTENCY_OUTLIER = 1.03;
+
+/**
+ * How evenly the clean laps were driven: the standard deviation of their
+ * times, ignoring laps over 3% off the median (a mistake is not inconsistency).
+ * Needs at least three laps.
+ */
+export function consistencyOf(laps: readonly OverviewLap[]): Consistency | null {
+  const clean = laps.filter(isCleanLap).map((lap) => lap.ms);
+  if (clean.length < 3) return null;
+  const limit = median(clean) * CONSISTENCY_OUTLIER;
+  const counted = clean.filter((ms) => ms <= limit);
+  if (counted.length < 3) return null;
+  const mean = counted.reduce((sum, ms) => sum + ms, 0) / counted.length;
+  const spreadMs = Math.sqrt(counted.reduce((sum, ms) => sum + (ms - mean) ** 2, 0) / counted.length);
+  const rating: ConsistencyRating =
+    spreadMs <= 200 ? "Very consistent" : spreadMs <= 500 ? "Consistent" : spreadMs <= 1000 ? "Variable" : "Inconsistent";
+  return { spreadMs, laps: counted.length, rating };
+}
+
+/** "±0.214 s" */
+export function formatSpread(consistency: Consistency): string {
+  return `±${(consistency.spreadMs / 1000).toFixed(3)} s`;
+}
 
 /** Valid, non-pit laps that began at the start line: the laps pace is judged on. */
 export function isCleanLap(lap: OverviewLap): boolean {
@@ -205,13 +242,14 @@ export function lapsInStint(stint: OverviewStint, laps: OverviewLap[]): Overview
 
 export function stintStats(stint: OverviewStint, laps: OverviewLap[]): StintStats {
   const clean = lapsInStint(stint, laps).filter(isCleanLap);
-  if (clean.length === 0) return { best: null, average: null, degradation: null, cleanLaps: 0 };
+  if (clean.length === 0) return { best: null, average: null, degradation: null, cleanLaps: 0, consistency: null };
   const slope = clean.length >= 4 ? linearSlope(clean.map((lap) => [lap.lap, lap.ms])) : null;
   return {
     best: Math.min(...clean.map((lap) => lap.ms)),
     average: clean.reduce((sum, lap) => sum + lap.ms, 0) / clean.length,
     degradation: slope === null ? null : slope / 1000,
     cleanLaps: clean.length,
+    consistency: consistencyOf(clean),
   };
 }
 
@@ -917,6 +955,14 @@ export function deriveSummary(input: {
   }
   const items: SummaryItem[] = [];
   if (best) items.push({ tone: "green", glyph: "check", text: `Best lap ${formatLapTime(best.ms)} (lap ${best.lap})` });
+  const consistency = consistencyOf(laps);
+  if (consistency) {
+    items.push({
+      tone: consistency.spreadMs <= 500 ? "green" : "amber",
+      glyph: consistency.spreadMs <= 500 ? "check" : "alert",
+      text: `${consistency.rating}: lap times within ${formatSpread(consistency)} over ${plural(consistency.laps, "clean lap")}`,
+    });
+  }
   const theory = theoreticalBest(laps, best?.ms ?? null);
   if (theory && theory.gainMs !== null && theory.gainMs >= 1) {
     items.push({ tone: "blue", glyph: "info", text: `Theoretical best ${theoreticalBestText(theory)}` });

@@ -11,6 +11,7 @@ import {
   compoundColor,
   degradationTone,
   formatDegradation,
+  formatSpread,
   formatLapRanges,
   isCleanLap,
   lapsInStint,
@@ -161,6 +162,21 @@ function StintTable({ stints, laps }: { stints: OverviewStint[]; laps: OverviewL
         ) : (
           <span className={viewStyles.degradation} data-tone={degradationTone(stats.degradation)}>
             {formatDegradation(stats.degradation)}
+          </span>
+        ),
+    },
+    {
+      key: "consistency",
+      header: "Consistency",
+      width: "140px",
+      numeric: true,
+      render: ({ stats }) =>
+        stats.consistency === null ? (
+          <NotAvailable compact reason="Needs at least three clean laps" />
+        ) : (
+          <span title={stats.consistency.rating}>
+            {formatSpread(stats.consistency)}
+            <span className={viewStyles.consistencyRating}> {stats.consistency.rating}</span>
           </span>
         ),
     },

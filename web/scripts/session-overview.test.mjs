@@ -480,6 +480,7 @@ test("derived summary lists text then items in the planned order", () => {
     result.items.map((item) => [item.tone, item.glyph, item.text]),
     [
       ["green", "check", "Best lap 1:19.000 (lap 2)"],
+      ["amber", "alert", "Inconsistent: lap times within ±1.118 s over 4 clean laps"],
       ["amber", "alert", "1 lap invalidated by the game"],
       ["blue", "info", "2 pit stops"],
       ["amber", "alert", "2 safety car periods"],
@@ -1182,4 +1183,23 @@ test("theoretical best adds the best valid sectors", () => {
   assert.equal(data.theoreticalBest([lap(1, 1, 93500, { sectors: null })], 93500), null);
   const summary = data.deriveSummary({ laps, bestId: "2", stintCount: null, summary: null });
   assert.ok(summary.items.some((item) => item.text.startsWith("Theoretical best 1:33.100")));
+});
+
+test("consistency is the spread of clean laps, ignoring mistakes", () => {
+  const laps = [
+    lap(1, 1, 93000),
+    lap(2, 2, 93200),
+    lap(3, 3, 93400),
+    lap(4, 4, 99000),
+    lap(5, 5, 93100, { pit: true }),
+    lap(6, 6, 92000, { valid: false }),
+  ];
+  const consistency = data.consistencyOf(laps);
+  assert.equal(consistency.laps, 3, "the 99 s mistake, the pit lap and the invalid lap are left out");
+  assert.equal(Math.round(consistency.spreadMs), 163);
+  assert.equal(consistency.rating, "Very consistent");
+  assert.equal(data.formatSpread(consistency), "±0.163 s");
+  assert.equal(data.consistencyOf(laps.slice(0, 2)), null);
+  const stint = data.stintStats({ index: 1, compound: "Medium", startLap: 1, endLap: 4, laps: 4 }, laps);
+  assert.equal(stint.consistency.laps, 3);
 });
