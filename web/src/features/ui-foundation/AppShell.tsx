@@ -7,6 +7,7 @@ import { ShellFooterBlock, StatusPill } from "@/features/live-status/ShellParts"
 import { F1Logo } from "./F1Logo";
 import { DriveIcon, ReviewIcon, SettingsIcon } from "./icons";
 import { ToastProvider } from "./Toast";
+import { UnitsProvider } from "./units";
 import styles from "./AppShell.module.css";
 
 export type ShellTone = "green" | "amber" | "red" | "grey";
@@ -91,7 +92,7 @@ export function AppShell({
       </aside>
       <main id="main" className={styles.main} tabIndex={-1}>
         <ToastProvider>
-          {children}
+          <UnitsProvider>{children}</UnitsProvider>
           <SessionWatcher />
         </ToastProvider>
       </main>

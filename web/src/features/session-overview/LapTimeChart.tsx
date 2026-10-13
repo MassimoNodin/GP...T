@@ -1,5 +1,6 @@
 import type { ProgressionPoint } from "@/features/review-data/fixtures";
 import { formatDelta, formatLapTime } from "@/features/review-data/format";
+import { displayDelta, useUnits } from "@/features/ui-foundation/units";
 import { formatAxisValue, formatMetricValue, type ChartMetric, type LapMarker } from "./overview-data";
 import styles from "./SessionOverview.module.css";
 
@@ -52,6 +53,7 @@ export function LapTimeChart({
    */
   onPick?: (lap: number, compare: boolean) => void;
 }) {
+  const units = useUnits();
   const plotW = W - PAD.left - PAD.right;
   const plotH = H - PAD.top - PAD.bottom;
   const xDomain = Math.max(xMax, 1);
@@ -183,7 +185,7 @@ export function LapTimeChart({
         <div className={styles.tooltipTime}>{metric === "lap" ? formatLapTime(selected.ms) : formatMetricValue(metric, own)}</div>
         {delta !== null && (
           <div className={styles.tooltipDelta} data-sign={delta > 0 ? "pos" : delta < 0 ? "neg" : "zero"}>
-            {formatDelta(delta)}
+            {displayDelta(formatDelta(delta), units)}
           </div>
         )}
         {showReference && <div className={styles.tooltipDelta}>vs Lap {reference.lap}</div>}

@@ -6,6 +6,7 @@ import { formatDelta, formatLapTime, formatSectorTime } from "@/features/review-
 import { StatusGlyph } from "@/features/ui-foundation/icons";
 import { Card, DeltaPill } from "@/features/ui-foundation/primitives";
 import { NotAvailable } from "@/features/ui-foundation/states";
+import { UnitText } from "@/features/ui-foundation/units";
 import { useAnalysis } from "./analysis-context";
 import styles from "./LapAnalysis.module.css";
 
@@ -71,7 +72,7 @@ export function SideColumn({ show }: { show: { sectors: boolean; differences: bo
               {(measured ? differences : lapAnalysisFixture.differences).map((item) => (
                 <li key={item.text} data-emphasis={item.emphasis ? "true" : undefined}>
                   <StatusGlyph tone="red" glyph="alert" size={13} />
-                  {item.text}
+                  <UnitText>{item.text}</UnitText>
                 </li>
               ))}
             </ul>

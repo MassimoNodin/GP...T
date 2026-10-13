@@ -4,6 +4,7 @@ import { useId, useRef, useState, type KeyboardEvent, type PointerEvent } from "
 import { deltaExtent, isDelta, signedAreas, type DeltaSeries } from "./delta";
 import { valueAt, type ChannelKey, type ChannelRuns, type DistanceRange } from "./lap-telemetry";
 import { referenceTraces, type Trace } from "./traces";
+import { MPH_PER_KMH, useUnits, type Units } from "@/features/ui-foundation/units";
 import styles from "./LapAnalysis.module.css";
 
 const DEFAULT_WIDTH = 720;
@@ -25,7 +26,17 @@ type RowSpec = {
   min: number;
   max: number;
   ticks: readonly number[];
+  /** Tick labels when they differ from the plotted value (speed in mph). */
+  tickLabels?: readonly number[];
 };
+
+/** Speed ticks in mph, placed at their km/h positions since traces stay in km/h. */
+const MPH_TICKS = [180, 120, 60, 0];
+
+function inUnits(spec: RowSpec, units: Units): RowSpec {
+  if (spec.key !== "speed" || units.speed !== "mph") return spec;
+  return { ...spec, unit: "mph", ticks: MPH_TICKS.map((mph) => mph / MPH_PER_KMH), tickLabels: MPH_TICKS };
+}
 
 // Illustrative reference rows (fixture session), as drawn in the reference.
 const FIXTURE_ROWS: Partial<Record<RowKey, RowSpec>> = {
@@ -102,6 +113,7 @@ export function TelemetryCharts({
 }) {
   const traces = measured ? null : referenceTraces(from, to);
   const clipId = useId();
+  const units = useUnits();
   const svgRef = useRef<SVGSVGElement>(null);
   const [drag, setDrag] = useState<{ start: number; now: number } | null>(null);
   const plotLeft = LABEL_W + AXIS_W;
@@ -126,7 +138,7 @@ export function TelemetryCharts({
       ];
     }
     const spec = measured ? MEASURED_ROWS[key] : FIXTURE_ROWS[key];
-    return spec ? [{ ...spec, height: rowHeights?.[key] ?? spec.height }] : [];
+    return spec ? [{ ...inUnits(spec, units), height: rowHeights?.[key] ?? spec.height }] : [];
   });
   let top = 6;
   const layout = rows.map((row) => {
@@ -246,11 +258,11 @@ export function TelemetryCharts({
                 {row.unit}
               </text>
             )}
-            {row.ticks.map((tick) => (
+            {row.ticks.map((tick, tickIndex) => (
               <g key={tick}>
                 <line x1={plotLeft} x2={width - RIGHT} y1={y(tick)} y2={y(tick)} stroke="#edf0f3" />
                 <text x={plotLeft - 8} y={y(tick) + 3.5} textAnchor="end" className={styles.tick}>
-                  {key === "delta" && tick > 0 ? `+${tick}` : tick}
+                  {row.tickLabels?.[tickIndex] ?? (key === "delta" && tick > 0 ? `+${tick}` : tick)}
                 </text>
               </g>
             ))}

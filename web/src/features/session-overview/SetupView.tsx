@@ -8,6 +8,7 @@ import { Card } from "@/features/ui-foundation/primitives";
 import { EmptyState, InlineAlert, NotAvailable } from "@/features/ui-foundation/states";
 import { Timeline, type TimelineItem } from "@/features/ui-foundation/Timeline";
 import { formatWeather } from "@/features/review-data/format";
+import { UnitText } from "@/features/ui-foundation/units";
 import {
   formatClock,
   sessionFacts,
@@ -52,7 +53,8 @@ export function SetupView({ data }: { data: ViewData }) {
 
 function FactValue({ row, loading }: { row: FactRow; loading: boolean }) {
   if (row.needsSummary && loading) return <Bone width={90} height={12} />;
-  return row.value === null ? <NotAvailable reason={row.reason ?? "Not reported"} /> : <>{row.value}</>;
+  if (row.value === null) return <NotAvailable reason={row.reason ?? "Not reported"} />;
+  return typeof row.value === "string" ? <UnitText>{row.value}</UnitText> : <>{row.value}</>;
 }
 
 function ConditionsCard({ data }: { data: ViewData }) {
@@ -91,7 +93,11 @@ function ConditionsCard({ data }: { data: ViewData }) {
     lap: null,
     time: row.timeS !== null && origin !== null ? formatClock(row.timeS - origin) : null,
     label: row.label,
-    chips: row.detail ? <span>{row.detail}</span> : undefined,
+    chips: row.detail ? (
+      <span>
+        <UnitText>{row.detail}</UnitText>
+      </span>
+    ) : undefined,
   }));
   return frame(
     <>

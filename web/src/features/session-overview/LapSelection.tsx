@@ -11,6 +11,7 @@ import {
 } from "@/features/ui-foundation/icons";
 import { LapStepper } from "@/features/ui-foundation/LapStepper";
 import { Card, IconButton } from "@/features/ui-foundation/primitives";
+import { displayDelta, useUnits } from "@/features/ui-foundation/units";
 import { Segmented } from "@/features/ui-foundation/Segmented";
 import { compareSentence, compareWarnings, type LapMode, type ResolvedCompare } from "./overview-data";
 import type { OverviewLap } from "./types";
@@ -47,6 +48,7 @@ export function LapSelection({
   /** Lap Analysis link carrying the pair. */
   compareHref: string;
 }) {
+  const units = useUnits();
   const index = Math.max(0, laps.findIndex((lap) => lap.id === selectedId));
   const selected = laps[index];
   const best = laps.find((lap) => lap.id === bestId) ?? null;
@@ -81,7 +83,7 @@ export function LapSelection({
             <div className={styles.stepValue} aria-live="polite">
               <span className={styles.stepLap}>Lap {selected.lap}</span>
               <span className={styles.stepTime}>{formatLapTime(selected.ms)}</span>
-              {best && <span className={styles.stepDelta}>{formatDelta(selected.ms - best.ms)}</span>}
+              {best && <span className={styles.stepDelta}>{displayDelta(formatDelta(selected.ms - best.ms), units)}</span>}
             </div>
             <IconButton
               label="Next lap"

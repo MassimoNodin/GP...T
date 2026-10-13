@@ -3,6 +3,7 @@
 import { useRef, useState, type PointerEvent } from "react";
 import { FilterChips } from "@/features/ui-foundation/FilterChips";
 import { Button, Card } from "@/features/ui-foundation/primitives";
+import { UnitText } from "@/features/ui-foundation/units";
 import { useAnalysis } from "../analysis-context";
 import { deltaAt } from "../delta";
 import { valueAt, type ChannelKey, type DistanceRange, type LapTrace } from "../lap-telemetry";
@@ -162,13 +163,13 @@ export function TelemetryView() {
           {cursor !== null && target && (
             <span className={styles.readoutItem}>
               <LegendDot tone="target" />
-              Lap {target.lap} {readout(targetTrace, cursor)}
+              Lap {target.lap} <UnitText>{readout(targetTrace, cursor)}</UnitText>
             </span>
           )}
           {cursor !== null && reference && referenceReady && (
             <span className={styles.readoutItem}>
               <LegendDot tone="reference" />
-              Lap {reference.lap} {readout(referenceReady, cursor)}
+              Lap {reference.lap} <UnitText>{readout(referenceReady, cursor)}</UnitText>
             </span>
           )}
           {deltaNow !== null && (

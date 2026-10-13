@@ -4,6 +4,7 @@ import { StatusGlyph } from "@/features/ui-foundation/icons";
 import { EmptyState } from "@/features/ui-foundation/states";
 import { TrackMap } from "@/features/ui-foundation/TrackMap";
 import { TrackPhoto } from "@/features/ui-foundation/TrackPhoto";
+import { UnitText } from "@/features/ui-foundation/units";
 import { StatTile } from "@/features/ui-foundation/StatTile";
 import { ConnectChecklist } from "./ConnectChecklist";
 import type { ChecklistStep } from "./connect-steps";
@@ -70,7 +71,9 @@ export function SessionContext({
           {context.facts.map(([label, value]) => (
             <div key={label} className={styles.fact}>
               <dt>{label}:</dt>
-              <dd>{value}</dd>
+              <dd>
+                <UnitText>{value}</UnitText>
+              </dd>
             </div>
           ))}
         </dl>

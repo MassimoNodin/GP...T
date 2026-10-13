@@ -7,6 +7,7 @@ import { ChevronDownIcon, ChevronRightIcon, ExpandIcon } from "@/features/ui-fou
 import { DataTable, type Column } from "@/features/ui-foundation/DataTable";
 import { Badge, Button, Card, DeltaPill, IconButton } from "@/features/ui-foundation/primitives";
 import { EmptyState, InlineAlert, NotAvailable } from "@/features/ui-foundation/states";
+import { convertSpeed, speedUnitLabel, useUnits } from "@/features/ui-foundation/units";
 import { useAnalysis } from "../analysis-context";
 import { SECTOR_MISSING } from "../SideColumn";
 import type { AnalysisLap } from "../load";
@@ -133,6 +134,18 @@ function SectorsCard() {
 
 type CornerRow = { choice: RegionChoice; metrics: CornerMetrics; child: boolean };
 
+/** "123 / 130 km/h" in the chosen speed unit. */
+function SpeedPair({ values }: { values: { target: number | null; reference: number | null } }) {
+  const units = useUnits();
+  const f = (value: number | null) => (value === null ? "—" : Math.round(convertSpeed(value, units)).toFixed(0));
+  return <>{`${f(values.target)} / ${f(values.reference)} ${speedUnitLabel(units)}`}</>;
+}
+
+function SpeedDelta({ kmh }: { kmh: number }) {
+  const value = Math.round(convertSpeed(kmh, useUnits()));
+  return <>{`${value > 0 ? "+" : ""}${value}`}</>;
+}
+
 function pair(values: { target: number | null; reference: number | null }, digits = 0, unit = "") {
   const f = (value: number | null) => (value === null ? "—" : value.toFixed(digits));
   return `${f(values.target)} / ${f(values.reference)}${unit}`;
@@ -176,7 +189,7 @@ function CornersCard() {
       key: "min",
       header: `Min speed ${tLabel}/${rLabel}`,
       numeric: true,
-      render: (row) => `${pair(row.metrics.minKph)} km/h`,
+      render: (row) => <SpeedPair values={row.metrics.minKph} />,
     },
     {
       key: "minDelta",
@@ -184,7 +197,7 @@ function CornersCard() {
       numeric: true,
       render: (row) => {
         const { target: t, reference: r } = row.metrics.minKph;
-        return t === null || r === null ? <NotAvailable reason="Needs both laps." compact /> : `${t - r > 0 ? "+" : ""}${Math.round(t - r)}`;
+        return t === null || r === null ? <NotAvailable reason="Needs both laps." compact /> : <SpeedDelta kmh={t - r} />;
       },
     },
     {

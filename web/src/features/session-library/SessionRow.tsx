@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Badge, StatusBadge } from "@/features/ui-foundation/primitives";
 import { NotAvailable } from "@/features/ui-foundation/states";
 import { TrackPhoto } from "@/features/ui-foundation/TrackPhoto";
+import { UnitText } from "@/features/ui-foundation/units";
 import type { LibraryRow } from "./load";
 import { SessionRowMenu } from "./SessionRowMenu";
 import styles from "./SessionLibrary.module.css";
@@ -28,7 +29,7 @@ export function SessionRow({ row, nested = false }: { row: LibraryRow; nested?: 
           {row.meta.map((part, index) => (
             <span key={`${part}-${index}`}>
               {index > 0 && <span className={styles.dot}>•</span>}
-              {part}
+              <UnitText>{part}</UnitText>
             </span>
           ))}
         </div>

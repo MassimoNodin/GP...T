@@ -2,11 +2,13 @@ import { NotAvailable } from "@/features/ui-foundation/states";
 import { Card, StatusBadge } from "@/features/ui-foundation/primitives";
 import { TrackMap } from "@/features/ui-foundation/TrackMap";
 import { TrackPhoto } from "@/features/ui-foundation/TrackPhoto";
+import { UnitText } from "@/features/ui-foundation/units";
 import type { HeroField, HeroPart, OverviewModel } from "./types";
 import styles from "./SessionOverview.module.css";
 
 function FieldValue({ field }: { field: HeroField }) {
-  return field.value === null ? <NotAvailable reason={field.reason ?? "Not reported"} /> : <>{field.value}</>;
+  if (field.value === null) return <NotAvailable reason={field.reason ?? "Not reported"} />;
+  return typeof field.value === "string" ? <UnitText>{field.value}</UnitText> : <>{field.value}</>;
 }
 
 function partText(part: HeroPart): string {
@@ -35,7 +37,7 @@ export function Hero({
                 {line.map((part, index) => (
                   <span key={`${partText(part)}-${index}`} title={typeof part === "string" ? undefined : part.title}>
                     {index > 0 && <span className={styles.dot}>•</span>}
-                    {partText(part)}
+                    <UnitText>{partText(part)}</UnitText>
                   </span>
                 ))}
               </div>

@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { formatDelta, formatLapTime } from "@/features/review-data/format";
 import { SwapIcon } from "@/features/ui-foundation/icons";
 import { IconButton, PageHeader, Tabs } from "@/features/ui-foundation/primitives";
+import { displayDelta, useUnits } from "@/features/ui-foundation/units";
 import { LapStepper } from "@/features/ui-foundation/LapStepper";
 import { Segmented } from "@/features/ui-foundation/Segmented";
 import { AnalysisProvider, useAnalysis } from "./analysis-context";
@@ -34,6 +35,7 @@ export function LapAnalysis({ model, initial }: { model: LapAnalysisModel; initi
 }
 
 function Body() {
+  const units = useUnits();
   const state = useAnalysis();
   const { model, laps, view, setView, compare, setCompare, reference, targetIndex, measured, lapDelta } = state;
 
@@ -58,7 +60,7 @@ function Body() {
               value={laps[targetIndex]?.id ?? null}
               onChange={state.setTargetId}
               formatTime={formatLapTime}
-              trailing={lapDelta !== null ? <span className={styles.pickerDelta}>{formatDelta(lapDelta)}</span> : null}
+              trailing={lapDelta !== null ? <span className={styles.pickerDelta}>{displayDelta(formatDelta(lapDelta), units)}</span> : null}
             />
             {measured && (
               <IconButton

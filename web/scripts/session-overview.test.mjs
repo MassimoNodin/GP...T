@@ -38,7 +38,7 @@ const reactShim = await emit(
   "react.mjs",
   `import React from ${JSON.stringify(reactUrl)};
 export default React;
-export const { useCallback, useEffect, useId, useMemo, useRef, useState } = React;
+export const { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } = React;
 `,
 );
 const cssStub = await emit("css.mjs", "export default new Proxy({}, { get: (_, key) => String(key) });\n");
@@ -768,8 +768,10 @@ test("proxy responses: ok, busy retries, and unavailable reasons", () => {
 /* -------------------------------------------------- Lap Selection rendering */
 
 const iconsUrl = await emitSource("features/ui-foundation/icons.tsx");
+const unitsUrl = await emitSource("features/ui-foundation/units.tsx");
 const primitivesUrl = await emitSource("features/ui-foundation/primitives.tsx", {
   "./icons": iconsUrl,
+  "./units": unitsUrl,
   "./primitives.module.css": cssStub,
 });
 const segmentedUrl = await emitSource("features/ui-foundation/Segmented.tsx", {
@@ -787,6 +789,7 @@ const selectionUrl = await emitSource("features/session-overview/LapSelection.ts
   "@/features/ui-foundation/LapStepper": stepperUrl,
   "@/features/ui-foundation/primitives": primitivesUrl,
   "@/features/ui-foundation/Segmented": segmentedUrl,
+  "@/features/ui-foundation/units": unitsUrl,
   "./overview-data": dataUrl,
   "./SessionOverview.module.css": cssStub,
   "./OverviewViews.module.css": cssStub,

@@ -43,6 +43,7 @@ import { deviceLabel, microphoneStage, selectedDevice, type BrowserAudio } from 
 import { openMic, type MicSession } from "./mic-capture";
 import { Field } from "./shared";
 import { runSpeechTest, type SpeechTestOutcome } from "./speech-test";
+import { UnitsCard } from "./UnitsCard";
 import styles from "./Settings.module.css";
 import tabStyles from "./SettingsTabs.module.css";
 
@@ -104,6 +105,7 @@ export function VoicePanel({ audio, requestAccess, micDeviceId, onMicDevice, spe
         speech={speech}
       />
       <EngineerVoiceCard audio={audio} onShowAssistance={onShowAssistance} />
+      <UnitsCard />
     </div>
   );
 }

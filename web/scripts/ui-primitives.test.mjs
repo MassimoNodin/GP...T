@@ -744,7 +744,7 @@ test("toast durations, stacking limit and the no-provider fallback", () => {
 test("AppShell mounts ToastProvider around the page content", async () => {
   const shell = await readFile(new URL(`${dir}/AppShell.tsx`, sourceRootUrl), "utf8");
   assert.match(shell, /import \{ ToastProvider \} from "\.\/Toast";/);
-  assert.match(shell, /<main id="main" className=\{styles\.main\} tabIndex=\{-1\}>\s*<ToastProvider>\s*\{children\}\s*<SessionWatcher \/>\s*<\/ToastProvider>\s*<\/main>/);
+  assert.match(shell, /<main id="main" className=\{styles\.main\} tabIndex=\{-1\}>\s*<ToastProvider>\s*<UnitsProvider>\{children\}<\/UnitsProvider>\s*<SessionWatcher \/>\s*<\/ToastProvider>\s*<\/main>/);
 });
 
 // --- Dropzone ---------------------------------------------------------------
@@ -817,4 +817,21 @@ test("LapStepper labelDot accepts a CSS colour for the label cell", () => {
   assert.match(green, /<circle[^>]*fill="var\(--reference\)"/, "the lap dot keeps the tone colour");
   const plain = render(createElement(stepperMod.LapStepper, { label: "Target", laps, value: "l1", onChange() {} }));
   assert.equal((plain.match(/<circle/g) ?? []).length, 1);
+});
+
+test("display units convert text and flip delta signs only on request", async () => {
+  const units = await importModule(`${dir}/units.tsx`);
+  const metric = units.DEFAULT_UNITS;
+  const imperial = { speed: "mph", temperature: "f", delta: "faster-positive" };
+  assert.equal(units.convertText("Clear 26°C", metric), "Clear 26°C");
+  assert.equal(units.convertText("Clear 26°C", imperial), "Clear 79°F");
+  assert.equal(units.convertText("Air 24°C · Track 38°C", imperial), "Air 75°F · Track 100°F");
+  assert.equal(units.convertText("Lower minimum speed (-12 km/h)", imperial), "Lower minimum speed (-7 mph)");
+  assert.equal(units.convertText("318 km/h Thr 100%", imperial), "198 mph Thr 100%");
+  assert.equal(units.displayDelta("+0.578", metric), "+0.578");
+  assert.equal(units.displayDelta("+0.578", imperial), "-0.578");
+  assert.equal(units.displayDelta("-0.210", imperial), "+0.210");
+  assert.equal(units.displayDelta("Personal best", imperial), "Personal best");
+  assert.deepEqual(units.parseUnits("not json"), metric);
+  assert.deepEqual(units.parseUnits(JSON.stringify({ speed: "mph" })), { ...metric, speed: "mph" });
 });

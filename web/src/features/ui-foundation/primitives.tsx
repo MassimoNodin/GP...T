@@ -13,6 +13,7 @@ import {
   type SelectHTMLAttributes,
 } from "react";
 import { ChevronDownIcon, StatusGlyph } from "./icons";
+import { displayDelta, useUnits } from "./units";
 import styles from "./primitives.module.css";
 
 /**
@@ -140,9 +141,11 @@ export function StatusBadge({
 }
 
 export function DeltaPill({ ms, children }: { ms: number; children: ReactNode }) {
+  // The tone always means slower (red) or faster (green); only the sign follows the setting.
+  const units = useUnits();
   return (
     <span className={styles.delta} data-tone={ms > 0 ? "red" : ms < 0 ? "green" : "grey"}>
-      {children}
+      {typeof children === "string" ? displayDelta(children, units) : children}
     </span>
   );
 }
