@@ -549,3 +549,64 @@ suite passed 2,216 tests with 16 skipped tests and two existing deprecation
 warnings. Radio compilation, CLI help, local documentation links and staged
 whitespace checks passed. Evidence is synthetic/mocked; game-focused wheel
 activation, real audio, acoustic latency and user acceptance remain unverified.
+
+## Fixed-reference lap target pace
+
+The standalone radio now supports lap-end target-pace tasks:
+
+```text
+ask Help me stay within three tenths of my best valid lap
+ask Help me stay within 0.3 seconds of my best valid lap for the next 4 laps
+ask Update task 1 help me stay within two tenths of my best valid lap
+ask What are you tracking?
+ask Cancel task 1
+```
+
+The target is the fastest eligible lap fully observed by this radio connection
+on your current actual tyre compound, not an unobserved whole-session or career
+best. The radio must observe qualified lap boundaries spanning the lap, with
+known game-valid, on-track, racing and unchanged tyre-compound data throughout
+its observed snapshots. A first partially observed lap is never a reference.
+The completion must explicitly report the previous lap as game-valid, have a
+positive bounded time and match the current reported last-lap time. Pits,
+invalid/unknown flags, missing tyre data, compound changes and observation gaps
+make that lap ineligible, even if a later snapshot looks healthy again.
+
+If no eligible reference exists on the current compound, the request is refused
+without replacing existing tasks. Complete a valid lap with the radio connected
+first. The acknowledgement and task list identify reference lap number, reported
+time, compound code and tolerance. Reference and tolerance are immutable for
+that task version; a subsequent faster lap updates the observed-best inventory
+but never moves the active target. Explicit updates choose a fresh eligible best.
+The registry also rejects malformed or missing fixed references.
+
+Tolerances accept one to nine tenths in words or digits, or seconds with up to
+three decimal places, bounded to 0.001–5.000 seconds. Requests may run indefinitely
+or for one to twenty upcoming completions. The target is a maximum allowed
+slowdown: a faster lap meets it, a slower lap at exactly the tolerance is within
+it, and an overrun reports both the reference delta and excess beyond tolerance.
+All calculations use integer milliseconds.
+
+The same observed-lap evidence is required for feedback. Missing evidence is
+spoken as unavailable, not a pace deficit. A fully observed lap on another
+compound pauses comparison against the fixed reference; an explicit update is
+needed to select another compound reference. This does not establish matching
+weather, fuel load, tyre age or stint conditions and makes no prediction about
+future laps. Actual compound codes are reported without inventing tyre names.
+
+Tasks share the existing capacity, expiry, cancellation, owned speech, freshness
+and quiet/listening rules and combine with other lap reports into one utterance.
+`status` includes observed bests; `radio_pace_lap_observed` and
+`radio_target_pace_report` expose eligibility, frozen reference and output alongside
+dispatch timing. At most sixteen compound bests are retained in memory. Session,
+player, epoch/generation, unavailable telemetry, history-gap and player-lap
+discontinuity resets discard the inventory. `Cancel all tracking` also clears it.
+No new detail demand, persistence, model/runtime change or automatic transcript
+execution is added. Sector-progress feedback, whole-session best retrieval,
+consistency coaching and live-game/audio acceptance remain unfinished.
+
+Validation: 558 focused tests passed, including 62 new target-pace cases. The
+full suite passed 2,278 tests with 16 skipped tests and two existing deprecation
+warnings. Radio compilation, CLI help, local documentation links and staged
+whitespace checks passed. This is synthetic/mocked evidence, not verification
+of in-game speech, acoustic latency or the full target-pace acceptance criterion.

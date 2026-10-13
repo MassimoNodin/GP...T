@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 
 from ..driver_names import driver_name_key
 from .questions import QuestionPlan
+from .pace import PaceReference
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,6 +14,7 @@ class TaskAction:
     question: str = ""
     task_id: int | None = None
     laps: int | None = None
+    tolerance_ms: int | None = None
 
 
 def parse_task_request(request: str) -> TaskAction | None:
@@ -31,6 +33,20 @@ def parse_task_request(request: str) -> TaskAction | None:
     if update:
         task_id, text = int(update.group(1)), update.group(2)
     duration = re.fullmatch(r"(.+) for (?:the )?next ([1-9][0-9]?) laps?", text)
+    payload = duration.group(1) if duration else text
+    pace = re.fullmatch(r"help me stay within (?:(one|two|three|four|five|six|seven|eight|nine|[1-9]) tenths?|([0-9](?:\.[0-9]{1,3})?) seconds?) of my best valid lap", payload)
+    if pace:
+        if pace.group(1):
+            tenths = pace.group(1)
+            words = ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+            tolerance = (int(tenths) if tenths.isdecimal() else words.index(tenths) + 1) * 100
+        else:
+            seconds, separator, fraction = pace.group(2).partition(".")
+            tolerance = int(seconds) * 1000 + int(fraction.ljust(3, "0") or "0")
+        laps = int(duration.group(2)) if duration else None
+        if not 1 <= tolerance <= 5000 or laps is not None and laps > 20:
+            raise ValueError("Choose a target tolerance from 0.001 to 5.000 seconds and one to twenty upcoming laps.")
+        return TaskAction("update" if task_id is not None else "create", "my target pace", task_id, laps, tolerance)
     watch = re.fullmatch(r"(?:watch (.+)|tell me if (.+) starts closing)", duration.group(1) if duration else text)
     if watch:
         target = watch.group(1) or watch.group(2)
@@ -64,12 +80,17 @@ class LapReportTask:
     first_lap: int
     until_lap: int | None
     state: str = "active"
+    pace_reference: PaceReference | None = None
+    pace_tolerance_ms: int | None = None
 
     def view(self) -> dict:
         return {"task_id": self.task_id, "version": self.version, "state": self.state,
                 "targets": list(self.plan.targets), "metrics": list(self.plan.metrics),
                 "first_lap": self.first_lap, "until_lap": self.until_lap,
-                "reference_policy": ("watch driver identity fixed; pauses outside adjacency" if "race_watch" in self.plan.metrics
+                "pace_reference": self.pace_reference.view() if self.pace_reference is not None else None,
+                "pace_tolerance_ms": self.pace_tolerance_ms,
+                "reference_policy": ("valid observed player lap and tolerance fixed" if "target_pace" in self.plan.metrics
+                                     else "watch driver identity fixed; pauses outside adjacency" if "race_watch" in self.plan.metrics
                                      else "named drivers fixed; race-position roles refreshed each lap")}
 
 
@@ -98,7 +119,8 @@ class LapReportRegistry:
         return True
 
     def install(self, plan: QuestionPlan, bindings: tuple[str | None, ...], *, cursor: int,
-                lap: int, laps: int | None, task_id: int | None = None) -> LapReportTask:
+                lap: int, laps: int | None, task_id: int | None = None,
+                pace_reference: PaceReference | None = None, pace_tolerance_ms: int | None = None) -> LapReportTask:
         existing = self._tasks.get(task_id) if task_id is not None else None
         if task_id is not None and existing is None:
             raise ValueError("That task does not exist.")
@@ -107,12 +129,21 @@ class LapReportRegistry:
             raise ValueError("Please choose one to twenty upcoming laps.")
         if len(bindings) != len(plan.targets):
             raise ValueError("Task references do not match its driver targets.")
+        if "target_pace" in plan.metrics:
+            if (plan.targets != ("self",) or plan.metrics != ("target_pace",)
+                    or not isinstance(pace_reference, PaceReference) or type(pace_tolerance_ms) is not int
+                    or not 1 <= pace_tolerance_ms <= 5000):
+                raise ValueError("Target pace requires a valid fixed player-lap reference and tolerance.")
+        elif pace_reference is not None or pace_tolerance_ms is not None:
+            raise ValueError("Only target-pace tasks can own a pace reference.")
         if "race_watch" in plan.metrics and (plan.metrics != ("race_watch",) or len(plan.targets) != 1
                                             or not isinstance(bindings[0], str)):
             raise ValueError("A watch requires one driver with a fixed identity and no additional facts.")
         if task_id is None:
             for task in active:
-                if task.plan == plan and task.fixed_bindings == bindings and task.until_lap == (lap + laps - 1 if laps is not None else None):
+                if (task.plan == plan and task.fixed_bindings == bindings
+                        and task.pace_reference == pace_reference and task.pace_tolerance_ms == pace_tolerance_ms
+                        and task.until_lap == (lap + laps - 1 if laps is not None else None)):
                     return task
         if len(active) >= 3 or sum(len(task.plan.targets) * len(task.plan.metrics) for task in active) + len(plan.targets) * len(plan.metrics) > 9:
             raise ValueError("Keep at most three active reports and nine total driver facts per lap.")
@@ -121,7 +152,8 @@ class LapReportRegistry:
         if task_id is None:
             self._next_id += 1
         task = LapReportTask(identifier, existing.version + 1 if existing else 1, plan, bindings, cursor, lap,
-                             lap + laps - 1 if laps is not None else None)
+                             lap + laps - 1 if laps is not None else None,
+                             pace_reference=pace_reference, pace_tolerance_ms=pace_tolerance_ms)
         self._tasks[identifier] = task
         self.notify({"event": "radio_task_updated" if existing else "radio_task_created", **task.view()})
         return task
