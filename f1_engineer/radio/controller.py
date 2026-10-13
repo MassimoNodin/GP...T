@@ -14,6 +14,7 @@ from .scheduler import RadioMessage, RadioScheduler
 from .tasks import LapReportRegistry, parse_task_request
 from .watches import RaceWatchTracker
 from .pace import PaceTracker
+from .lap_history import FieldLapHistory
 from .regions import RegionTracker, RegionWindow
 from .region_progress import RegionProgress
 from ..analysis.resampling import TraceSample
@@ -60,6 +61,7 @@ class RadioController:
         self.gaps = LapGapTracker()
         self.watches = RaceWatchTracker()
         self.pace = PaceTracker()
+        self.lap_history = FieldLapHistory()
         self.regions = RegionTracker()
         self.region_progress = RegionProgress()
         self._track_length_m = None
@@ -78,6 +80,7 @@ class RadioController:
         self.tasks.clear(safe_reason)
         self.watches.clear()
         self.pace.clear()
+        self.lap_history.clear()
         self.regions.clear()
         self.region_progress.clear()
         self._report("unavailable", safe_reason)
@@ -133,6 +136,7 @@ class RadioController:
             self.tasks.clear("scope_changed")
             self.watches.clear()
             self.pace.clear()
+            self.lap_history.clear()
             self.regions.clear()
             self.region_progress.clear()
             self._reset_gaps()
@@ -182,12 +186,15 @@ class RadioController:
                 self.tasks.clear("event_history_gap")
                 self.watches.clear()
                 self.pace.clear()
+                self.lap_history.clear()
                 self.regions.clear()
                 self.region_progress.clear()
                 self._reset_gaps()
                 self.notify({"event": "radio_resynchronised", "reason": "event_history_gap"})
             self._cursor = cursor
+            self.lap_history.feed(snapshot, now=now, after_cursor=cursor, age_s=age)
             return
+        self.lap_history.feed(snapshot, now=now, after_cursor=self._cursor, age_s=age)
         seen_events = set()
         if any(isinstance(event, dict) and event.get("kind") == "driver_discontinuity"
                     and _integer(event.get("id"), 1) and self._cursor < event["id"] <= cursor
@@ -488,24 +495,34 @@ class RadioController:
                            brake=values["brake"], throttle=None, steering=None, gear=None, drs_active=None)
 
     def _timing_fact(self, metric: str, row: dict, *, now: float) -> str:
+        if metric.startswith("lap_number:"):
+            number = int(metric.split(":", 1)[1])
+            state = self.lap_history.get(row)
+            record = next((record for record in state.laps if record.lap_number == number), None) if state else None
+            if record is None:
+                return f"lap {number} unavailable in retained eligible radio history; not complete session history"
+            return f"fully observed valid lap {number} {record.elapsed_ms / 1000:.3f} seconds, compound {record.compound}"
         if metric in ("observed_best", "last_sector1", "last_sector2", "last_sector3"):
-            if row["identity"] != self._player["identity"]:
+            player = row["identity"] == self._player["identity"]
+            state = self.lap_history.get(row)
+            tracker = self.pace if player else state.tracker if state else None
+            if tracker is None or not player and not state.laps:
                 return "observed lap history unavailable for this opponent"
             if metric == "observed_best":
                 try:
-                    reference = self.pace.reference(self._player)
+                    reference = tracker.reference(row)
                 except ValueError as error:
-                    return str(error)
+                    return str(error) if player else "best observed valid lap unavailable; no eligible reference on this driver's current compound"
                 return (f"best fully observed valid radio lap on current compound {reference.compound}: "
                         f"lap {reference.lap_number} {reference.elapsed_ms / 1000:.3f} seconds; "
                         "not the complete session best")
-            reference = self.pace.last_completed
+            reference = tracker.last_completed
             number = row["lap"].get("current_lap_number")
             sector = int(metric[-1])
             if (reference is None or type(number) is not int or reference.lap_number != number - 1
                     or reference.sector_times_ms is None
                     or row["lap"].get("last_lap_time_ms") != reference.elapsed_ms):
-                return f"last lap sector {sector} unavailable; complete observed player sector history missing"
+                return f"last lap sector {sector} unavailable; complete observed {'player' if player else 'opponent'} sector history missing"
             elapsed = (reference.sector_times_ms[sector - 1] if sector < 3
                        else reference.elapsed_ms - sum(reference.sector_times_ms))
             source = "derived from lap minus sectors 1 and 2" if sector == 3 else "observed"

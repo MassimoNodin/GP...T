@@ -73,6 +73,12 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
     remaining = re.sub(r"\b(?:tell|show|give) me\b", " ", remaining)
     metrics = []
     targets = []
+    def numbered_lap(match):
+        metrics.append("lap_number:" + match.group(1))
+        return " "
+    remaining = re.sub(r"\blap ([1-9][0-9]{0,2})(?: time)?\b", numbered_lap, remaining)
+    if any(int(metric.split(":", 1)[1]) > 255 for metric in metrics):
+        raise ValueError("Please choose a lap number from 1 to 255.")
     for metric, pattern in METRICS.items():
         remaining, count = re.subn(r"\b(?:" + pattern + r")\b", " ", remaining)
         if count:
@@ -97,7 +103,7 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
         raise ValueError("Please specify a driver; that pronoun has no single supported reference.")
     remaining = re.sub(r"\b(?:what|what's|is|are|the|a|and|also|please|tell|show|give|for|of|about|how|their|his|her|them|him|then)\b", " ", remaining)
     if re.sub(r"[\s?,.!']", "", remaining):
-        raise ValueError("I can answer current or last lap times, measured current-lap sectors 1 and 2, your fully observed last-lap sectors and best observed valid lap, last lap comparisons to you, positions, leader/front-car gaps, your lap-boundary gap changes and observed player speed or brake input. Use me, leader, car ahead, car behind, P1 to P24, or an available driver's full name or surname. Other facts and task instructions are not supported yet.")
+        raise ValueError("I can answer current or last lap times, retained observed numbered laps, measured current-lap sectors 1 and 2, fully observed last-lap sectors and best observed valid lap, last lap comparisons to you, positions, leader/front-car gaps, your lap-boundary gap changes and observed player speed or brake input. Use me, leader, car ahead, car behind, P1 to P24, or an available driver's full name or surname. Other facts and task instructions are not supported yet.")
     if not metrics and not targets:
         raise ValueError("Please specify a driver or timing fact.")
     inherited_targets = not targets and previous is not None
@@ -108,6 +114,7 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
     if not targets:
         targets = list(previous.targets) if previous else ["self"]
     targets = list(dict.fromkeys(targets))
+    metrics = list(dict.fromkeys(metrics))
     if len(targets) > 3 or len(metrics) > 3:
         raise ValueError("Please request at most three drivers and three facts at once.")
     return QuestionPlan(tuple(targets), tuple(metrics), inherited_targets)

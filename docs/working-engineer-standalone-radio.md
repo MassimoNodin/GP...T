@@ -1106,14 +1106,16 @@ including aligned sector-completion events and a matching reported last-lap
 number/time. Sectors 1 and 2 are observed; sector 3 is explicitly labelled as
 derived from that lap's total minus its two observed sectors. The radio never
 mixes sectors across laps or fills missing sectors from a previous best.
-Opponent completed-sector history is not yet retained by this radio and is
-explicitly unavailable, not borrowed from their current-lap fields.
+Opponent completed-sector history was unavailable in this initial retrieval
+increment. The field-history increment below now retains eligible opponent
+observations, without borrowing from their current-lap fields.
 
 `best observed valid lap` uses the existing eligible player reference on the
 current compound and explicitly says it is **not the complete session best**.
 First/partially observed laps, missing eligibility and other-compound records
-cannot substitute. Opponent observed-best history remains unavailable. Generic
-`best lap`, numbered older laps, historical/condition filters and ambiguous
+cannot substitute. Opponent observed-best history and numbered older laps were
+added by the field-history increment below. Generic
+`best lap`, historical/condition filters and ambiguous
 `sector one` are not silently interpreted as these narrower supported facts.
 
 Supported multi-driver/multi-fact requests retain available results when another
@@ -1129,3 +1131,47 @@ warning. Compilation and whitespace checks passed; the full suite was not rerun.
 Evidence remains synthetic/mocked. Full session history, opponent history,
 complete coaching and real-game wheel/headset/browser-free acceptance remain
 pending; this is a retrieval increment, not branch completion.
+
+## Bounded observed field lap history
+
+The radio now keeps up to 64 eligible completed lap observations per verified
+driver (at most 24 drivers), independently of dashboard selections. Per-compound
+best references remain bounded to 16 compounds per driver. This is in-memory
+history collected while this radio is connected, not a full session backfill.
+
+New examples:
+
+- `Leclerc lap 4 time and lap 5 time`
+- `my and Leclerc best observed valid lap`
+- `Leclerc last lap sector one time and last lap sector three time`
+
+Each driver's existing observed-pace eligibility policy is applied separately:
+the first partial lap is not retained; a complete sampled lap needs known
+on-track/active/valid status, one known compound throughout, an adjacent observed
+completion and matching reported lap time. Known pit/invalid/interrupted laps
+and unknown eligibility are excluded. This is observed validity, not certification
+that the final game's validity flag or every driving instant was captured.
+Completed sectors require their own aligned events; sector 3 remains labelled
+as derived. Missing sector coverage never substitutes another lap or driver.
+
+Opponent observed-best queries now use that driver's eligible record on their
+current compound, not the player's reference. Numbered-lap queries accept laps
+1 to 255 and identify unavailable/unretained laps. Supported facts with missing
+evidence do not discard available results in the same bounded request. Generic
+session-best queries, arbitrary historical filters and unsupported-fact partial
+parsing remain unimplemented.
+
+Session/backend loss, cursor resets/history gaps and player-scope changes clear
+the ledger. Driver-specific missing/disputed slots, identity replacement,
+rewinds/skips, discontinuity and stale/future completion receipts fence that
+driver's records. Freshness includes transport age. Duplicate event delivery
+cannot duplicate records; conflicting event IDs cannot choose an arbitrary lap.
+Initial retained backend events establish a baseline, not imported lap history.
+Collection itself creates no new opponent speech. Existing priority and scoped
+question/task dispatch continue to apply.
+
+Validation: 958 focused radio/backend-capture and CLI tests passed, including
+44 new field-history cases, with one existing Starlette/httpx deprecation warning.
+Compilation and whitespace checks passed. The full suite and real-game acceptance
+were not run. Post-pit ranking/benchmarks, full historical retrieval, complete
+coaching and the rest of the acceptance inventory remain pending.
