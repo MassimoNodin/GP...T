@@ -234,3 +234,13 @@ def test_conflicting_duplicate_event_id_does_not_create_an_arbitrary_record():
     controller.feed = conflicting
     publish(controller, value, number=4, now=12)
     assert not records(controller, value)
+
+
+def test_cancel_all_tracking_does_not_erase_observed_player_question_history():
+    controller, radio, events, value = history_live()
+    publish(controller, value, car=0, number=3, now=11)
+    publish(controller, value, car=0, number=4, now=12)
+    controller.handle_request("cancel all tracking", now=12)
+    radio.cancel()
+    controller.answer_question("my best observed valid lap", now=12)
+    assert "lap 4 100.000 seconds" in radio.pending[-1].text

@@ -13,7 +13,8 @@ The standalone radio now has recurring reports, basic multi-driver live question
 adjacent catch/defend watches, observed sector consistency, fixed lap/sector target
 pace, backend player-region capture and explicit fixed previous-region diagnostic
 comparisons. Dynamic wheel binding, capture/cues, automatic scoped voice question/
-task submission and browser-independent radio controls also exist. Automated
+task submission, bounded observed field lap history, post-pit same-compound
+benchmarks and browser-independent radio controls also exist. Automated
 coverage does not establish complete acceptance.
 
 Remaining implementation and scope decisions:
@@ -25,8 +26,11 @@ Remaining implementation and scope decisions:
   Numeric diagnostic differences are not this completed capability.
 - Opponent braking/minimum-speed task-owned collection through existing detail
   permissions, aligned player/opponent lap windows and guarded spoken comparisons.
-- Confirmed post-pit same-session/same-compound benchmarking, retained eligible
-  lap sets, pre-pit-position ranking/tie-breaks, exclusions and one-off reporting.
+- Real-game validation of post-pit benchmarking and retained-lap eligibility.
+  Stop-count/tyre-change confirmation, pre-pit ranking/tie-breaks, clean observed
+  lap-set averages, age/condition disclosures and one-off reporting now exist.
+  Pre-connection/evicted laps and missing confirmation/ranking data cannot be
+  filled in; pit transition alone is not claimed as a serviced stop.
 - Complete session-best/older-lap retrieval beyond the bounded observed history,
   plus partial supported answers when a mixed request contains unsupported facts.
   Current-lap sectors 1/2, fully observed player/opponent last-lap sectors, retained

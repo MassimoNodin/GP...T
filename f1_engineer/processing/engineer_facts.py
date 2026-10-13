@@ -243,9 +243,14 @@ class LiveEngineerFacts:
                         "pre_pit_received_monotonic_ns": previous["received_monotonic_ns"],
                         "pre_pit_field": [
                             {"identity": row["identity"],
-                             "position": row["lap"]["car_position"] if row["lap"]["car_position"] > 0 else None}
+                             "position": row["lap"]["car_position"] if row["lap"]["car_position"] > 0 else None,
+                             "leader_gap_ms": (0 if row["lap"]["car_position"] == 1 else
+                                               row["lap"]["delta_to_race_leader_ms"]
+                                               if row["lap"]["delta_to_race_leader_ms"] > 0 else None)}
                             for row in previous["drivers"] if row["lap"]["result_status_id"] == 2
                         ],
+                        "pre_pit_stop_count": old["pit_stop_count"],
+                        "pre_pit_tyre": copy.deepcopy(prior["tyre"]["value"]),
                     }
                 self._event("pit_entered", driver, current,
                             pre_pit_position=old["car_position"] if old["car_position"] > 0 else None,

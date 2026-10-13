@@ -23,10 +23,23 @@ def identity_key(row):
 
 
 @dataclass(slots=True)
+class LapConditions:
+    tyre_age_range: tuple[int, int] | None
+    visual_compound: int | None
+    weather_ids: tuple[int, ...] | None
+    track_temperature_range: tuple[int, int] | None = None
+    air_temperature_range: tuple[int, int] | None = None
+
+
+@dataclass(slots=True)
 class DriverLapHistory:
     identity: str
     tracker: PaceTracker = field(default_factory=PaceTracker)
     laps: deque[PaceReference] = field(default_factory=lambda: deque(maxlen=64))
+    conditions: dict[int, LapConditions] = field(default_factory=dict)
+    open_conditions: LapConditions | None = None
+    pending_conditions: LapConditions | None = None
+    stop_count: int | None = None
 
 
 class FieldLapHistory:
@@ -66,6 +79,48 @@ class FieldLapHistory:
                     or state.tracker.received_at is not None and not 0 <= now - state.tracker.received_at < 3):
                 state = DriverLapHistory(key)
                 self.drivers[car] = state
+            tyre = row.get("tyre", {})
+            value = tyre.get("value") if isinstance(tyre, dict) and tyre.get("status") == "available" else None
+            age = value.get("age_laps") if isinstance(value, dict) else None
+            visual = value.get("visual_compound") if isinstance(value, dict) else None
+            age = age if integer(age, 0, 255) else None
+            visual = visual if integer(visual, 1, 255) else None
+            context = snapshot.get("context")
+            metadata = (context.get("value") if isinstance(context, dict)
+                        and context.get("status") == "available" else None)
+            weather = (metadata.get("weather_id") if isinstance(metadata, dict)
+                       and all(type(metadata.get(field)) is int and metadata[field] == snapshot["scope"][field]
+                               for field in ("session_uid", "packet_format")) else None)
+            weather = weather if integer(weather, 0, 255) else None
+            temperatures = {}
+            for field in ("track_temperature_c", "air_temperature_c"):
+                temperature = metadata.get(field) if weather is not None else None
+                temperatures[field] = temperature if integer(temperature, -128, 127) else None
+            stops = row["lap"].get("pit_stop_count")
+            if (integer(stops, 0, 255) and state.stop_count is not None and stops != state.stop_count
+                    or state.open_conditions is not None and state.open_conditions.tyre_age_range is not None
+                    and age is not None and age < state.open_conditions.tyre_age_range[1]):
+                state.tracker.eligible = False
+            state.stop_count = stops if integer(stops, 0, 255) else None
+            if state.tracker.number != number:
+                state.pending_conditions = state.open_conditions
+                state.open_conditions = LapConditions((age, age) if age is not None else None,
+                                                       visual, (weather,) if weather is not None else None,
+                                                       *((value, value) if value is not None else None
+                                                         for value in temperatures.values()))
+            elif state.open_conditions is not None:
+                previous = state.open_conditions
+                previous.tyre_age_range = ((previous.tyre_age_range[0], age)
+                                          if previous.tyre_age_range is not None and age is not None else None)
+                if previous.visual_compound != visual:
+                    previous.visual_compound = None
+                previous.weather_ids = (tuple(sorted(set((*previous.weather_ids, weather))))
+                                        if previous.weather_ids is not None and weather is not None else None)
+                for source, attribute in (("track_temperature_c", "track_temperature_range"),
+                                          ("air_temperature_c", "air_temperature_range")):
+                    current, bounds = temperatures[source], getattr(previous, attribute)
+                    setattr(previous, attribute, (min(bounds[0], current), max(bounds[1], current))
+                            if bounds is not None and current is not None else None)
             state.tracker.observe(row, now=now)
         events = {}
         conflicts = set()
@@ -97,6 +152,10 @@ class FieldLapHistory:
                 self.drivers[car].tracker.observe(row, now=now)
                 blocked.add(car)
                 continue
+            if event.get("kind") in ("pit_entered", "pit_exited"):
+                state.tracker.eligible = False
+                state.tracker.reset_sectors()
+                continue
             if event.get("kind") not in ("sector_completed", "lap_completed"):
                 continue
             receipt = event.get("received_monotonic_ns")
@@ -122,3 +181,7 @@ class FieldLapHistory:
             record = state.tracker.last_completed
             if record is not None and not any(previous.lap_number == record.lap_number for previous in state.laps):
                 state.laps.append(record)
+                if state.pending_conditions is not None:
+                    state.conditions[record.lap_number] = state.pending_conditions
+                retained = {record.lap_number for record in state.laps}
+                state.conditions = {number: conditions for number, conditions in state.conditions.items() if number in retained}

@@ -74,7 +74,13 @@ and new scopes establish baselines without inventing earlier events.
   reporting the completed sector as one/two. Missing times are `null`.
 - Pit entry/exit is a pit-state transition, not proof of a serviced pit stop.
   The player's pit-entry event includes the previous coherent observed field
-  positions/identities and their receipt time. Unknown positions are `null`;
+  positions/identities and their receipt time. Each field entry also has
+  `leader_gap_ms` (zero for the leader; unknown/zero follower gaps are `null`).
+  Additive `pre_pit_stop_count` and `pre_pit_tyre` carry the previous observed
+  stop count and same-frame tyre value, with unavailable tyre data `null`.
+  Consumers must independently confirm a stop-count increase and observed
+  compound change or tyre-age reset after pit exit before claiming service and
+  tyre replacement. Unknown positions are `null`;
   later benchmarking must still validate position uniqueness and eligibility.
 - Compound changes require two observed nonzero compounds. Missing status
   frames break that comparison; no unobserved change is inferred.

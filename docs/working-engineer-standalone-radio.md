@@ -1175,3 +1175,63 @@ Validation: 958 focused radio/backend-capture and CLI tests passed, including
 Compilation and whitespace checks passed. The full suite and real-game acceptance
 were not run. Post-pit ranking/benchmarks, full historical retrieval, complete
 coaching and the rest of the acceptance inventory remain pending.
+
+## Confirmed post-pit same-compound benchmark
+
+The radio now automatically offers one benchmark after a correlated player pit
+entry/exit, exactly one observed stop-count increment and an observed tyre
+replacement. Replacement means a changed actual compound or a known age reset
+on the same compound; merely driving through the pit lane is not confirmation.
+If fresh tyre status is absent at exit, the radio may complete on a later fresh
+frame of that same exit lap, never a subsequent lap or unrelated stop. Missing
+confirmation does not manufacture a benchmark trigger.
+
+The frozen, source-timestamped pre-pit field supplies player/opponent positions
+and leader-relative race gaps. Among opponents with retained eligible laps on
+the new actual compound, selection uses absolute position distance from the
+player's **pre-pit** position, then closest reliable pre-pit race gap, then the
+driver ahead. Post-pit positions are irrelevant. If the nearest driver lacks
+eligible laps, the next nearest eligible driver is considered. Missing/disputed
+player positions, missing reliable gap tie-breaks or no eligible references
+produce an explicit unavailable explanation, not a substituted comparison.
+Unknown nonplayer positions are disclosed; selection then uses known positions.
+
+The benchmark identifies the latest contiguous observed clean lap set for the
+selected driver on that actual compound, without combining across missing laps,
+observed age resets or known weather changes. Pit/in/out and known interrupted
+laps are excluded by the observed eligibility policy. One eligible lap is
+explicitly a single-lap reference, not an average trend. It names the driver,
+pre-pit positional relation, measured average, lap range and sample count.
+Observed tyre-age ranges, weather-code differences and track/air temperature
+ranges versus current conditions are reported where available. Missing
+conditions, fuel/traffic equivalence and unobserved interruptions are disclosed;
+this is not a guaranteed target or certified complete driving trace.
+
+Friendly soft/medium/hard/intermediate/wet labels require scoped formula-zero
+context and the **visual** compound field; actual compound IDs alone cannot be
+labelled soft (for example, an actual compound can represent a C-number).
+Without supported context/visual data the radio says the actual compound ID.
+Known visual-compound mismatches are not used in the sample set.
+
+`radio_pit_benchmark` includes the pit-entry event ID, stop count, reference
+identity, pre-pit position, selected lap numbers, sample count, average and
+condition evidence. Scope loss, player discontinuity, missing/disputed reference
+identity/history and tyre changes invalidate queued/active/repeatable reports.
+Existing explicit-answer priority, listening suppression, quiet and freshness
+deadlines apply. A deliberately suppressed/interrupted call is not replayed as
+a stale backlog. Cancelling tracking does not erase the separate observed lap
+ledger used for timing questions and benchmarks.
+
+The queue retains the existing three-second observation-to-dispatch freshness
+deadline. Once started, the benchmark has the longer 60-second speech lifetime
+used for explicit answers, rather than the short default lap-call lifetime, so
+the condition disclosures are not cut off at ten seconds. Scope loss and
+explicit-answer interruption still cancel it. This is a playback lifetime,
+not a measured-response latency acceptance gate.
+
+Validation: 1,043 focused radio/backend-capture/CLI/live-facts tests passed,
+including 49 new pit-benchmark cases and one player-history cancellation case,
+with the existing Starlette/httpx deprecation warning. Compilation and whitespace
+checks passed; the full suite was not rerun. Evidence remains synthetic/mocked.
+Real pit-stop/game/wheel/headset testing, latency approval, complete historical
+coverage and the remaining coaching/conversation criteria are still pending.

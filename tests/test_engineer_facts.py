@@ -89,6 +89,9 @@ def test_sector_pit_and_compound_transitions_are_separate_events():
     assert events[1]["pre_pit_position"] == 1
     assert events[1]["pre_pit_field"][0]["position"] == 1
     assert events[1]["pre_pit_received_monotonic_ns"] == 5_000_000_000
+    assert events[1]["pre_pit_stop_count"] == 0
+    assert events[1]["pre_pit_tyre"]["actual_compound"] == 18
+    assert events[1]["pre_pit_field"][0]["leader_gap_ms"] == 0
     assert events[-1]["actual_compound"] == 16
 
 

@@ -15,6 +15,7 @@ from .tasks import LapReportRegistry, parse_task_request
 from .watches import RaceWatchTracker
 from .pace import PaceTracker
 from .lap_history import FieldLapHistory
+from .pit_benchmark import PitBenchmarkTracker
 from .regions import RegionTracker, RegionWindow
 from .region_progress import RegionProgress
 from ..analysis.resampling import TraceSample
@@ -62,6 +63,7 @@ class RadioController:
         self.watches = RaceWatchTracker()
         self.pace = PaceTracker()
         self.lap_history = FieldLapHistory()
+        self.pit_benchmarks = PitBenchmarkTracker()
         self.regions = RegionTracker()
         self.region_progress = RegionProgress()
         self._track_length_m = None
@@ -81,6 +83,7 @@ class RadioController:
         self.watches.clear()
         self.pace.clear()
         self.lap_history.clear()
+        self.pit_benchmarks.clear()
         self.regions.clear()
         self.region_progress.clear()
         self._report("unavailable", safe_reason)
@@ -137,6 +140,7 @@ class RadioController:
             self.watches.clear()
             self.pace.clear()
             self.lap_history.clear()
+            self.pit_benchmarks.clear()
             self.regions.clear()
             self.region_progress.clear()
             self._reset_gaps()
@@ -187,6 +191,7 @@ class RadioController:
                 self.watches.clear()
                 self.pace.clear()
                 self.lap_history.clear()
+                self.pit_benchmarks.clear()
                 self.regions.clear()
                 self.region_progress.clear()
                 self._reset_gaps()
@@ -195,6 +200,16 @@ class RadioController:
             self.lap_history.feed(snapshot, now=now, after_cursor=cursor, age_s=age)
             return
         self.lap_history.feed(snapshot, now=now, after_cursor=self._cursor, age_s=age)
+        benchmark, invalidated = self.pit_benchmarks.feed(
+            snapshot, self._player, self.lap_history, self._participant_name,
+            after_cursor=self._cursor, age_s=age)
+        if invalidated:
+            self.scheduler.cancel_owner("pit_benchmark")
+        if benchmark is not None:
+            self.notify({"event": "radio_pit_benchmark", **benchmark, "observation_age_s": age})
+            self.scheduler.submit(RadioMessage(benchmark["key"], binding, benchmark["text"], "proactive",
+                                              now + 60, observation_age_s=age,
+                                              dispatch_before=now + 3 - age, owner="pit_benchmark"), now=now)
         seen_events = set()
         if any(isinstance(event, dict) and event.get("kind") == "driver_discontinuity"
                     and _integer(event.get("id"), 1) and self._cursor < event["id"] <= cursor
@@ -433,6 +448,10 @@ class RadioController:
         return match
 
     def _clear_tasks(self, reason: str) -> None:
+        if reason != "cancelled":
+            self.lap_history.clear()
+            self.pit_benchmarks.clear()
+            self.scheduler.cancel_owner("pit_benchmark")
         self.tasks.clear(reason)
         self.watches.clear()
         self.pace.clear()
@@ -505,9 +524,9 @@ class RadioController:
         if metric in ("observed_best", "last_sector1", "last_sector2", "last_sector3"):
             player = row["identity"] == self._player["identity"]
             state = self.lap_history.get(row)
-            tracker = self.pace if player else state.tracker if state else None
+            tracker = state.tracker if state else None
             if tracker is None or not player and not state.laps:
-                return "observed lap history unavailable for this opponent"
+                return f"observed lap history unavailable for this {'player' if player else 'opponent'}"
             if metric == "observed_best":
                 try:
                     reference = tracker.reference(row)
