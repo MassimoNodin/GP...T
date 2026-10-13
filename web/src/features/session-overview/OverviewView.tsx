@@ -7,6 +7,7 @@ import { StatusGlyph } from "@/features/ui-foundation/icons";
 import { Card, Checkbox, Select } from "@/features/ui-foundation/primitives";
 import { EmptyState, InlineAlert } from "@/features/ui-foundation/states";
 import { LapTimeChart } from "./LapTimeChart";
+import { SessionQuestion } from "./SessionQuestion";
 import {
   buildSeries,
   deriveSummary,
@@ -52,6 +53,7 @@ export function OverviewView({
       <div className={styles.col}>
         <SummaryCard data={data} />
         <EventsCard data={data} onShowAll={onShowEvents} />
+        {data.model.source !== "fixture" && <SessionQuestion data={data} />}
       </div>
     </div>
   );
