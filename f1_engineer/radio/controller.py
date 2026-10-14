@@ -23,6 +23,7 @@ from .region_progress import RegionProgress
 from .opponent_regions import compare_opponent_region
 from .track_geometry import geometry_binding, resolve_named_region
 from ..analysis.resampling import TraceSample
+from ..analysis.region_context import scoped_region_context
 
 
 def _integer(value, minimum=0, maximum=2**64 - 1):
@@ -205,7 +206,7 @@ class RadioController:
                     and item.get("binding") == self._geometry_binding]
         self._geometry_result = deepcopy(geometry[0].get("result")) if len(geometry) == 1 else None
         self.regions.observe(() if self._backend_regions else self.tasks.active(), self._player, self._region_sample(now=now),
-                             track_length_m=self._track_length_m)
+                             track_length_m=self._track_length_m, context=scoped_region_context(snapshot))
         if self.pace.observe(self._player, now=now):
             self.scheduler.cancel_owner("pace_sectors")
             if any("consistency" in task.plan.metrics for task in self.tasks.active()):

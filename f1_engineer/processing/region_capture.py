@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 
 from ..analysis.region_tracking import RegionTracker, RegionWindow
+from ..analysis.region_context import scoped_region_context
 from ..analysis.resampling import TraceSample
 
 
@@ -285,7 +286,8 @@ class RegionCaptureStore:
                 return
             tasks = [lease["task"] for lease in active if "opponent" not in lease["request"]]
             sample = _sample(snapshot, player, self._clock_ns())
-            self._tracker.observe(tasks, player, sample, track_length_m=length)
+            self._tracker.observe(tasks, player, sample, track_length_m=length,
+                                  context=scoped_region_context(snapshot))
             for lease in active:
                 target = player
                 tracker = self._tracker_for(lease)
@@ -295,7 +297,7 @@ class RegionCaptureStore:
                         self._end(lease, "unavailable", "region_opponent_owner_unavailable")
                         continue
                     tracker.observe([lease["task"]], target, _sample(snapshot, target, self._clock_ns()),
-                                    track_length_m=length)
+                                    track_length_m=length, context=scoped_region_context(snapshot))
                 target_number = target["lap"]["current_lap_number"]
                 if binding != lease["binding"] or ordinal < lease["ordinal"] or cursor < lease["cursor"]:
                     self._end(lease, "unavailable", "region_capture_scope_changed")

@@ -1564,3 +1564,37 @@ repository suite passes 3,419 tests with sixteen skips and two existing warnings
 in 320.23 seconds. Changed-module compilation and whitespace checks pass.
 These results cover named tracking, the earlier notice-lifetime fix and initial
 worst-corner clarification; they do not demonstrate real-game hardware acceptance.
+
+### Regional reported-context retention
+
+Both backend paired/player capture and sparse standalone player tracking now
+retain reported tyre ages, weather codes and track/air temperatures attached to
+the original retained regional source samples. Per-field bounded ranges include
+the retained boundary-bracketing samples, not later samples after the window.
+Missing/invalid observations make that field unavailable for the whole retained
+sample set; later values cannot backfill it. Missing/misbound overall track
+context still interrupts capture under the existing scope safeguards.
+
+Fixed previous-region references retain their original context. Reference views
+and captured results do not share mutable context dictionaries. Invalid context
+metadata is treated as unavailable without upgrading coaching eligibility or
+discarding otherwise supported numeric measurements. Context sample counts must
+match the measurement's original source-sample count.
+
+Player/reference and opponent comparisons speak the first available reported
+context difference (tyre age, weather, then temperatures), retain all differences
+and missing fields in structured evidence, and distinguish matching reported
+ranges from verified equivalence. For example, "Reported tyre ages 3 to 3 versus
+5 to 5" requires those retained observations. Fuel, traffic, continuously matching
+conditions and physical live-layout verification remain unestablished; a sampled
+range is not a like-for-like coaching guarantee. Numeric reports remain diagnostic.
+
+Twenty-two additional synthetic checks cover actual paired collection, original
+sample counts, retained boundary context, within-region changes, later outside-
+region exclusion, missing/type-invalid values, scope interruptions, fixed-reference
+preservation, malformed metadata and report disclosures. The focused regional/
+capture/reference selection passes 263 tests with one existing warning.
+The broader integrated radio/capture/live-facts/detail/pipeline/track selection
+passes 1,789 tests with two existing warnings; changed-module compilation and
+whitespace checks pass. The complete-suite 3,419-pass result above predates this
+context-retention increment. No hardware or acoustic acceptance is claimed.

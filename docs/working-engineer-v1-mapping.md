@@ -21,6 +21,11 @@ Remaining implementation and scope decisions:
 
 - Proactive advice and previous-best/opponent coaching with defensible reference
   eligibility, observed context and explicit missing/material-difference disclosures.
+  Regional captures now retain bounded reported tyre-age/weather/temperature
+  ranges attached to their original retained sample frames. Player/reference and
+  opponent reports disclose available differences and missing observations;
+  continuous context equivalence, fuel and traffic remain unverified. This is
+  observed diagnostic context, not a newly admitted coaching/reference policy.
 - Focus-corner loss selection or target clarification, supported geometry/reference
   policy, one coaching focus and fixed-reference progress across requested laps.
   Numeric diagnostic differences are not this completed capability.

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from .corners import MAX_DISTANCE_WINDOW_SAMPLES, analyze_distance_window
 from .resampling import TraceSample
+from .region_context import RegionSampleContext, regional_sample_context
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +43,7 @@ class RegionTracker:
         active = {(task.task_id, task.version) for task in tasks if task.region_window is not None}
         self.records = {key: value for key, value in self.records.items() if key[:2] in active}
 
-    def observe(self, tasks, player, sample, *, track_length_m):
+    def observe(self, tasks, player, sample, *, track_length_m, context=None):
         active = {(task.task_id, task.version): task for task in tasks if task.region_window is not None}
         self.prune(tasks)
         lap = player["lap"]
@@ -57,11 +58,13 @@ class RegionTracker:
         healthy = (tyre.get("status") == "available" and type(compound) is int and 1 <= compound <= 255
                    and all(type(lap.get(key)) is int and lap[key] == value for key, value in
                            (("current_lap_invalid_id", 0), ("pit_status_id", 0), ("result_status_id", 2))))
+        sample_context = regional_sample_context(context, player)
         for key, task in active.items():
             if not task.first_lap <= number <= task.until_lap:
                 continue
             record = self.records.setdefault((*key, number),
-                {"samples": [], "previous": None, "invalid": False, "compound": compound})
+                {"samples": [], "previous": None, "invalid": False, "compound": compound,
+                 "previous_context": None, "context": RegionSampleContext()})
             if (not healthy or compound != record["compound"]
                     or track_length_m != task.region_window.track_length_m):
                 record["invalid"] = True
@@ -87,7 +90,9 @@ class RegionTracker:
             ):
                 record["invalid"] = True
                 continue
+            previous_context = record["previous_context"]
             record["previous"] = sample
+            record["previous_context"] = sample_context
             samples = record["samples"]
             if sample.distance_m < task.region_window.start_m:
                 if samples:
@@ -97,11 +102,13 @@ class RegionTracker:
                 continue
             if not samples and previous is not None and previous.distance_m < task.region_window.start_m:
                 samples.append(previous)
+                record["context"].observe(previous_context)
             if len(samples) >= MAX_DISTANCE_WINDOW_SAMPLES:
                 record["invalid"] = True
                 record["samples"] = []
                 continue
             samples.append(sample)
+            record["context"].observe(sample_context)
 
     def complete(self, task, event):
         record = self.records.pop((task.task_id, task.version, event["lap_number"]), None)
@@ -139,4 +146,5 @@ class RegionTracker:
         return text, {"lap_number": event["lap_number"], "actual_compound": record["compound"],
                       "first_frame_identifier": samples[0].frame_identifier if samples else None,
                       "last_frame_identifier": samples[-1].frame_identifier if samples else None,
+                      "observed_context": record["context"].view(),
                       "measurement": result}

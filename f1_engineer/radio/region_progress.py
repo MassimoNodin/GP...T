@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import math
 from collections import OrderedDict
+from copy import deepcopy
 from dataclasses import dataclass
 
 from .regions import RegionWindow
+from ..analysis.region_context import validate_region_context, compare_reported_context
 
 
 def _integer(value, minimum, maximum):
@@ -23,8 +25,13 @@ class RegionReference:
     elapsed_s: float
     minimum_speed_kph: float
     brake_bracket_m: tuple[float, float] | None
+    observed_context: dict | None = None
 
     def __post_init__(self):
+        if self.observed_context is not None and (
+                not isinstance(self.observed_context, dict)
+                or validate_region_context(self.observed_context, self.observed_context.get("sample_count")) is None):
+            raise ValueError("A regional reference requires bounded reported context without coaching eligibility.")
         if (not _integer(self.lap_number, 1, 255) or not _integer(self.actual_compound, 1, 255)
                 or not isinstance(self.window, RegionWindow) or not _number(self.elapsed_s, 0, 86_400)
                 or self.elapsed_s <= 0
@@ -42,6 +49,7 @@ class RegionReference:
                 "window": self.window.view(), "elapsed_s": self.elapsed_s,
                 "minimum_speed_kph": self.minimum_speed_kph,
                 "brake_bracket_m": list(self.brake_bracket_m) if self.brake_bracket_m is not None else None,
+                "observed_context": deepcopy(self.observed_context),
                 "diagnostic_only": True, "coaching_eligible": False, "ranking_eligible": False}
 
 
@@ -93,7 +101,8 @@ def measured_reference(window, event, evidence):
         bracket = None
     return RegionReference(event["lap_number"], evidence["actual_compound"], window,
                            elapsed["elapsed_s"], minimum["speed_kph"],
-                           tuple(bracket) if bracket is not None else None)
+                           tuple(bracket) if bracket is not None else None,
+                           validate_region_context(evidence.get("observed_context"), measurement["source_sample_count"]))
 
 
 class RegionProgress:
@@ -158,8 +167,15 @@ class RegionProgress:
         else:
             direction = "later" if shift[0] > 0 else "earlier" if shift[1] < 0 else "direction unresolved"
             text += f"Brake-onset shift {shift[0]:g} to {shift[1]:g} metres, {direction}. "
-        text += "Same compound only; tyre age, fuel, conditions and traffic not established. Diagnostic, not coaching."
+        context_text, context_evidence = compare_reported_context(current.observed_context, reference.observed_context)
+        text += context_text
+        if context_text and context_evidence["missing_reported_fields"]:
+            text += "Some reported context unavailable. "
+        text += ("Same compound; context is sampled, not verified equivalence; fuel and traffic unverified. " if context_text else
+                 "Same compound only; tyre age, fuel, conditions and traffic not established. ")
+        text += "Diagnostic, not coaching."
         return text, {"reference": reference.view(), "current": current.view(),
                       "elapsed_delta_s": elapsed_delta, "minimum_speed_delta_kph": speed_delta,
                       "brake_shift_bracket_m": list(shift) if shift is not None else None,
+                      "reported_context_comparison": context_evidence,
                       "diagnostic_only": True, "coaching_eligible": False, "ranking_eligible": False}

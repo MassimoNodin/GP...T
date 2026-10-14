@@ -4,6 +4,7 @@ from copy import deepcopy
 import math
 import re
 
+from ..analysis.region_context import compare_reported_context
 from .opponent_captures import RadioOpponentCaptures
 from .detail_demands import RadioDetailDemands
 from .region_progress import measured_reference
@@ -114,7 +115,13 @@ def _compare(request, captured, *, lap_number, label, now):
         text += f"Same compound {player.actual_compound}; "
     else:
         text += f"Different compounds {player.actual_compound} and {opponent.actual_compound}; no like-for-like deltas. "
-    text += "tyre age, fuel, conditions and traffic not verified. Independent full laps; numeric diagnostic, not coaching."
+    context_text, context_evidence = compare_reported_context(player.observed_context, opponent.observed_context)
+    text += context_text
+    if context_text and context_evidence["missing_reported_fields"]:
+        text += "Some reported context unavailable. "
+    text += ("Context is sampled, not verified equivalence; fuel and traffic unverified. " if context_text else
+             "tyre age, fuel, conditions and traffic not verified. ")
+    text += "Independent full laps; numeric diagnostic, not coaching."
     if len(text.encode("utf-8")) > 900:
         return None
     return text, {"player": player.view(), "opponent": opponent.view(), "opponent_identity": deepcopy(request["opponent"]),
@@ -123,5 +130,9 @@ def _compare(request, captured, *, lap_number, label, now):
                   "completion_ages_s": [record["completion_age_s"] for record in records],
                   "elapsed_delta_s": elapsed_delta, "minimum_speed_delta_kph": speed_delta,
                   "brake_shift_bracket_m": list(shift) if shift is not None else None,
-                  "same_compound": same_compound, "missing_context": ["tyre_age", "fuel", "conditions", "traffic"],
+                  "same_compound": same_compound,
+                  "missing_context": (["tyre_age"] if "tyre_age_laps" in context_evidence["missing_reported_fields"] else [])
+                    + (["conditions"] if any(key != "tyre_age_laps" for key in context_evidence["missing_reported_fields"]) else [])
+                    + ["fuel", "traffic", "continuous_condition_equivalence"],
+                  "reported_context_comparison": context_evidence,
                   "diagnostic_only": True, "coaching_eligible": False, "ranking_eligible": False}
