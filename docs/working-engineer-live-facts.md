@@ -234,6 +234,38 @@ bounded backend command queue and mocked HTTP transport. The integrated radio,
 capture, live-facts, detail and pipeline selection passes 1,476 tests with two
 existing deprecation warnings. Real-game acceptance remains pending.
 
+The complete suite at the guarded-formatter increment passes 3,255 tests with
+sixteen platform skips and two existing deprecation warnings. This run predates
+the paired task-registry lifecycle increment below.
+
+## Paired task registry lifecycle — October 14, 2026
+
+The bounded report registry now has an explicit paired regional task type.
+Both driver identities are immutable verified JSON bindings, with independent
+player/opponent next-lap starts, one fixed numeric window and a twenty-lap maximum
+horizon within lap 255. One pair costs two of the shared three regional collection
+leases; another single player region may coexist, but a second pair cannot.
+
+Player lap events cannot expire or run generic reports for these paired tasks.
+Instead, a task/version-bound sequential consumption cursor advances only when
+the controller explicitly consumes the corresponding pair. Duplicate, out-of-order,
+stale-version and malformed consumption/end calls do not change registry state.
+Updates restart both windows with a new version, while cancellation/scope clearing
+remove authority. Completed tasks cannot revive. Registry views expose the
+opponent start and reported-through cursor so a later controller can report
+the actual independent collection status.
+
+Extension is currently refused explicitly for paired tasks: create/update a new
+bounded request rather than silently discarding and shifting independent windows.
+This is a stated interim limitation, not full unrestricted conversational editing.
+The registry type is not yet exposed by the spoken parser/controller.
+
+Twenty-nine new registry cases pass, including a late opponent finish after the
+player horizon, budget accounting, sequential/versioned consumption, updates and
+scope cleanup. The integrated radio/capture/live-facts/detail/pipeline selection
+passes 1,610 tests with two existing deprecation warnings. Spoken integration and
+real-game acceptance remain pending.
+
 ## Radio capture cleanup hardening — October 14, 2026
 
 Region lease ownership now survives a failed or malformed DELETE response.

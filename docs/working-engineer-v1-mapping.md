@@ -40,6 +40,8 @@ Remaining implementation and scope decisions:
   driver, and paired publication rechecks freshness after polling I/O.
   A guarded numeric report formatter now labels both independent laps, reports
   sampled minima/brake-onset brackets and discloses tyre/context limitations.
+  The registry now owns fixed paired windows and sequential/version-bound
+  consumption; the player's earlier finish cannot expire an unconsumed pair.
   The spoken request/controller and polling-loop connection and full focus-corner
   coaching remain to be implemented.
 - Real-game validation of post-pit benchmarking and retained-lap eligibility.
