@@ -1498,3 +1498,22 @@ when a later finished pair has unavailable numeric evidence.
 The integrated radio/capture/live-facts/detail/pipeline selection passes 1,693
 tests with two existing warnings. The clean complete-suite run immediately above
 predates this final small notice-lifetime fix.
+
+### Initial worst-corner clarification
+
+"Help me improve my worst corner for three laps" and "coach my worst corner for
+the next 3 laps" now receive a specific target clarification instead of a generic
+unsupported-question reply. The current radio feed does not provide verified
+corner geometry and an eligible corner reference for ranking or prescribing a
+braking change. The engineer asks for explicit start/end metres and explains the
+available sampled tracking/previous-complete-region diagnostics. It confirms that
+no new tracking started; existing tasks remain unchanged. The original request
+and its requested horizon stay in bounded instruction history.
+
+This is the insufficient-evidence fallback, not completed worst-corner selection,
+coaching, automatic region resolution or fixed-reference coaching progress.
+Seven new cases verify intent/duration parsing, excessive horizons, retained
+instructions, existing-task preservation and missing-telemetry refusal.
+The current integrated radio/capture/live-facts/detail/pipeline selection passes
+1,700 tests with two existing warnings. The earlier complete-suite result
+predates this clarification and the notice-lifetime fix.

@@ -67,6 +67,17 @@ def parse_task_request(request: str) -> TaskAction | None:
     cancel = re.fullmatch(r"cancel task ([1-9][0-9]{0,8})", text)
     if cancel:
         return TaskAction("cancel", task_id=int(cancel.group(1)))
+    focus = re.fullmatch(
+        r"(?:help me improve|coach) my worst corner(?: for (?:the )?(?:next )?([1-9][0-9]?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty) laps?)?", text
+    )
+    if focus:
+        count = focus.group(1)
+        words = ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+                 "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty")
+        laps = (int(count) if count.isdecimal() else words.index(count) + 1) if count else None
+        if laps is not None and laps > 20:
+            raise ValueError("Please choose one to twenty upcoming laps.")
+        return TaskAction("focus_corner", "my worst corner", laps=laps)
     update = re.match(r"update task ([1-9][0-9]{0,8}) (.+)", text)
     task_id = None
     if update:

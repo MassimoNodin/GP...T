@@ -792,6 +792,15 @@ class RadioController:
             elif action.kind == "cancel_all":
                 self._clear_tasks("cancelled")
                 text = "All lap-report tracking cancelled."
+            elif action.kind == "focus_corner":
+                if self._player is None:
+                    raise ValueError("Fresh player telemetry is required to choose a driving focus. No new tracking started.")
+                duration = f" for your requested {action.laps} lap{'s' if action.laps != 1 else ''}" if action.laps else ""
+                text = ("I cannot rank a worst corner or prescribe a braking change from this live feed without "
+                        "verified corner geometry and an eligible reference. Choose an explicit start and end "
+                        f"distance in metres{duration}. I can track sampled braking and minimum speed there, "
+                        "or compare with a previous complete observed region if available. Those are numeric "
+                        "diagnostics, not verified corner coaching. No new tracking started; make an explicit regional request.")
             elif action.kind == "cancel":
                 paired = any(task["task_id"] == action.task_id and task["opponent_first_lap"] is not None
                              for task in self.tasks.views())

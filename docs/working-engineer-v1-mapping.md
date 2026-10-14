@@ -24,6 +24,10 @@ Remaining implementation and scope decisions:
 - Focus-corner loss selection or target clarification, supported geometry/reference
   policy, one coaching focus and fixed-reference progress across requested laps.
   Numeric diagnostic differences are not this completed capability.
+  Initial "help me improve my worst corner for three laps" requests now explain
+  the missing verified geometry/eligible reference, retain the requested horizon
+  in conversation and ask for an explicit distance target without starting a
+  pretend coaching task. Selection, actual coaching and progress still remain.
 - Opponent braking/minimum-speed task-owned collection through existing detail
   permissions, aligned player/opponent lap windows and guarded spoken comparisons.
   A backend prerequisite now exposes same-frame opponent observations only for
