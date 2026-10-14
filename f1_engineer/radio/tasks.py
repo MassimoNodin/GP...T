@@ -10,6 +10,7 @@ from .pace import PaceReference
 from .regions import RegionWindow
 from .region_progress import RegionReference
 from .focus_coach import compatible_focus_context
+from .spoken_numbers import normalize_duration
 
 
 def _fixed_identity(binding):
@@ -41,12 +42,13 @@ class TaskAction:
     region_opponent: str | None = None
     region_name: str | None = None
     focus_coach: bool = False
+    region_opponent_binding: dict | None = None
 
 
 def parse_task_request(request: str) -> TaskAction | None:
     if not isinstance(request, str) or not 1 <= len(request.encode("utf-8")) <= 1024:
         return None
-    text = driver_name_key(request).rstrip("?.!")
+    text = normalize_duration(driver_name_key(request).rstrip("?.!"))
     if text in ("what are you tracking", "list tasks", "tasks"):
         return TaskAction("list")
     if text == "cancel all tracking":
@@ -146,10 +148,15 @@ def parse_task_request(request: str) -> TaskAction | None:
             raise ValueError("Choose one named opponent for regional tracking.")
         return TaskAction("update" if task_id is not None else "create", "paired regional observations",
                           task_id, laps, region_bounds_m=(float(start), float(end)), region_opponent=opponent)
-    if (re.fullmatch(
-            r"(?:track|keep track of) (.+?)(?:'s)? braking points? and minimum speed (?:in comparison to|compared to) me for (?:the )?next(?: [1-9][0-9]?)? laps?", text)
-            or re.fullmatch(r"(?:track|keep track of) braking points? and minimum speed for (.+) (?:in comparison to|compared to) me for (?:the )?next(?: [1-9][0-9]?)? laps?", text)):
-        raise ValueError("Choose an explicit distance window in metres for braking and minimum-speed tracking; corner geometry is not yet verified.")
+    missing_region = (re.fullmatch(
+        r"(?:track|keep track of) (.+?)(?:'s)? braking points? and minimum speed (?:in comparison to|compared to) me" + named_duration, text)
+        or re.fullmatch(r"(?:track|keep track of) braking points? and minimum speed for (.+) (?:in comparison to|compared to) me" + named_duration, text))
+    if missing_region:
+        opponent, count = missing_region.groups()
+        laps = int(count or "1")
+        if laps > 20:
+            raise ValueError("Please choose one to twenty upcoming laps.")
+        return TaskAction("clarify_region", "paired regional observations", task_id, laps, region_opponent=opponent)
     comparison = re.fullmatch(
         r"compare my braking and minimum speed from ([0-9]{1,5}(?:\.[0-9]{1,2})?) to ([0-9]{1,5}(?:\.[0-9]{1,2})?) (?:metres|meters) with my previous observed region for (?:the )?next(?: ([1-9][0-9]?))? laps?", text
     )

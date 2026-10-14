@@ -1734,3 +1734,39 @@ with one existing Starlette/httpx warning after this watch increment. Changed
 modules compile and whitespace checks pass. Full-repository validation will be
 rerun after the remaining implementation increments; the earlier 3,502-pass run
 does not cover focus practice or non-adjacent watches.
+
+### Spoken numbers and bounded regional clarification
+
+Spoken lap numbers and upcoming durations from one to twenty now normalize only
+inside supported number slots. Unknown qualifiers remain unsupported, rather
+than being silently stripped. "Tell me at the end of lap a comparison between my
+car and cars around me" installs the player, car-ahead and car-behind lap-time
+and aligned lap-difference facts, with trigger, targets and duration confirmed.
+Different completed lap numbers make the comparison unavailable, not a race gap;
+other available facts still appear in the report.
+
+The original "Keep track of braking points and minimum speed for Leclerc in
+comparison to me for the next lap" now asks for a region without starting
+capture. Reply with "10 to 50 metres" or a reviewed label such as "Turn One".
+The reply preserves the original opponent identity, horizon and independent
+next-full-lap boundaries. A focus-corner clarification similarly preserves its
+requested duration; subsequent admission still requires an eligible reference.
+Spoken labels only resolve existing reviewed geometry, never invented corners.
+
+One pending intent is retained, separately from existing tasks, and is exposed
+in status/task listing. Unique captured intent IDs prevent asynchronously
+transcribed old replies from consuming a newer request. Changed session/player,
+opponent identity, circuit/length, lost freshness, or either original lap starting
+invalidates the reply rather than moving its capture to a later lap. Forget,
+cancel-all and unrelated ordinary questions discard pending intent. An incomplete
+task update cannot modify an existing task. Cancel-that needs an unambiguous
+current captured reference; explicit task IDs remain available when ambiguous.
+
+The request/clarification module passes 43 focused regressions, including
+partial/aligned nearby results, spoken-number limits, reviewed labels, retained
+focus horizons, identity/lap/context changes, stale captured intent, cancellation
+and existing-task preservation, retaining all prior clarification tests. The
+earlier focused existing-feature selection passes 348 tests. The final integrated
+radio/name/wheel/conversation selection passes 1,539 tests with one existing
+Starlette/httpx warning; module compilation and whitespace checks pass.
+Hardware speech/latency and user acceptance remain pending.

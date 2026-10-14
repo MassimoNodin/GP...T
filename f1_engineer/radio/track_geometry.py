@@ -5,6 +5,7 @@ import math
 import re
 import time
 from copy import deepcopy
+from .spoken_numbers import region_name_key
 
 from .regions import RegionWindow
 
@@ -59,7 +60,7 @@ class RadioTrackGeometry:
 
 
 def _name(value):
-    return " ".join(value.casefold().replace("-", " ").split()) if isinstance(value, str) else ""
+    return region_name_key(value)
 
 
 def resolve_named_region(result, binding, name):

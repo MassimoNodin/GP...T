@@ -24,6 +24,7 @@ from .opponent_regions import compare_opponent_region
 from .track_geometry import geometry_binding, resolve_named_region
 from .reported_history import reported_best_fact, reported_lap_fact
 from .focus_coach import FOCUS_POLICY, choose_focus_reference, choose_focus_loss, focus_cue, focus_progress
+from .spoken_numbers import regional_reply
 from ..analysis.resampling import TraceSample
 from ..analysis.region_context import scoped_region_context, regional_sample_context
 
@@ -88,8 +89,11 @@ class RadioController:
         self._focus_context = None
         self._focus_binding = None
         self._focus_first_lap = None
+        self._clarification_id = 0
+        self._pending_region = None
 
     def _unavailable(self, reason: str) -> None:
+        self._pending_region = None
         self._focus_context = None
         self._focus_binding = None
         self._focus_first_lap = None
@@ -159,6 +163,7 @@ class RadioController:
         previous_lap = self._player["lap"].get("current_lap_number") if self._player is not None else None
         self.scheduler.set_scope(binding)
         if changed:
+            self._pending_region = None
             self._history.clear()
             self.conversation.clear()
             self.tasks.clear("scope_changed")
@@ -558,19 +563,73 @@ class RadioController:
                 "reason": self._status[1] if self._status else "not_connected",
                 "conversation_turns": len(self._history),
                 "tasks": self.tasks.views(),
+                "pending_region_clarification": ({key: deepcopy(value) for key, value in self._pending_region.items()
+                                                   if key != "action"} if self._pending_region is not None else None),
                 "watches": self.watches.views(),
                 "pace_bests": [record.view() for record in self.pace.best.values()],
                 "quiet": self.scheduler.muted, "pending_messages": len(self.scheduler.pending),
                 "active_message": self.scheduler.active.key if self.scheduler.active else None}
 
     def forget_conversation(self) -> None:
+        self._pending_region = None
         self._history.clear()
         self.conversation.clear()
         self.notify({"event": "radio_conversation_cleared"})
 
     def capture_task_context(self) -> TaskContext:
-        return self.conversation.capture_tasks(
+        context = self.conversation.capture_tasks(
             self.scheduler.scope, self.tasks.active(), self.scheduler.active or self.scheduler.last_completed)
+        return replace(context, clarification_id=self._pending_region["id"] if self._pending_region is not None else None)
+
+    def _await_region(self, action):
+        if (self._player is None or self.scheduler.scope is None
+                or not _integer(self._player["lap"].get("current_lap_number"), 1, 254)):
+            raise ValueError("Fresh player telemetry and a known upcoming lap are required; no tracking started.")
+        if action.task_id is not None:
+            raise ValueError("Specify the region in the complete task update; no existing task changed.")
+        opponent = None
+        if action.region_opponent is not None:
+            opponent = self._resolve_target("name:" + action.region_opponent)
+            if (opponent is None or opponent["identity"] == self._player["identity"]
+                    or not _integer(opponent["lap"].get("current_lap_number"), 1, 254)):
+                raise ValueError("Choose one available named opponent with a known upcoming lap; no tracking started.")
+        self._clarification_id += 1
+        self._pending_region = {"id": self._clarification_id, "scope": self.scheduler.scope,
+                                "revision": self.conversation.revision, "action": action,
+                                "player_first_lap": self._player["lap"]["current_lap_number"] + 1,
+                                "opponent_first_lap": opponent["lap"]["current_lap_number"] + 1 if opponent else None,
+                                "opponent_identity": deepcopy(opponent["identity"]) if opponent else None,
+                                "requested_laps": action.laps or (3 if action.kind == "focus_corner" else 1),
+                                "opponent": action.region_opponent, "focus_coach": action.kind == "focus_corner",
+                                "geometry_binding": self._geometry_binding, "track_length_m": self._track_length_m}
+
+    def _clarified_region(self, reply, captured):
+        pending = self._pending_region
+        context = self.capture_task_context() if captured is _LIVE_TASK_CONTEXT else captured
+        if (pending is None or not isinstance(context, TaskContext) or context.scope != self.scheduler.scope
+                or context.scope != pending["scope"] or context.clarification_id != pending["id"]
+                or context.revision != self.conversation.revision or context.revision != pending["revision"]):
+            raise ValueError("No matching current regional clarification was captured. Repeat the complete tracking instruction.")
+        if (pending["geometry_binding"] != self._geometry_binding or pending["track_length_m"] != self._track_length_m
+                or self._player is None):
+            self._pending_region = None
+            raise ValueError("The circuit context changed while choosing a region. Repeat the complete tracking instruction.")
+        if (not _integer(self._player["lap"].get("current_lap_number"), 1, 254)
+                or self._player["lap"]["current_lap_number"] + 1 != pending["player_first_lap"]):
+            self._pending_region = None
+            raise ValueError("Your originally requested next lap has started or changed; I will not shift it. Repeat the instruction.")
+        action = pending["action"]
+        if action.region_opponent is not None:
+            opponent = self._resolve_target("name:" + action.region_opponent, pending["opponent_identity"])
+            if (opponent is None or not _integer(opponent["lap"].get("current_lap_number"), 1, 254)
+                    or opponent["lap"]["current_lap_number"] + 1 != pending["opponent_first_lap"]):
+                self._pending_region = None
+                raise ValueError("The originally requested opponent or next lap changed; I will not substitute it. Repeat the instruction.")
+        bounds, name = reply
+        return replace(action, kind="create", question="my regional observations", laps=pending["requested_laps"],
+                       region_bounds_m=bounds, region_name=name,
+                       region_compare=action.kind == "focus_corner", focus_coach=action.kind == "focus_corner",
+                       region_opponent_binding=deepcopy(pending["opponent_identity"]))
 
     def capture_question_context(self) -> QuestionContext | None:
         if not self._history:
@@ -630,6 +689,7 @@ class RadioController:
         return match
 
     def _clear_tasks(self, reason: str) -> None:
+        self._pending_region = None
         self.scheduler.cancel_owner("opponent_regions")
         if reason != "cancelled":
             self._history.clear()
@@ -700,6 +760,8 @@ class RadioController:
                            brake=values["brake"], throttle=None, steering=None, gear=None, drs_active=None)
 
     def _timing_fact(self, metric: str, row: dict, *, now: float) -> str:
+        if metric == "lap_comparison" and row["identity"] == self._player["identity"]:
+            return "player comparison reference: " + timing_fact("last_lap", row["lap"], self._player["lap"])
         if metric == "session_best":
             result = reported_best_fact(row, self._observation_frame,
                                         live_age_s=self._age_s + now - self._received_at)
@@ -813,9 +875,17 @@ class RadioController:
         try:
             action = parse_task_request(question)
             if action is None:
-                self.answer_question(question, now=now, question_context=question_context)
-                return
+                reply = regional_reply(question)
+                if reply is not None:
+                    action = self._clarified_region(reply, task_context)
+                    self._pending_region = None
+                else:
+                    self._pending_region = None
+                    self.answer_question(question, now=now, question_context=question_context)
+                    return
             focus_selection = None
+            if action.kind in ("focus_corner", "clarify_region"):
+                self._pending_region = None
             if action.kind == "focus_corner" and self._backend_regions and self._player is not None:
                 selected = choose_focus_loss(self.region_progress.focus_candidates, self._player,
                                              regional_sample_context(self._focus_context, self._player))
@@ -826,6 +896,15 @@ class RadioController:
                                         region_compare=True, focus_coach=True)
             if action.kind == "cancel_reference":
                 context = self.capture_task_context() if task_context is _LIVE_TASK_CONTEXT else task_context
+                if (self._pending_region is not None and isinstance(context, TaskContext)
+                        and context.scope == self.scheduler.scope and context.revision == self.conversation.revision
+                        and context.selected is None
+                        and context.clarification_id == self._pending_region["id"]):
+                    self._pending_region = None
+                    self._control_answer("Regional clarification cancelled. No existing tracking task changed.", now=now)
+                    self.conversation.record("instruction", request=question,
+                                             response="Regional clarification cancelled. No existing tracking task changed.")
+                    return
                 if (not isinstance(context, TaskContext) or context.scope != self.scheduler.scope
                         or context.revision != self.conversation.revision or context.selected is None
                         or context.selected not in context.versions):
@@ -839,6 +918,8 @@ class RadioController:
                 reference = next((entry for entry in task_context.versions if entry[0] == action.task_id), None)
                 if reference is None or not any((task.task_id, task.version) == reference for task in self.tasks.active()):
                     raise ValueError("The task changed, ended or was not active when listening began. Repeat the command for a current task.")
+            if action.kind not in ("focus_corner", "clarify_region", "list"):
+                self._pending_region = None
             if action.kind == "list":
                 active = [task for task in self.tasks.views() if task["state"] == "active"]
                 lines = []
@@ -863,6 +944,8 @@ class RadioController:
                     expiry = f"through lap {task['until_lap']}" if task["until_lap"] is not None else "until cancelled or session change"
                     lines.append(f"Task {task['task_id']}: {targets}; {metrics}; {expiry}.")
                 text = " ".join(lines) if lines else "No active lap reports."
+                if self._pending_region is not None:
+                    text += " A regional clarification is pending; no new capture has started for it."
             elif action.kind == "cancel_all":
                 self._clear_tasks("cancelled")
                 text = "All lap-report tracking cancelled."
@@ -875,6 +958,13 @@ class RadioController:
                         f"distance in metres{duration}. I can track sampled braking and minimum speed there, "
                         "or compare with a previous complete observed region if available. Those are numeric "
                         "diagnostics, not verified corner coaching. No new tracking started; make an explicit regional request.")
+                self._await_region(action)
+                text += " You can reply with a named region or start/end metres before the requested next lap starts."
+            elif action.kind == "clarify_region":
+                self._await_region(action)
+                text = (f"Choose an explicit distance window in metres or a reviewed named region for "
+                        f"{action.region_opponent} versus you, for {action.laps} requested lap{'s' if action.laps != 1 else ''}. "
+                        "No new tracking started. Reply before either requested next lap starts; driver identities stay fixed.")
             elif action.kind == "cancel":
                 paired = any(task["task_id"] == action.task_id and task["opponent_first_lap"] is not None
                              for task in self.tasks.views())
@@ -978,6 +1068,8 @@ class RadioController:
                     if watching and row["identity"] == self._player["identity"]:
                         raise ValueError("Choose another driver to watch.")
                     if action.region_opponent is not None and target.startswith("name:"):
+                        if action.region_opponent_binding is not None and row["identity"] != action.region_opponent_binding:
+                            raise ValueError("The clarified opponent identity changed; repeat the complete instruction.")
                         if row["identity"] == self._player["identity"]:
                             raise ValueError("Choose another driver for paired regional tracking.")
                         if not _integer(row["lap"].get("current_lap_number"), 1, 254):
@@ -1058,6 +1150,11 @@ class RadioController:
                                  "requested_region": action.region_name, "source": named_source,
                                  "window": region_window.view(), "diagnostic_only": True,
                                  "coaching_eligible": False})
+                if region_window is None and not watching and pace_reference is None:
+                    labels = {"self": "you", "ahead": "car ahead", "behind": "car behind"}
+                    targets = ", ".join(labels.get(target, target.removeprefix("name:").replace("position:", "P"))
+                                        for target in plan.targets)
+                    text += f" Facts: {', '.join(metric.replace('_', ' ') for metric in plan.metrics)}. Targets: {targets}."
         except ValueError as error:
             text = str(error)
         queued = self._control_answer(text, now=now)

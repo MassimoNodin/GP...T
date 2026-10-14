@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 
 from ..driver_names import driver_name_key
+from .spoken_numbers import LAP_WORDS, WORD_PATTERN, spoken_integer, nearby_comparison
 
 @dataclass(frozen=True, slots=True)
 class QuestionPlan:
@@ -56,7 +57,7 @@ TARGETS = {
 def plan_question(question: str, previous: QuestionPlan | None = None, *, names: tuple[str, ...] = ()) -> QuestionPlan:
     if not isinstance(question, str) or not 1 <= len(question.encode("utf-8")) <= 1024:
         raise ValueError("Ask a question of at most 1024 bytes.")
-    remaining = driver_name_key(question)
+    remaining = nearby_comparison(driver_name_key(question))
     sector_only = re.fullmatch(r"only sector (one|two|three|[1-3])[?.!]*", remaining)
     if sector_only:
         if previous is None:
@@ -78,6 +79,7 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
         raise ValueError("Please specify a supported driver name or timing fact.")
     named_targets = []
     reserved = set("what is are the a and also please tell show give for of about how their his her them him then my me mine myself lap last current quiet resume cancel repeat status quit submit forget ask listen finish sector one two three best observed valid time session fastest fuel level remaining load tyre tire age compound".split())
+    reserved.update(LAP_WORDS)
     reserved_patterns = "|".join((*TARGETS.values(), *METRICS.values(), r"p(?:[1-9]|1[0-9]|2[0-4])"))
     name_patterns = []
     known_names = {driver_name_key(name) for name in names}
@@ -100,9 +102,9 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
     metrics = []
     targets = []
     def numbered_lap(match):
-        metrics.append("lap_number:" + match.group(1))
+        metrics.append("lap_number:" + str(spoken_integer(match.group(1))))
         return " "
-    remaining = re.sub(r"\blap ([1-9][0-9]{0,2})(?: time)?\b", numbered_lap, remaining)
+    remaining = re.sub(r"\blap ([1-9][0-9]{0,2}|" + WORD_PATTERN + r")(?: time)?\b", numbered_lap, remaining)
     if any(int(metric.split(":", 1)[1]) > 255 for metric in metrics):
         raise ValueError("Please choose a lap number from 1 to 255.")
     for metric, pattern in METRICS.items():

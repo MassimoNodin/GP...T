@@ -74,8 +74,9 @@ def test_explicit_paired_request_forms(text, opponent, bounds, laps, task_id):
     "track Leclerc's braking points and minimum speed compared to me for next lap",
 ])
 def test_unknown_corner_geometry_requires_clarification(text):
-    with pytest.raises(ValueError, match="explicit distance window"):
-        parse_task_request(text)
+    action = parse_task_request(text)
+    assert action.kind == "clarify_region" and action.region_opponent == "leclerc"
+    assert action.region_bounds_m is None and action.laps == 1
 
 
 @pytest.mark.parametrize("opponent", ["me", "myself", "my car", "leclerc and norris", "p2", "<leclerc>"])

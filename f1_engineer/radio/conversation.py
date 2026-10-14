@@ -13,6 +13,7 @@ class TaskContext:
     selected: tuple[int, int] | None
     versions: tuple[tuple[int, int], ...]
     revision: int = 0
+    clarification_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

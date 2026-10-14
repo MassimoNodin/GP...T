@@ -71,7 +71,11 @@ Remaining implementation and scope decisions:
   geometry clarifies rather than inventing a corner. Guarded conversational
   extensions now create a fresh version with each fixed driver's next full lap,
   explicitly discarding old partial/unreported pairs and bounding both horizons.
-  Broader natural-language forms and real-game acceptance remain outstanding.
+  The original no-region Leclerc request now retains a bounded clarification:
+  a numeric-window or reviewed-label reply preserves the named identity, requested
+  horizon and each driver's original next full lap. Changed laps/context or stale
+  voice intent cannot shift or substitute those captures. Real-game acceptance
+  and wording outside the documented bounded grammar remain outstanding.
 - Real-game validation of post-pit benchmarking and retained-lap eligibility.
   Stop-count/tyre-change confirmation, pre-pit ranking/tie-breaks, clean observed
   lap-set averages, age/condition disclosures and one-off reporting now exist.
@@ -97,6 +101,11 @@ Remaining implementation and scope decisions:
   context. The radio now retains prior questions/answers, instructions and computed
   tracking reports, supports sector-only follow-ups and version-bound task
   extensions, and clarifies ambiguous references without reviving ended tasks.
+  Spoken lap numbers and upcoming durations from one to twenty are supported.
+  The agreed nearby-car comparison wording installs player/ahead/behind lap-time
+  and aligned lap-difference reports; unaligned results retain available facts
+  with explicit omissions. Regional clarification replies carry unique captured
+  intent IDs, preventing old voice replies from consuming newer requests.
   This is deterministic conversation support, not unrestricted natural language.
 - Real-game acceptance of automatic scoped voice questions/tasks and the explicit
   spoken quiet/cancel-speech/repeat controls, preserving capture/playback echo
