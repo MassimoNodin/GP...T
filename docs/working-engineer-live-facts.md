@@ -295,3 +295,38 @@ admission.
 The integrated radio/capture/live-facts/detail/pipeline selection passes 1,521
 tests with two existing deprecation warnings. This remains automated prerequisite
 evidence, not a demonstrated in-game capability.
+
+## Captured completion provenance — October 14, 2026
+
+Every owned regional lap result now includes a bounded additive completion view:
+original event ID/kind, lifecycle scope, exact driver identity, qualification,
+lap number/time, observed invalidity and monotonic receipt. These fields are copied
+from the actual completion event, not reconstructed from later live lap numbers
+or fabricated for numeric comparison. Arbitrary event fields are not retained.
+Player and opponent clocks/identities stay distinct even after the earlier
+finisher's source event leaves the current history. Returned views and later
+source mutations cannot modify the retained facts; lease release/expiry retains
+the existing evidence-clearing behavior.
+
+The paired coordinator now binds each result to this completion view and rejects
+driver/scope/event/receipt/qualification conflicts, malformed lap clocks and
+negative completion age. Invalid laps keep their actual invalidity and unavailable
+measurement rather than becoming valid evidence. Older backends without these
+fields cannot satisfy the new pairing provenance contract; the radio does not
+invent the missing completion facts.
+
+Pair publication also rechecks the processed frame after network I/O. A frame
+that becomes stale during polling cannot publish a ready comparison; collection
+stays owned while the coordinator waits for a fresh frame. This retains the
+existing three-second telemetry safety boundary, not a new latency acceptance
+gate. The earlier driver's retained lap may legitimately be older while the
+second driver finishes; it remains labelled owned historical evidence, not a
+claim of fresh simultaneous telemetry.
+
+Eleven new provenance/invalidity/freshness cases pass. The integrated radio,
+capture, live-facts, detail and pipeline selection passes 1,532 tests with two
+existing deprecation warnings. The complete suite at the preceding paired-capture
+increment passed 3,195 tests, with sixteen platform skips and two existing
+warnings; that run does not cover these later provenance/freshness additions.
+Spoken numeric comparison/controller integration and real-game acceptance remain
+pending.

@@ -36,6 +36,8 @@ Remaining implementation and scope decisions:
   polling loop. A paired-capture coordinator now waits for processed owner
   metadata, preserves each driver's independently requested next-lap boundary,
   retains both legs through separate crossings and releases orphan admissions.
+  Captured results retain the actual scoped completion event facts for each
+  driver, and paired publication rechecks freshness after polling I/O.
   The spoken request/controller and polling-loop connection, guarded diagnostic
   comparison reporting and full focus-corner coaching remain to be implemented.
 - Real-game validation of post-pit benchmarking and retained-lap eligibility.

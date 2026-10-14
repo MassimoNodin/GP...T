@@ -137,6 +137,30 @@ class RadioOpponentCaptures:
                 and len(set(owners)) == len(owners) and owner["detail_task_id"] in owners)
 
     @staticmethod
+    def _matching_completion(result, body):
+        event = result.get("completion")
+        driver = body.get("opponent", body["player"])
+        if (not isinstance(event, dict)
+                or set(event) != {"id", "kind", "scope", "driver", "qualification", "lap_number",
+                                 "lap_time_ms", "previous_observed_invalid", "received_monotonic_ns"}
+                or not isinstance(event["scope"], dict) or event["scope"] != body["scope"]
+                or any(type(value) is not int for value in event["scope"].values())
+                or not isinstance(event["driver"], dict) or event["driver"] != driver
+                or any(type(event["driver"].get(key)) is not type(value) for key, value in driver.items())):
+            return False
+        return (type(event["id"]) is int and event["id"] > 0 and type(result.get("event_id")) is int
+                and event["id"] == result["event_id"]
+                and event["kind"] == "lap_completed" and event["qualification"] == "observed_lap_transition"
+                and type(event["lap_number"]) is int and event["lap_number"] == result["lap_number"]
+                and type(event["lap_time_ms"]) is int and 1 <= event["lap_time_ms"] <= 2**32 - 1
+                and type(event["previous_observed_invalid"]) is int and event["previous_observed_invalid"] in (0, 1)
+                and type(event["received_monotonic_ns"]) is int and event["received_monotonic_ns"] >= 0
+                and type(result.get("received_monotonic_ns")) is int
+                and event["received_monotonic_ns"] == result["received_monotonic_ns"]
+                and type(result.get("completion_age_s")) in (int, float)
+                and math.isfinite(result["completion_age_s"]) and result["completion_age_s"] >= 0)
+
+    @staticmethod
     def _matching_result(result, track_length_m):
         response = result.get("response") or {}
         data = response.get("data") if response.get("status") == "available" else None
@@ -155,6 +179,7 @@ class RadioOpponentCaptures:
                        or not body["first_lap"] <= item["lap_number"] < body["first_lap"] + body["laps"]
                        for item in results)
                 or len({item["lap_number"] for item in results}) != len(results)
+                or any(not RadioOpponentCaptures._matching_completion(item, body) for item in results)
                 or data.get("state") == "complete" and len(results) != body["laps"]):
             return False
         return (data.get("lease_id") == result["lease_id"]
@@ -234,6 +259,11 @@ class RadioOpponentCaptures:
                             and isinstance(result["response"].get("data"), dict)
                             and result["response"]["data"].get("state") == "complete" for result in results)):
                 state = "complete"
+        unused_rows, final_reason = self._frame(request, snapshot)
+        if final_reason == "opponent_frame_unverified":
+            state, reason = "waiting", final_reason
+        elif final_reason is not None:
+            pair["terminal"] = final_reason
         if pair["terminal"]:
             self._cleanup()
             state, reason, results = "unavailable", pair["terminal"], []

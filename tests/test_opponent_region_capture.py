@@ -61,6 +61,21 @@ def collect(store, controller, value):
         tick(store, controller, value, index=index)
 
 
+def test_opponent_completion_survives_later_player_event_and_source_mutation():
+    store, body, clock, controller, radio, value = ready_opponent()
+    collect(store, controller, value)
+    tick(store, controller, value, number=4)
+    earlier = store.get(OPPONENT_LEASE, value)["results"][0]
+    original = deepcopy(earlier["completion"])
+    earlier["completion"]["driver"]["tenure_ordinal"] = 99
+    value["events"][-1]["lap_time_ms"] = 9999
+    tick(store, controller, value, number=4, player_number=5)
+    result = store.get(OPPONENT_LEASE, value)["results"][0]
+    assert result["completion"] == original
+    assert result["completion"]["driver"] == body["opponent"]
+    assert result["completion"]["driver"] != value["events"][-1]["driver"]
+
+
 def test_opponent_region_uses_its_own_next_lap_and_finish_crossing():
     store, body, clock, controller, radio, value = ready_opponent()
     collect(store, controller, value)
@@ -75,6 +90,10 @@ def test_opponent_region_uses_its_own_next_lap_and_finish_crossing():
     assert rival["detail_task_id"] == OWNER and rival["first_lap"] == 3
     result, = rival["results"]
     assert result["lap_number"] == 3 and "151.0" in result["text"]
+    assert result["completion"] == value["events"][-1]
+    assert result["completion"]["driver"] == body["opponent"]
+    assert result["completion"]["lap_number"] == 3
+    assert result["completion"]["lap_time_ms"] == 2000
     assert "between 20 and 25" in result["text"]
     assert result["evidence"]["measurement"]["elapsed"]["elapsed_s"] == pytest.approx(0.4)
     assert not store._leases[OPPONENT_LEASE]["tracker"].records

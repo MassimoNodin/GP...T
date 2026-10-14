@@ -326,6 +326,9 @@ class RegionCaptureStore:
                         text, evidence = "Regional observations unavailable: completion mismatch or stale event.", None
                     lease["results"].append({"event_id": event["id"], "lap_number": event["lap_number"],
                         "received_monotonic_ns": event.get("received_monotonic_ns", received),
+                        "completion": {key: copy.deepcopy(event.get(key)) for key in
+                                       ("id", "kind", "scope", "driver", "qualification", "lap_number",
+                                        "lap_time_ms", "previous_observed_invalid", "received_monotonic_ns")},
                         "text": text, "evidence": evidence})
                 lease["cursor"], lease["ordinal"] = cursor, ordinal
                 if lease["state"] == "active" and target_number > lease["task"].until_lap:

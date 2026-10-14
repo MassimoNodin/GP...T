@@ -39,12 +39,45 @@ def feed_window(store, controller, value, *, mutate=None):
     store.observe(value)
 
 
+def test_capture_completion_facts_are_copied_and_bounded_to_original_fields():
+    store, body, clock, controller, radio, value = capture()
+    feed_window(store, controller, value)
+    result = store.get(LEASE, value)["results"][0]
+    original = deepcopy(result["completion"])
+    assert set(original) == {"id", "kind", "scope", "driver", "qualification", "lap_number",
+                             "lap_time_ms", "previous_observed_invalid", "received_monotonic_ns"}
+    result["completion"]["driver"]["tenure_ordinal"] = 99
+    value["events"][0]["lap_time_ms"] = 9999
+    value["events"][0]["extra"] = "not retained"
+    assert store.get(LEASE, value)["results"][0]["completion"] == original
+
+
+def test_invalid_completion_retains_invalidity_without_fabricating_measured_evidence():
+    store, body, clock, controller, radio, value = capture()
+    for index in range(13):
+        push(controller, value, distance=float(index * 5), clock=index * 50,
+             speed=180 - index, brake=0.5 if 4 <= index <= 8 else 0.0)
+        store.observe(value)
+    push(controller, value, lap=5)
+    value["events"][0].update(previous_observed_invalid=1, extra="not retained")
+    store.observe(value)
+    result = store.get(LEASE, value)["results"][0]
+    assert result["evidence"] is None
+    assert result["completion"]["previous_observed_invalid"] == 1
+    assert "extra" not in result["completion"]
+
+
 def test_backend_frames_complete_region_without_intermediate_http_polls():
     store, body, clock, controller, radio, value = capture()
     feed_window(store, controller, value)
     result = store.get(LEASE, value)
     assert result["state"] == "complete"
     assert len(result["results"]) == 1
+    completion = result["results"][0]["completion"]
+    assert completion == value["events"][0]
+    assert completion["driver"] == body["player"]
+    assert completion["lap_number"] == 4
+    assert completion["lap_time_ms"] == 1000
     result = result["results"][0]
     assert "171.0" in result["text"] and "between 15 and 20" in result["text"]
     assert result["evidence"]["measurement"]["elapsed"]["elapsed_s"] == pytest.approx(0.4)

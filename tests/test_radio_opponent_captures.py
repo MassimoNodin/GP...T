@@ -265,6 +265,52 @@ def test_same_version_cannot_mutate_fixed_lap_window():
     manager.replace([request])
 
 
+@pytest.mark.parametrize("mutation", [
+    lambda result: result["completion"]["driver"].update(tenure_ordinal=99),
+    lambda result: result["completion"].update(qualification="guessed"),
+    lambda result: result["completion"].update(lap_time_ms=True),
+    lambda result: result["completion"].update(id=result["event_id"] + 1),
+    lambda result: result["completion"].update(received_monotonic_ns=result["received_monotonic_ns"] + 1),
+    lambda result: result["completion"].update(previous_observed_invalid=False),
+    lambda result: result.update(completion_age_s=-1),
+])
+def test_pair_rejects_completion_provenance_conflicts(mutation):
+    manager, client, request, controller, radio, value, owner_id = armed()
+    for index in range(13):
+        drive(client, controller, value, owner_id, index=index)
+    drive(client, controller, value, owner_id, player_number=5, number=4)
+    original = client.region_capture
+    def respond(method, lease_id, body=None):
+        response = original(method, lease_id, body)
+        if method == "GET" and response.get("status") == "available":
+            for result in response["data"]["results"]:
+                mutation(result)
+        return response
+    client.region_capture = respond
+    result = manager.poll(value)[0]
+    assert result["state"] == "unavailable" and not result["legs"]
+
+
+def test_slow_network_poll_cannot_publish_complete_pair_from_a_now_stale_frame():
+    manager, client, request, controller, radio, value, owner_id = armed()
+    for index in range(13):
+        drive(client, controller, value, owner_id, index=index)
+    drive(client, controller, value, owner_id, player_number=5, number=4)
+    delay = [0]
+    manager.clock_ns = lambda: value["received_monotonic_ns"] + delay[0]
+    def slow(method):
+        if method == "region_GET":
+            delay[0] = 3_000_000_000
+    client.hook = slow
+    result = manager.poll(value)[0]
+    assert result["state"] == "waiting"
+    assert result["reason"] == "opponent_frame_unverified"
+    assert len(result["legs"]) == 2
+    client.hook = lambda method: None
+    delay[0] = 0
+    assert manager.poll(value)[0]["state"] == "complete"
+
+
 @pytest.mark.parametrize("requests", [None, {}, []])
 def test_pair_request_list_contract(requests):
     manager, client, request, controller, radio, value = ready()
