@@ -32,8 +32,9 @@ Remaining implementation and scope decisions:
   opponent's next-lap/finish boundaries, and revalidate active ownership at the
   authenticated API. A bounded radio demand broker now resolves exact target
   identities, distinguishes queued commands from owner activation, fences
-  renewals and reports unverified cleanup. It is not yet wired into the radio
-  polling loop. A paired-capture coordinator now waits for processed owner
+  renewals and reports unverified cleanup. It is now wired into the radio
+  polling loop for explicit bounded named-driver numeric-window requests.
+  A paired-capture coordinator now waits for processed owner
   metadata, preserves each driver's independently requested next-lap boundary,
   retains both legs through separate crossings and releases orphan admissions.
   Captured results retain the actual scoped completion event facts for each
@@ -42,8 +43,11 @@ Remaining implementation and scope decisions:
   sampled minima/brake-onset brackets and discloses tyre/context limitations.
   The registry now owns fixed paired windows and sequential/version-bound
   consumption; the player's earlier finish cannot expire an unconsumed pair.
-  The spoken request/controller and polling-loop connection and full focus-corner
-  coaching remain to be implemented.
+  Spoken requests now fix both identities and independent upcoming lap windows;
+  the background worker collects both legs, and guarded reports consume each
+  completed pair once without expiring on the player's earlier finish. Missing
+  geometry clarifies rather than inventing a corner. Full focus-corner coaching,
+  broader natural-language forms and real-game acceptance remain outstanding.
 - Real-game validation of post-pit benchmarking and retained-lap eligibility.
   Stop-count/tyre-change confirmation, pre-pit ranking/tie-breaks, clean observed
   lap-set averages, age/condition disclosures and one-off reporting now exist.

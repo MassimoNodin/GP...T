@@ -14,6 +14,7 @@ from .controller import RadioController
 from .input_settings import DEFAULT_INPUT_SETTINGS
 from .listening import VoiceInput
 from .region_captures import RadioRegionCaptures
+from .opponent_captures import RadioOpponentCaptures
 from .scheduler import RadioScheduler
 from .wheel_input import WheelButtonMonitor
 from .windows_speech import WindowsSpeech
@@ -52,12 +53,14 @@ def _commands(inbox: queue.Queue, stream) -> None:
             inbox.put("ask " + text[4:] if text[:4].lower() == "ask " else text.lower())
 
 
-def _poll(client: RadioClient, inbox: queue.Queue, stop: threading.Event, interval: float, captures=None) -> None:
+def _poll(client: RadioClient, inbox: queue.Queue, stop: threading.Event, interval: float, captures=None, opponent_captures=None) -> None:
     try:
         while not stop.is_set():
             started = time.monotonic()
             snapshot = client.fetch()
             results = captures.poll() if captures is not None else []
+            if opponent_captures is not None:
+                results += opponent_captures.poll(snapshot)
             try:
                 inbox.get_nowait()
             except queue.Empty:
@@ -69,7 +72,11 @@ def _poll(client: RadioClient, inbox: queue.Queue, stop: threading.Event, interv
             if captures is not None:
                 captures.close()
         finally:
-            client.close()
+            try:
+                if opponent_captures is not None:
+                    opponent_captures.close()
+            finally:
+                client.close()
 
 
 def run_radio(args) -> int:
@@ -99,6 +106,7 @@ def run_radio(args) -> int:
     stop = threading.Event()
     worker = None
     captures = RadioRegionCaptures(client, notify=emit) if client is not None else None
+    opponent_captures = RadioOpponentCaptures(client, notify=emit) if client is not None else None
     try:
         playback = DryRunPlayback() if args.dry_run or args.once or args.capture_test else WindowsSpeech(
             voice=args.voice, rate=args.rate, volume=args.volume)
@@ -123,7 +131,7 @@ def run_radio(args) -> int:
         snapshots: queue.Queue = queue.Queue(maxsize=1)
         commands: queue.Queue = queue.Queue(maxsize=16)
         if client is not None:
-            worker = threading.Thread(target=_poll, args=(client, snapshots, stop, args.poll_interval, captures),
+            worker = threading.Thread(target=_poll, args=(client, snapshots, stop, args.poll_interval, captures, opponent_captures),
                                       name="radio-backend", daemon=True)
             worker.start()
         threading.Thread(target=_commands, args=(commands, sys.stdin), name="radio-commands", daemon=True).start()
@@ -195,6 +203,8 @@ def run_radio(args) -> int:
                     submit_ready_question(controller, voice, now=now, input_status=wheel.status())
                 if captures is not None:
                     captures.replace(controller.region_capture_requests())
+                if opponent_captures is not None:
+                    opponent_captures.replace(controller.opponent_capture_requests())
                 scheduler.suspended = voice.blocks_playback
                 scheduler.tick(now=now)
             stop.wait(0.05)

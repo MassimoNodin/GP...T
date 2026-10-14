@@ -1376,3 +1376,57 @@ the complete repository suite passes 3,000 tests with sixteen skips and two
 existing deprecation warnings in 304.81 seconds. This includes all final code
 changes described above. These automated results do not establish real-game
 acceptance or acoustic latency.
+
+### Named-opponent numeric regional tracking
+
+The standalone radio now accepts these explicit diagnostic requests:
+
+- "Compare my braking and minimum speed from 10 to 50 metres with Leclerc for next lap."
+- "Track Leclerc's braking points and minimum speed from 10 to 50 metres in comparison to me for the next 3 laps."
+- Prefix either with "update task 2" to replace a current task through the existing
+  captured-version authority checks. Use "cancel task 2" or "cancel all tracking"
+  to release collection. A paired task cannot yet be extended in place.
+
+Use an actual distance window appropriate to the current track; these numbers
+are syntax examples, not a recommended corner. Requests without geometry ask
+for an explicit distance window. Unknown names, ambiguous participants, missing
+lap numbers, self-comparisons and unavailable backend capture fail closed.
+
+Admission is pending, not a promise of data. Both verified driver identities,
+their independent next-lap starts and the one-to-twenty-lap horizon are fixed.
+One paired task uses two region leases, leaving at most one ordinary player
+region within the existing three-lease task budget. Activation must be processed
+and observed before either requested boundary is missed; late activation never
+slides the task to later laps. All capture/detail network calls and release work
+run on the backend worker, not the microphone/playback controller thread.
+
+Each sequential lap pair waits for both completions, in either crossing order.
+Reports explicitly label both lap numbers, sampled minima, supported braking
+onset brackets and measured region times. Matching compounds permit descriptive
+deltas; different compounds retain absolute facts without like-for-like deltas.
+Tyre age, fuel, conditions and traffic remain unverified. These are numeric
+diagnostics, not corner coaching or evidence that one driver should copy another.
+Incomplete finished evidence reports unavailable instead of blocking forever.
+
+Reports retain bounded conversation history. Quiet mode consumes completed pairs
+without replaying them on resume. Updates, cancellation, stale telemetry, scope
+loss, identity replacement and discontinuities fence capture/results/audio.
+Opponent discontinuity ends its fixed request rather than reviving it. Earlier
+retained completion provenance is historical evidence; live retrieval and speech
+dispatch still obey the three-second freshness safeguard. Final consumption
+releases the owner only through the worker, with unverified cleanup reported.
+
+Fifty-two additional synthetic controller/worker tests cover actual queued detail
+activation and backend capture, both finish orders, multi-lap consumption,
+cancel/update during reads, replacement after completion, malformed/stale views,
+history, quiet mode, dispatch freshness and exception-safe shutdown. Real-game,
+wheel/headset and browser-closed acceptance remains pending.
+
+The integrated radio/capture/live-facts/detail/pipeline selection passes 1,662
+tests with two existing deprecation warnings. The complete repository run reports
+3,335 passed, sixteen skipped and one failure in the unchanged recording-controller
+inbox test (HTTP 503 instead of 200), with the same warnings, in 287.71 seconds.
+That result is not a clean full-suite pass; the recording test is checked
+separately without changing unrelated recording code.
+All thirteen recording-controller tests pass on that separate rerun; the full-run
+failure did not reproduce. Compilation and whitespace checks also pass.

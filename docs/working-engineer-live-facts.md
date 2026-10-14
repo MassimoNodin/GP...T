@@ -234,6 +234,28 @@ bounded backend command queue and mocked HTTP transport. The integrated radio,
 capture, live-facts, detail and pipeline selection passes 1,476 tests with two
 existing deprecation warnings. Real-game acceptance remains pending.
 
+### Spoken paired regional tracking connection
+
+The standalone radio now connects the paired registry, demand broker, independent
+capture coordinator and guarded formatter. Explicit named-opponent requests with
+a numeric distance window install fixed player/opponent upcoming lap ranges;
+requests without geometry clarify rather than inventing corner boundaries.
+One paired task is admitted alongside at most one ordinary region task. Queued
+detail admission is not active ownership, and missed boundaries never move.
+
+The worker performs all capture/detail I/O and closes both managers before the
+client. The controller consumes completed pairs sequentially exactly once, waits
+for the second independent crossing, records computed diagnostics in bounded
+conversation history and ends interrupted/unavailable tasks without rebinding.
+Quiet mode consumes without backlog. Version changes, cancellation, scope loss,
+stale views, identity replacement and opponent discontinuity fence results and
+pending/active speech. Earlier owned completion evidence is historical; fresh
+retrieval/frame and dispatch deadlines retain the three-second safeguard.
+
+These are explicit numeric diagnostics, not full focus-corner coaching. Fifty-two
+new controller/worker cases pass, including real synthetic queued ownership and
+capture-store collection. Hardware/game and acoustic acceptance remain pending.
+
 The complete suite at the guarded-formatter increment passes 3,255 tests with
 sixteen platform skips and two existing deprecation warnings. This run predates
 the paired task-registry lifecycle increment below.

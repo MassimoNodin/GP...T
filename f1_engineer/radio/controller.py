@@ -19,6 +19,7 @@ from .conversation import ConversationMemory, QuestionContext, TaskContext
 from .pit_benchmark import PitBenchmarkTracker
 from .regions import RegionTracker, RegionWindow
 from .region_progress import RegionProgress
+from .opponent_regions import compare_opponent_region
 from ..analysis.resampling import TraceSample
 
 
@@ -76,6 +77,7 @@ class RadioController:
         self._backend_regions = backend_regions
         self._capture_namespace = uuid.uuid4()
         self._capture_results = []
+        self._pair_report_identity = None
 
     def _unavailable(self, reason: str) -> None:
         self.scheduler.set_scope(None)
@@ -160,6 +162,10 @@ class RadioController:
                 self._clear_tasks("lap_number_discontinuity")
         self._player = deepcopy(player)
         self._drivers = deepcopy(snapshot["drivers"])
+        if (self._pair_report_identity is not None
+                and self._resolve_target("self", self._pair_report_identity) is None):
+            self.scheduler.cancel_owner("opponent_regions")
+            self._pair_report_identity = None
         self._received_at = now
         self._age_s = age
         self._observation_frame = {**scope, "frame_identifier": snapshot.get("frame_identifier"),
@@ -175,6 +181,7 @@ class RadioController:
             self.regions.interrupt()
             self.region_progress.clear()
             self.scheduler.cancel_owner("lap_reports")
+            self.scheduler.cancel_owner("opponent_regions")
         self._track_length_m = length if type(length) in (int, float) and math.isfinite(length) and 0 < length <= 20_000 else None
         self.regions.observe(() if self._backend_regions else self.tasks.active(), self._player, self._region_sample(now=now),
                              track_length_m=self._track_length_m)
@@ -225,6 +232,18 @@ class RadioController:
                     and _integer(event.get("id"), 1) and self._cursor < event["id"] <= cursor
                     and event.get("scope") == scope for event in snapshot["events"]):
             self._reset_gaps()
+            for task in self.tasks.active():
+                if task.opponent_first_lap is None:
+                    continue
+                identity = json.loads(task.fixed_bindings[1])
+                if any(isinstance(event, dict) and event.get("kind") == "driver_discontinuity"
+                       and _integer(event.get("id"), 1) and self._cursor < event["id"] <= cursor
+                       and event.get("scope") == scope and event.get("driver") == identity
+                       for event in snapshot["events"]):
+                    if self.tasks.end_region_pair(task.task_id, task.version, "opponent_discontinuity"):
+                        self._queue_opponent_region(
+                            task, f"Task {task.task_id}: opponent regional tracking ended after a driver discontinuity; no comparison available.",
+                            None, number=task.reported_through_lap + 1, age=age, now=now)
         for event in snapshot["events"]:
             if (not isinstance(event, dict) or not _integer(event.get("id"), 1)
                     or not self._cursor < event["id"] <= cursor
@@ -294,6 +313,7 @@ class RadioController:
                 self.scheduler.cancel_owner("lap_reports")
             self.tasks.complete_lap(number - 1)
         self.regions.prune(self.tasks.active())
+        self._report_opponent_regions(now=now)
 
     def region_capture_requests(self):
         if not self._backend_regions or self._player is None or self.scheduler.scope is None:
@@ -301,7 +321,7 @@ class RadioController:
         generation, session_id, scope, player = json.loads(self.scheduler.scope)
         requests = []
         for task in self.tasks.active():
-            if task.region_window is None:
+            if task.region_window is None or task.opponent_first_lap is not None:
                 continue
             lease_id = uuid.uuid5(self._capture_namespace,
                                  f"{self.scheduler.scope}:{task.task_id}:{task.version}").hex
@@ -311,6 +331,79 @@ class RadioController:
                                       "laps": task.until_lap - task.first_lap + 1,
                                       "window_m": [task.region_window.start_m, task.region_window.end_m]}})
         return requests
+
+    def opponent_capture_requests(self):
+        if not self._backend_regions or self._player is None or self.scheduler.scope is None:
+            return []
+        generation, session_id, scope, player = json.loads(self.scheduler.scope)
+        return [{"task_id": task.task_id, "version": task.version,
+                 "body": {"generation": generation, "session_id": session_id, "scope": scope,
+                          "player": json.loads(task.fixed_bindings[0]), "first_lap": task.first_lap,
+                          "laps": task.until_lap - task.first_lap + 1,
+                          "window_m": [task.region_window.start_m, task.region_window.end_m]},
+                 "opponent": json.loads(task.fixed_bindings[1]),
+                 "opponent_first_lap": task.opponent_first_lap}
+                for task in self.tasks.active() if task.opponent_first_lap is not None]
+
+    def _report_opponent_regions(self, *, now):
+        for request in self.opponent_capture_requests():
+            task = next(task for task in self.tasks.active() if task.task_id == request["task_id"])
+            matches = [item for item in self._capture_results if isinstance(item, dict)
+                       and all(type(item.get(key)) is type(value) and item.get(key) == value
+                               for key, value in request.items())]
+            if len(matches) != 1:
+                continue
+            captured = matches[0]
+            if (not all(_number(captured.get(key)) for key in ("request_age_s", "frame_age_s"))
+                    or type(captured.get("received_at")) not in (int, float)
+                    or not math.isfinite(captured["received_at"]) or not 0 <= captured["received_at"] <= now
+                    or now - captured["received_at"] + max(captured["request_age_s"], captured["frame_age_s"]) >= 3):
+                continue
+            row = self._resolve_target(task.plan.targets[1], json.loads(task.fixed_bindings[1]))
+            terminal = captured.get("state") == "unavailable" or row is None
+            number = task.reported_through_lap + 1
+            if terminal:
+                text = f"Task {task.task_id}: paired regional observations unavailable; tracking ended without changing the requested drivers or laps."
+                evidence = None
+                if not self.tasks.end_region_pair(task.task_id, task.version, "paired_capture_unavailable"):
+                    continue
+                self.scheduler.cancel_owner("opponent_regions")
+            else:
+                if captured.get("state") not in ("collecting", "complete"):
+                    continue
+                legs = captured.get("legs")
+                if not isinstance(legs, list) or len(legs) != 2:
+                    continue
+                completed = []
+                for leg, lap in zip(legs, (number, task.opponent_first_lap + number - task.first_lap)):
+                    response = leg.get("response") if isinstance(leg, dict) else None
+                    data = response.get("data") if isinstance(response, dict) else None
+                    results = data.get("results") if isinstance(data, dict) else None
+                    completed.append(isinstance(results, list) and any(
+                        isinstance(result, dict) and type(result.get("lap_number")) is int
+                        and result["lap_number"] == lap for result in results))
+                if not all(completed):
+                    continue
+                label = self._participant_name(row) or task.plan.targets[1].removeprefix("name:")
+                text, evidence = compare_opponent_region(request, captured, lap_number=number, label=label, now=now)
+                if not self.tasks.consume_region_pair(task.task_id, task.version, number):
+                    continue
+            age = max(self._age_s, captured["request_age_s"] + now - captured["received_at"],
+                      captured["frame_age_s"] + now - captured["received_at"])
+            self._queue_opponent_region(task, text, evidence, number=number, age=age, now=now)
+
+    def _queue_opponent_region(self, task, text, evidence, *, number, age, now):
+        key = f"opponent-region:{task.task_id}:{task.version}:{number}"
+        self.notify({"event": "radio_opponent_region_report", "task_id": task.task_id,
+                     "version": task.version, "lap_number": number, "text": text,
+                     "evidence": evidence, "observation_age_s": age})
+        queued = self.scheduler.submit(RadioMessage(key, self.scheduler.scope, text, "proactive", now + 60,
+                                                   observation_age_s=age, dispatch_before=now + 3 - age,
+                                                   owner="opponent_regions"), now=now)
+        self._pair_report_identity = json.loads(task.fixed_bindings[1])
+        self.conversation.record("task_result", response=text,
+                                 tasks=[item for item in self.tasks.views() if item["task_id"] == task.task_id],
+                                 message_key=key, queued=queued)
 
     def _captured_region(self, task, event, *, now):
         unavailable = ("Regional observations unavailable: no fresh matching backend capture.", None)
@@ -471,6 +564,7 @@ class RadioController:
         return match
 
     def _clear_tasks(self, reason: str) -> None:
+        self.scheduler.cancel_owner("opponent_regions")
         if reason != "cancelled":
             self._history.clear()
             self.conversation.clear()
@@ -492,6 +586,7 @@ class RadioController:
         self.scheduler.cancel_owner("gap_changes")
         self.scheduler.cancel_owner("lap_reports")
         self.scheduler.cancel_owner("pace_sectors")
+        self.scheduler.cancel_owner("opponent_regions")
 
     def _aligned_observation(self, row: dict, *, now: float):
         observation = row.get("observation")
@@ -684,7 +779,11 @@ class RadioController:
                 self._clear_tasks("cancelled")
                 text = "All lap-report tracking cancelled."
             elif action.kind == "cancel":
+                paired = any(task["task_id"] == action.task_id and task["opponent_first_lap"] is not None
+                             for task in self.tasks.views())
                 if self.tasks.cancel(action.task_id):
+                    if paired:
+                        self.scheduler.cancel_owner("opponent_regions")
                     self.watches.remove(action.task_id)
                     self.regions.remove(action.task_id)
                     self.scheduler.cancel_owner("lap_reports")
@@ -725,12 +824,17 @@ class RadioController:
                     raise ValueError("Fresh player telemetry and a known lap number are required to create a report.")
                 aliases = tuple(alias for row in self._drivers if isinstance(row, dict)
                                 and (name := self._participant_name(row)) is not None for alias in driver_name_aliases(name))
-                plan = (QuestionPlan(("self",), ("regional_observations",)) if action.region_bounds_m is not None
+                plan = (QuestionPlan(("self", "name:" + action.region_opponent), ("opponent_regional_observations",))
+                        if action.region_opponent is not None
+                        else QuestionPlan(("self",), ("regional_observations",)) if action.region_bounds_m is not None
                         else plan_question(action.question, names=aliases))
                 if any(metric in UNAVAILABLE_FACTS for metric in plan.metrics):
                     raise ValueError("Recurring reports cannot track session-best laps, fastest sectors or fuel from this feed. Ask a timing question for partial available results.")
                 region_window = None
                 region_reference = None
+                opponent_first_lap = None
+                if action.region_opponent is not None and not self._backend_regions:
+                    raise ValueError("Opponent regional tracking requires backend detail-demand capture; sparse polling is not a substitute.")
                 if action.region_bounds_m is not None:
                     if self._track_length_m is None:
                         raise ValueError("Regional tracking requires a known current track length.")
@@ -745,17 +849,28 @@ class RadioController:
                     raise ValueError("Choose another driver to watch.")
                 bindings = []
                 for target in plan.targets:
-                    row = self._resolve_target(target) if watching or target.startswith("name:") else None
+                    row = self._resolve_target(target) if watching or target.startswith("name:") or action.region_opponent is not None else None
                     if (watching or target.startswith("name:")) and row is None:
                         raise ValueError("A named report target is unavailable or ambiguous. Use a full name or race position.")
                     if watching and row["identity"] == self._player["identity"]:
                         raise ValueError("Choose another driver to watch.")
+                    if action.region_opponent is not None and target.startswith("name:"):
+                        if row["identity"] == self._player["identity"]:
+                            raise ValueError("Choose another driver for paired regional tracking.")
+                        if not _integer(row["lap"].get("current_lap_number"), 1, 254):
+                            raise ValueError("A known opponent lap number is required; I will not guess its next lap.")
+                        opponent_first_lap = row["lap"]["current_lap_number"] + 1
                     bindings.append(json.dumps(row["identity"], sort_keys=True) if row is not None else None)
+                previous_pair = any(task.task_id == action.task_id and task.opponent_first_lap is not None
+                                    for task in self.tasks.active())
                 task = self.tasks.install(plan, tuple(bindings), cursor=self._cursor or 0,
                                           lap=self._player["lap"]["current_lap_number"] + (1 if region_window else 0),
                                           laps=action.laps, task_id=action.task_id,
                                           pace_reference=pace_reference, pace_tolerance_ms=action.tolerance_ms,
-                                          region_window=region_window, region_reference=region_reference)
+                                          region_window=region_window, region_reference=region_reference,
+                                          opponent_first_lap=opponent_first_lap)
+                if opponent_first_lap is not None or previous_pair:
+                    self.scheduler.cancel_owner("opponent_regions")
                 selected_tasks = (task,)
                 if action.kind == "update":
                     self.regions.remove(task.task_id)
@@ -768,7 +883,15 @@ class RadioController:
                     text += (" Rolling three consecutive fully observed valid laps on one compound since this request. "
                              "Sector 1 and 2 fastest-to-slowest spreads, not pace deficits. "
                              "Missing evidence restarts warm-up; short tasks may expire before three samples.")
-                if region_window is not None:
+                if opponent_first_lap is not None:
+                    text = (f"Task {task.task_id}: paired capture admission pending. Tracking your laps {task.first_lap} "
+                            f"to {task.until_lap} against {action.region_opponent}'s laps {opponent_first_lap} "
+                            f"to {opponent_first_lap + action.laps - 1}, from {region_window.start_m:g} "
+                            f"to {region_window.end_m:g} metres. Both identities and upcoming lap windows fixed. "
+                            "Reports wait for both drivers; missed admission or incomplete evidence is unavailable, "
+                            "not shifted to later laps. Sampled numeric diagnostics, not corner coaching. "
+                            "Tyre age, fuel, conditions and traffic are not verified.")
+                elif region_window is not None:
                     capture_policy = ("Backend capture admission pending; incomplete data may leave partial coverage. "
                                       if self._backend_regions else
                                       "Sparse polling may leave partial coverage or unavailable onset and region time. ")

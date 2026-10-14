@@ -37,6 +37,7 @@ class TaskAction:
     tolerance_ms: int | None = None
     region_bounds_m: tuple[float, float] | None = None
     region_compare: bool = False
+    region_opponent: str | None = None
 
 
 def parse_task_request(request: str) -> TaskAction | None:
@@ -70,6 +71,28 @@ def parse_task_request(request: str) -> TaskAction | None:
     task_id = None
     if update:
         task_id, text = int(update.group(1)), update.group(2)
+    paired = re.fullmatch(
+        r"compare my braking and minimum speed from ([0-9]{1,5}(?:\.[0-9]{1,2})?) to ([0-9]{1,5}(?:\.[0-9]{1,2})?) (?:metres|meters) with (.+) for (?:the )?next(?: ([1-9][0-9]?))? laps?", text
+    )
+    tracked = re.fullmatch(
+        r"(?:track|keep track of) (.+)'s braking (?:points? )?and minimum speed from ([0-9]{1,5}(?:\.[0-9]{1,2})?) to ([0-9]{1,5}(?:\.[0-9]{1,2})?) (?:metres|meters) (?:in comparison to|compared to) me for (?:the )?next(?: ([1-9][0-9]?))? laps?", text
+    )
+    if (paired and paired.group(3) != "my previous observed region") or tracked:
+        start, end, opponent, count = (paired.groups() if paired else
+                                      (tracked.group(2), tracked.group(3), tracked.group(1), tracked.group(4)))
+        laps = int(count or "1")
+        if laps > 20:
+            raise ValueError("Please choose one to twenty upcoming laps.")
+        if (not opponent or len(opponent.encode("utf-8")) > 80
+                or re.fullmatch(r"[^\W\d_]+(?:[ '\-][^\W\d_]+)*", opponent) is None
+                or opponent in {"me", "myself", "my car", "my previous observed region"}):
+            raise ValueError("Choose one named opponent for regional tracking.")
+        return TaskAction("update" if task_id is not None else "create", "paired regional observations",
+                          task_id, laps, region_bounds_m=(float(start), float(end)), region_opponent=opponent)
+    if (re.fullmatch(
+            r"(?:track|keep track of) (.+?)(?:'s)? braking points? and minimum speed (?:in comparison to|compared to) me for (?:the )?next(?: [1-9][0-9]?)? laps?", text)
+            or re.fullmatch(r"(?:track|keep track of) braking points? and minimum speed for (.+) (?:in comparison to|compared to) me for (?:the )?next(?: [1-9][0-9]?)? laps?", text)):
+        raise ValueError("Choose an explicit distance window in metres for braking and minimum-speed tracking; corner geometry is not yet verified.")
     comparison = re.fullmatch(
         r"compare my braking and minimum speed from ([0-9]{1,5}(?:\.[0-9]{1,2})?) to ([0-9]{1,5}(?:\.[0-9]{1,2})?) (?:metres|meters) with my previous observed region for (?:the )?next(?: ([1-9][0-9]?))? laps?", text
     )
