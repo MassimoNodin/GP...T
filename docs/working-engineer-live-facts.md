@@ -148,3 +148,46 @@ pipeline, detail policy/demand/API and radio suites pass in a 1,350-test selecti
 Two existing Starlette/httpx deprecation warnings remain. Compilation and
 whitespace checks pass. This selection is not a new full-suite run or real-game
 acceptance evidence.
+
+## Owned opponent region capture prerequisite — October 14, 2026
+
+The authenticated `/api/v2/engineer/region-captures/{lease_id}` endpoint now
+accepts an opponent variant of the existing player capture body. Add an exact
+verified `opponent` identity (car slot, tenure ordinal and participant fingerprint)
+and `detail_task_id` for an already-active demand in this same logical session.
+Both fields are required together; arbitrary extra fields remain rejected.
+The binding still includes the current player/session/generation/scope, so player
+replacement or session change fences the collection.
+
+The requested `first_lap` must be the opponent's own next lap, not the player's
+next lap. Each opponent lease owns an independent regional tracker. Completion
+uses that opponent's lap clock, finish-line event and reported last-lap time;
+the player's earlier/later crossing cannot complete it. Response views add the
+fixed opponent and detail owner, while results retain individually labelled lap
+numbers, source receipt times and diagnostic numeric evidence.
+
+The API requires `demand_v1` and an active runtime owner, then checks its current
+opaque binding against the requested car, packet format, lifecycle epoch,
+tenure ordinal and fingerprint. Detail-target metadata now includes the latter
+two identity fields so callers need not bind by car slot alone. Reads revalidate
+runtime ownership even when the last frame still contains old owner metadata;
+revoked owners lose their capture results. Observed owner loss, identity change,
+player/opponent discontinuity and event-history loss also fence the lease.
+
+All player/opponent leases share the existing three-active-capture budget,
+twenty-lap horizon, bounded sample storage and thirty-second renewal requirement.
+Renewal preserves samples. Release, expiry and invalidation clear owned samples;
+incomplete/interrupted windows remain unavailable rather than becoming measured
+comparisons. Existing player-only request/response behavior remains compatible.
+
+This is backend collection, not completed radio tracking: the radio still needs
+to activate/release detail demands, schedule both drivers independently, retain
+the pair until both crossings, validate comparability and speak the result.
+Real-game acceptance remains pending.
+
+Validation: 44 new opponent-capture cases pass, including both crossing orders,
+unusable/interrupted windows, lease cleanup, exact identity publication and
+authenticated owner revalidation. The integrated radio/live-facts, capture,
+detail policy/demand/API/review and pipeline selection passes 1,413 tests with
+two existing deprecation warnings. Compilation and whitespace checks pass.
+This is not a new complete-suite or real-game acceptance run.

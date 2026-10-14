@@ -690,6 +690,8 @@ class SessionCoordinator:
         targets = tuple({
             "binding_id": binding_id, "car_index": item.car_index,
             "epoch": item.lifecycle_epoch, "packet_format": item.packet_format,
+            "tenure_ordinal": item.tenure_ordinal,
+            "participant_identity_fingerprint": item.participant_identity_fingerprint,
             "is_player": item.car_index == player,
         } for binding_id, item in current_tenures.items())
         queue.publish_targets(session, targets)

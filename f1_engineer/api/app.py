@@ -1160,6 +1160,27 @@ def create_app(
             snapshot = live_runtime.engineer_snapshot()
         return {"data": snapshot}
 
+    def region_owner_available(binding, opponent, owner_id):
+        if (live_runtime is None or live_runtime.detail_profile != "demand_v1"
+                or not isinstance(binding, dict) or not isinstance(binding.get("scope"), dict)
+                or not isinstance(opponent, dict) or not isinstance(owner_id, str)
+                or not isinstance(binding.get("session_id"), str)):
+            return False
+        owner = live_runtime.detail_task(owner_id)
+        if (owner is None or owner.state != "active" or owner.task_id != owner_id
+                or owner.session_id != binding["session_id"]):
+            return False
+        targets = live_runtime.detail_targets(binding["session_id"])
+        matches = [target for target in (targets or ()) if target.get("binding_id") == owner.binding_id]
+        return (len(matches) == 1 and matches[0].get("is_player") is False
+                and type(matches[0].get("car_index")) is int
+                and matches[0]["car_index"] == opponent.get("car_index")
+                and type(matches[0].get("tenure_ordinal")) is int
+                and matches[0]["tenure_ordinal"] == opponent.get("tenure_ordinal")
+                and matches[0].get("participant_identity_fingerprint") == opponent.get("participant_identity_fingerprint")
+                and matches[0].get("epoch") == binding["scope"].get("epoch")
+                and matches[0].get("packet_format") == binding["scope"].get("packet_format"))
+
     @app.post("/api/v2/engineer/region-captures/{lease_id}")
     async def arm_region_capture(lease_id: str, request: Request):
         if not _authorized(request.headers.get("authorization"), control_token):
@@ -1171,6 +1192,9 @@ def create_app(
         except (_EngineerRequestBodyLimitExceeded, ValueError, UnicodeError, RecursionError):
             return _api_error(422, "region_capture_request_invalid")
         snapshot = await run_in_threadpool(live_runtime.engineer_snapshot)
+        if isinstance(body, dict) and "opponent" in body and not region_owner_available(
+                body, body["opponent"], body.get("detail_task_id")):
+            return _api_error(409, "region_opponent_owner_unavailable")
         code, result = await run_in_threadpool(live_runtime.region_captures.arm, lease_id, body, snapshot)
         if code != 202:
             return _api_error(code, result["reason"])
@@ -1185,6 +1209,9 @@ def create_app(
         result = live_runtime.region_captures.get(lease_id, live_runtime.engineer_snapshot())
         if result is None:
             return _api_error(404, "region_capture_not_found")
+        if "opponent" in result and not region_owner_available(
+                result["binding"], result["opponent"], result["detail_task_id"]):
+            result = live_runtime.region_captures.revoke(lease_id, "region_opponent_owner_unavailable")
         return JSONResponse(content={"data": result}, headers={"Cache-Control": "no-store"})
 
     @app.delete("/api/v2/engineer/region-captures/{lease_id}")

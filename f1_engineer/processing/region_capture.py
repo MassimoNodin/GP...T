@@ -26,6 +26,40 @@ def _hex(value, length):
     return isinstance(value, str) and re.fullmatch(f"[a-f0-9]{{{length}}}", value) is not None
 
 
+def _opponent(snapshot, identity, owner):
+    if (not isinstance(identity, dict)
+            or set(identity) != {"car_index", "tenure_ordinal", "participant_identity_fingerprint"}
+            or not _integer(identity.get("car_index"), 0, 23)
+            or not _integer(identity.get("tenure_ordinal"), 1)
+            or not _hex(identity.get("participant_identity_fingerprint"), 64)
+            or not isinstance(owner, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", owner) is None
+            or identity["car_index"] == snapshot.get("player_car_index")):
+        return None
+    rows = snapshot.get("drivers")
+    if not isinstance(rows, list) or len(rows) > 24:
+        return None
+    matches = [row for row in rows if isinstance(row, dict) and row.get("car_index") == identity["car_index"]]
+    if len(matches) != 1:
+        return None
+    row = matches[0]
+    observation = row.get("observation")
+    if (type(row.get("car_index")) is not int or row.get("identity") != identity
+            or not isinstance(row.get("identity"), dict)
+            or any(type(row["identity"].get(key)) is not int for key in ("car_index", "tenure_ordinal"))
+            or not isinstance(row.get("lap"), dict)
+            or not isinstance(observation, dict) or observation.get("identity") != identity
+            or not isinstance(observation.get("identity"), dict)
+            or any(type(observation["identity"].get(key)) is not int for key in ("car_index", "tenure_ordinal"))
+            or observation.get("status") not in ("available", "unavailable")):
+        return None
+    owners = observation.get("detail_task_ids")
+    if (not isinstance(owners, list) or not 1 <= len(owners) <= 4
+            or any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", item) is None for item in owners)
+            or len(set(owners)) != len(owners) or owner not in owners):
+        return None
+    return row
+
+
 def _binding(snapshot):
     scope = snapshot.get("scope")
     if (not _hex(snapshot.get("generation"), 32) or not _hex(snapshot.get("session_id"), 32)
@@ -90,14 +124,20 @@ class RegionCaptureStore:
             self._tracker.clear()
             for lease in self._leases.values():
                 if lease["state"] in ("active", "complete"):
-                    lease.update(state="unavailable", reason=reason, results=[])
+                    self._end(lease, "unavailable", reason)
+
+    def _tracker_for(self, lease):
+        return lease.get("tracker", self._tracker)
+
+    def _end(self, lease, state, reason):
+        lease.update(state=state, reason=reason, results=[])
+        self._tracker_for(lease).remove(lease["task"].task_id)
 
     def _expire(self):
         now = self._clock()
         for lease in self._leases.values():
             if lease["state"] in ("active", "complete") and now >= lease["expires_at"]:
-                lease.update(state="expired", reason="region_capture_expired", results=[])
-                self._tracker.remove(lease["task"].task_id)
+                self._end(lease, "expired", "region_capture_expired")
 
     def _view(self, lease):
         task = lease["task"]
@@ -106,6 +146,9 @@ class RegionCaptureStore:
                   "until_lap": task.until_lap, "window": task.region_window.view(),
                   "expires_in_s": max(0, lease["expires_at"] - self._clock()),
                   "results": copy.deepcopy(lease["results"])}
+        if "opponent" in lease["request"]:
+            result.update(opponent=copy.deepcopy(lease["request"]["opponent"]),
+                          detail_task_id=lease["request"]["detail_task_id"])
         for item in result["results"]:
             received = item["received_monotonic_ns"]
             age = (self._clock_ns() - received) / 1e9 if _integer(received) else None
@@ -113,8 +156,9 @@ class RegionCaptureStore:
         return result
 
     def arm(self, lease_id, body, snapshot):
+        required = {"generation", "session_id", "scope", "player", "first_lap", "laps", "window_m"}
         if (not _hex(lease_id, 32) or not isinstance(body, dict)
-                or set(body) != {"generation", "session_id", "scope", "player", "first_lap", "laps", "window_m"}
+                or set(body) not in (required, required | {"opponent", "detail_task_id"})
                 or not _integer(body.get("first_lap"), 1, 255) or not _integer(body.get("laps"), 1, 20)
                 or body["first_lap"] + body["laps"] - 1 > 255
                 or type(body.get("window_m")) is not list or len(body["window_m"]) != 2):
@@ -134,6 +178,14 @@ class RegionCaptureStore:
             binding = {key: body[key] for key in ("generation", "session_id", "scope", "player")}
             if binding != parsed[0]:
                 return 409, {"reason": "region_capture_binding_mismatch"}
+            target = parsed[1]
+            if "opponent" in body:
+                target = _opponent(snapshot, body["opponent"], body["detail_task_id"])
+                if (target is None or snapshot.get("frame_ordinal") != self._latest["ordinal"]
+                        or snapshot.get("event_cursor") != self._latest["cursor"]):
+                    return 409, {"reason": "region_opponent_owner_unavailable"}
+                if not _integer(target["lap"].get("current_lap_number"), 1, 255):
+                    return 409, {"reason": "region_opponent_lap_unavailable"}
             try:
                 window = RegionWindow(*body["window_m"], self._latest["track_length_m"])
             except ValueError:
@@ -146,7 +198,8 @@ class RegionCaptureStore:
                     return 409, {"reason": "region_capture_not_active"}
                 known["expires_at"] = self._clock() + REGION_CAPTURE_TTL_S
                 return 202, self._view(known)
-            if body["first_lap"] != self._latest["lap_number"] + 1:
+            current_lap = target["lap"]["current_lap_number"] if "opponent" in body else self._latest["lap_number"]
+            if body["first_lap"] != current_lap + 1:
                 return 409, {"reason": "region_capture_requires_next_lap"}
             if sum(lease["state"] == "active" for lease in self._leases.values()) >= MAX_REGION_CAPTURES:
                 return 409, {"reason": "region_capture_budget_busy"}
@@ -161,6 +214,8 @@ class RegionCaptureStore:
                      "state": "active", "reason": None, "results": [],
                      "cursor": self._latest["cursor"], "ordinal": self._latest["ordinal"],
                      "expires_at": self._clock() + REGION_CAPTURE_TTL_S}
+            if "opponent" in body:
+                lease["tracker"] = RegionTracker()
             self._leases[lease_id] = lease
             return 202, self._view(lease)
 
@@ -175,6 +230,9 @@ class RegionCaptureStore:
             elif self._latest is not None and parsed[0] != self._latest["binding"]:
                 self.invalidate("region_capture_scope_changed")
             lease = self._leases.get(lease_id)
+            if (lease is not None and lease["state"] in ("active", "complete") and "opponent" in lease["request"]
+                    and _opponent(snapshot, lease["request"]["opponent"], lease["request"]["detail_task_id"]) is None):
+                self._end(lease, "unavailable", "region_opponent_owner_unavailable")
             return None if lease is None else self._view(lease)
 
     def release(self, lease_id):
@@ -182,8 +240,16 @@ class RegionCaptureStore:
             lease = self._leases.get(lease_id)
             if lease is None:
                 return None
-            lease.update(state="released", reason="region_capture_released", results=[])
-            self._tracker.remove(lease_id)
+            self._end(lease, "released", "region_capture_released")
+            return self._view(lease)
+
+    def revoke(self, lease_id, reason):
+        with self._lock:
+            lease = self._leases.get(lease_id)
+            if lease is None:
+                return None
+            if lease["state"] in ("active", "complete"):
+                self._end(lease, "unavailable", reason)
             return self._view(lease)
 
     def observe(self, snapshot):
@@ -217,31 +283,44 @@ class RegionCaptureStore:
             active = [lease for lease in self._leases.values() if lease["state"] == "active"]
             if not active:
                 return
-            tasks = [lease["task"] for lease in active]
+            tasks = [lease["task"] for lease in active if "opponent" not in lease["request"]]
             sample = _sample(snapshot, player, self._clock_ns())
             self._tracker.observe(tasks, player, sample, track_length_m=length)
             for lease in active:
+                target = player
+                tracker = self._tracker_for(lease)
+                if "opponent" in lease["request"]:
+                    target = _opponent(snapshot, lease["request"]["opponent"], lease["request"]["detail_task_id"])
+                    if target is None or not _integer(target["lap"].get("current_lap_number"), 1, 255):
+                        self._end(lease, "unavailable", "region_opponent_owner_unavailable")
+                        continue
+                    tracker.observe([lease["task"]], target, _sample(snapshot, target, self._clock_ns()),
+                                    track_length_m=length)
+                target_number = target["lap"]["current_lap_number"]
                 if binding != lease["binding"] or ordinal < lease["ordinal"] or cursor < lease["cursor"]:
-                    lease.update(state="unavailable", reason="region_capture_scope_changed", results=[])
+                    self._end(lease, "unavailable", "region_capture_scope_changed")
                     continue
                 if snapshot.get("event_floor", cursor) > lease["cursor"]:
-                    lease.update(state="unavailable", reason="region_event_history_gap", results=[])
+                    self._end(lease, "unavailable", "region_event_history_gap")
                     continue
                 for event in snapshot.get("events", ()):
-                    if (event.get("driver") != binding["player"] or event.get("scope") != binding["scope"]
+                    if (event.get("scope") != binding["scope"]
                             or not lease["cursor"] < event.get("id", 0) <= cursor):
                         continue
-                    if event.get("kind") == "driver_discontinuity":
-                        lease.update(state="unavailable", reason="region_driver_discontinuity", results=[])
+                    if (event.get("kind") == "driver_discontinuity"
+                            and event.get("driver") in (binding["player"], target["identity"])):
+                        self._end(lease, "unavailable", "region_driver_discontinuity")
                         break
+                    if event.get("driver") != target["identity"]:
+                        continue
                     task = lease["task"]
                     if (event.get("kind") != "lap_completed"
                             or event.get("qualification") != "observed_lap_transition"
-                            or event.get("lap_number") != number - 1
+                            or event.get("lap_number") != target_number - 1
                             or not task.first_lap <= event["lap_number"] <= task.until_lap):
                         continue
-                    text, evidence = self._tracker.complete(task, event)
-                    if (event.get("lap_time_ms") != player["lap"].get("last_lap_time_ms")
+                    text, evidence = tracker.complete(task, event)
+                    if (event.get("lap_time_ms") != target["lap"].get("last_lap_time_ms")
                             or not _integer(event.get("received_monotonic_ns"))
                             or not 0 <= self._clock_ns() - event["received_monotonic_ns"] < 3_000_000_000):
                         text, evidence = "Regional observations unavailable: completion mismatch or stale event.", None
@@ -249,9 +328,12 @@ class RegionCaptureStore:
                         "received_monotonic_ns": event.get("received_monotonic_ns", received),
                         "text": text, "evidence": evidence})
                 lease["cursor"], lease["ordinal"] = cursor, ordinal
-                if lease["state"] == "active" and number > lease["task"].until_lap:
+                if lease["state"] == "active" and target_number > lease["task"].until_lap:
                     lease["state"] = "complete"
-            self._tracker.prune([lease["task"] for lease in self._leases.values() if lease["state"] == "active"])
+                if "opponent" in lease["request"]:
+                    tracker.prune([lease["task"]] if lease["state"] == "active" else [])
+            self._tracker.prune([lease["task"] for lease in self._leases.values()
+                                 if lease["state"] == "active" and "opponent" not in lease["request"]])
 
 
 def _sample(snapshot, player, now_ns):

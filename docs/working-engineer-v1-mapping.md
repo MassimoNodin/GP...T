@@ -28,7 +28,10 @@ Remaining implementation and scope decisions:
   permissions, aligned player/opponent lap windows and guarded spoken comparisons.
   A backend prerequisite now exposes same-frame opponent observations only for
   current explicit detail-demand owners, with owner IDs and identity/provenance
-  guards. This is not yet radio-owned paired capture or a spoken tracking task.
+  guards. Backend opponent region leases now use independent trackers and the
+  opponent's next-lap/finish boundaries, and revalidate active ownership at the
+  authenticated API. Radio-owned demand activation, paired capture coordination
+  and spoken tracking comparisons remain to be connected.
 - Real-game validation of post-pit benchmarking and retained-lap eligibility.
   Stop-count/tyre-change confirmation, pre-pit ranking/tie-breaks, clean observed
   lap-set averages, age/condition disclosures and one-off reporting now exist.
