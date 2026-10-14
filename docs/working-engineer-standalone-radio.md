@@ -1455,3 +1455,32 @@ interim extension refusal, not the remaining full-coaching or hardware acceptanc
 The integrated radio/capture/live-facts/detail/pipeline selection passes 1,687
 tests with two existing warnings; compilation and whitespace checks pass. The
 prior complete-suite run predates this extension increment.
+
+### Paired-report latency measurements
+
+The JSON `radio_opponent_region_report` event now includes `message_key` and a
+`latency` object for a measured pair. It reports separate player/opponent
+completion-to-queue intervals and a paired-ready-to-queue interval: readiness
+uses the later of the two independent completions, not the earlier driver's
+necessary wait for the other driver. The request-duration interval accounts for
+the backend sampling completion age somewhere within each read rather than
+claiming an exact response-sampling instant. `pair_poll_s` is the measured local
+coordinator-poll duration, not pure network or model inference time.
+
+Match `message_key` to `radio_started.key` and add that event's `queue_wait_s` to
+both interval endpoints to estimate completion/readiness-to-playback-dispatch.
+Dispatch is the call to the playback adapter, not proof of acoustic output or
+that the user heard it. Missing/ended evidence has `latency: null`, not invented
+completion timing. Historical completion delays remain separate from live
+frame/retrieval age; the three-second freshness safeguard is unchanged.
+
+Four additional synthetic cases verify timing uncertainty, both independent
+completion orders, scheduler-key correlation and unavailable timing. These
+measurements support later real-game latency review; there is no numerical
+latency acceptance gate and no automatic model substitution.
+
+Final complete-repository validation for paired spoken tracking, extensions and
+latency logs: 3,365 passed, sixteen skipped and two existing deprecation warnings
+in 287.61 seconds. The earlier unchanged recording-controller failure does not
+reproduce in this full rerun. Compilation and whitespace checks pass. These are
+automated prerequisites, not real-game or acoustic acceptance evidence.

@@ -346,6 +346,55 @@ def test_dispatch_deadline_includes_elapsed_delivery_time_but_not_old_completion
     assert message.dispatch_before == pytest.approx(now + 3)
 
 
+def test_pair_latency_reports_interval_uncertainty_and_links_scheduler_queue_wait():
+    manager, client, request, controller, radio, value, owner_id = armed()
+    collect(client, controller, value, owner_id)
+    drive(client, controller, value, owner_id, player_number=5, number=4)
+    now = 10 + value["frame_ordinal"] * 0.05
+    client.clock[0] = now
+    results = manager.poll(value)
+    results[0]["request_age_s"] = 0.7
+    for leg, completion_age, elapsed, request_age in zip(results[0]["legs"], (40, 1), (0.3, 0.1), (0.4, 0.2)):
+        leg["received_at"] = now - elapsed
+        leg["request_age_s"] = request_age
+        leg["response"]["data"]["results"][0]["completion_age_s"] = completion_age
+    controller.feed(value, now=now + 0.5, region_captures=results)
+    report, = reports(controller)
+    assert report["latency"]["player_completion_to_queue_interval_s"] == pytest.approx([40.8, 41.2])
+    assert report["latency"]["opponent_completion_to_queue_interval_s"] == pytest.approx([1.6, 1.8])
+    assert report["latency"]["paired_ready_to_queue_interval_s"] == pytest.approx([1.6, 1.8])
+    assert report["latency"]["pair_poll_s"] == pytest.approx(0.7)
+    assert report["observation_age_s"] == pytest.approx(1.2)
+    radio.pending = [message for message in radio.pending if message.owner == "opponent_regions"]
+    radio.tick(now=now + 0.7)
+    started = next(event for event in reversed(controller.notify.__self__) if event["event"] == "radio_started")
+    assert started["key"] == report["message_key"] and started["queue_wait_s"] == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize("ages", [(0, 12), (12, 0)])
+def test_pair_ready_latency_uses_the_later_independent_completion(ages):
+    manager, client, request, controller, radio, value, owner_id = armed()
+    collect(client, controller, value, owner_id)
+    drive(client, controller, value, owner_id, player_number=5, number=4)
+    now = 10 + value["frame_ordinal"] * 0.05
+    client.clock[0] = now
+    results = manager.poll(value)
+    for leg, age in zip(results[0]["legs"], ages):
+        leg["response"]["data"]["results"][0]["completion_age_s"] = age
+    controller.feed(value, now=now + 0.2, region_captures=results)
+    report, = reports(controller)
+    assert report["latency"]["paired_ready_to_queue_interval_s"] == pytest.approx([0.2, 0.2])
+    assert report["evidence"] is not None
+
+
+def test_unavailable_report_has_no_fabricated_completion_latency():
+    manager, client, request, controller, radio, value = connected()
+    drive(client, controller, value, "not-active", player_number=4)
+    publish(manager, client, controller, value)
+    report, = reports(controller)
+    assert report["latency"] is None and report["message_key"]
+
+
 @pytest.mark.parametrize("question", ["track that for another two laps", "extend task {task_id} by 2 laps"])
 def test_pair_extension_uses_captured_reference_and_confirms_discarded_partial_data(question):
     manager, client, request, controller, radio, value = connected(laps=2)

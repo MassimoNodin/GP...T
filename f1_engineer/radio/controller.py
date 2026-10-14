@@ -388,15 +388,27 @@ class RadioController:
                 text, evidence = compare_opponent_region(request, captured, lap_number=number, label=label, now=now)
                 if not self.tasks.consume_region_pair(task.task_id, task.version, number):
                     continue
-            age = max(self._age_s, captured["request_age_s"] + now - captured["received_at"],
-                      captured["frame_age_s"] + now - captured["received_at"])
-            self._queue_opponent_region(task, text, evidence, number=number, age=age, now=now)
+            age = max(self._age_s, captured["request_age_s"] + (now - captured["received_at"]),
+                      captured["frame_age_s"] + (now - captured["received_at"]))
+            latency = None
+            if evidence is not None:
+                intervals = []
+                for leg, completion_age in zip(captured["legs"], evidence["completion_ages_s"]):
+                    lower = completion_age + (now - leg["received_at"])
+                    intervals.append([lower, lower + leg["request_age_s"]])
+                latency = {"player_completion_to_queue_interval_s": intervals[0],
+                           "opponent_completion_to_queue_interval_s": intervals[1],
+                           "paired_ready_to_queue_interval_s": [min(interval[0] for interval in intervals),
+                                                                min(interval[1] for interval in intervals)],
+                           "pair_poll_s": captured["request_age_s"]}
+            self._queue_opponent_region(task, text, evidence, number=number, age=age, now=now, latency=latency)
 
-    def _queue_opponent_region(self, task, text, evidence, *, number, age, now):
+    def _queue_opponent_region(self, task, text, evidence, *, number, age, now, latency=None):
         key = f"opponent-region:{task.task_id}:{task.version}:{number}"
         self.notify({"event": "radio_opponent_region_report", "task_id": task.task_id,
                      "version": task.version, "lap_number": number, "text": text,
-                     "evidence": evidence, "observation_age_s": age})
+                     "evidence": evidence, "observation_age_s": age, "message_key": key,
+                     "latency": latency})
         queued = self.scheduler.submit(RadioMessage(key, self.scheduler.scope, text, "proactive", now + 60,
                                                    observation_age_s=age, dispatch_before=now + 3 - age,
                                                    owner="opponent_regions"), now=now)
