@@ -243,7 +243,7 @@ class LapReportTask:
                                      else "previous observed region fixed; same-compound diagnostic differences only" if self.region_reference is not None
                                      else "numeric player-window fixed; diagnostic observations only" if self.region_window is not None
                                      else "rolling three consecutive valid observed player laps on one compound" if "consistency" in self.plan.metrics
-                                     else "watch driver identity fixed; pauses outside adjacency" if "race_watch" in self.plan.metrics
+                                     else "watch driver identity fixed; pauses without qualified same-lap gap evidence" if "race_watch" in self.plan.metrics
                                      else "named drivers fixed; race-position roles refreshed each lap")}
 
 

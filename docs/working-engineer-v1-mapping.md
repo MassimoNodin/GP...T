@@ -102,9 +102,14 @@ Remaining implementation and scope decisions:
   spoken quiet/cancel-speech/repeat controls, preserving capture/playback echo
   safeguards. These controls now exist, with ambiguous commands clarified rather
   than guessed, but still require the wheel/headset acceptance evidence below.
-- Resolve or explicitly agree existing limits: named-driver watches currently
-  pause outside meaningful adjacency; target pace uses eligible laps observed by
-  the radio connection, not complete historical session-best evidence.
+- Real-game acceptance of expanded named-driver watches. Non-adjacent named targets
+  now use explicitly labelled same-frame shared-leader gap differences, requiring
+  unique race positions, racing/on-track status, known circuit length and physical
+  lap-distance/race-order agreement. Lapped cars and missing/conflicting sources
+  pause the watch; changing leader identity or gap basis restarts warm-up. Role-based
+  requests still retain the originally selected driver and pause outside adjacency.
+  Target pace uses identified eligible laps observed by the radio connection,
+  not an unqualified complete historical session-best reference.
 
 Remaining acceptance evidence:
 

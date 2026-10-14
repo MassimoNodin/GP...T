@@ -240,7 +240,8 @@ class RadioController:
             self.scheduler.cancel_owner("pace_sectors")
             if any("consistency" in task.plan.metrics for task in self.tasks.active()):
                 self.scheduler.cancel_owner("lap_reports")
-        if self.watches.observe(self.tasks.active(), self._player, self._resolve_target, now=now):
+        if self.watches.observe(self.tasks.active(), self._player, self._resolve_target, now=now,
+                                track_length_m=self._track_length_m):
             self.scheduler.cancel_owner("lap_reports")
         prior_gap_results = dict(self.gaps.results)
         self.gaps.observe(self._player, self._resolve_target, now=now)
@@ -1000,7 +1001,8 @@ class RadioController:
                     self.regions.remove(task.task_id)
                 self.scheduler.cancel_owner("lap_reports")
                 self.scheduler.cancel_owner("pace_sectors")
-                self.watches.observe(self.tasks.active(), self._player, self._resolve_target, now=now)
+                self.watches.observe(self.tasks.active(), self._player, self._resolve_target, now=now,
+                                     track_length_m=self._track_length_m)
                 expiry = f"through lap {task.until_lap}" if task.until_lap is not None else "until cancelled or the session changes"
                 text = f"Task {task.task_id} active: end-of-lap report from lap {task.first_lap}, {expiry}."
                 if "consistency" in plan.metrics:
@@ -1042,7 +1044,8 @@ class RadioController:
                                  "Reference stays fixed; matching compound does not establish matching tyre age, fuel, conditions or traffic.")
                 if watching:
                     name = self._participant_name(row) or plan.targets[0].removeprefix("name:").replace("position:", "P")
-                    text += f" Watching {name}; driver identity fixed. Three comparable adjacent-driver boundaries required. Alerts report trend changes."
+                    text += (f" Watching {name}; driver identity fixed. Three comparable lap boundaries required. "
+                             "Named non-adjacent drivers use qualified shared-leader gap differences. Alerts report trend changes.")
                 if pace_reference is not None:
                     text += (f" Fixed reference: best fully observed valid radio lap {pace_reference.lap_number}, "
                              f"{pace_reference.elapsed_ms / 1000:.3f} seconds on compound {pace_reference.compound}. "

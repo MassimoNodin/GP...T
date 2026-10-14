@@ -1700,3 +1700,37 @@ targeted focus/clarification/reference/task/conversation/reviewed-geometry selec
 passed 252 tests before the final two policy cases; both are included in the
 1,601-pass integrated run. Changed modules compile and whitespace checks pass.
 The 3,502-pass complete-repository run above predates this focus increment.
+
+### Named non-adjacent catch/defend watches
+
+Named requests such as "tell me if Norris starts closing" no longer require the
+target to remain immediately adjacent. For non-adjacent targets the radio can
+derive the pair's timing separation by subtracting their published same-frame
+gaps to a shared verified race leader. It labels this as a derived leader-gap
+difference, not a direct adjacent-car gap or a lap-time difference.
+
+Both participants need unique reliable race positions, known racing/on-track
+status, compatible lap numbers and physical total-distance separation less than
+the reported circuit length, with distance/race/gap ordering in agreement. The
+shared leader must be available and eligible; unavailable/zero/invalid follower
+gaps, ambiguous leaders, pits, missing geometry/distance or lapping pause the
+watch rather than creating a closing claim. The normal behind-driver finish-line
+phase is allowed when physical distance establishes within-lap alignment.
+
+Three comparable player lap boundaries and the existing consistent two-interval
+trend thresholds remain mandatory. Leader identity, race-position role or gap
+source changes restart warm-up, so direct and derived samples cannot be mixed.
+The watched identity stays fixed; it is never rebound to another nearby driver.
+Role-based "watch car behind/ahead" instructions retain their original adjacent
+scope. Known physical lapping also suppresses otherwise ambiguous adjacent-car
+samples. Status exposes the current qualified gap basis, or no basis while paused.
+
+The focused watch/gap/task/conversation/focus selection passes 276 tests. Actual
+non-adjacent race timing and spoken acceptance still require the real-game run;
+synthetic published gaps do not establish that hardware evidence.
+
+The complete radio/standalone/wheel/conversation/live-name suite passes 1,503 tests
+with one existing Starlette/httpx warning after this watch increment. Changed
+modules compile and whitespace checks pass. Full-repository validation will be
+rerun after the remaining implementation increments; the earlier 3,502-pass run
+does not cover focus practice or non-adjacent watches.
