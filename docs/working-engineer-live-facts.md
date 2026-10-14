@@ -416,3 +416,43 @@ request parsing, registry lifecycle and background-worker integration remain.
 Forty-nine new report cases pass using real paired captures. The integrated radio,
 capture, live-facts, detail and pipeline selection passes 1,581 tests with two
 existing deprecation warnings. Real-game acceptance remains pending.
+
+## Game-reported timing history - October 14, 2026
+
+Each current verified driver can now expose a bounded reported_history object
+through the existing authenticated live-facts endpoint. This is a separate
+all-car packet-11 timing readout; the player-only persisted session-history
+enrichment contract and explicit opponent detail permissions are unchanged.
+At most 24 current drivers and 100 published timing rows per driver are retained.
+History is added during snapshot export, not to high-frequency regional capture
+callbacks or their detailed sample ownership.
+
+The source includes scope, exact current tenure identity, packet/frame provenance,
+session clock and receipt/capture times. Exported completed rows must fall within
+the observed driver's attributable tenure and match the lap timing seen at a
+backend-observed completion. Starting midlap excludes that partial lap; missing
+drivers, identity/player/scope changes, lap skips/rewinds, backwards clocks and
+unqualified/conflicting frames discard continuity. Malformed/conflicting history
+cannot silently replace qualified data. History ahead of the latest live lap
+frame is withheld until the live facts catch up. Publication never returns an
+incomplete current lap as completed history.
+
+Numbered historical timing can remain available from an older published table
+while the current live identity/feed is fresh. The game's session-best selector
+has stricter requirements: completed attributable timing, known lap validity,
+agreement with published valid timings, coverage of all currently completed laps
+and a source less than three seconds old. There is no next-best substitution for
+an invalid, inconsistent, incomplete or pre-tenure selector. The radio repeats
+scope/identity/completion/shape checks, includes history age in speech dispatch
+freshness and distinguishes valid, invalid and unknown-validity numbered laps.
+
+These are game-reported scalar timings, not fully observed coaching references.
+They do not automatically seed pace targets, consistency, pit benchmarks or
+regional coaching. Fastest-sector selectors remain unavailable. Pre-backend
+session laps and timings beyond the game's 100-row coverage are not recovered.
+
+A synthetic 24-driver/100-row snapshot serialized to 357,677 bytes, below the
+radio's 1 MiB response limit. Twenty local snapshot-plus-JSON measurements while
+the regression suite ran concurrently had a 19.823 ms median and 50.699 ms maximum.
+This is a CPU/publication measurement, not live voice or end-to-end latency, and
+does not establish hardware acceptance or a new responsiveness gate.

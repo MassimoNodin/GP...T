@@ -1619,3 +1619,35 @@ code coverage. No F1 process or actual game capture was available in this run;
 no reviewed real-circuit bundle was manufactured from synthetic fixtures.
 Actual coaching admission, remaining history/wording work and real-game wheel/
 microphone/browser-free/latency acceptance remain open.
+
+### Game-reported historical questions
+
+The standalone radio can now answer numbered laps retained by the backend before
+the radio connected, independently of its 64-lap fully observed reference history.
+For example, "my and leader lap 1" can return separate game-reported timings when
+each driver's backend-observed completion matches the published table. It labels
+valid versus invalid timing and explicitly refuses unknown validity. Pre-backend
+or pre-tenure laps and incomplete current laps are not invented.
+
+"My and leader best lap" uses each driver's actual game-reported session-best
+selector only when its completed timing, identity, validity, table coverage and
+freshness are verified. It does not silently answer with a radio-observed best.
+The historical source's age, transport age and local wait count toward the existing
+three-second best-answer dispatch safeguard. Older numbered timings remain
+historical facts while the current live feed is fresh. These scalar timings do
+not change target-pace, pit-benchmark or coaching-reference eligibility, and do
+not implicitly enable recurring session-best instructions or fastest-sector
+answers. Existing observed-best requests retain their original meaning.
+
+Targeted history/UDP/controller/partial-question/reference retrieval validation:
+190 passed with one existing Starlette/httpx warning before the final malformed
+packet case and documentation updates. All 55 new history tests pass; changed
+modules compile and staged whitespace checks pass.
+
+Complete regression retry: 3,502 passed, sixteen skipped and two existing warnings
+in 336.93 seconds. The initial full run had 3,501 passes and one recording-controller
+failure: the completed recording's inbox request returned HTTP 503 instead of 200.
+That unrelated module's thirteen tests passed immediately in isolation, and the
+complete rerun passed without changing recording code. The intermittent failure
+is retained here rather than represented as a clean first run. No real-game,
+wheel/microphone, browser-free or end-to-end voice-latency acceptance is claimed.

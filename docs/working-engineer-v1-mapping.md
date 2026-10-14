@@ -5,9 +5,10 @@ The [acceptance contract](working-engineer-v1-acceptance.md) is authoritative.
 This map is an implementation plan, not acceptance evidence for new features.
 Partial means reusable components exist, not that the in-game experience passes.
 No complete acceptance criterion has been demonstrated on real-game hardware.
-Latest complete regression validation (October 14, 2026): 3,447 passed,
+Latest complete regression validation (October 14, 2026): 3,502 passed,
 sixteen skipped and two existing warnings, including reviewed named-region
-tracking, reported regional context retention and expanded spoken forms.
+tracking, reported regional context retention, expanded spoken forms and
+qualified game-reported historical/session-best timing retrieval.
 
 ## Remaining acceptance work as of October 14, 2026
 
@@ -72,14 +73,22 @@ Remaining implementation and scope decisions:
   lap-set averages, age/condition disclosures and one-off reporting now exist.
   Pre-connection/evicted laps and missing confirmation/ranking data cannot be
   filled in; pit transition alone is not claimed as a serviced stop.
-- Complete session-best/older-lap retrieval beyond the bounded observed history,
-  and broader wording support for safely separable unsupported facts. Mixed
-  requests now return available timing/tyre data alongside explicit unavailable
-  session-best/fastest-sector/fuel results; unknown qualifiers are not discarded.
+- Real-game validation of game-reported session-best/older-lap retrieval,
+  and broader wording support for safely separable unsupported facts. The backend
+  now retains up to 100 published timing rows per current verified driver,
+  independently of radio connection history. Numbered answers require an observed
+  tenure-bound completion matching the published timing, exclude pre-observation
+  and incomplete current laps, and disclose validity and scalar-only provenance.
+  Session-best answers require the game's own valid completed selector, a current
+  table, consistent timing and a source less than three seconds old at dispatch;
+  no observed-best substitution occurs. This does not recover pre-backend laps or
+  admit published timings as target-pace, pit-benchmark or coaching references.
+  Mixed requests still return available timing/tyre data alongside unavailable
+  fastest-sector/fuel results; unknown qualifiers are not discarded.
   Current-lap sectors 1/2, fully observed player/opponent last-lap sectors, retained
   eligible numbered laps and labelled same-compound radio-observed best retrieval
   now exist; these are not
-  complete historical/session-best coverage.
+  unconditional complete historical/session-best coverage.
 - Broader conversational wording and follow-ups beyond the bounded implemented
   context. The radio now retains prior questions/answers, instructions and computed
   tracking reports, supports sector-only follow-ups and version-bound task

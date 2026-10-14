@@ -655,6 +655,10 @@ class TelemetryPipeline:
                               for car in range(len(fact_laps.cars))},
                     participants=self.car_lap_inventory.active_participants({frame.session_uid: frame_ordinal}),
                     telemetry_packets=telemetry_candidates)
+            self.engineer_facts.reported_history.consume(
+                frame.packets, frame_ordinal=frame_ordinal, epoch=association_epoch,
+                assessable=association_scope_assessable and not lifecycle_boundary and not quarantine_lap_data,
+                conflicted=frame_observation_conflicted)
             if pending_observation is not None:
                 (lap_packet, lap_data_packet, player_index, context_json,
                  observation_telemetry, telemetry_reason, observation_motion,

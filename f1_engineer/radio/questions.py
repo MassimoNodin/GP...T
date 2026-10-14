@@ -13,7 +13,7 @@ class QuestionPlan:
 
 
 UNAVAILABLE_FACTS = {
-    "session_best": "session-best lap unavailable; complete session history is not exposed here",
+    "session_best": "session-best lap unavailable; qualified game-reported session history is missing",
     "fastest_sector": "fastest sector unavailable; complete session sector history is missing",
     "fuel_level": "fuel level unavailable in this live timing feed",
 }

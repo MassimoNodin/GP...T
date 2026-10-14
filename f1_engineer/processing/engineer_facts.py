@@ -13,6 +13,7 @@ from .detail_policy import DetailPolicyFrame, select_detail
 from .detail_demand import MAX_ACTIVE_DETAIL_TASKS
 from ..udp.car_status import CarStatusData
 from ..udp.models import PacketId
+from .reported_history import ReportedSessionHistory
 
 
 EVENT_LIMIT = 128
@@ -126,10 +127,12 @@ class LiveEngineerFacts:
         self._dropped = 0
         self._current: dict[str, Any] | None = None
         self._reason = "lap_observations_not_received"
+        self.reported_history = ReportedSessionHistory()
         self.on_observe = on_observe
         self.on_invalidate = on_invalidate
 
     def invalidate(self, reason: str) -> None:
+        self.reported_history.clear()
         self._current = None
         self._events.clear()
         self._reason = reason
@@ -296,6 +299,7 @@ class LiveEngineerFacts:
                             previous_compound=old_tyre["actual_compound"],
                             actual_compound=tyre["actual_compound"])
         self._current = current
+        self.reported_history.observe_live(current)
         self._reason = "verified_drivers_unavailable" if not current["drivers"] else None
         if self.on_observe is not None:
             self.on_observe(current, tuple(self._events), self._cursor,
@@ -313,4 +317,8 @@ class LiveEngineerFacts:
                   "events": list(self._events)}
         if self._current is not None:
             result.update(self._current)
-        return copy.deepcopy(result)
+        result = copy.deepcopy(result)
+        if self._current is not None:
+            for row in result["drivers"]:
+                row["reported_history"] = self.reported_history.view(row, self._current)
+        return result

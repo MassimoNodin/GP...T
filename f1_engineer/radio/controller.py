@@ -22,6 +22,7 @@ from .regions import RegionTracker, RegionWindow
 from .region_progress import RegionProgress
 from .opponent_regions import compare_opponent_region
 from .track_geometry import geometry_binding, resolve_named_region
+from .reported_history import reported_best_fact, reported_lap_fact
 from ..analysis.resampling import TraceSample
 from ..analysis.region_context import scoped_region_context
 
@@ -670,6 +671,14 @@ class RadioController:
                            brake=values["brake"], throttle=None, steering=None, gear=None, drs_active=None)
 
     def _timing_fact(self, metric: str, row: dict, *, now: float) -> str:
+        if metric == "session_best":
+            result = reported_best_fact(row, self._observation_frame,
+                                        live_age_s=self._age_s + now - self._received_at)
+            if result is not None:
+                text, source_age = result
+                if source_age is not None:
+                    self._fact_age_s = max(self._fact_age_s or 0, source_age)
+                return text
         if metric in UNAVAILABLE_FACTS:
             return UNAVAILABLE_FACTS[metric]
         if metric in ("tyre_age", "tyre_compound"):
@@ -689,6 +698,9 @@ class RadioController:
             state = self.lap_history.get(row)
             record = next((record for record in state.laps if record.lap_number == number), None) if state else None
             if record is None:
+                reported = reported_lap_fact(row, self._observation_frame, number)
+                if reported is not None:
+                    return reported
                 return f"lap {number} unavailable in retained eligible radio history; not complete session history"
             return f"fully observed valid lap {number} {record.elapsed_ms / 1000:.3f} seconds, compound {record.compound}"
         if metric in ("observed_best", "last_sector1", "last_sector2", "last_sector3"):
