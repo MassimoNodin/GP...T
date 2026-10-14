@@ -210,7 +210,8 @@ class RadioDetailDemands:
 
     def close(self):
         self.replace([])
-        self.poll()
-        result = {"cleanup_verified": not self._owned, "pending_detail_task_ids": list(self._owned)}
+        with self._poll_lock:
+            self._poll()
+            result = {"cleanup_verified": not self._owned, "pending_detail_task_ids": list(self._owned)}
         self.notify({"event": "radio_detail_cleanup", **result})
         return result

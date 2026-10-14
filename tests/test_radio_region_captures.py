@@ -253,6 +253,104 @@ def test_stale_runtime_ends_requests_and_releases_owned_capture():
     assert store.get(lease_id, value)["state"] == "released"
 
 
+def test_failed_release_remains_owned_and_retries_with_backoff():
+    controller, radio, events, value, clock, store, client, captures = backend_ready()
+    lease_id = controller.region_capture_requests()[0]["lease_id"]
+    original = client.region_capture
+    attempts = []
+    def respond(method, identifier, body=None):
+        if method == "DELETE":
+            attempts.append(identifier)
+            if len(attempts) == 1:
+                return {"status": "unavailable", "reason": "network_unavailable"}
+        return original(method, identifier, body)
+    client.region_capture = respond
+    result = captures.close()
+    assert result == {"cleanup_verified": False, "pending_lease_ids": [lease_id]}
+    assert store.get(lease_id, value)["state"] == "active"
+    for unused in range(10):
+        captures.poll()
+    assert attempts == [lease_id]
+    clock[0] += 10
+    captures.poll()
+    assert attempts == [lease_id, lease_id]
+    assert captures.close()["cleanup_verified"]
+    assert store.get(lease_id, value)["state"] == "released"
+
+
+@pytest.mark.parametrize("data", [None, {}, {"state": "released"},
+                                  {"lease_id": "f" * 32, "state": "released"},
+                                  {"lease_id": None, "state": "active"}])
+def test_success_transport_is_not_proof_of_matching_capture_cleanup(data):
+    controller, radio, events, value, clock, store, client, captures = backend_ready()
+    lease_id = controller.region_capture_requests()[0]["lease_id"]
+    original = client.region_capture
+    client.region_capture = lambda method, identifier, body=None: (
+        {"status": "available", "data": deepcopy(data)} if method == "DELETE"
+        else original(method, identifier, body))
+    assert not captures.close()["cleanup_verified"]
+    assert lease_id in captures._owned
+    assert events[-1]["event"] == "radio_region_capture_cleanup"
+    assert events[-1]["cleanup_verified"] is False
+
+
+def test_pending_cleanup_cannot_be_rearmed_by_readding_same_capture():
+    controller, radio, events, value, clock, store, client, captures = backend_ready()
+    request = controller.region_capture_requests()[0]
+    original = client.region_capture
+    client.region_capture = lambda method, identifier, body=None: (
+        {"status": "unavailable"} if method == "DELETE" else original(method, identifier, body))
+    assert not captures.close()["cleanup_verified"]
+    captures.replace([request])
+    posts = len([call for call in client.calls if call[0] == "POST"])
+    assert captures.poll()[0]["response"]["reason"] == "region_capture_release_pending"
+    assert len([call for call in client.calls if call[0] == "POST"]) == posts
+    client.region_capture = original
+    clock[0] += 10
+    assert captures.poll()[0]["response"]["reason"] == "region_capture_released"
+    assert len([call for call in client.calls if call[0] == "POST"]) == posts
+    assert captures.close()["cleanup_verified"]
+
+
+def test_lost_delete_acknowledgement_is_not_immediate_cleanup_evidence():
+    controller, radio, events, value, clock, store, client, captures = backend_ready()
+    lease_id = controller.region_capture_requests()[0]["lease_id"]
+    original = client.region_capture
+    def respond(method, identifier, body=None):
+        result = original(method, identifier, body)
+        return {"status": "unavailable"} if method == "DELETE" else result
+    client.region_capture = respond
+    assert not captures.close()["cleanup_verified"]
+    assert store.get(lease_id, value)["state"] == "released"
+    client.region_capture = original
+    clock[0] += 10
+    assert captures.close()["cleanup_verified"]
+
+
+def test_pending_capture_cleanup_uses_shared_bounded_owner_budget():
+    controller, radio, events, value, clock, store, client, captures = backend_ready()
+    original = client.region_capture
+    requests = []
+    for index in range(3):
+        request = deepcopy(controller.region_capture_requests()[0])
+        request["lease_id"] = str(index) * 32
+        request["task_id"] = index + 1
+        requests.append(request)
+    captures.close()
+    captures.replace(requests)
+    captures.poll()
+    assert len(captures._owned) == 3
+    client.region_capture = lambda method, identifier, body=None: (
+        {"status": "unavailable"} if method == "DELETE" else original(method, identifier, body))
+    fresh = deepcopy(requests[0])
+    fresh["lease_id"] = "d" * 32
+    captures.replace([fresh])
+    result = captures.poll()[0]
+    assert result["response"]["reason"] == "region_capture_owner_budget_busy"
+    assert len(captures._owned) == 3
+    assert not any(call[1] == fresh["lease_id"] for call in client.calls)
+
+
 def test_quiet_mode_consumes_completed_capture_without_backlog():
     controller, radio, events, value, clock, store, client, captures = backend_ready()
     radio.quiet()
@@ -333,7 +431,9 @@ def test_failed_release_is_reported_and_backend_ttl_clears_retained_data():
         {"status": "unavailable", "reason": "network_unavailable"} if method == "DELETE"
         else original(method, lease, body))
     captures.close()
-    assert events[-1]["status"] == "unavailable"
+    assert events[-1]["cleanup_verified"] is False
+    assert next(event for event in reversed(events)
+                if event["event"] == "radio_region_capture_released")["status"] == "unavailable"
     clock[0] = 41
     assert store.get(lease_id, value)["state"] == "expired"
     assert not store._tracker.records

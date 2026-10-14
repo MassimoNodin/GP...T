@@ -233,3 +233,21 @@ Validation: sixty-three new transport/ownership cases pass against the real
 bounded backend command queue and mocked HTTP transport. The integrated radio,
 capture, live-facts, detail and pipeline selection passes 1,476 tests with two
 existing deprecation warnings. Real-game acceptance remains pending.
+
+## Radio capture cleanup hardening — October 14, 2026
+
+Region lease ownership now survives a failed or malformed DELETE response.
+Only a matching terminal lease response verifies cleanup; otherwise shutdown
+reports pending lease IDs. Retries use a ten-second backoff, appropriate for this
+synchronous idempotent endpoint (unlike queued detail-demand release commands).
+Pending cleanup shares the three-record radio ownership budget with collection,
+so cancellation/network failure cannot create unbounded abandoned owners. A
+capture being released cannot be rearmed by readding the same request, and a
+lost DELETE acknowledgement is not represented as verified cleanup. Backend TTL
+remains a safety fallback, not evidence that the client observed release.
+
+Polling and shutdown cleanup snapshots are serialized for both region leases
+and detail demands. Nine new release/budget cases pass; the integrated radio,
+capture, live-facts, detail and pipeline selection passes 1,485 tests with two
+existing deprecation warnings. Paired scheduling and real-game acceptance
+remain pending.
