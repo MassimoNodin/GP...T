@@ -405,6 +405,8 @@ class RadioController:
 
     def _queue_opponent_region(self, task, text, evidence, *, number, age, now, latency=None):
         key = f"opponent-region:{task.task_id}:{task.version}:{number}"
+        if evidence is None:
+            self.scheduler.cancel_owner("opponent_regions")
         self.notify({"event": "radio_opponent_region_report", "task_id": task.task_id,
                      "version": task.version, "lap_number": number, "text": text,
                      "evidence": evidence, "observation_age_s": age, "message_key": key,
@@ -412,7 +414,7 @@ class RadioController:
         queued = self.scheduler.submit(RadioMessage(key, self.scheduler.scope, text, "proactive", now + 60,
                                                    observation_age_s=age, dispatch_before=now + 3 - age,
                                                    owner="opponent_regions"), now=now)
-        self._pair_report_identity = json.loads(task.fixed_bindings[1])
+        self._pair_report_identity = json.loads(task.fixed_bindings[1]) if evidence is not None else None
         self.conversation.record("task_result", response=text,
                                  tasks=[item for item in self.tasks.views() if item["task_id"] == task.task_id],
                                  message_key=key, queued=queued)

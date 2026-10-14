@@ -395,6 +395,38 @@ def test_unavailable_report_has_no_fabricated_completion_latency():
     assert report["latency"] is None and report["message_key"]
 
 
+def test_missing_driver_notice_survives_fresh_frames_without_the_old_identity():
+    manager, client, request, controller, radio, value, owner_id = armed()
+    value["drivers"][1]["identity"]["tenure_ordinal"] += 1
+    value["drivers"][1]["participant"]["identity"] = deepcopy(value["drivers"][1]["identity"])
+    results, now = publish(manager, client, controller, value)
+    report, = reports(controller)
+    assert report["evidence"] is None
+    controller.feed(value, now=now + 0.1, region_captures=results)
+    pending, = [message for message in radio.pending if message.owner == "opponent_regions"]
+    assert pending.key == report["message_key"] and "unavailable" in pending.text
+    radio.pending = [pending]
+    radio.tick(now=now + 0.2)
+    assert radio.active is not None and radio.active.key == report["message_key"]
+
+
+def test_unavailable_later_pair_cancels_prior_measured_audio_instead_of_losing_its_identity_guard():
+    manager, client, request, controller, radio, value, owner_id = armed(laps=2)
+    for player_lap, opponent_lap in ((4, 3), (5, 4)):
+        collect(client, controller, value, owner_id, player_lap=player_lap, opponent_lap=opponent_lap)
+        drive(client, controller, value, owner_id, player_number=player_lap + 1, number=opponent_lap + 1)
+        now = 10 + value["frame_ordinal"] * 0.05
+        client.clock[0] = now
+        results = manager.poll(value)
+        if player_lap == 5:
+            results[0]["legs"][1]["response"]["data"]["results"][1]["evidence"] = None
+        controller.feed(value, now=now, region_captures=results)
+    first, last = reports(controller)
+    assert first["evidence"] is not None and last["evidence"] is None
+    paired, = [message for message in radio.pending if message.owner == "opponent_regions"]
+    assert paired.key == last["message_key"]
+
+
 @pytest.mark.parametrize("question", ["track that for another two laps", "extend task {task_id} by 2 laps"])
 def test_pair_extension_uses_captured_reference_and_confirms_discarded_partial_data(question):
     manager, client, request, controller, radio, value = connected(laps=2)

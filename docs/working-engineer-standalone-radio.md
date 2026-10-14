@@ -1484,3 +1484,17 @@ latency logs: 3,365 passed, sixteen skipped and two existing deprecation warning
 in 287.61 seconds. The earlier unchanged recording-controller failure does not
 reproduce in this full rerun. Compilation and whitespace checks pass. These are
 automated prerequisites, not real-game or acoustic acceptance evidence.
+
+### Missing-opponent notice lifetime
+
+A missing/replaced opponent's unavailable notice no longer disappears on the
+next fresh frame merely because that old identity is still absent. Such a notice
+contains no measured comparison and keeps normal scope/freshness cancellation;
+it does not acquire an obsolete driver-identity guard. Before queuing it, any
+older measured paired audio is cancelled, so removing that guard cannot leave
+old numeric reports unprotected. Two reproduced controller regressions now pass:
+fresh-frame survival after replacement, and removal of a prior measured report
+when a later finished pair has unavailable numeric evidence.
+The integrated radio/capture/live-facts/detail/pipeline selection passes 1,693
+tests with two existing warnings. The clean complete-suite run immediately above
+predates this final small notice-lifetime fix.
