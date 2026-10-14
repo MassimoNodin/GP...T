@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import math
 import queue
 import sys
@@ -19,10 +18,7 @@ from .track_geometry import RadioTrackGeometry
 from .scheduler import RadioScheduler
 from .wheel_input import WheelButtonMonitor
 from .windows_speech import WindowsSpeech
-
-
-def emit(event: dict) -> None:
-    print(json.dumps(event, separators=(",", ":")), flush=True)
+from .diagnostics import emit, radio_event_log, trace_event
 
 
 class DryRunPlayback:
@@ -64,6 +60,18 @@ def _poll(client: RadioClient, inbox: queue.Queue, stop: threading.Event, interv
                 results += opponent_captures.poll(snapshot)
             if geometry is not None:
                 results += geometry.poll(snapshot)
+            trace_event({"event": "radio_poll", "poll_elapsed_s": time.monotonic() - started,
+                         "status": snapshot.get("status"), "reason": snapshot.get("reason"),
+                         "generation": snapshot.get("generation"), "session_id": snapshot.get("session_id"),
+                         "scope": snapshot.get("scope"), "age_s": snapshot.get("age_s"),
+                         "frame_ordinal": snapshot.get("frame_ordinal"),
+                         "received_monotonic_ns": snapshot.get("received_monotonic_ns"),
+                         "event_cursor": snapshot.get("event_cursor"), "event_floor": snapshot.get("event_floor"),
+                         "player_car_index": snapshot.get("player_car_index"),
+                         "driver_count": len(snapshot["drivers"]) if isinstance(snapshot.get("drivers"), list) else None,
+                         "capture_results": [{key: value for key, value in item.items()
+                                              if key in ("task_id", "version", "lease_id", "kind", "request_age_s", "received_at")}
+                                             for item in results if isinstance(item, dict)]})
             try:
                 inbox.get_nowait()
             except queue.Empty:
@@ -83,6 +91,11 @@ def _poll(client: RadioClient, inbox: queue.Queue, stop: threading.Event, interv
 
 
 def run_radio(args) -> int:
+    with radio_event_log(getattr(args, "log_file", None)):
+        return _run_radio(args)
+
+
+def _run_radio(args) -> int:
     if (not math.isfinite(args.poll_interval) or not 0.1 <= args.poll_interval <= 1
             or not -10 <= args.rate <= 10 or not 0 <= args.volume <= 100):
         raise ValueError("invalid radio settings")
@@ -128,6 +141,8 @@ def run_radio(args) -> int:
         emit({"event": "radio_ready", "dry_run": args.dry_run, "voice": getattr(playback, "voice", None),
               "rate": args.rate, "volume": args.volume,
               "capture_test": args.capture_test,
+              "microphone": args.microphone, "cue_output": args.cue_output,
+              "poll_interval_s": args.poll_interval, "capture_seconds": args.capture_seconds,
               "voice_submission": ("disabled" if args.capture_test else
                                    "manual" if getattr(args, "manual_submit", False) else "automatic"),
               "commands": ["lap", "listen", "finish", "ask <question>", "submit", "tasks", "forget",

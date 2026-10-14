@@ -19,6 +19,8 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
+from .request_trace import RequestTraceMiddleware
+
 from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, select_reference
 from ..analysis.session_comparison import compare_session_laps
 from ..analysis.session_reference import select_session_reference
@@ -1144,6 +1146,9 @@ def create_app(
             if not _authorized(request.headers.get("authorization"), control_token):
                 return _api_error(403, "api_not_authorized")
             return await call_next(request)
+
+    if os.environ.get("F1_ENGINEER_TRACE_REQUESTS") == "1":
+        app.add_middleware(RequestTraceMiddleware)
 
     @app.get("/api/v2/session-evidence/status")
     def session_evidence_status():

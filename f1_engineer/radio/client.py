@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import time
+import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -12,6 +13,35 @@ import httpx
 
 from ..analysis.local_speech import (SPEECH_MAX_RESPONSE_BYTES, SPEECH_MAX_TRANSCRIPT_BYTES,
                                     LocalSpeechUnavailable, validate_canonical_wav)
+from .diagnostics import exception_trace, trace_enabled, trace_event
+
+
+def _trace_request(request):
+    if trace_enabled():
+        request.extensions["radio_trace_started"] = time.monotonic()
+        request.extensions["radio_trace_id"] = uuid.uuid4().hex
+        request.headers["X-F1-Radio-Request-ID"] = request.extensions["radio_trace_id"]
+        trace_event({"event": "radio_http_request", "http_id": request.extensions["radio_trace_id"],
+                     "capture_id": request.headers.get("X-Request-ID"),
+                     "method": request.method, "path": request.url.path})
+
+
+def _trace_response(response):
+    started = response.request.extensions.get("radio_trace_started")
+    if started is not None:
+        trace_event({"event": "radio_http_response", "method": response.request.method,
+                     "http_id": response.request.extensions.get("radio_trace_id"),
+                     "backend_request_id": response.headers.get("X-F1-Backend-Request-ID"),
+                     "path": response.request.url.path, "status_code": response.status_code,
+                     "headers_elapsed_s": time.monotonic() - started})
+
+
+async def _trace_async_request(request):
+    _trace_request(request)
+
+
+async def _trace_async_response(response):
+    _trace_response(response)
 
 
 def read_control_token(path: Path) -> str:
@@ -45,6 +75,7 @@ class RadioClient:
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"), headers={"Authorization": f"Bearer {token}"},
             timeout=2, follow_redirects=False, trust_env=False, transport=transport,
+            event_hooks={"request": [_trace_request], "response": [_trace_response]},
         )
 
     def fetch(self) -> dict:
@@ -64,7 +95,8 @@ class RadioClient:
                 if not isinstance(decoded, dict) or not isinstance(decoded.get("data"), dict):
                     raise ValueError("invalid response")
                 return decoded["data"]
-        except (httpx.RequestError, ValueError, RecursionError, RuntimeError):
+        except (httpx.RequestError, ValueError, RecursionError, RuntimeError) as exception:
+            trace_event({"event": "radio_http_failure", "operation": "live_snapshot", "exception_chain": exception_trace(exception)})
             return {"status": "unavailable", "reason": "backend_response_unavailable"}
 
     def region_capture(self, method: str, lease_id: str, body=None) -> dict:
@@ -89,7 +121,8 @@ class RadioClient:
                 if not isinstance(decoded.get("data"), dict):
                     raise ValueError("invalid response")
                 return {"status": "available", "data": decoded["data"]}
-        except (httpx.RequestError, ValueError, RecursionError, RuntimeError):
+        except (httpx.RequestError, ValueError, RecursionError, RuntimeError) as exception:
+            trace_event({"event": "radio_http_failure", "operation": "region_capture", "exception_chain": exception_trace(exception)})
             return {"status": "unavailable", "reason": "region_capture_response_unavailable"}
 
     def detail_targets(self, session_id: str) -> dict:
@@ -144,7 +177,8 @@ class RadioClient:
                 elif not isinstance(data, dict):
                     raise ValueError("invalid task")
                 return {"status": "available", "data": data}
-        except (httpx.RequestError, ValueError, RecursionError, RuntimeError):
+        except (httpx.RequestError, ValueError, RecursionError, RuntimeError) as exception:
+            trace_event({"event": "radio_http_failure", "operation": "detail_demand", "exception_chain": exception_trace(exception)})
             return {"status": "unavailable", "reason": "detail_response_unavailable"}
 
     def close(self) -> None:
@@ -183,7 +217,8 @@ class RadioClient:
         try:
             async with httpx.AsyncClient(base_url=self._base_url, headers=self._headers,
                                          timeout=httpx.Timeout(62, connect=2, write=5, pool=2),
-                                         follow_redirects=False, trust_env=False, transport=self._transport) as client:
+                                         follow_redirects=False, trust_env=False, transport=self._transport,
+                                         event_hooks={"request": [_trace_async_request], "response": [_trace_async_response]}) as client:
                 async with client.stream("POST", "/api/v1/engineer/transcribe", headers=headers, content=wav) as response:
                     if response.status_code in (401, 403):
                         return {"status": "unavailable", "reason": "backend_authentication_failed"}
@@ -206,5 +241,7 @@ class RadioClient:
                             or len(data["transcript"].encode("utf-8")) > SPEECH_MAX_TRANSCRIPT_BYTES):
                         raise ValueError
                     return {"status": "available", "transcript": data["transcript"].strip()}
-        except (httpx.RequestError, ValueError, RecursionError, RuntimeError, AttributeError):
+        except (httpx.RequestError, ValueError, RecursionError, RuntimeError, AttributeError) as exception:
+            trace_event({"event": "radio_http_failure", "operation": "transcription", "capture_id": request_id,
+                         "exception_chain": exception_trace(exception)})
             return {"status": "unavailable", "reason": "transcription_response_invalid_or_unavailable"}

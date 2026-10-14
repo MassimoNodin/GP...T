@@ -44,6 +44,42 @@ Optional settings: `--voice "Microsoft Hazel Desktop"`, `--rate 0`,
 `--list-voices`; rate is -10 to 10, volume 0 to 100, and polling 0.1 to 1 second.
 The helper does not change Windows default voice settings.
 
+## Logged split-host test launcher
+
+The browser-free PowerShell launcher scripts/start-standalone-radio.ps1 fetches
+the existing Ubuntu credential into an owner-only local token file, reuses an
+authenticated tunnel or opens its own hidden tunnel, verifies the engineer live
+endpoint, then runs the interactive radio. It does not start, build or require
+the dashboard. It closes only a tunnel it created, not another application's
+tunnel. Use -CheckOnly for a no-audio readiness check; unavailable game telemetry
+is reported without being mistaken for an unavailable backend.
+
+Each launch creates an ignored data/radio-tests timestamped directory containing
+manifest.json, launcher.log, radio.jsonl, radio-stderr.log and owned-tunnel errors
+when applicable. Optional -Microphone and -CueOutput indices select devices from
+fresh discovery; omitted indices retain system defaults. No saved wheel mapping
+is changed. Console stdin stays interactive for recovery and quit commands.
+
+The radio --log-file option enables UTF-8 JSONL diagnostics with run ID, sequence,
+UTC and process-local monotonic times, PID and thread. It records normal events,
+poll/capture metadata, correlated HTTP boundaries/status, listening/transcription,
+questions/tasks/reports, playback queue/dispatch and sanitized exception chains.
+Complete exception frames/types are retained without exception messages, local
+variables, authorization headers, query strings, request/response bodies or raw
+microphone audio. Spoken text/transcripts can contain personal information: these
+logs are private debugging evidence, not files to commit or publish unreviewed.
+Files rotate at 25 MiB with four backups; older evidence can be overwritten after
+the bounded retention window. Standard stderr/fatal traces are also retained by
+the launcher. None of these timestamps prove acoustic onset.
+
+Set F1_ENGINEER_TRACE_REQUESTS=1 in the approved backend service to opt into
+structured journal request traces. Valid generated radio request IDs correlate
+local HTTP events with backend status/duration and sanitized error-frame chains;
+transcription capture IDs are preserved. Authentication remains required and
+query/header/body values are not logged. Existing telemetry journal/database and
+retained capture/report evidence supply data-level traces, rather than copying
+high-rate raw observations into every radio poll log.
+
 ## Console controls
 
 Enter one command per line; an optional leading `/` is accepted.

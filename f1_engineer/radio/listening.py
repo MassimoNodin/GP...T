@@ -11,6 +11,7 @@ import wave
 
 from ..analysis.local_speech import SPEECH_MAX_SECONDS, SPEECH_MAX_SAMPLES, SPEECH_SAMPLE_RATE, SPEECH_MAX_TRANSCRIPT_BYTES
 from .audio import NativeRadioAudio, RadioAudioUnavailable
+from .diagnostics import exception_trace
 
 
 def canonical_wav(pcm: bytes) -> bytes:
@@ -295,7 +296,8 @@ class VoiceInput:
                             "radio_microphone_stop_failed", "radio_microphone_data_invalid",
                             "radio_cue_output_underflow", "radio_cue_output_unavailable", "radio_capture_empty"}
             reason = str(exception) if isinstance(exception, RadioAudioUnavailable) and str(exception) in safe_reasons else "capture_or_transcription_failed"
-            self._put(capture_id, "radio_listen_unavailable", reason=reason)
+            self._put(capture_id, "radio_listen_unavailable", reason=reason,
+                      exception_chain=exception_trace(exception))
         finally:
             if audio is not None:
                 try:
