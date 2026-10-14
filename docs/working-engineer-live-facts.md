@@ -191,3 +191,45 @@ authenticated owner revalidation. The integrated radio/live-facts, capture,
 detail policy/demand/API/review and pipeline selection passes 1,413 tests with
 two existing deprecation warnings. Compilation and whitespace checks pass.
 This is not a new complete-suite or real-game acceptance run.
+
+## Radio demand ownership prerequisite — October 14, 2026
+
+The radio HTTP client now supports target discovery and detail-task admission,
+status and release through the existing loopback API. Requests retain bearer
+authentication, no proxy/redirect behavior and bounded time/response limits.
+Task/session/binding IDs and exact admission fields are checked before network
+I/O. Target lists are limited to twenty-four rows; task responses are bounded
+to sixty-four KiB. Error bodies are not exposed.
+
+The new radio demand broker copies at most four desired task/version descriptors
+and owns at most four records including pending cleanup. Each descriptor fixes
+the logical session, lifecycle scope and opponent slot/tenure/fingerprint. Only
+one exact nonplayer target may supply its opaque binding; replacement or duplicate
+targets cannot silently rebind a request. Generated IDs are radio-instance-owned,
+and cleanup never addresses an unrelated dashboard demand.
+
+Admission acknowledgement is not activation. Only a matching authoritative GET
+with an applied active owner and stable activation ordinal/frame exposes active
+ownership. Periodic renewals retain the activation and wait for authoritative
+application. Ambiguous admission/renewal/release responses do not trigger repeated
+commands. Temporary target transport failures pause readiness rather than revoke
+an otherwise valid binding; confirmed identity loss initiates release. Terminal
+owners do not automatically revive. Admission and observed activation latency are
+reported without a numerical acceptance threshold.
+
+Cancellation, supersession and shutdown request cleanup. A queued DELETE is not
+proof of release: owned records remain bounded and pending until a matching
+terminal owner snapshot is observed. Shutdown reports pending IDs honestly;
+backend TTL remains fallback cleanup, not synchronous release evidence. An
+ambiguous admission with no verifiable owner can retain a bounded pending slot.
+
+This broker is a collection prerequisite, not a completed spoken feature. It is
+not yet connected to the radio polling worker. Active ownership alone does not
+prove same-frame observation availability; paired scheduling must also wait for
+the owner ID in the opponent observation, preserve both next-lap boundaries and
+retain ownership until both capture results have been consumed.
+
+Validation: sixty-three new transport/ownership cases pass against the real
+bounded backend command queue and mocked HTTP transport. The integrated radio,
+capture, live-facts, detail and pipeline selection passes 1,476 tests with two
+existing deprecation warnings. Real-game acceptance remains pending.

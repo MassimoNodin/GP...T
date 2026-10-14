@@ -30,8 +30,11 @@ Remaining implementation and scope decisions:
   current explicit detail-demand owners, with owner IDs and identity/provenance
   guards. Backend opponent region leases now use independent trackers and the
   opponent's next-lap/finish boundaries, and revalidate active ownership at the
-  authenticated API. Radio-owned demand activation, paired capture coordination
-  and spoken tracking comparisons remain to be connected.
+  authenticated API. A bounded radio demand broker now resolves exact target
+  identities, distinguishes queued commands from owner activation, fences
+  renewals and reports unverified cleanup. It is not yet wired into the radio
+  polling loop; paired capture coordination and spoken tracking comparisons
+  remain to be connected.
 - Real-game validation of post-pit benchmarking and retained-lap eligibility.
   Stop-count/tyre-change confirmation, pre-pit ranking/tie-breaks, clean observed
   lap-set averages, age/condition disclosures and one-off reporting now exist.

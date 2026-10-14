@@ -92,6 +92,56 @@ class RadioClient:
         except (httpx.RequestError, ValueError, RecursionError, RuntimeError):
             return {"status": "unavailable", "reason": "region_capture_response_unavailable"}
 
+    def detail_targets(self, session_id: str) -> dict:
+        if (not isinstance(session_id, str)
+                or re.fullmatch(r"[a-f0-9]{32}", session_id) is None):
+            return {"status": "unavailable", "reason": "detail_request_invalid"}
+        return self._detail_request("GET", "/api/v2/session-evidence/detail-targets",
+                                    params={"session_id": session_id}, targets=True)
+
+    def detail_task(self, method: str, task_id: str, body=None) -> dict:
+        if (method not in ("POST", "GET", "DELETE") or not isinstance(task_id, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", task_id) is None):
+            return {"status": "unavailable", "reason": "detail_request_invalid"}
+        if method == "POST":
+            if (not isinstance(body, dict) or set(body) != {"task_id", "session_id", "binding_id"}
+                    or body.get("task_id") != task_id
+                    or not isinstance(body.get("session_id"), str)
+                    or re.fullmatch(r"[a-f0-9]{32}", body["session_id"]) is None
+                    or not isinstance(body.get("binding_id"), str)
+                    or re.fullmatch(r"[a-f0-9]{64}", body["binding_id"]) is None):
+                return {"status": "unavailable", "reason": "detail_request_invalid"}
+            return self._detail_request(method, "/api/v2/session-evidence/detail-tasks", json=body)
+        if body is not None:
+            return {"status": "unavailable", "reason": "detail_request_invalid"}
+        return self._detail_request(method, f"/api/v2/session-evidence/detail-tasks/{task_id}")
+
+    def _detail_request(self, method: str, endpoint: str, *, targets=False, **options) -> dict:
+        started = time.monotonic()
+        try:
+            with self._client.stream(method, endpoint, **options) as response:
+                if response.status_code != (200 if method == "GET" else 202):
+                    return {"status": "unavailable", "reason": "detail_request_rejected",
+                            "status_code": response.status_code}
+                raw = bytearray()
+                for chunk in response.iter_bytes():
+                    raw.extend(chunk)
+                    if len(raw) > 65_536 or time.monotonic() - started >= 5:
+                        raise ValueError("oversized response")
+                decoded = json.loads(raw)
+                if not isinstance(decoded, dict):
+                    raise ValueError("invalid response")
+                data = decoded.get("data")
+                if targets:
+                    if (not isinstance(data, list) or len(data) > 24
+                            or any(not isinstance(item, dict) for item in data)):
+                        raise ValueError("invalid targets")
+                elif not isinstance(data, dict):
+                    raise ValueError("invalid task")
+                return {"status": "available", "data": data}
+        except (httpx.RequestError, ValueError, RecursionError, RuntimeError):
+            return {"status": "unavailable", "reason": "detail_response_unavailable"}
+
     def close(self) -> None:
         self._client.close()
 
