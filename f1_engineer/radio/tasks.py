@@ -295,18 +295,34 @@ class LapReportRegistry:
         self.notify({"event": "radio_task_updated" if existing else "radio_task_created", **task.view()})
         return task
 
-    def extend(self, task_id: int, version: int, *, additional_laps: int, cursor: int, lap: int) -> LapReportTask:
+    def extend(self, task_id: int, version: int, *, additional_laps: int, cursor: int, lap: int,
+               opponent_lap: int | None = None) -> LapReportTask:
         if (type(task_id) is not int or type(version) is not int or task_id < 1 or version < 1
                 or type(cursor) is not int or cursor < 0 or type(lap) is not int or not 1 <= lap <= 255):
             raise ValueError("An extension requires a current task version and valid lap and event cursor.")
         task = self._tasks.get(task_id)
-        if task is not None and task.opponent_first_lap is not None:
-            raise ValueError("Create or update a bounded opponent request instead of extending its independent lap windows.")
         if (task is None or task.state != "active" or task.version != version
-                or task.until_lap is not None and task.until_lap < lap):
+                or task.opponent_first_lap is None and task.until_lap is not None and task.until_lap < lap):
             raise ValueError("That task is no longer active or its version changed. Specify a current task; cancelled or expired tasks are not revived.")
         if type(additional_laps) is not int or not 1 <= additional_laps <= 20:
             raise ValueError("Please choose one to twenty additional laps.")
+        if task.opponent_first_lap is not None:
+            if type(opponent_lap) is not int or not 1 <= opponent_lap <= 254 or lap > 254:
+                raise ValueError("Extending independent lap windows requires fresh current lap numbers for both fixed drivers.")
+            consumed = task.reported_through_lap >= task.first_lap
+            minimum_player = task.reported_through_lap + 1 if consumed else task.first_lap - 1
+            minimum_opponent = (task.opponent_first_lap + task.reported_through_lap - task.first_lap + 1
+                                if consumed else task.opponent_first_lap - 1)
+            if lap < minimum_player or opponent_lap < minimum_opponent:
+                raise ValueError("The fixed driver's lap moved backwards; end tracking instead of extending stale windows.")
+            first = max(task.first_lap, lap + 1)
+            until = max(task.until_lap, lap) + additional_laps
+            laps = until - first + 1
+            if not 1 <= laps <= 20 or until > 255 or opponent_lap + laps > 255:
+                raise ValueError("The extended paired task must cover at most twenty upcoming laps for each driver, within lap 255.")
+            return self.install(task.plan, task.fixed_bindings, cursor=cursor, lap=first, laps=laps,
+                                task_id=task.task_id, region_window=task.region_window,
+                                opponent_first_lap=opponent_lap + 1)
         first = max(task.first_lap, lap + (1 if task.region_window is not None else 0))
         until = task.until_lap + additional_laps if task.until_lap is not None else first + additional_laps - 1
         if not 1 <= first <= until <= 255 or until - first + 1 > 20:

@@ -1385,7 +1385,8 @@ The standalone radio now accepts these explicit diagnostic requests:
 - "Track Leclerc's braking points and minimum speed from 10 to 50 metres in comparison to me for the next 3 laps."
 - Prefix either with "update task 2" to replace a current task through the existing
   captured-version authority checks. Use "cancel task 2" or "cancel all tracking"
-  to release collection. A paired task cannot yet be extended in place.
+  to release collection. "Track that for another two laps" or "extend task 2 by
+  2 laps" can extend an active paired task through a new captured-version request.
 
 Use an actual distance window appropriate to the current track; these numbers
 are syntax examples, not a recommended corner. Requests without geometry ask
@@ -1430,3 +1431,27 @@ That result is not a clean full-suite pass; the recording test is checked
 separately without changing unrelated recording code.
 All thirteen recording-controller tests pass on that separate rerun; the full-run
 failure did not reproduce. Compilation and whitespace checks also pass.
+
+### Guarded paired tracking extensions
+
+Extensions preserve both verified driver identities and the numeric region, not
+old capture ownership. They create a new task version and start each driver's
+next full lap independently. The player horizon retains still-upcoming originally
+requested laps plus the additional count; if the player already finished its old
+horizon while the opponent is still pending, the new horizon contains only the
+new additional laps. Both driver horizons remain within twenty upcoming laps
+and lap 255. Partial and unreported old pairs are explicitly discarded in the
+spoken confirmation; they are not claimed as carried-forward measurements.
+
+A fresh current lap is required for both fixed drivers. Missing/backward laps,
+replacement, stale listening context, ended tasks and excessive horizons refuse
+without changing registry authority. New admission can still miss a requested
+boundary; extension does not permit shifting it. Old-version capture results and
+speech are fenced, and old owners are released by the worker before replacement
+collection. Twenty-five additional registry/controller cases exercise these
+guards, including extension during an in-flight read followed by fresh actual
+synthetic backend collection. This supersedes the earlier internal registry's
+interim extension refusal, not the remaining full-coaching or hardware acceptance.
+The integrated radio/capture/live-facts/detail/pipeline selection passes 1,687
+tests with two existing warnings; compilation and whitespace checks pass. The
+prior complete-suite run predates this extension increment.

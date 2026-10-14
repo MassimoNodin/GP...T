@@ -46,7 +46,10 @@ Remaining implementation and scope decisions:
   Spoken requests now fix both identities and independent upcoming lap windows;
   the background worker collects both legs, and guarded reports consume each
   completed pair once without expiring on the player's earlier finish. Missing
-  geometry clarifies rather than inventing a corner. Full focus-corner coaching,
+  geometry clarifies rather than inventing a corner. Guarded conversational
+  extensions now create a fresh version with each fixed driver's next full lap,
+  explicitly discarding old partial/unreported pairs and bounding both horizons.
+  Full focus-corner coaching,
   broader natural-language forms and real-game acceptance remain outstanding.
 - Real-game validation of post-pit benchmarking and retained-lap eligibility.
   Stop-count/tyre-change confirmation, pre-pit ranking/tie-breaks, clean observed

@@ -69,12 +69,60 @@ def test_completed_pair_cannot_be_revived_or_reconsumed():
         registry.install(**{**arguments(), "task_id": 1})
 
 
-def test_pair_extensions_are_explicitly_refused_without_mutating_active_windows():
+def test_pair_extension_requires_both_current_laps_without_mutating_active_windows():
     registry, task = installed()
     before = registry.views()
     with pytest.raises(ValueError, match="independent lap windows"):
         registry.extend(1, 1, additional_laps=2, cursor=5, lap=5)
     assert registry.views() == before
+
+
+@pytest.mark.parametrize("player,opponent,first,until,opponent_first", [
+    (3, 2, 4, 7, 3), (4, 3, 5, 7, 4), (5, 2, 6, 7, 3), (6, 4, 7, 8, 5),
+])
+def test_pair_extension_restarts_independent_full_windows_without_rebinding(player, opponent, first, until, opponent_first):
+    registry, task = installed()
+    updated = registry.extend(1, 1, additional_laps=2, cursor=8, lap=player, opponent_lap=opponent)
+    assert updated.version == 2 and updated.first_lap == first and updated.until_lap == until
+    assert updated.opponent_first_lap == opponent_first and updated.reported_through_lap == first - 1
+    assert updated.fixed_bindings == task.fixed_bindings and updated.region_window == task.region_window
+    assert not registry.consume_region_pair(1, 1, 4)
+
+
+@pytest.mark.parametrize("options", [
+    {"opponent_lap": None}, {"opponent_lap": True}, {"opponent_lap": 0},
+    {"opponent_lap": 255}, {"lap": 255}, {"opponent_lap": 254},
+    {"additional_laps": 21}, {"additional_laps": 19}, {"version": 2},
+    {"lap": 2}, {"opponent_lap": 1},
+])
+def test_invalid_pair_extension_keeps_existing_version_and_windows(options):
+    registry, task = installed()
+    arguments = {"task_id": 1, "version": 1, "additional_laps": 2, "cursor": 8, "lap": 3, "opponent_lap": 2}
+    arguments.update(options)
+    before = registry.views()
+    with pytest.raises(ValueError):
+        registry.extend(**arguments)
+    assert registry.views() == before
+
+
+def test_completed_pair_and_cancelled_pair_cannot_be_extended():
+    registry, task = installed()
+    registry.end_region_pair(1, 1, "capture_failed")
+    with pytest.raises(ValueError, match="no longer active"):
+        registry.extend(1, 1, additional_laps=2, cursor=8, lap=5, opponent_lap=3)
+    registry.cancel(1)
+    with pytest.raises(ValueError, match="no longer active"):
+        registry.extend(1, 1, additional_laps=2, cursor=8, lap=5, opponent_lap=3)
+
+
+def test_consumed_pairs_cannot_be_extended_using_earlier_driver_laps():
+    registry, task = installed()
+    assert registry.consume_region_pair(1, 1, 4)
+    for player, opponent in ((4, 3), (5, 2)):
+        with pytest.raises(ValueError, match="backwards"):
+            registry.extend(1, 1, additional_laps=2, cursor=8, lap=player, opponent_lap=opponent)
+    updated = registry.extend(1, 1, additional_laps=2, cursor=8, lap=5, opponent_lap=4)
+    assert updated.first_lap == 6 and updated.opponent_first_lap == 5
 
 
 def test_cancel_all_scope_clear_removes_pair_authority():

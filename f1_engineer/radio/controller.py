@@ -809,15 +809,28 @@ class RadioController:
                 for target, identity in zip(original.plan.targets, original.fixed_bindings):
                     if identity is not None and self._resolve_target(target, json.loads(identity)) is None:
                         raise ValueError("The fixed driver is unavailable or replaced; I will not rebind this task.")
+                opponent_lap = None
+                if original.opponent_first_lap is not None:
+                    opponent = self._resolve_target(original.plan.targets[1], json.loads(original.fixed_bindings[1]))
+                    opponent_lap = opponent["lap"].get("current_lap_number")
                 task = self.tasks.extend(*reference, additional_laps=action.laps, cursor=self._cursor or 0,
-                                         lap=self._player["lap"]["current_lap_number"])
+                                         lap=self._player["lap"]["current_lap_number"], opponent_lap=opponent_lap)
                 self.regions.remove(task.task_id)
                 self.watches.extend_version(task.task_id, original.version, task.version)
                 self.scheduler.cancel_owner("lap_reports")
                 self.scheduler.cancel_owner("pace_sectors")
                 selected_tasks = (task,)
                 text = f"Task {task.task_id} extended through lap {task.until_lap}. Existing fixed references remain unchanged."
-                if task.region_window is not None:
+                if task.opponent_first_lap is not None:
+                    self.scheduler.cancel_owner("opponent_regions")
+                    count = task.until_lap - task.first_lap + 1
+                    text = (f"Task {task.task_id} extended: new paired capture admission pending for your laps "
+                            f"{task.first_lap} to {task.until_lap}, and the fixed opponent's laps "
+                            f"{task.opponent_first_lap} to {task.opponent_first_lap + count - 1}. "
+                            "Driver identities and numeric region remain fixed. Both captures restart on each driver's "
+                            "next full lap; partial or unreported old pairs are discarded, not carried forward. "
+                            "Missing admission is unavailable, not shifted. Numeric diagnostics only.")
+                elif task.region_window is not None:
                     text += " Regional capture restarts next lap; the partial current capture is discarded."
             else:
                 if self._player is None or not _integer(self._player["lap"].get("current_lap_number"), 1, 255):

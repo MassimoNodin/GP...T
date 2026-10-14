@@ -346,6 +346,76 @@ def test_dispatch_deadline_includes_elapsed_delivery_time_but_not_old_completion
     assert message.dispatch_before == pytest.approx(now + 3)
 
 
+@pytest.mark.parametrize("question", ["track that for another two laps", "extend task {task_id} by 2 laps"])
+def test_pair_extension_uses_captured_reference_and_confirms_discarded_partial_data(question):
+    manager, client, request, controller, radio, value = connected(laps=2)
+    context = controller.capture_task_context()
+    controller.handle_request(question.format(task_id=request["task_id"]), now=10, task_context=context)
+    updated, = controller.opponent_capture_requests()
+    assert updated["task_id"] == request["task_id"] and updated["version"] == request["version"] + 1
+    assert updated["body"]["first_lap"] == 4 and updated["opponent_first_lap"] == 3
+    assert updated["body"]["laps"] == 4
+    assert updated["opponent"] == request["opponent"] and updated["body"]["window_m"] == request["body"]["window_m"]
+    text = controller.conversation.context()[-1]["response"]
+    assert "admission pending" in text and "old pairs are discarded" in text
+    controller.handle_request("extend task {task_id} by 2 laps".format(task_id=request["task_id"]),
+                              now=10, task_context=context)
+    assert controller.opponent_capture_requests() == [updated]
+    assert "changed or ended" in controller.conversation.context()[-1]["response"]
+
+
+@pytest.mark.parametrize("fault", ["replacement", "missing_lap", "backwards", "stale_context", "completed"])
+def test_pair_followup_extension_fails_without_mutating_original_authority(fault):
+    manager, client, request, controller, radio, value = connected(laps=2)
+    context = controller.capture_task_context()
+    if fault == "replacement":
+        value["drivers"][1]["identity"]["tenure_ordinal"] += 1
+    elif fault == "missing_lap":
+        value["drivers"][1]["lap"]["current_lap_number"] = None
+    elif fault == "backwards":
+        value["drivers"][1]["lap"]["current_lap_number"] = 1
+    elif fault == "stale_context":
+        controller.handle_request(f"update task {request['task_id']} " + REQUEST, now=10)
+    else:
+        controller.tasks.end_region_pair(request["task_id"], request["version"], "capture_failed")
+    controller.feed(value, now=10)
+    before = controller.tasks.views()
+    controller.handle_request("track that for another two laps", now=10, task_context=context)
+    assert controller.tasks.views() == before
+
+
+def test_extension_discards_inflight_old_result_then_collects_fresh_independent_pairs():
+    manager, client, request, controller, radio, value, owner_id = armed(laps=2)
+    collect(client, controller, value, owner_id)
+    drive(client, controller, value, owner_id, player_number=5, number=4)
+    now = 10 + value["frame_ordinal"] * 0.05
+    client.clock[0] = now
+    controller.feed(value, now=now)
+    def interrupt(method):
+        if method != "region_GET":
+            return
+        client.hook = lambda method: None
+        controller.handle_request(f"extend task {request['task_id']} by 2 laps", now=now)
+        manager.replace(controller.opponent_capture_requests())
+    client.hook = interrupt
+    assert manager.poll(value) == []
+    assert reports(controller) == []
+    updated, = controller.opponent_capture_requests()
+    assert updated["body"]["first_lap"] == 6 and updated["opponent_first_lap"] == 5
+    assert updated["body"]["laps"] == 2
+    assert any(method == "region_DELETE" for method, identifier, body in client.calls)
+    new_owner = activate(manager, client, value)
+    assert new_owner != owner_id and client.queue.get(owner_id).state == "released"
+    assert manager.poll(value)[0]["state"] == "collecting"
+    collect(client, controller, value, new_owner, player_lap=6, opponent_lap=5)
+    drive(client, controller, value, new_owner, player_number=7, number=6)
+    results, now = publish(manager, client, controller, value)
+    report, = reports(controller)
+    assert report["version"] == updated["version"] and report["lap_number"] == 6
+    assert report["evidence"] is not None and "Your lap 6 versus Charles Leclerc's lap 5" in report["text"]
+    assert controller.tasks.active()[0].reported_through_lap == 6
+
+
 def test_worker_polls_both_managers_and_closes_all_on_its_own_thread():
     stop = threading.Event()
     inbox = queue.Queue(maxsize=1)
