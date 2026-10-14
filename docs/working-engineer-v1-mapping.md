@@ -38,8 +38,10 @@ Remaining implementation and scope decisions:
   retains both legs through separate crossings and releases orphan admissions.
   Captured results retain the actual scoped completion event facts for each
   driver, and paired publication rechecks freshness after polling I/O.
-  The spoken request/controller and polling-loop connection, guarded diagnostic
-  comparison reporting and full focus-corner coaching remain to be implemented.
+  A guarded numeric report formatter now labels both independent laps, reports
+  sampled minima/brake-onset brackets and discloses tyre/context limitations.
+  The spoken request/controller and polling-loop connection and full focus-corner
+  coaching remain to be implemented.
 - Real-game validation of post-pit benchmarking and retained-lap eligibility.
   Stop-count/tyre-change confirmation, pre-pit ranking/tie-breaks, clean observed
   lap-set averages, age/condition disclosures and one-off reporting now exist.

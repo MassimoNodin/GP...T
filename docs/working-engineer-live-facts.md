@@ -330,3 +330,35 @@ increment passed 3,195 tests, with sixteen platform skips and two existing
 warnings; that run does not cover these later provenance/freshness additions.
 Spoken numeric comparison/controller integration and real-game acceptance remain
 pending.
+
+## Guarded opponent numeric reports — October 14, 2026
+
+A deterministic report formatter now accepts an authoritative fixed pair request
+and a matching fresh capture view. It validates the task/version, exact owner,
+activation identity, both lease requests, geometry, completion provenance and
+complete numeric measurement eligibility before producing a comparison. Snapshot,
+polling and per-leg retrieval age are carried explicitly and rechecked at report
+construction; queued/inactive owners and stale payloads cannot produce numeric
+reports. A later controller must still validate its active registry/scope before
+submission and cancel queued audio when that authority changes.
+
+Reports explicitly label the player's lap and the opponent's independently
+requested lap. They give each sampled minimum, measured region time and supported
+brake-onset interval. Matching compounds permit labelled descriptive numeric
+differences; overlapping/touching onset uncertainty does not imply an earlier or
+later brake point. Missing/censored onset retains supported minimum-speed facts
+and says onset is unavailable. Different compounds retain the absolute facts but
+do not produce like-for-like delta fields.
+
+Tyre age, fuel, conditions and traffic remain explicitly unverified. Every report
+is diagnostic, not a named-corner recommendation or driver ranking. Retained
+completion ages are preserved as historical ownership evidence, not interpreted
+as simultaneous live telemetry. A complete paired lap may be formatted before a
+longer requested horizon ends; an unfinished/missing corresponding lap is never
+substituted. Copied output provenance cannot mutate the underlying capture.
+
+This is a verified formatter, not yet a spoken opponent tracking task: controller
+request parsing, registry lifecycle and background-worker integration remain.
+Forty-nine new report cases pass using real paired captures. The integrated radio,
+capture, live-facts, detail and pipeline selection passes 1,581 tests with two
+existing deprecation warnings. Real-game acceptance remains pending.

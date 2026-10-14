@@ -13,6 +13,7 @@ from .region_captures import RadioRegionCaptures
 
 class RadioOpponentCaptures:
     def __init__(self, client, *, notify=None, clock=time.monotonic, clock_ns=time.monotonic_ns):
+        self.clock = clock
         self.clock_ns = clock_ns
         self.demands = RadioDetailDemands(client, notify=notify, clock=clock)
         self.captures = RadioRegionCaptures(client, notify=notify, clock=clock)
@@ -200,6 +201,7 @@ class RadioOpponentCaptures:
             return self._poll(snapshot)
 
     def _poll(self, snapshot):
+        started = self.clock()
         with self._lock:
             desired = copy.deepcopy(self._desired)
         if self._pair is not None and self._pair["request"] not in desired:
@@ -271,7 +273,10 @@ class RadioOpponentCaptures:
             self._cleanup()
             return []
         return [{**copy.deepcopy(request), "state": state, "reason": reason,
-                 "owner": copy.deepcopy(owner), "legs": results}]
+                 "owner": copy.deepcopy(owner), "legs": results,
+                 "request_age_s": self.clock() - started, "received_at": self.clock(),
+                 "frame_age_s": ((self.clock_ns() - snapshot["received_monotonic_ns"]) / 1e9
+                                 if isinstance(snapshot, dict) and type(snapshot.get("received_monotonic_ns")) is int else None)}]
 
     def close(self):
         self.replace([])
