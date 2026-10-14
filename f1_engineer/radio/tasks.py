@@ -83,12 +83,25 @@ def parse_task_request(request: str) -> TaskAction | None:
     task_id = None
     if update:
         task_id, text = int(update.group(1)), update.group(2)
+    lap_words = ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+                 "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty")
+    named_count = r"([1-9][0-9]?|" + "|".join(lap_words) + r")"
+    named_duration = r" for (?:the )?next(?: " + named_count + r")? laps?"
+    named_tracked = re.fullmatch(
+        r"(?:track|keep track of) (.{1,80}?)'s braking (?:points? )?and minimum speed at (.{1,80}?) (?:in comparison to|compared to) me" + named_duration, text
+    )
+    named_for = re.fullmatch(
+        r"(?:track|keep track of) braking points? and minimum speed for (.{1,80}?) at (.{1,80}?) (?:in comparison to|compared to) me" + named_duration, text
+    )
+    if named_tracked or named_for:
+        opponent, name, count = (named_tracked or named_for).groups()
+        text = f"compare my braking and minimum speed at {name} with {opponent} for next {count or '1'} laps"
     named = re.fullmatch(
-        r"(track|compare) my braking and minimum speed at (.{1,80}?)(?: with (.{1,80}?))? for (?:the )?next(?: ([1-9][0-9]?))? laps?", text
+        r"(track|compare) my braking and minimum speed at (.{1,80}?)(?: with (.{1,80}?))?" + named_duration, text
     )
     if named:
         verb, name, opponent, count = named.groups()
-        laps = int(count or "1")
+        laps = (int(count) if count.isdecimal() else lap_words.index(count) + 1) if count else 1
         if laps > 20:
             raise ValueError("Please choose one to twenty upcoming laps.")
         comparison = opponent == "my previous observed region"

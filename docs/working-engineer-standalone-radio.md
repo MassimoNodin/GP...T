@@ -1598,3 +1598,16 @@ The broader integrated radio/capture/live-facts/detail/pipeline/track selection
 passes 1,789 tests with two existing warnings; changed-module compilation and
 whitespace checks pass. The complete-suite 3,419-pass result above predates this
 context-retention increment. No hardware or acoustic acceptance is claimed.
+
+### Spoken named-region phrasing
+
+Named tracking also accepts driver-first requests such as "Keep track of
+Leclerc's braking points and minimum speed at turn 1 in comparison to me for
+the next three laps" and "Keep track of braking points and minimum speed for
+Leclerc at turn 1 compared to me for next three laps." Named requests accept
+spoken counts from one through twenty as well as digits, including updates.
+They use the same reviewed geometry, fixed-driver identity, independent lap
+boundaries, task limits and capture path; no qualifier is silently discarded.
+Six additional cases exercise these forms and actual controller admission.
+The focused command/registry/controller/clarification/context selection passes
+242 tests with one existing warning.

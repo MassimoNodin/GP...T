@@ -62,6 +62,29 @@ def test_bad_named_requests_do_not_drop_qualifiers(question):
         parse_task_request(question)
 
 
+@pytest.mark.parametrize("question,opponent,laps", [
+    ("keep track of Leclerc's braking points and minimum speed at turn 1 in comparison to me for the next three laps", "leclerc", 3),
+    ("track Charles Leclerc's braking and minimum speed at turn-1 compared to me for next lap", "charles leclerc", 1),
+    ("keep track of braking points and minimum speed for Leclerc at Turn 1 compared to me for next twenty laps", "leclerc", 20),
+    ("compare my braking and minimum speed at turn 1 with Leclerc for next two laps", "leclerc", 2),
+    ("track my braking and minimum speed at turn 1 for next one lap", None, 1),
+])
+def test_named_tracking_accepts_driver_first_forms_and_spoken_durations(question, opponent, laps):
+    action = parse_task_request(question)
+    assert action.region_opponent == opponent and action.laps == laps
+    assert action.region_name in {"turn 1", "turn-1"}
+    assert action.region_bounds_m is None
+    assert parse_task_request("update task 2 " + question).task_id == 2
+
+
+def test_driver_first_named_request_uses_the_same_real_reviewed_capture_binding(reviewed):
+    manager, client, controller, radio, value, catalog = setup_named(reviewed)
+    controller.handle_request("keep track of braking points and minimum speed for Leclerc at turn 1 in comparison to me for next three laps", now=10)
+    request, = controller.opponent_capture_requests()
+    assert request["body"]["laps"] == 3 and request["body"]["window_m"] == [10.0, 50.0]
+    assert request["opponent"] == value["drivers"][1]["identity"]
+
+
 def test_real_reviewed_catalog_resolves_only_explicit_aliases(reviewed):
     manager, client, controller, radio, value, catalog = setup_named(reviewed)
     window, source = resolve_named_region(catalog["result"], catalog["binding"], "TURN-1")
