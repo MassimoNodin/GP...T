@@ -33,8 +33,8 @@ class RadioDetailDemands:
                 and type(scope["packet_format"]) is int and scope["packet_format"] in (2025, 2026)
                 and isinstance(opponent, dict)
                 and set(opponent) == {"car_index", "tenure_ordinal", "participant_identity_fingerprint"}
-                and type(opponent["car_index"]) is int and 0 <= opponent["car_index"] < 22
-                and type(opponent["tenure_ordinal"]) is int and opponent["tenure_ordinal"] >= 0
+                and type(opponent["car_index"]) is int and 0 <= opponent["car_index"] < 24
+                and type(opponent["tenure_ordinal"]) is int and opponent["tenure_ordinal"] >= 1
                 and isinstance(opponent["participant_identity_fingerprint"], str)
                 and re.fullmatch(r"[a-f0-9]{64}", opponent["participant_identity_fingerprint"]) is not None)
 

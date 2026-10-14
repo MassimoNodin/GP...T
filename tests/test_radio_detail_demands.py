@@ -285,6 +285,18 @@ def test_expired_owner_is_terminal_and_proves_cleanup():
     assert broker.close()["cleanup_verified"]
 
 
+@pytest.mark.parametrize("car_index", [22, 23])
+def test_backend_reserve_slots_are_valid_when_exactly_bound(car_index):
+    client, broker, events = ready()
+    request = descriptor()
+    request["opponent"]["car_index"] = car_index
+    client.rows[0]["car_index"] = car_index
+    broker.replace([request])
+    assert broker.poll()[0]["state"] == "waiting"
+    client.apply()
+    assert broker.poll()[0]["state"] == "active"
+
+
 def test_ambiguous_initial_post_does_not_flood_or_claim_verified_cleanup():
     client, broker, events = ready()
     client.override["POST"] = {"status": "unavailable"}

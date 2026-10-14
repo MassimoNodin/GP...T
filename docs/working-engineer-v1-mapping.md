@@ -33,8 +33,11 @@ Remaining implementation and scope decisions:
   authenticated API. A bounded radio demand broker now resolves exact target
   identities, distinguishes queued commands from owner activation, fences
   renewals and reports unverified cleanup. It is not yet wired into the radio
-  polling loop; paired capture coordination and spoken tracking comparisons
-  remain to be connected.
+  polling loop. A paired-capture coordinator now waits for processed owner
+  metadata, preserves each driver's independently requested next-lap boundary,
+  retains both legs through separate crossings and releases orphan admissions.
+  The spoken request/controller and polling-loop connection, guarded diagnostic
+  comparison reporting and full focus-corner coaching remain to be implemented.
 - Real-game validation of post-pit benchmarking and retained-lap eligibility.
   Stop-count/tyre-change confirmation, pre-pit ranking/tie-breaks, clean observed
   lap-set averages, age/condition disclosures and one-off reporting now exist.

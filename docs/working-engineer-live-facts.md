@@ -251,3 +251,47 @@ and detail demands. Nine new release/budget cases pass; the integrated radio,
 capture, live-facts, detail and pipeline selection passes 1,485 tests with two
 existing deprecation warnings. Paired scheduling and real-game acceptance
 remain pending.
+
+## Radio paired capture prerequisite — October 14, 2026
+
+A new paired-capture coordinator composes the bounded radio detail-demand and
+region-lease managers. It accepts one fixed player/opponent regional request at
+a time, consuming two leases from the shared backend three-active-lease budget.
+Each task/version freezes session/generation/scope, both exact identities,
+numeric window, diagnostic track length and independent upcoming lap numbers.
+An in-place descriptor change requires a new task version.
+
+Neither leg is admitted while the detail owner is only queued, before matching
+owner metadata appears in the opponent row, or from a frame predating the owner
+activation frame. Admission requires a fresh processed frame, valid geometry and
+both drivers still on the lap immediately before their originally requested
+window. If either boundary is missed, the pair becomes unavailable; it never
+silently moves to a later lap.
+
+Player-first and opponent-first completion are both supported. The first leg
+and detail owner remain retained while the second driver finishes. Complete
+pair views retain explicitly different lap labels and require both fixed leases,
+binding/window/track-length agreement and complete unique lap-result sets.
+Complete collection is not proof of comparable or coaching-eligible measurements;
+the future reporting layer must validate the numeric diagnostic evidence and
+disclose conditions, timings and unsupported claims.
+
+Definitive partial admission failure releases the other leg instead of exposing
+a half-comparison. Scope/identity/geometry changes fence both leases. Temporary
+owner transport failures pause pair readiness without discarding already-owned
+collection. Cancellation and shutdown retain the managers' bounded, honest
+pending-cleanup semantics. Backend reserve slots twenty-two and twenty-three
+now use the same exact-identity admission policy as other supported slots; zero
+tenure ordinals are rejected.
+
+This coordinator is not yet wired into the standalone radio worker/controller.
+No spoken opponent tracking, complete focus-corner coaching or real-game
+acceptance is claimed by this prerequisite. Thirty-four new paired cases pass
+using the real region trackers and bounded detail queue; two reserve-slot demand
+cases also pass. They include both crossing orders, queued/late activation,
+partial budget rejection, capture-response corruption and cancellation during
+admission.
+
+The integrated radio/capture/live-facts/detail/pipeline selection passes 1,521
+tests with two existing deprecation warnings. This remains automated prerequisite
+evidence, not a demonstrated in-game capability.
