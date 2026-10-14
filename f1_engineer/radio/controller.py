@@ -6,6 +6,7 @@ import re
 import time
 import uuid
 from copy import deepcopy
+from dataclasses import replace
 
 from ..driver_names import display_driver_name, driver_name_aliases
 from .gaps import GAP_CHANGES, LapGapTracker
@@ -20,6 +21,7 @@ from .pit_benchmark import PitBenchmarkTracker
 from .regions import RegionTracker, RegionWindow
 from .region_progress import RegionProgress
 from .opponent_regions import compare_opponent_region
+from .track_geometry import geometry_binding, resolve_named_region
 from ..analysis.resampling import TraceSample
 
 
@@ -78,8 +80,12 @@ class RadioController:
         self._capture_namespace = uuid.uuid4()
         self._capture_results = []
         self._pair_report_identity = None
+        self._geometry_binding = None
+        self._geometry_result = None
 
     def _unavailable(self, reason: str) -> None:
+        self._geometry_binding = None
+        self._geometry_result = None
         self.scheduler.set_scope(None)
         self._cursor = None
         self._player = None
@@ -183,6 +189,21 @@ class RadioController:
             self.scheduler.cancel_owner("lap_reports")
             self.scheduler.cancel_owner("opponent_regions")
         self._track_length_m = length if type(length) in (int, float) and math.isfinite(length) and 0 < length <= 20_000 else None
+        self._geometry_binding = geometry_binding(snapshot)
+        changed_geometry = [task for task in self.tasks.views() if task["region_geometry_binding"] is not None
+                            and task["region_geometry_binding"] != self._geometry_binding]
+        for task in changed_geometry:
+            self.tasks.cancel(task["task_id"])
+            self.regions.remove(task["task_id"])
+            self.notify({"event": "radio_named_region_ended", "task_id": task["task_id"],
+                         "version": task["version"], "reason": "track_geometry_context_changed"})
+        if changed_geometry:
+            self.scheduler.cancel_owner("lap_reports")
+            self.scheduler.cancel_owner("opponent_regions")
+        geometry = [item for item in self._capture_results if isinstance(item, dict)
+                    and item.get("kind") == "track_geometry" and self._geometry_binding is not None
+                    and item.get("binding") == self._geometry_binding]
+        self._geometry_result = deepcopy(geometry[0].get("result")) if len(geometry) == 1 else None
         self.regions.observe(() if self._backend_regions else self.tasks.active(), self._player, self._region_sample(now=now),
                              track_length_m=self._track_length_m)
         if self.pace.observe(self._player, now=now):
@@ -858,6 +879,11 @@ class RadioController:
             else:
                 if self._player is None or not _integer(self._player["lap"].get("current_lap_number"), 1, 255):
                     raise ValueError("Fresh player telemetry and a known lap number are required to create a report.")
+                named_source = None
+                if action.region_name is not None:
+                    window, named_source = resolve_named_region(self._geometry_result, self._geometry_binding,
+                                                               action.region_name)
+                    action = replace(action, region_bounds_m=(window.start_m, window.end_m))
                 aliases = tuple(alias for row in self._drivers if isinstance(row, dict)
                                 and (name := self._participant_name(row)) is not None for alias in driver_name_aliases(name))
                 plan = (QuestionPlan(("self", "name:" + action.region_opponent), ("opponent_regional_observations",))
@@ -904,7 +930,8 @@ class RadioController:
                                           laps=action.laps, task_id=action.task_id,
                                           pace_reference=pace_reference, pace_tolerance_ms=action.tolerance_ms,
                                           region_window=region_window, region_reference=region_reference,
-                                          opponent_first_lap=opponent_first_lap)
+                                          opponent_first_lap=opponent_first_lap,
+                                          region_geometry_binding=self._geometry_binding if named_source is not None else None)
                 if opponent_first_lap is not None or previous_pair:
                     self.scheduler.cancel_owner("opponent_regions")
                 selected_tasks = (task,)
@@ -948,6 +975,12 @@ class RadioController:
                              f"Stay within {task.pace_tolerance_ms / 1000:.3f} seconds; reference does not update automatically.")
                     text += (" Observed sector feedback enabled." if pace_reference.sector_times_ms is not None
                              else " Sector feedback unavailable for this reference; lap feedback remains enabled.")
+                if named_source is not None:
+                    text += " Using reviewed distance bounds; the actual live layout is not independently verified."
+                    self.notify({"event": "radio_named_region", "task_id": task.task_id, "version": task.version,
+                                 "requested_region": action.region_name, "source": named_source,
+                                 "window": region_window.view(), "diagnostic_only": True,
+                                 "coaching_eligible": False})
         except ValueError as error:
             text = str(error)
         queued = self._control_answer(text, now=now)

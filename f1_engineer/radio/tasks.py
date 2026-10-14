@@ -38,6 +38,7 @@ class TaskAction:
     region_bounds_m: tuple[float, float] | None = None
     region_compare: bool = False
     region_opponent: str | None = None
+    region_name: str | None = None
 
 
 def parse_task_request(request: str) -> TaskAction | None:
@@ -82,6 +83,24 @@ def parse_task_request(request: str) -> TaskAction | None:
     task_id = None
     if update:
         task_id, text = int(update.group(1)), update.group(2)
+    named = re.fullmatch(
+        r"(track|compare) my braking and minimum speed at (.{1,80}?)(?: with (.{1,80}?))? for (?:the )?next(?: ([1-9][0-9]?))? laps?", text
+    )
+    if named:
+        verb, name, opponent, count = named.groups()
+        laps = int(count or "1")
+        if laps > 20:
+            raise ValueError("Please choose one to twenty upcoming laps.")
+        comparison = opponent == "my previous observed region"
+        if verb == "track" and opponent is not None or verb == "compare" and opponent is None:
+            raise ValueError("Say track my braking and minimum speed at a named corner, or compare it with one named opponent.")
+        if opponent is not None and not comparison and (
+                re.fullmatch(r"[^\W\d_]+(?:[ '\-][^\W\d_]+)*", opponent) is None
+                or opponent in {"me", "myself", "my car"}):
+            raise ValueError("Choose one named opponent for regional tracking.")
+        return TaskAction("update" if task_id is not None else "create", "my regional observations",
+                          task_id, laps, region_compare=comparison,
+                          region_opponent=None if comparison else opponent, region_name=name)
     paired = re.fullmatch(
         r"compare my braking and minimum speed from ([0-9]{1,5}(?:\.[0-9]{1,2})?) to ([0-9]{1,5}(?:\.[0-9]{1,2})?) (?:metres|meters) with (.+) for (?:the )?next(?: ([1-9][0-9]?))? laps?", text
     )
@@ -176,6 +195,7 @@ class LapReportTask:
     region_reference: RegionReference | None = None
     opponent_first_lap: int | None = None
     reported_through_lap: int | None = None
+    region_geometry_binding: str | None = None
 
     def view(self) -> dict:
         return {"task_id": self.task_id, "version": self.version, "state": self.state,
@@ -185,6 +205,7 @@ class LapReportTask:
                 "pace_tolerance_ms": self.pace_tolerance_ms,
                 "region_window": self.region_window.view() if self.region_window is not None else None,
                 "region_reference": self.region_reference.view() if self.region_reference is not None else None,
+                "region_geometry_binding": self.region_geometry_binding,
                 "opponent_first_lap": self.opponent_first_lap,
                 "reported_through_lap": self.reported_through_lap,
                 "reference_policy": ("valid observed player lap and tolerance fixed" if "target_pace" in self.plan.metrics
@@ -225,7 +246,8 @@ class LapReportRegistry:
                 pace_reference: PaceReference | None = None, pace_tolerance_ms: int | None = None,
                 region_window: RegionWindow | None = None,
                 region_reference: RegionReference | None = None,
-                opponent_first_lap: int | None = None) -> LapReportTask:
+                opponent_first_lap: int | None = None,
+                region_geometry_binding: str | None = None) -> LapReportTask:
         if (type(cursor) is not int or cursor < 0 or type(lap) is not int or not 1 <= lap <= 255
                 or task_id is not None and (type(task_id) is not int or task_id < 1)):
             raise ValueError("A report requires a valid current lap, event cursor and task identifier.")
@@ -257,6 +279,10 @@ class LapReportRegistry:
                 raise ValueError("Paired regional tracking requires two fixed drivers, independent upcoming laps and one numeric window.")
         elif region_window is not None:
             raise ValueError("Only regional tracking tasks can own a numeric window.")
+        if region_geometry_binding is not None and (
+                region_window is None or not isinstance(region_geometry_binding, str)
+                or not 1 <= len(region_geometry_binding.encode("utf-8")) <= 512):
+            raise ValueError("Named regions require a bounded current geometry binding and numeric window.")
         if opponent_first_lap is not None and "opponent_regional_observations" not in plan.metrics:
             raise ValueError("Only a paired regional task can own an opponent lap window.")
         if region_reference is not None and (not isinstance(region_reference, RegionReference)
@@ -280,6 +306,7 @@ class LapReportRegistry:
                 if (task.plan == plan and task.fixed_bindings == bindings
                         and task.region_window == region_window
                         and task.region_reference == region_reference
+                        and task.region_geometry_binding == region_geometry_binding
                         and task.opponent_first_lap == opponent_first_lap
                         and (opponent_first_lap is None or task.first_lap == lap)
                         and task.pace_reference == pace_reference and task.pace_tolerance_ms == pace_tolerance_ms
@@ -301,6 +328,7 @@ class LapReportRegistry:
                              pace_reference=pace_reference, pace_tolerance_ms=pace_tolerance_ms,
                              region_window=region_window, region_reference=region_reference,
                              opponent_first_lap=opponent_first_lap,
+                             region_geometry_binding=region_geometry_binding,
                              reported_through_lap=lap - 1 if opponent_first_lap is not None else None)
         self._tasks[identifier] = task
         self.notify({"event": "radio_task_updated" if existing else "radio_task_created", **task.view()})
@@ -333,7 +361,8 @@ class LapReportRegistry:
                 raise ValueError("The extended paired task must cover at most twenty upcoming laps for each driver, within lap 255.")
             return self.install(task.plan, task.fixed_bindings, cursor=cursor, lap=first, laps=laps,
                                 task_id=task.task_id, region_window=task.region_window,
-                                opponent_first_lap=opponent_lap + 1)
+                                opponent_first_lap=opponent_lap + 1,
+                                region_geometry_binding=task.region_geometry_binding)
         first = max(task.first_lap, lap + (1 if task.region_window is not None else 0))
         until = task.until_lap + additional_laps if task.until_lap is not None else first + additional_laps - 1
         if not 1 <= first <= until <= 255 or until - first + 1 > 20:
@@ -346,7 +375,7 @@ class LapReportRegistry:
         return self.install(task.plan, task.fixed_bindings, cursor=cursor, lap=first, laps=until - first + 1,
                             task_id=task.task_id, pace_reference=task.pace_reference,
                             pace_tolerance_ms=task.pace_tolerance_ms, region_window=task.region_window,
-                            region_reference=task.region_reference)
+                            region_reference=task.region_reference, region_geometry_binding=task.region_geometry_binding)
 
     def eligible(self, *, event_id: int, lap: int) -> tuple[LapReportTask, ...]:
         return tuple(task for task in self._tasks.values() if task.state == "active"

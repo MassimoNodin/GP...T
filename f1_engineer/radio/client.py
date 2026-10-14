@@ -116,6 +116,11 @@ class RadioClient:
             return {"status": "unavailable", "reason": "detail_request_invalid"}
         return self._detail_request(method, f"/api/v2/session-evidence/detail-tasks/{task_id}")
 
+    def track_models(self, session_id: str) -> dict:
+        if not isinstance(session_id, str) or re.fullmatch(r"[a-f0-9]{32}", session_id) is None:
+            return {"status": "unavailable", "reason": "track_model_request_invalid"}
+        return self._detail_request("GET", f"/api/v2/session-evidence/sessions/{session_id}/track-models")
+
     def _detail_request(self, method: str, endpoint: str, *, targets=False, **options) -> dict:
         started = time.monotonic()
         try:

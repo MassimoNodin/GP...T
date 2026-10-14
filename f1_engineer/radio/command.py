@@ -15,6 +15,7 @@ from .input_settings import DEFAULT_INPUT_SETTINGS
 from .listening import VoiceInput
 from .region_captures import RadioRegionCaptures
 from .opponent_captures import RadioOpponentCaptures
+from .track_geometry import RadioTrackGeometry
 from .scheduler import RadioScheduler
 from .wheel_input import WheelButtonMonitor
 from .windows_speech import WindowsSpeech
@@ -53,7 +54,7 @@ def _commands(inbox: queue.Queue, stream) -> None:
             inbox.put("ask " + text[4:] if text[:4].lower() == "ask " else text.lower())
 
 
-def _poll(client: RadioClient, inbox: queue.Queue, stop: threading.Event, interval: float, captures=None, opponent_captures=None) -> None:
+def _poll(client: RadioClient, inbox: queue.Queue, stop: threading.Event, interval: float, captures=None, opponent_captures=None, geometry=None) -> None:
     try:
         while not stop.is_set():
             started = time.monotonic()
@@ -61,6 +62,8 @@ def _poll(client: RadioClient, inbox: queue.Queue, stop: threading.Event, interv
             results = captures.poll() if captures is not None else []
             if opponent_captures is not None:
                 results += opponent_captures.poll(snapshot)
+            if geometry is not None:
+                results += geometry.poll(snapshot)
             try:
                 inbox.get_nowait()
             except queue.Empty:
@@ -107,6 +110,7 @@ def run_radio(args) -> int:
     worker = None
     captures = RadioRegionCaptures(client, notify=emit) if client is not None else None
     opponent_captures = RadioOpponentCaptures(client, notify=emit) if client is not None else None
+    geometry = RadioTrackGeometry(client) if client is not None else None
     try:
         playback = DryRunPlayback() if args.dry_run or args.once or args.capture_test else WindowsSpeech(
             voice=args.voice, rate=args.rate, volume=args.volume)
@@ -131,7 +135,7 @@ def run_radio(args) -> int:
         snapshots: queue.Queue = queue.Queue(maxsize=1)
         commands: queue.Queue = queue.Queue(maxsize=16)
         if client is not None:
-            worker = threading.Thread(target=_poll, args=(client, snapshots, stop, args.poll_interval, captures, opponent_captures),
+            worker = threading.Thread(target=_poll, args=(client, snapshots, stop, args.poll_interval, captures, opponent_captures, geometry),
                                       name="radio-backend", daemon=True)
             worker.start()
         threading.Thread(target=_commands, args=(commands, sys.stdin), name="radio-commands", daemon=True).start()

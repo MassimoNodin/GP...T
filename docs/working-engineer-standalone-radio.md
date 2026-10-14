@@ -1517,3 +1517,50 @@ instructions, existing-task preservation and missing-telemetry refusal.
 The current integrated radio/capture/live-facts/detail/pipeline selection passes
 1,700 tests with two existing warnings. The earlier complete-suite result
 predates this clarification and the notice-lifetime fix.
+
+### Reviewed named-region tracking
+
+The polling worker now retrieves the authenticated session-compatible track
+catalog using a bounded GET (64 KiB, existing transport/time limits, no redirects
+or proxies). Catalogs are cached by backend generation, session, UDP scope,
+track ID and length. Failed retrieval retries after thirty seconds; missing or
+stale live context clears the cache. No catalog network request runs on the
+controller/playback thread. The original three-second live freshness safeguard
+also includes catalog I/O time before publication.
+
+Supported explicit forms include:
+
+- "Track my braking and minimum speed at turn 1 for next 3 laps."
+- "Compare my braking and minimum speed at turn 1 with Leclerc for next lap."
+- "Compare my braking and minimum speed at turn 1 with my previous observed
+  region for next 2 laps."
+- Prefix these with "update task N" to change an active task.
+
+Resolution requires exactly one compatible reviewed model with validated,
+approved fingerprint/review metadata, and one exact normalized region label or
+ID. For example, "turn-1" and "Turn 1" normalize alike; arbitrary corner-number
+aliases and "worst corner" are not guessed. Wrap-around, oversized or invalid
+windows refuse capture. If no eligible reviewed model is configured, choose
+explicit numeric bounds instead; the packaged draft does not become reviewed.
+
+Resolved tasks retain fixed numeric bounds and a current geometry-context
+binding, including through player and paired conversational extensions.
+Changing/missing track context ends named tracking and fences regional speech;
+an explicit numeric update removes named-geometry authority. Each successful
+resolution emits diagnostic provenance and states that the actual live layout
+is not independently verified. Review-bundle metadata is authenticated operator
+provenance, not a physical layout demonstration or permission to prescribe a
+driving change. Reports retain existing diagnostic/context limitations.
+
+Synthetic tests use real test-only reviewed bundles and actual two-driver
+capture collection/completion, not real-circuit validation. They cover parsing,
+provenance/context rejection, ambiguity, cache/retry behavior, worker isolation,
+HTTP bounds, fixed extensions and context cancellation. Worst-corner selection,
+coaching reference eligibility and real-game acceptance remain outstanding.
+
+Validation: 45 new named-geometry cases pass. The integrated radio/capture/
+live-facts/detail/pipeline/track selection passes 1,767 tests. The complete
+repository suite passes 3,419 tests with sixteen skips and two existing warnings
+in 320.23 seconds. Changed-module compilation and whitespace checks pass.
+These results cover named tracking, the earlier notice-lifetime fix and initial
+worst-corner clarification; they do not demonstrate real-game hardware acceptance.

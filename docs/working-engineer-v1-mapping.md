@@ -28,6 +28,10 @@ Remaining implementation and scope decisions:
   the missing verified geometry/eligible reference, retain the requested horizon
   in conversation and ask for an explicit distance target without starting a
   pretend coaching task. Selection, actual coaching and progress still remain.
+  Explicit named-corner numeric tracking now resolves exact reviewed region
+  labels/IDs through the authenticated session catalog. Drafts, ambiguous
+  models/corners and incompatible context refuse resolution. This does not
+  independently verify the live layout or enable corner ranking/coaching.
 - Opponent braking/minimum-speed task-owned collection through existing detail
   permissions, aligned player/opponent lap windows and guarded spoken comparisons.
   A backend prerequisite now exposes same-frame opponent observations only for
