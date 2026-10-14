@@ -21,6 +21,81 @@ Radio modules compile and whitespace checks pass. No frontend build or Linux
 runtime test was run in this increment. These results cover the bounded code
 paths, not actual hardware or user acceptance.
 
+## Live test preparation, October 14, 2026
+
+Code commit 868a4d0 was verified with 3,612 passing Windows repository tests,
+sixteen platform-specific skips and two existing warnings in 319.15 seconds.
+On the actual Ubuntu host, 276 targeted authentication, request trace, live fact,
+opponent capture, focus/watch/pit, radio diagnostic and local speech tests pass
+with one existing warning. Compilation and PowerShell launcher parsing pass.
+No UI/browser build, deployment or test was performed for this preparation.
+
+Backend journal capture started before synchronization and service restarts.
+The single-branch Ubuntu clone required an explicit feature-branch fetch and
+tracking ref; the partial checkout was verified against the feature tree before
+repairing its metadata, without discarding files or rewriting history. Ubuntu
+now runs the feature code with the existing CPU affinity, demand-v1 opponent
+policy, UDP address/port, Codex executable/profile and subscription model intact.
+
+The configured career database lacked its speech pin. The existing verified
+whisper.cpp 1.9.3 tiny.en CPU pin was reused, without replacing binaries/models
+or bypassing hash checks. The old career acquisition journal requires a lengthy
+recovery replay, so its retained data was kept and this live test uses a separate
+NVMe database at:
+
+    /mnt/nvme/f1-engineer/data/working-engineer-20261014-200122/f1-engineer.sqlite3
+
+The run-specific service override is zzzz-working-engineer-test.conf in the user
+f1-engineer.service.d directory. To restore the earlier database after the test,
+stop the service, move only that named override into this run's log directory,
+reload the user units and restart; expect the earlier recovery replay to resume.
+Do not delete either database, mark recovery complete artificially, or seed test
+facts into the real telemetry scope. Existing recordings remain in their original
+NVMe location. Request tracing is enabled by the separate named trace override.
+
+The isolated UDP receiver is bound on 192.168.1.115:20777 with a 212,992-byte
+receive buffer. The actual runtime reports no error, zero packets/drops/socket
+errors and awaits game input. Speech/runtime endpoints report ready. A bundled
+JFK fixture was correctly transcribed through the real API in 1.500 seconds;
+this is a fixture smoke check, not microphone or end-to-end voice latency.
+Windows Hazel playback dispatched and native completion was acknowledged;
+audibility/acoustic onset still requires the user's confirmation.
+
+The normal Windows radio is running with automatic spoken submission, saved
+R3 button 32, native playback and a dedicated SSH tunnel on port 19765. It does
+not depend on the existing dashboard/tunnel on port 18765. A requested console
+status was processed successfully. Its HTTP responses are 200, client/backend
+request IDs match, and the corresponding records are present in the Ubuntu
+journal capture. No process/thread failure was logged during readiness checks.
+The R3 is currently not detected and F1 is not providing telemetry; stale facts
+are unavailable rather than spoken as current. Capture remains idle until input.
+
+Local ignored evidence directory:
+
+    data/radio-tests/working-engineer-20261014-200122/
+
+It contains preflight/device/binding/voice manifests, deployment commands,
+Windows playback diagnostics and radio/radio.jsonl with stderr/launcher logs.
+The local run was checked for the actual credential value: no leak was found.
+Radio logs rotate at 25 MiB with four backups and include spoken text, but not
+raw microphone audio or HTTP credentials/bodies. Do not publish unreviewed logs.
+
+Backend evidence directory:
+
+    /mnt/nvme/f1-engineer/logs/working-engineer-20261014-200122/
+
+It contains before/after service configuration and revision, deployment logs,
+readiness, fixture transcription and the continuing backend-journal.jsonl.
+The private journal collector unit working-engineer-20261014-200122-logs runs
+for up to four hours; normal systemd journal logging remains enabled afterwards.
+The telemetry database supplies retained data-level evidence separately.
+
+Actual wheel/microphone driving, listening cues, audible answers/coaching,
+browser-free acceptance and acoustic latency sign-off remain pending. Connect
+the wheel, select the intended Windows default playback/microphone devices,
+enable F1 UDP toward the listening Ubuntu endpoint and begin a real session.
+No successful real-game criterion or user acceptance is claimed by this setup.
+
 ## Criterion status
 
 Every criterion still needs a real-game demonstration and user acceptance.
