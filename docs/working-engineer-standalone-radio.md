@@ -1770,3 +1770,21 @@ earlier focused existing-feature selection passes 348 tests. The final integrate
 radio/name/wheel/conversation selection passes 1,539 tests with one existing
 Starlette/httpx warning; module compilation and whitespace checks pass.
 Hardware speech/latency and user acceptance remain pending.
+
+### Final regression and acceptance readiness, October 14, 2026
+
+At code commit f14311f the complete repository Python suite passes 3,596 tests,
+with sixteen Windows/platform-specific skips and two existing deprecation
+warnings, in 319.34 seconds. This final run includes all original clarification
+regressions as well as the new spoken forms, fixed-reference focus practice,
+non-adjacent watches and qualified historical timing. Compilation/whitespace
+checks pass; no frontend build or Linux runtime test was run in this increment.
+
+The [live acceptance record](working-engineer-v1-validation.md) now maps every
+criterion to its implemented path, remaining limitations and required actual
+demonstration. Read-only readiness checks found the saved R3 button-32 mapping
+intact, but no discovered wheel, matching F1 process or listening local/tunnel
+backend port. The default radio check lacks its token file. Audio/installed voice
+discovery works, without proving microphone capture, routing or audible output.
+No production runtime, credentials or wheel mapping were changed. Live driving,
+acoustic latency reporting and explicit user acceptance still gate completion.

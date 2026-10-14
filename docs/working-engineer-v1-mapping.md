@@ -5,10 +5,12 @@ The [acceptance contract](working-engineer-v1-acceptance.md) is authoritative.
 This map is an implementation plan, not acceptance evidence for new features.
 Partial means reusable components exist, not that the in-game experience passes.
 No complete acceptance criterion has been demonstrated on real-game hardware.
-Latest complete regression validation (October 14, 2026): 3,502 passed,
-sixteen skipped and two existing warnings, including reviewed named-region
-tracking, reported regional context retention, expanded spoken forms and
-qualified game-reported historical/session-best timing retrieval.
+Latest complete regression validation (October 14, 2026): 3,596 passed,
+sixteen platform-specific skips and two existing warnings, including reviewed
+named-region tracking, reported context retention, historical timing retrieval,
+fixed-reference focus practice, non-adjacent watches and captured regional
+clarification. The [validation record](working-engineer-v1-validation.md)
+lists current readiness blockers and the criterion-by-criterion live test.
 
 ## Remaining acceptance work as of October 14, 2026
 
