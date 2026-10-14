@@ -1611,3 +1611,11 @@ boundaries, task limits and capture path; no qualifier is silently discarded.
 Six additional cases exercise these forms and actual controller admission.
 The focused command/registry/controller/clarification/context selection passes
 242 tests with one existing warning.
+
+Complete-repository validation after reported-context retention and expanded
+spoken named requests: 3,447 passed, sixteen skipped and two existing warnings
+in 309.03 seconds. This supersedes the earlier complete-suite result for current
+code coverage. No F1 process or actual game capture was available in this run;
+no reviewed real-circuit bundle was manufactured from synthetic fixtures.
+Actual coaching admission, remaining history/wording work and real-game wheel/
+microphone/browser-free/latency acceptance remain open.
