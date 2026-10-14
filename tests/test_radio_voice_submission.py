@@ -30,6 +30,56 @@ def prepared(question="my last lap", *, source="wheel"):
     return controller, radio, events, value, voice, hardware, voice_events, clock
 
 
+@pytest.mark.parametrize("source", ["wheel", "console"])
+@pytest.mark.parametrize("question", ["Hello?", "my last lap", "watch Leclerc", "cancel all tracking"])
+def test_capture_without_session_speaks_unavailability_without_executing_request(source, question, capsys):
+    controller, radio, events, value, voice, hardware, voice_events, clock = prepared(question, source=source)
+    controller._unavailable("runtime_stale")
+    voice._scope = None
+    assert not command.submit_ready_question(controller, voice, now=10, input_status=WHEEL)
+    assert not voice.status()["draft_available"]
+    assert not controller.tasks.active()
+    assert len(radio.pending) == 1
+    assert radio.pending[0].scope is None
+    assert "no live F1 telemetry" in radio.pending[0].text
+    assert not any(event["event"] == "radio_question_answer" for event in events)
+    rejection = json.loads(capsys.readouterr().out)
+    assert rejection["reason"] == "session_unavailable"
+    assert rejection["capture_id"] == REQUEST_ID and rejection["response_queued"]
+    assert not command.submit_ready_question(controller, voice, now=10, input_status=WHEEL)
+    assert len(radio.pending) == 1
+    radio.tick(now=10)
+    assert radio.active is not None
+
+
+@pytest.mark.parametrize("change", ["disconnected", "connection", "cancelled", "unknown_origin"])
+def test_no_session_feedback_still_requires_valid_uncancelled_capture(change):
+    controller, radio, events, value, voice, hardware, voice_events, clock = prepared("Hello?")
+    controller._unavailable("runtime_stale")
+    voice._scope = None
+    status = {**WHEEL}
+    if change == "disconnected":
+        status["status"] = "unavailable"
+    elif change == "connection":
+        status["connection_instance"] = "replacement-wheel"
+    elif change == "cancelled":
+        voice.cancel()
+    else:
+        voice._source = "remote"
+    assert not command.submit_ready_question(controller, voice, now=10, input_status=status)
+    assert not radio.pending and not controller.tasks.active()
+
+
+def test_session_start_drops_no_session_feedback_before_playback():
+    controller, radio, events, value, voice, hardware, voice_events, clock = prepared("Hello?")
+    controller._unavailable("runtime_stale")
+    voice._scope = None
+    command.submit_ready_question(controller, voice, now=10, input_status=WHEEL)
+    assert radio.pending
+    controller.feed(value, now=10)
+    assert not radio.pending and radio.active is None
+
+
 def test_completed_wheel_capture_submits_once_without_console_command(capsys):
     controller, radio, events, value, voice, hardware, voice_events, clock = prepared()
     clock.now += 0.1

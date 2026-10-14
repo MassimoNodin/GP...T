@@ -144,6 +144,11 @@ class VoiceInput:
                 or input_status.get("connection_instance") != self._connection):
             self.cancel("wheel_binding_changed_or_unavailable")
             return None
+        if scope is None and self._scope is None and not self._discard:
+            self._draft = None
+            self._consumed_capture_id = self._capture_id
+            return {"unavailable_reason": "session_unavailable", "capture_id": self._capture_id,
+                    "source": self._source}
         question = self.take_draft(scope=scope)
         if question is None:
             self._notify({"event": "radio_voice_submission_unavailable", "reason": "no_current_draft"})

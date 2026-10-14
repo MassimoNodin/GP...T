@@ -15,7 +15,7 @@ from .listening import VoiceInput
 from .region_captures import RadioRegionCaptures
 from .opponent_captures import RadioOpponentCaptures
 from .track_geometry import RadioTrackGeometry
-from .scheduler import RadioScheduler
+from .scheduler import RadioMessage, RadioScheduler
 from .wheel_input import WheelButtonMonitor
 from .windows_speech import WindowsSpeech
 from .diagnostics import emit, radio_event_log, trace_event
@@ -299,6 +299,16 @@ def submit_ready_question(controller: RadioController, voice: VoiceInput, *, now
     controller.check_freshness(now=now)
     submission = voice.take_ready_draft(scope=controller.scheduler.scope, input_status=input_status)
     if submission is None:
+        return False
+    if submission.get("unavailable_reason") == "session_unavailable":
+        text = ("I received your voice request, but no live F1 telemetry is available. "
+                "Start a session with UDP telemetry enabled, then try again.")
+        controller.scheduler.cancel()
+        queued = controller.scheduler.submit(RadioMessage(
+            f"voice-unavailable:{submission['capture_id']}", None, text, "answer", now + 15), now=now)
+        emit({"event": "radio_voice_submission_unavailable", "reason": "session_unavailable",
+              "capture_id": submission["capture_id"], "source": submission["source"],
+              "response_queued": queued, "text": text})
         return False
     dispatch_voice_request(submission["question"], controller, voice, now=now)
     emit({"event": "radio_voice_submitted", "capture_id": submission["capture_id"],

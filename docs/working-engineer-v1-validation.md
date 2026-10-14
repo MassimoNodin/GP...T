@@ -189,6 +189,24 @@ runtimes/models merely to complete this checklist.
     Exercise wheel reconnect, telemetry loss and game restart or flashback.
     Record actual recovery/failures without manipulating telemetry to fake passes.
 
+## Live microphone check: missing-session feedback
+
+On October 14, 2026, the Razer Barracuda X 2.4 microphone was explicitly
+selected as input device 1 (MME); mono 16 kHz input settings passed validation.
+The user heard wheel-button cues but reported no spoken response to two hello
+attempts. Both captures transcribed as "Hello?"; capture-end-to-transcript
+times were 1.992 and 2.031 seconds. No F1 telemetry was available. The voice
+submission guard discarded drafts without a session, leaving only a console
+diagnostic and no audible explanation.
+
+Completed, valid captures started without a session now queue a spoken
+no-live-telemetry explanation instead of silently discarding the request.
+This does not execute the transcript, create tasks, or relax the three-second
+freshness limit. Cancelled captures, invalid wheel origins, and captures from
+a changed or stale previous session remain rejected. A new session cancels
+queued no-session feedback. Regression tests cover these boundaries and
+one-time consumption. Audible user confirmation remains pending.
+
 ## Latency and final sign-off
 
 Measure wheel press to audible listening feedback, capture end to first answer
