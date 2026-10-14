@@ -23,8 +23,9 @@ from .region_progress import RegionProgress
 from .opponent_regions import compare_opponent_region
 from .track_geometry import geometry_binding, resolve_named_region
 from .reported_history import reported_best_fact, reported_lap_fact
+from .focus_coach import FOCUS_POLICY, choose_focus_reference, choose_focus_loss, focus_cue, focus_progress
 from ..analysis.resampling import TraceSample
-from ..analysis.region_context import scoped_region_context
+from ..analysis.region_context import scoped_region_context, regional_sample_context
 
 
 def _integer(value, minimum=0, maximum=2**64 - 1):
@@ -84,8 +85,14 @@ class RadioController:
         self._pair_report_identity = None
         self._geometry_binding = None
         self._geometry_result = None
+        self._focus_context = None
+        self._focus_binding = None
+        self._focus_first_lap = None
 
     def _unavailable(self, reason: str) -> None:
+        self._focus_context = None
+        self._focus_binding = None
+        self._focus_first_lap = None
         self._geometry_binding = None
         self._geometry_result = None
         self.scheduler.set_scope(None)
@@ -169,6 +176,27 @@ class RadioController:
             if difference < 0 or difference > 1:
                 self._clear_tasks("lap_number_discontinuity")
         self._player = deepcopy(player)
+        self._focus_context = deepcopy(scoped_region_context(snapshot))
+        focus_context = self._focus_context or {}
+        focus_length = focus_context.get("track_length_m")
+        focus_binding = (json.dumps([scope, player["identity"], focus_context["track_id"], focus_length], sort_keys=True)
+                         if _integer(focus_context.get("track_id"), 0, 127)
+                         and type(focus_length) in (int, float) and math.isfinite(focus_length)
+                         and 0 < focus_length <= 20_000 else None)
+        if changed or focus_binding != self._focus_binding:
+            self.region_progress.focus_candidates.clear()
+            for task in self.tasks.active():
+                if task.focus_coach:
+                    self.tasks.cancel(task.task_id, reason="focus_context_changed")
+                    self.regions.remove(task.task_id)
+                    self.scheduler.cancel_owner("lap_reports")
+            number = player["lap"].get("current_lap_number")
+            at_start = (type(player["lap"].get("current_lap_time_ms")) is int
+                        and player["lap"]["current_lap_time_ms"] == 0
+                        and type(player["lap"].get("lap_distance_m")) in (int, float)
+                        and player["lap"]["lap_distance_m"] <= 0)
+            self._focus_first_lap = number + (0 if at_start else 1) if _integer(number, 1, 255) else None
+        self._focus_binding = focus_binding
         self._drivers = deepcopy(snapshot["drivers"])
         if (self._pair_report_identity is not None
                 and self._resolve_target("self", self._pair_report_identity) is None):
@@ -786,6 +814,15 @@ class RadioController:
             if action is None:
                 self.answer_question(question, now=now, question_context=question_context)
                 return
+            focus_selection = None
+            if action.kind == "focus_corner" and self._backend_regions and self._player is not None:
+                selected = choose_focus_loss(self.region_progress.focus_candidates, self._player,
+                                             regional_sample_context(self._focus_context, self._player))
+                if selected is not None:
+                    window, focus_selection = selected
+                    action = TaskAction("create", "my focus practice", laps=action.laps or 3,
+                                        region_bounds_m=(window.start_m, window.end_m),
+                                        region_compare=True, focus_coach=True)
             if action.kind == "cancel_reference":
                 context = self.capture_task_context() if task_context is _LIVE_TASK_CONTEXT else task_context
                 if (not isinstance(context, TaskContext) or context.scope != self.scheduler.scope
@@ -820,6 +857,8 @@ class RadioController:
                     if task["region_reference"] is not None:
                         reference = task["region_reference"]
                         metrics += f"; fixed observed lap {reference['lap_number']}, compound {reference['actual_compound']}"
+                    if task["focus_coach"]:
+                        metrics += "; one observation-guided repeatability focus, best retained admitted reference fixed"
                     expiry = f"through lap {task['until_lap']}" if task["until_lap"] is not None else "until cancelled or session change"
                     lines.append(f"Task {task['task_id']}: {targets}; {metrics}; {expiry}.")
                 text = " ".join(lines) if lines else "No active lap reports."
@@ -916,6 +955,14 @@ class RadioController:
                     region_window = RegionWindow(*action.region_bounds_m, self._track_length_m)
                     if action.region_compare:
                         region_reference = self.region_progress.reference(region_window, self._player)
+                    if action.focus_coach:
+                        if self._focus_binding is None:
+                            raise ValueError("Focus practice requires a stable reported circuit and track-length binding.")
+                        if not self._backend_regions:
+                            raise ValueError("Focus practice needs complete backend region capture; sparse polling cannot qualify coaching.")
+                        region_reference = choose_focus_reference(
+                            self.region_progress.focus_candidates, region_window, region_reference.actual_compound,
+                            regional_sample_context(self._focus_context, self._player))
                 pace_reference = self.pace.reference(self._player) if "target_pace" in plan.metrics else None
                 watching = "race_watch" in plan.metrics
                 if watching and (len(plan.targets) != 1 or plan.metrics != ("race_watch",)):
@@ -944,7 +991,8 @@ class RadioController:
                                           pace_reference=pace_reference, pace_tolerance_ms=action.tolerance_ms,
                                           region_window=region_window, region_reference=region_reference,
                                           opponent_first_lap=opponent_first_lap,
-                                          region_geometry_binding=self._geometry_binding if named_source is not None else None)
+                                          region_geometry_binding=self._geometry_binding if named_source is not None else None,
+                                          focus_coach=action.focus_coach)
                 if opponent_first_lap is not None or previous_pair:
                     self.scheduler.cancel_owner("opponent_regions")
                 selected_tasks = (task,)
@@ -967,6 +1015,19 @@ class RadioController:
                             "Reports wait for both drivers; missed admission or incomplete evidence is unavailable, "
                             "not shifted to later laps. Sampled numeric diagnostics, not corner coaching. "
                             "Tyre age, fuel, conditions and traffic are not verified.")
+                elif action.focus_coach:
+                    text = (f"Task {task.task_id}: focus practice on your laps {task.first_lap} to {task.until_lap}, "
+                            f"region {region_window.start_m:g} to {region_window.end_m:g} metres. Fixed best retained "
+                            f"admitted lap {region_reference.lap_number}, compound {region_reference.actual_compound}. "
+                            f"{focus_cue(region_reference)} Backend capture admission pending. "
+                            "Reported weather must match; tyre age within three laps and temperatures within five degrees. "
+                            "Sampled context only; fuel, traffic and physical layout unverified. Experimental focus, not proven cause or guaranteed gain.")
+                    if focus_selection is not None:
+                        text += (f" Selected the largest measured loss, {focus_selection['loss_s']:.3f} seconds, "
+                                 f"among {focus_selection['candidate_windows']} admitted retained windows on lap "
+                                 f"{focus_selection['target_lap']}; not a whole-circuit worst-corner ranking.")
+                        self.notify({"event": "radio_focus_selection", "task_id": task.task_id,
+                                     "version": task.version, "selection": deepcopy(focus_selection)})
                 elif region_window is not None:
                     capture_policy = ("Backend capture admission pending; incomplete data may leave partial coverage. "
                                       if self._backend_regions else
@@ -1039,13 +1100,23 @@ class RadioController:
                 comparison = None
                 if task.region_reference is not None:
                     feedback, comparison = self.region_progress.compare(task.region_reference, event, evidence)
+                coaching = None
+                if task.focus_coach:
+                    feedback, coaching = focus_progress(task.region_reference, comparison)
+                    self.notify({"event": "radio_focus_report", "task_id": task.task_id, "version": task.version,
+                                 "lap_number": event["lap_number"], "policy": FOCUS_POLICY,
+                                 "reference_lap": task.region_reference.lap_number, "coaching": coaching,
+                                 "text": feedback})
                 if max(age, self._fact_age_s or 0) < 3:
-                    self.region_progress.observe(task.region_window, event, evidence)
+                    self.region_progress.observe(task.region_window, event, evidence,
+                                                 focus_allowed=self._focus_binding is not None
+                                                 and self._focus_first_lap is not None
+                                                 and event["lap_number"] >= self._focus_first_lap)
                 reports.append(f"Task {task.task_id}: " + feedback)
                 self.notify({"event": "radio_region_report", "task_id": task.task_id, "version": task.version,
                              "lap_number": event["lap_number"], "event_id": event["id"],
                              "binding": self.scheduler.scope, "player": deepcopy(self._player["identity"]),
-                             "evidence": evidence, "comparison": comparison, "text": feedback})
+                             "evidence": evidence, "comparison": comparison, "coaching": coaching, "text": feedback})
                 continue
             if "consistency" in task.plan.metrics:
                 feedback, samples = self.pace.consistency(task)

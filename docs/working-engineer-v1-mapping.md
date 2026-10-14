@@ -30,13 +30,18 @@ Remaining implementation and scope decisions:
   opponent reports disclose available differences and missing observations;
   continuous context equivalence, fuel and traffic remain unverified. This is
   observed diagnostic context, not a newly admitted coaching/reference policy.
-- Focus-corner loss selection or target clarification, supported geometry/reference
-  policy, one coaching focus and fixed-reference progress across requested laps.
-  Numeric diagnostic differences are not this completed capability.
-  Initial "help me improve my worst corner for three laps" requests now explain
-  the missing verified geometry/eligible reference, retain the requested horizon
-  in conversation and ask for an explicit distance target without starting a
-  pretend coaching task. Selection, actual coaching and progress still remain.
+- Real-game acceptance of bounded observation-guided focus practice. "Help me
+  improve my worst corner for three laps" now selects the largest supported loss
+  among eligible retained numeric windows on the last completed lap, or asks for
+  an explicit target when evidence is insufficient. It never claims an exhaustive
+  circuit ranking. Explicit numeric/reviewed-label targets choose the fastest
+  retained admitted same-compound regional reference, fix one repeatability focus
+  and report subsequent measured progress without automatically switching targets.
+  Complete backend capture, known stable reported circuit binding and a conservative
+  reported-context admission policy are required. Missing/different weather or
+  out-of-policy tyre age/temperature refuses coaching; circuit/identity changes end
+  tasks. Fuel, traffic, continuous equivalence and the physical layout remain
+  unverified and disclosed; suggestions are experimental, not causal prescriptions.
   Explicit named-corner numeric tracking now resolves exact reviewed region
   labels/IDs through the authenticated session catalog. Drafts, ambiguous
   models/corners and incompatible context refuse resolution. This does not
@@ -66,8 +71,7 @@ Remaining implementation and scope decisions:
   geometry clarifies rather than inventing a corner. Guarded conversational
   extensions now create a fresh version with each fixed driver's next full lap,
   explicitly discarding old partial/unreported pairs and bounding both horizons.
-  Full focus-corner coaching,
-  broader natural-language forms and real-game acceptance remain outstanding.
+  Broader natural-language forms and real-game acceptance remain outstanding.
 - Real-game validation of post-pit benchmarking and retained-lap eligibility.
   Stop-count/tyre-change confirmation, pre-pit ranking/tie-breaks, clean observed
   lap-set averages, age/condition disclosures and one-off reporting now exist.

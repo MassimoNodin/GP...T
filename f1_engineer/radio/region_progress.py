@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from copy import deepcopy
 from dataclasses import dataclass
 
@@ -111,11 +111,12 @@ class RegionProgress:
 
     def clear(self):
         self.references = OrderedDict()
+        self.focus_candidates = deque(maxlen=64)
 
     def _key(self, window, compound):
         return window, compound
 
-    def observe(self, window, event, evidence):
+    def observe(self, window, event, evidence, *, focus_allowed=True):
         reference = measured_reference(window, event, evidence)
         if reference is None:
             return
@@ -124,6 +125,8 @@ class RegionProgress:
         if previous is not None and reference.lap_number <= previous.lap_number:
             return
         self.references[key] = reference
+        if focus_allowed:
+            self.focus_candidates.append(reference)
         self.references.move_to_end(key)
         while len(self.references) > 8:
             self.references.popitem(last=False)

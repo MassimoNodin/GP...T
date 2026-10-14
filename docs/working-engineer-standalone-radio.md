@@ -1651,3 +1651,52 @@ That unrelated module's thirteen tests passed immediately in isolation, and the
 complete rerun passed without changing recording code. The intermittent failure
 is retained here rather than represented as a clean first run. No real-game,
 wheel/microphone, browser-free or end-to-end voice-latency acceptance is claimed.
+
+### Observation-guided focus practice
+
+"Coach my corner from 100 to 200 metres for next three laps" and reviewed-label
+forms such as "coach my corner at turn 1 for next three laps" create a bounded
+practice task only with an admitted complete prior numeric capture. Backend
+capture is mandatory; sparse polling and published scalar history cannot qualify
+it. The fastest retained admitted same-compound measurement is fixed for the whole
+task, including conversational extensions. Explicit updates may choose a new
+reference. Expired/cancelled tasks cannot be revived by an ambiguous extension.
+
+"Help me improve my worst corner for three laps" selects the largest supported
+time loss of at least one millisecond among retained last-completed-lap windows
+with an earlier eligible reference. It labels the candidate count, target lap and
+loss, not a whole-circuit worst-corner ranking or proof of causation. Without
+sufficient evidence it retains the request and asks for an explicit target without
+starting a pretend task. The cache holds at most 64 complete regional references;
+"best retained" is deliberately not a claim about the entire session.
+
+The versioned observed-numeric-repeatability-v1 admission policy requires known
+sampled weather, tyre age and track/air temperatures. Weather must be a matching
+single reported code; maximum pairwise reported differences are three tyre-age
+laps and five degrees Celsius for each temperature. These are conservative
+implementation admission limits, not empirically established proof of equivalence.
+Missing data or changes outside the limits suppress coaching/progress rather than
+silently selecting a different reference. Actual sampled context differences stay
+in structured evidence and are disclosed in speech.
+
+One repeatability focus compares the observed braking transition, or the
+minimum-speed phase when onset is unavailable. It never commands later braking
+or treats a sampled minimum as a speed target. Event reports include measured
+progress against the fixed reference. Underlying measurements remain diagnostic;
+the separate practice suggestion does not grant legacy analysis/coaching/ranking
+eligibility. Fuel, traffic and independent physical-layout verification remain
+unknown, and neither causation nor a guaranteed improvement is claimed.
+
+Fresh reported circuit/length/identity bindings are required. Binding changes
+cancel focus tasks and discard old candidates; a newly observed partial lap cannot
+become a fresh coaching reference. Task listing identifies the focus and fixed
+reference. Existing event freshness, audio priority, cancellation and no-duplicate
+rules also apply. Automated coverage is not real-game/user acceptance of this
+practice policy or audible experience.
+
+The complete radio/name/wheel/conversation suite plus regional context and both
+capture paths passes 1,601 tests with one existing Starlette/httpx warning. The
+targeted focus/clarification/reference/task/conversation/reviewed-geometry selection
+passed 252 tests before the final two policy cases; both are included in the
+1,601-pass integrated run. Changed modules compile and whitespace checks pass.
+The 3,502-pass complete-repository run above predates this focus increment.

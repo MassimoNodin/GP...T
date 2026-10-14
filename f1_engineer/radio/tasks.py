@@ -9,6 +9,7 @@ from .questions import QuestionPlan
 from .pace import PaceReference
 from .regions import RegionWindow
 from .region_progress import RegionReference
+from .focus_coach import compatible_focus_context
 
 
 def _fixed_identity(binding):
@@ -39,6 +40,7 @@ class TaskAction:
     region_compare: bool = False
     region_opponent: str | None = None
     region_name: str | None = None
+    focus_coach: bool = False
 
 
 def parse_task_request(request: str) -> TaskAction | None:
@@ -87,6 +89,18 @@ def parse_task_request(request: str) -> TaskAction | None:
                  "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty")
     named_count = r"([1-9][0-9]?|" + "|".join(lap_words) + r")"
     named_duration = r" for (?:the )?next(?: " + named_count + r")? laps?"
+    focus_window = re.fullmatch(
+        r"(?:coach|help me improve) my (?:corner|region) from ([0-9]{1,5}(?:\.[0-9]{1,2})?) to ([0-9]{1,5}(?:\.[0-9]{1,2})?) (?:metres|meters)" + named_duration, text
+    )
+    focus_named = re.fullmatch(r"(?:coach|help me improve) my (?:corner|region) at (.{1,80}?)" + named_duration, text)
+    if focus_window or focus_named:
+        count = (focus_window or focus_named).groups()[-1]
+        laps = (int(count) if count.isdecimal() else lap_words.index(count) + 1) if count else 1
+        if laps > 20:
+            raise ValueError("Please choose one to twenty upcoming laps.")
+        return TaskAction("update" if task_id is not None else "create", "my focus practice", task_id, laps,
+                          region_bounds_m=(float(focus_window.group(1)), float(focus_window.group(2))) if focus_window else None,
+                          region_compare=True, region_name=focus_named.group(1) if focus_named else None, focus_coach=True)
     named_tracked = re.fullmatch(
         r"(?:track|keep track of) (.{1,80}?)'s braking (?:points? )?and minimum speed at (.{1,80}?) (?:in comparison to|compared to) me" + named_duration, text
     )
@@ -209,6 +223,7 @@ class LapReportTask:
     opponent_first_lap: int | None = None
     reported_through_lap: int | None = None
     region_geometry_binding: str | None = None
+    focus_coach: bool = False
 
     def view(self) -> dict:
         return {"task_id": self.task_id, "version": self.version, "state": self.state,
@@ -219,9 +234,11 @@ class LapReportTask:
                 "region_window": self.region_window.view() if self.region_window is not None else None,
                 "region_reference": self.region_reference.view() if self.region_reference is not None else None,
                 "region_geometry_binding": self.region_geometry_binding,
+                "focus_coach": self.focus_coach,
                 "opponent_first_lap": self.opponent_first_lap,
                 "reported_through_lap": self.reported_through_lap,
                 "reference_policy": ("valid observed player lap and tolerance fixed" if "target_pace" in self.plan.metrics
+                                     else "best retained measured region fixed; observed numeric repeatability policy" if self.focus_coach
                                      else "both driver identities and independent numeric lap windows fixed; diagnostic only" if self.opponent_first_lap is not None
                                      else "previous observed region fixed; same-compound diagnostic differences only" if self.region_reference is not None
                                      else "numeric player-window fixed; diagnostic observations only" if self.region_window is not None
@@ -247,11 +264,11 @@ class LapReportRegistry:
             self.notify({"event": "radio_task_ended", "reason": reason, **task.view()})
         self._tasks.clear()
 
-    def cancel(self, task_id: int) -> bool:
+    def cancel(self, task_id: int, *, reason="cancelled") -> bool:
         task = self._tasks.pop(task_id, None)
         if task is None:
             return False
-        self.notify({"event": "radio_task_ended", "reason": "cancelled", **task.view()})
+        self.notify({"event": "radio_task_ended", "reason": reason, **task.view()})
         return True
 
     def install(self, plan: QuestionPlan, bindings: tuple[str | None, ...], *, cursor: int,
@@ -260,7 +277,7 @@ class LapReportRegistry:
                 region_window: RegionWindow | None = None,
                 region_reference: RegionReference | None = None,
                 opponent_first_lap: int | None = None,
-                region_geometry_binding: str | None = None) -> LapReportTask:
+                region_geometry_binding: str | None = None, focus_coach: bool = False) -> LapReportTask:
         if (type(cursor) is not int or cursor < 0 or type(lap) is not int or not 1 <= lap <= 255
                 or task_id is not None and (type(task_id) is not int or task_id < 1)):
             raise ValueError("A report requires a valid current lap, event cursor and task identifier.")
@@ -302,6 +319,12 @@ class LapReportRegistry:
                 or region_window != region_reference.window or "regional_observations" not in plan.metrics
                 or region_reference.lap_number >= lap):
             raise ValueError("A regional comparison needs an earlier fixed reference for the same numeric window.")
+        if type(focus_coach) is not bool or focus_coach and (region_reference is None
+                or plan.metrics != ("regional_observations",) or opponent_first_lap is not None):
+            raise ValueError("Focus practice requires a fixed complete player-region reference.")
+        if focus_coach and not compatible_focus_context(region_reference.observed_context,
+                                                        region_reference.observed_context)[0]:
+            raise ValueError("Focus practice requires known stable reported reference context.")
         if "consistency" in plan.metrics and (plan.targets != ("self",) or plan.metrics != ("consistency",)):
             raise ValueError("Consistency coaching requires only your own laps, without additional facts.")
         if "target_pace" in plan.metrics:
@@ -320,6 +343,7 @@ class LapReportRegistry:
                         and task.region_window == region_window
                         and task.region_reference == region_reference
                         and task.region_geometry_binding == region_geometry_binding
+                        and task.focus_coach == focus_coach
                         and task.opponent_first_lap == opponent_first_lap
                         and (opponent_first_lap is None or task.first_lap == lap)
                         and task.pace_reference == pace_reference and task.pace_tolerance_ms == pace_tolerance_ms
@@ -342,6 +366,7 @@ class LapReportRegistry:
                              region_window=region_window, region_reference=region_reference,
                              opponent_first_lap=opponent_first_lap,
                              region_geometry_binding=region_geometry_binding,
+                             focus_coach=focus_coach,
                              reported_through_lap=lap - 1 if opponent_first_lap is not None else None)
         self._tasks[identifier] = task
         self.notify({"event": "radio_task_updated" if existing else "radio_task_created", **task.view()})
@@ -388,7 +413,8 @@ class LapReportRegistry:
         return self.install(task.plan, task.fixed_bindings, cursor=cursor, lap=first, laps=until - first + 1,
                             task_id=task.task_id, pace_reference=task.pace_reference,
                             pace_tolerance_ms=task.pace_tolerance_ms, region_window=task.region_window,
-                            region_reference=task.region_reference, region_geometry_binding=task.region_geometry_binding)
+                            region_reference=task.region_reference, region_geometry_binding=task.region_geometry_binding,
+                            focus_coach=task.focus_coach)
 
     def eligible(self, *, event_id: int, lap: int) -> tuple[LapReportTask, ...]:
         return tuple(task for task in self._tasks.values() if task.state == "active"
