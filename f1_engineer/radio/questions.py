@@ -137,7 +137,7 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
         raise ValueError("Please specify a driver; that pronoun has no single supported reference.")
     if re.search(r"\b(?:his|her|him)\b", remaining) and (len(previous.targets) != 1 or previous.targets == ("self",)):
         raise ValueError("Please specify one other driver; that singular pronoun is ambiguous.")
-    remaining = re.sub(r"\b(?:what|what's|is|are|the|a|and|also|please|tell|show|give|for|of|about|how|their|his|her|them|him|then)\b", " ", remaining)
+    remaining = re.sub(r"\b(?:what's|what|is|are|the|a|and|also|please|tell|show|give|for|of|about|how|their|his|her|them|him|then)\b", " ", remaining)
     if re.sub(r"[\s?,.!']", "", remaining):
         raise ValueError("Didn't catch that. Say again.")
     if not metrics and not targets:

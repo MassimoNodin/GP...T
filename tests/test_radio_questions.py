@@ -43,6 +43,8 @@ def live():
     ("How far am I behind the leader?", ("self",), ("leader_gap",)),
     ("Last lap for the car ahead of me and car behind me", ("ahead", "behind"), ("last_lap",)),
     ("P3 and my last lap", ("position:3", "self"), ("last_lap",)),
+    ("What's my position?", ("self",), ("position",)),
+    ("What's my last lap?", ("self",), ("last_lap",)),
 ])
 def test_typed_plans(question, targets, metrics):
     plan = plan_question(question)
