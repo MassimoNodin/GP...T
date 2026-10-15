@@ -58,6 +58,31 @@ def reported_lap_fact(row: dict, frame: dict | None, number: int) -> str | None:
             "published timing, not a fully observed coaching reference")
 
 
+def reported_lap_sector_fact(row: dict, frame: dict | None, number: int, sector: int) -> str | None:
+    if not isinstance(row, dict) or not _integer(number, 1, 255) or not _integer(sector, 1, 3):
+        return None
+    history = qualified_history(row, frame)
+    if history is None:
+        return None
+    lap = next((lap for lap in history["laps"] if lap["lap_number"] == number), None)
+    if lap is None:
+        return None
+    unavailable = f"game-reported lap {number} sector {sector} unavailable"
+    flags = lap["validity_flags"]
+    if flags & ~15:
+        return unavailable + "; unknown validity flags"
+    if not flags & (1 << sector):
+        return unavailable + "; sector is invalid"
+    timings = lap.get("sector_times_ms")
+    if (not isinstance(timings, list) or len(timings) != 3
+            or not _integer(timings[sector - 1], 1, 86_400_000)):
+        return unavailable + "; reported sector time missing"
+    validity = "valid" if flags & 1 else "invalid"
+    return (f"game-reported {validity} lap {number} sector {sector} "
+            f"{timings[sector - 1] / 1000:.3f} seconds; "
+            "published timing, not a fully observed coaching reference")
+
+
 def reported_best_fact(row: dict, frame: dict | None, *, live_age_s: float):
     history = qualified_history(row, frame)
     if history is None:

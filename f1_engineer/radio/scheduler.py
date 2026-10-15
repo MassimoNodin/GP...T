@@ -54,6 +54,7 @@ class RadioScheduler:
         self._started_at = 0.0
         self._repeat_id = 0
         self._repeat_revision = 0
+        self._completed_at: OrderedDict[str, float] = OrderedDict()
 
     def set_scope(self, scope: str | None) -> None:
         if scope != self.scope:
@@ -61,6 +62,7 @@ class RadioScheduler:
             self.cancel()
             self.scope = scope
             self.last_completed = None
+            self._completed_at.clear()
             self._seen.clear()
 
     def _drop(self, message: RadioMessage, reason: str) -> bool:
@@ -122,6 +124,9 @@ class RadioScheduler:
                 return
             else:
                 self.last_completed = self.active
+                self._completed_at[self.active.key] = now
+                while len(self._completed_at) > 128:
+                    self._completed_at.popitem(last=False)
                 self.notify({"event": "radio_completed", "key": self.active.key,
                              "completion_observed_s": now - self._started_at})
                 self.active = None
@@ -143,7 +148,9 @@ class RadioScheduler:
         self.pending.clear()
 
     def cancel_owner(self, owner: str) -> None:
-        self._repeat_revision += 1
+        if (self.active is not None and self.active.owner == owner
+                or self.last_completed is not None and self.last_completed.owner == owner):
+            self._repeat_revision += 1
         if self.active is not None and self.active.owner == owner:
             self.playback.cancel()
             self.active = None
@@ -156,13 +163,7 @@ class RadioScheduler:
         self.muted = True
 
     def repeat(self, *, now: float) -> bool:
-        source = self.active or self.last_completed
-        if source is None or source.scope != self.scope:
-            return False
-        self.cancel()
-        self._repeat_id += 1
-        return self.submit(replace(source, key=f"repeat:{self._repeat_id}", kind="answer",
-                                   expires_at=now + 15, observation_age_s=None), now=now)
+        return self.repeat_captured(self.capture_repeat_reference(), now=now)
 
     def capture_repeat_reference(self) -> RepeatReference | None:
         source = self.active or self.last_completed
@@ -174,13 +175,14 @@ class RadioScheduler:
         if not isinstance(reference, RepeatReference) or reference.revision != self._repeat_revision:
             return False
         source = reference.message
-        if (source.scope != self.scope or source.expires_at <= now
-                or (source.dispatch_before is not None and source.dispatch_before <= now)):
+        completed = self._completed_at.get(source.key)
+        deadline = completed + 15 if completed is not None else source.expires_at
+        if source.scope != self.scope or deadline <= now:
             return False
         self.cancel()
         self._repeat_id += 1
         return self.submit(replace(source, key=f"repeat:{self._repeat_id}", kind="answer",
-                                   expires_at=now + 15, observation_age_s=None), now=now)
+                                   expires_at=now + 15, observation_age_s=None, dispatch_before=None), now=now)
 
     def close(self) -> None:
         try:

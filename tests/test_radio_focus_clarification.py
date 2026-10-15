@@ -264,9 +264,29 @@ def test_missing_corner_evidence_clarifies_and_preserves_existing_tasks_and_hist
     assert question in radio.pending[-1].text
 
 
-def test_focus_clarification_requires_live_telemetry_and_does_not_create_or_revive_tasks():
+@pytest.mark.parametrize("pause", ["stale", "unavailable"])
+def test_focus_clarification_preserves_existing_tasks_but_requires_live_telemetry(pause):
     manager, client, request, controller, radio, value = connected()
-    controller.feed({"status": "unavailable", "reason": "no_telemetry"}, now=10)
-    controller.handle_request("help me improve my worst corner for three laps", now=10)
-    assert controller.tasks.views() == [] and controller.opponent_capture_requests() == []
+    tasks = controller.tasks.active()
+    assert tasks and controller.opponent_capture_requests()
+    if pause == "stale":
+        controller.check_freshness(now=14)
+    else:
+        controller.feed({"status": "unavailable", "reason": "no_telemetry"}, now=14)
+    controller.handle_request(FOCUS, now=14)
+    assert controller.tasks.active() == tasks and controller.opponent_capture_requests() == []
+    assert controller.status()["pending_region_clarification"] is None
     assert "Fresh player telemetry" in controller.conversation.context()[-1]["response"]
+    value["events"] = []
+    controller.feed(value, now=15)
+    assert controller.tasks.active() == tasks
+    assert controller.opponent_capture_requests() == [request]
+
+
+def test_cancelled_task_during_pause_is_not_revived_on_resume():
+    manager, client, request, controller, radio, value = connected()
+    controller.feed({"status": "unavailable", "reason": "replay_paused"}, now=10)
+    controller.handle_request("cancel all tracking", now=10)
+    assert not controller.tasks.active()
+    controller.feed(value, now=11)
+    assert not controller.tasks.active() and not controller.opponent_capture_requests()

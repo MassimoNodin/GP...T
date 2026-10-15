@@ -240,7 +240,7 @@ def test_freshly_dispatched_answer_is_not_cut_off_by_dispatch_deadline():
     controller.feed(value, now=14)
     radio.tick(now=14)
     assert radio.active is not None
-    assert not radio.repeat(now=14)
+    assert radio.repeat(now=14)
 
 
 @pytest.mark.parametrize("deadline", [float("nan"), float("inf"), -float("inf")])

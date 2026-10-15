@@ -186,11 +186,24 @@ def test_memory_queries_disclose_computed_historical_result_and_forget():
     assert events[-1]["event"] == "radio_conversation_cleared"
 
 
-def test_scope_loss_clears_memory():
+@pytest.mark.parametrize("pause", ["stale", "unavailable"])
+def test_same_session_pause_preserves_memory_and_task_inventory(pause):
     controller, radio, events, value = named_live()
     install(controller, radio)
-    controller.feed({"status": "unavailable", "reason": "no_telemetry"}, now=11)
-    assert not controller.conversation.context()
+    turns = deepcopy(controller.conversation.context())
+    tasks = controller.tasks.active()
+    if pause == "stale":
+        controller.check_freshness(now=14)
+    else:
+        controller.feed({"status": "unavailable", "reason": "no_telemetry"}, now=14)
+    assert controller.conversation.context() == turns
+    assert controller.tasks.active() == tasks
+    assert radio.scope is None and not radio.pending
+    controller.feed(value, now=15)
+    assert controller.conversation.context() == turns
+    assert controller.tasks.active() == tasks
+    controller.handle_request("what was my last request?", now=15)
+    assert "end of each lap" in radio.pending[-1].text
 
 
 def test_capture_context_is_forwarded_before_cancel():
@@ -320,15 +333,16 @@ def test_voice_without_prior_question_does_not_adopt_a_later_reference():
     assert "Please specify a driver" in radio.pending[-1].text
 
 
-@pytest.mark.parametrize("reset", ["forget", "unavailable", "history_gap"])
+@pytest.mark.parametrize("reset", ["forget", "session", "history_gap"])
 def test_question_capture_cannot_survive_conversation_reset(reset):
     controller, radio, events, value = named_live()
     controller.handle_request("Leclerc last lap", now=10)
     captured = controller.capture_question_context()
     if reset == "forget":
         controller.forget_conversation()
-    elif reset == "unavailable":
-        controller.feed({"status": "unavailable", "reason": "no_telemetry"}, now=10.1)
+    elif reset == "session":
+        value["scope"]["epoch"] += 1
+        controller.feed(value, now=10.1)
     else:
         value["event_floor"] = value["event_cursor"] = 10
         controller.feed(value, now=10.1)
@@ -337,6 +351,26 @@ def test_question_capture_cannot_survive_conversation_reset(reset):
     dispatch_voice_request("only sector two", controller,
                            SimpleNamespace(task_context=None, question_context=captured), now=10.2)
     assert "Which lap and driver" in radio.pending[-1].text
+
+
+@pytest.mark.parametrize("pause", ["stale", "unavailable"])
+def test_captured_question_survives_pause_but_cannot_answer_until_resume(pause):
+    controller, radio, events, value = named_live()
+    controller.handle_request("Leclerc last lap", now=10)
+    captured = controller.capture_question_context()
+    if pause == "stale":
+        controller.check_freshness(now=14)
+    else:
+        controller.feed({"status": "unavailable", "reason": "no_telemetry"}, now=14)
+    controller.handle_request("his previous lap", now=14, question_context=captured)
+    assert "No fresh player telemetry" in radio.pending[-1].text
+    assert "101.000 seconds" not in radio.pending[-1].text
+    value["events"] = []
+    controller.feed(value, now=15)
+    dispatch_voice_request("his previous lap", controller,
+                           SimpleNamespace(task_context=None, question_context=captured), now=15)
+    assert "Previously selected Charles Leclerc" in radio.pending[-1].text
+    assert "101.000 seconds" in radio.pending[-1].text
 
 
 def test_forgetting_invalidates_task_context_even_when_task_is_still_active():

@@ -356,8 +356,11 @@ class LapReportRegistry:
                         and task.pace_reference == pace_reference and task.pace_tolerance_ms == pace_tolerance_ms
                         and task.until_lap == (lap + laps - 1 if laps is not None else None)):
                     return task
-        if len(active) >= 3 or sum(len(task.plan.targets) * len(task.plan.metrics) for task in active) + len(plan.targets) * len(plan.metrics) > 9:
-            raise ValueError("Keep at most three active reports and nine total driver facts per lap.")
+        if len(active) >= 3:
+            identifiers = ", ".join(str(task.task_id) for task in active)
+            raise ValueError(f"You already have three reports running: tasks {identifiers}. Cancel one to add this.")
+        if sum(len(task.plan.targets) * len(task.plan.metrics) for task in active) + len(plan.targets) * len(plan.metrics) > 9:
+            raise ValueError("This would exceed nine total driver facts per lap. Cancel or simplify a report to add this.")
         region_owners = sum(2 if task.opponent_first_lap is not None else 1
                             for task in active if task.region_window is not None)
         requested_owners = (2 if opponent_first_lap is not None else 1) if region_window is not None else 0

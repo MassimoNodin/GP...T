@@ -8,7 +8,7 @@ import os
 import re
 import sqlite3
 import threading
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Generic, Literal, TypeVar
@@ -1114,44 +1114,45 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        import_controller.start()
-        recording_upload_service.start()
-        recording_controller.start()
-        replay_controller.start()
-        if live_runtime:
-            await run_in_threadpool(live_runtime.start)
-            engineer_activity.start()
-        import_controller.enable_dispatch()
-        await run_in_threadpool(local_speech_runtime.cleanup_stale_temporary_files)
-        start_speech = getattr(local_speech_runtime, "start", None)
-        if start_speech is not None:
-            await start_speech()
-        app.state.import_controller = import_controller
-        app.state.recording_controller = recording_controller
-        app.state.replay_controller = replay_controller
-        app.state.recording_upload_service = recording_upload_service
-        app.state.engineer_runtime = selected_engineer_runtime
-        app.state.ollama_runtime = selected_engineer_runtime
-        app.state.local_speech_runtime = local_speech_runtime
-        app.state.live_session_runtime = live_runtime
-        app.state.evidence_store = evidence_store
-        try:
-            yield
-        finally:
+        async with AsyncExitStack() as cleanup:
+            cleanup.callback(import_controller.close)
+            import_controller.start()
+            cleanup.push_async_callback(run_in_threadpool, recording_upload_service.close)
+            recording_upload_service.start()
+            cleanup.callback(recording_controller.close)
+            recording_controller.start()
+            cleanup.callback(replay_controller.close)
+            replay_controller.start()
+            if live_runtime:
+                cleanup.push_async_callback(run_in_threadpool, live_runtime.close)
+                await run_in_threadpool(live_runtime.start)
+                cleanup.push_async_callback(run_in_threadpool, engineer_activity.stop)
+                engineer_activity.start()
+            cleanup.callback(import_controller.stop_dispatch)
+            import_controller.enable_dispatch()
             close_speech = getattr(local_speech_runtime, "close", None)
             if close_speech is not None:
-                await close_speech()
+                cleanup.push_async_callback(close_speech)
+            await run_in_threadpool(local_speech_runtime.cleanup_stale_temporary_files)
+            start_speech = getattr(local_speech_runtime, "start", None)
+            if start_speech is not None:
+                await start_speech()
+            app.state.import_controller = import_controller
+            app.state.recording_controller = recording_controller
+            app.state.replay_controller = replay_controller
+            app.state.recording_upload_service = recording_upload_service
+            app.state.engineer_runtime = selected_engineer_runtime
+            app.state.ollama_runtime = selected_engineer_runtime
+            app.state.local_speech_runtime = local_speech_runtime
+            app.state.live_session_runtime = live_runtime
+            app.state.evidence_store = evidence_store
             close_runtime = getattr(selected_engineer_runtime, "close", None)
             if close_runtime is not None:
-                await close_runtime()
-            if live_runtime:
-                await run_in_threadpool(engineer_activity.stop)
-                await run_in_threadpool(live_runtime.close)
-            import_controller.stop_dispatch()
-            await run_in_threadpool(recording_upload_service.close)
-            replay_controller.close()
-            recording_controller.close()
-            import_controller.close()
+                cleanup.push_async_callback(close_runtime)
+            start_runtime = getattr(selected_engineer_runtime, "start", None)
+            if start_runtime is not None:
+                await start_runtime()
+            yield
 
     app = FastAPI(
         title="F1 Race Engineer API",

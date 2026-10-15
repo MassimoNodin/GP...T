@@ -19,7 +19,7 @@ CODEX_TIMEOUT_S = 25.0
 MAX_PROTOCOL_BYTES = 2 * 1024 * 1024
 MAX_LINE_BYTES = 256 * 1024
 RADIO_TIMEOUT_S = 8.0
-RADIO_PREFLIGHT_TTL_S = 300.0
+RADIO_PREFLIGHT_TTL_S = 60.0
 RADIO_RECYCLE_REQUESTS = 100
 RADIO_EFFORT = "low"
 
@@ -92,6 +92,8 @@ class CodexRuntime:
         self._radio_checked = 0.0
         self._radio_uses = 0
         self._radio_effort = RADIO_EFFORT
+        self._radio_refresh_task = None
+        self._radio_closed = False
 
     @asynccontextmanager
     async def _open(self):
@@ -272,15 +274,18 @@ class CodexRuntime:
         except TimeoutError as exc:
             raise EngineerRuntimeUnavailable("codex_request_timeout") from exc
 
-    async def _radio_server(self):
+    async def _radio_server(self, *, refresh=False):
         """Reuse one app-server for the radio so each request skips process start and login checks."""
         server = self._radio_current
+        if self._radio_closed:
+            raise EngineerRuntimeUnavailable("codex_runtime_closed")
         if server is not None:
+            server.bytes_read = 0
             process = getattr(server, "process", None)
             if (process is not None and process.returncode is not None) or self._radio_uses >= RADIO_RECYCLE_REQUESTS:
                 await self._close_radio_server()
                 server = None
-            elif time.monotonic() - self._radio_checked >= RADIO_PREFLIGHT_TTL_S:
+            elif refresh or time.monotonic() - self._radio_checked >= RADIO_PREFLIGHT_TTL_S:
                 await self._preflight(server)
                 self._radio_checked = time.monotonic()
         if server is None:
@@ -304,9 +309,48 @@ class CodexRuntime:
             except Exception:
                 pass
 
+    async def _warm_radio_server(self, *, refresh=False):
+        try:
+            async with asyncio.timeout(CODEX_TIMEOUT_S):
+                await self._radio_server(refresh=refresh)
+        except TimeoutError:
+            pass
+        except (EngineerRuntimeUnavailable, OSError):
+            await self._close_radio_server()
+        except BaseException:
+            await self._close_radio_server()
+            raise
+
+    async def start(self):
+        """Warm subscription authentication without running an inference turn."""
+        async with self._radio_lock():
+            if self._radio_refresh_task is not None:
+                return
+            self._radio_closed = False
+            await self._warm_radio_server()
+            if not self._radio_closed:
+                self._radio_refresh_task = asyncio.create_task(self._refresh_radio_login())
+
+    async def _refresh_radio_login(self):
+        while True:
+            await asyncio.sleep(RADIO_PREFLIGHT_TTL_S)
+            async with self._radio_lock():
+                if self._radio_closed:
+                    return
+                await self._warm_radio_server(refresh=True)
+
     async def close(self):
+        self._radio_closed = True
+        task, self._radio_refresh_task = self._radio_refresh_task, None
+        if task is not None:
+            task.cancel()
         async with self._radio_lock():
             await self._close_radio_server()
+        if task is not None:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     def _radio_lock(self):
         if self._radio_guard is None:
@@ -318,15 +362,21 @@ class CodexRuntime:
         started_at = time.monotonic()
         messages = build_intent_messages(transcript, context)
         try:
-            async with asyncio.timeout(RADIO_TIMEOUT_S), self._radio_lock():
+            async with asyncio.timeout(RADIO_TIMEOUT_S) as deadline, self._radio_lock():
                 try:
                     server = await self._radio_server()
                     self._radio_uses += 1
                     content = await self._turn(
                         server, instructions=messages[0]["content"], prompt=messages[1]["content"],
                         schema=intent_schema(context), effort=self._radio_effort)
+                except asyncio.CancelledError:
+                    if not deadline.expired():
+                        await self._close_radio_server()
+                    raise
+                except TimeoutError:
+                    raise
                 except BaseException:
-                    await self._close_radio_server()  # protocol state is unknown after any failure
+                    await self._close_radio_server()
                     raise
             try:
                 intent = parse_intent(content, context=context)

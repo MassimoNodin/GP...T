@@ -75,10 +75,13 @@ class FieldLapHistory:
             number = row["lap"].get("current_lap_number")
             if (state is None or state.identity != key
                     or not integer(number, 1, 255)
-                    or state.tracker.number is not None and number - state.tracker.number not in (0, 1)
-                    or state.tracker.received_at is not None and not 0 <= now - state.tracker.received_at < 3):
+                    or state.tracker.number is not None and number - state.tracker.number not in (0, 1)):
                 state = DriverLapHistory(key)
                 self.drivers[car] = state
+            elif state.tracker.received_at is not None and not 0 <= now - state.tracker.received_at < 3:
+                state.tracker.interrupt()
+                state.open_conditions = None
+                state.pending_conditions = None
             tyre = row.get("tyre", {})
             value = tyre.get("value") if isinstance(tyre, dict) and tyre.get("status") == "available" else None
             age = value.get("age_laps") if isinstance(value, dict) else None

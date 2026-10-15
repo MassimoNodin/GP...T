@@ -13,12 +13,19 @@ def application(tmp_path, **kwargs):
                       control_token=TOKEN, automatic_acquisition=False, **kwargs)
 
 
-def test_engineer_defaults_to_exact_subscription_model_without_starting_inference(tmp_path):
+def test_engineer_defaults_to_exact_subscription_model_without_starting_inference(tmp_path, monkeypatch):
+    starts = []
+
+    async def warm_without_inference(runtime):
+        starts.append(runtime)
+
+    monkeypatch.setattr(CodexRuntime, "start", warm_without_inference)
     app = application(tmp_path)
     with TestClient(app):
         runtime = app.state.engineer_runtime
         assert isinstance(runtime, CodexRuntime)
         assert runtime.home == (tmp_path / ".codex-engineer").resolve()
+        assert starts == [runtime]
         assert not runtime.home.exists()
 
 

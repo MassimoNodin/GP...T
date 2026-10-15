@@ -4,7 +4,7 @@ import pytest
 
 from f1_engineer.radio.questions import plan_question, timing_fact
 from tests.test_radio_questions import live
-from tests.test_radio_sector_pace import sector_ready
+from tests.test_radio_sector_pace import sector, sector_ready
 from tests.test_radio_target_pace import ready
 
 
@@ -24,7 +24,7 @@ def test_explicit_sector_and_observed_history_question_plans(phrase, metric):
 @pytest.mark.parametrize("phrase", [
     "my sector one", "my current lap sector three time",
     "my best observed lap in the rain", "my last lap sector one in traffic",
-    "my lap 3 sector one time", "my best observed lap on soft tyres",
+    "my best observed lap on soft tyres",
 ])
 def test_ambiguous_or_unavailable_historical_filters_are_not_silently_removed(phrase):
     with pytest.raises(ValueError):
@@ -125,22 +125,51 @@ def test_changed_compound_does_not_substitute_previous_compound_best():
     assert "No fully observed valid radio lap on your current tyre compound" in radio.pending[-1].text
 
 
-@pytest.mark.parametrize("invalidate", ["stale", "history_gap", "session", "identity"])
+@pytest.mark.parametrize("invalidate", ["history_gap", "session", "identity"])
 def test_observed_retrieval_does_not_cross_invalidated_context(invalidate):
     controller, radio, events, value = sector_ready()
-    if invalidate == "stale":
+    value = deepcopy(value)
+    if invalidate == "history_gap":
+        value["event_cursor"] += 2
+        value["event_floor"] = value["event_cursor"] - 1
+    elif invalidate == "session":
+        value["session_id"] = "3" * 32
+    else:
+        value["drivers"][0]["identity"]["tenure_ordinal"] += 1
+    controller.feed(value, now=12.1)
+    assert not controller.pace.best and controller.pace.last_completed is None
+
+
+@pytest.mark.parametrize("pause", ["stale", "unavailable"])
+def test_pause_preserves_observed_history_and_reference_but_discards_open_sectors(pause):
+    controller, radio, events, value = sector_ready()
+    sector(controller, radio, value, 1, 30100, now=12.1)
+    assert controller.pace.sectors
+    best = deepcopy(controller.pace.best)
+    task, = controller.tasks.active()
+    reference = task.pace_reference
+    laps = deepcopy(controller.lap_history.get(value["drivers"][0]).laps)
+    assert laps
+    if pause == "stale":
         controller.check_freshness(now=16)
     else:
-        value = deepcopy(value)
-        if invalidate == "history_gap":
-            value["event_cursor"] += 2
-            value["event_floor"] = value["event_cursor"] - 1
-        elif invalidate == "session":
-            value["session_id"] = "3" * 32
-        else:
-            value["drivers"][0]["identity"]["tenure_ordinal"] += 1
-        controller.feed(value, now=12.1)
-    assert not controller.pace.best and controller.pace.last_completed is None
+        controller.feed({"status": "unavailable", "reason": "replay_paused"}, now=16)
+    assert controller.pace.best == best
+    assert controller.tasks.active() == (task,) and task.pace_reference is reference
+    assert controller.lap_history.get(value["drivers"][0]).laps == laps
+    assert not controller.pace.sectors and not controller.pace.started
+    assert controller.pace.last_completed is None
+    controller.answer_question("my best observed valid lap", now=16)
+    assert "No fresh player telemetry" in radio.pending[-1].text
+    assert "100.000 seconds" not in radio.pending[-1].text
+    value["events"] = []
+    controller.feed(value, now=17)
+    assert controller.tasks.active() == (task,) and task.pace_reference is reference
+    assert controller.pace.best == best
+    assert controller.lap_history.get(value["drivers"][0]).laps == laps
+    assert not controller.pace.sectors and not controller.pace.started
+    controller.answer_question("my best observed valid lap", now=17)
+    assert "lap 4 100.000 seconds" in radio.pending[-1].text
 
 
 def test_sector_followup_preserves_driver_bindings():

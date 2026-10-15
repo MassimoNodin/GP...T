@@ -395,3 +395,239 @@ def test_cli_defaults_engineer_provider_to_codex():
     args = build_parser().parse_args(["api"])
 
     assert args.engineer_ai_provider == "codex"
+
+
+def tracked_radio_server(monkeypatch, runtime, server):
+    lifecycle = []
+
+    @asynccontextmanager
+    async def open_server():
+        lifecycle.append("open")
+        try:
+            yield server
+        finally:
+            lifecycle.append("close")
+
+    monkeypatch.setattr(runtime, "_open", open_server)
+    return lifecycle
+
+
+def test_radio_start_warms_once_and_refreshes_login_every_sixty_seconds(monkeypatch, tmp_path):
+    runtime = codex_runtime.CodexRuntime(tmp_path)
+    server = successful_server()
+    lifecycle = tracked_radio_server(monkeypatch, runtime, server)
+    tick = asyncio.Event()
+    sleeping = asyncio.Event()
+    delays = []
+
+    async def sleep(delay):
+        delays.append(delay)
+        sleeping.set()
+        await tick.wait()
+        tick.clear()
+
+    monkeypatch.setattr(codex_runtime.asyncio, "sleep", sleep)
+
+    async def run():
+        await runtime.start()
+        task = runtime._radio_refresh_task
+        try:
+            await runtime.start()
+            assert runtime._radio_refresh_task is task
+            assert [method for method, _ in server.calls] == ["account/read", "model/list"]
+            await asyncio.wait_for(sleeping.wait(), 1)
+            sleeping.clear()
+            tick.set()
+            await asyncio.wait_for(sleeping.wait(), 1)
+            assert [method for method, _ in server.calls] == ["account/read", "model/list"] * 2
+            assert delays == [60.0, 60.0]
+            assert lifecycle == ["open"]
+        finally:
+            await runtime.close()
+        assert task.cancelled()
+        assert lifecycle == ["open", "close"]
+        await runtime.close()
+        assert lifecycle == ["open", "close"]
+        with pytest.raises(EngineerRuntimeUnavailable, match="codex_runtime_closed"):
+            await runtime._radio_server()
+
+    asyncio.run(run())
+
+
+def test_radio_warmup_failure_can_retry_after_login(monkeypatch, tmp_path):
+    runtime = codex_runtime.CodexRuntime(tmp_path)
+    server = FakeServer()
+    lifecycle = tracked_radio_server(monkeypatch, runtime, server)
+
+    async def run():
+        await runtime.start()
+        try:
+            assert runtime._radio_current is None
+            assert lifecycle == ["open", "close"]
+            server.account = {"type": "chatgpt"}
+            async with runtime._radio_lock():
+                await runtime._warm_radio_server(refresh=True)
+            assert runtime._radio_current is server
+        finally:
+            await runtime.close()
+        assert lifecycle == ["open", "close", "open", "close"]
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("phase", ["preflight", "turn"])
+@pytest.mark.parametrize("failure", ["deadline", "timeout", "protocol", "cancel"])
+def test_radio_reuses_server_after_timeout_but_closes_on_protocol_failure(
+    monkeypatch, tmp_path, phase, failure,
+):
+    runtime = codex_runtime.CodexRuntime(tmp_path)
+    server = successful_server()
+    lifecycle = tracked_radio_server(monkeypatch, runtime, server)
+    entered = asyncio.Event()
+    monkeypatch.setattr(codex_runtime, "RADIO_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(codex_runtime, "parse_intent", lambda content, **kwargs: content)
+    context = {"drivers": [], "tasks": [], "track": None, "regions": [], "recent": [],
+               "pending_region": None, "glossary": {"terms": {}, "mishearings": {}}}
+
+    async def fail(*args, **kwargs):
+        entered.set()
+        if failure in ("deadline", "cancel"):
+            await asyncio.Event().wait()
+        if failure == "timeout":
+            raise TimeoutError()
+        raise EngineerRuntimeUnavailable("codex_protocol_invalid")
+
+    async def run():
+        await runtime._radio_server()
+        original_preflight = runtime._preflight
+        original_turn = runtime._turn
+        if phase == "preflight":
+            runtime._radio_checked = -codex_runtime.RADIO_PREFLIGHT_TTL_S
+            monkeypatch.setattr(runtime, "_preflight", fail)
+        else:
+            monkeypatch.setattr(runtime, "_turn", fail)
+        try:
+            task = asyncio.create_task(runtime.interpret_radio("hello", context))
+            await asyncio.wait_for(entered.wait(), 1)
+            if failure == "cancel":
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            else:
+                reason = "codex_protocol_invalid" if failure == "protocol" else "codex_request_timeout"
+                with pytest.raises(EngineerRuntimeUnavailable, match=reason):
+                    await task
+            retained = failure in ("deadline", "timeout")
+            assert lifecycle == (["open"] if retained else ["open", "close"])
+            assert (runtime._radio_current is server) is retained
+            monkeypatch.setattr(runtime, "_preflight", original_preflight)
+            monkeypatch.setattr(runtime, "_turn", original_turn)
+            server.events.extend(completed_events())
+            result, _ = await runtime.interpret_radio("hello", context)
+            assert result == ROUTER_JSON
+            assert lifecycle.count("open") == (1 if retained else 2)
+        finally:
+            await runtime.close()
+
+    asyncio.run(run())
+
+
+def test_radio_close_cancels_inflight_refresh_without_waiting_for_deadline(monkeypatch, tmp_path):
+    runtime = codex_runtime.CodexRuntime(tmp_path)
+    server = successful_server()
+    lifecycle = tracked_radio_server(monkeypatch, runtime, server)
+    entered = asyncio.Event()
+
+    async def preflight(server):
+        entered.set()
+        await asyncio.Event().wait()
+
+    async def run():
+        await runtime._radio_server()
+        monkeypatch.setattr(runtime, "_preflight", preflight)
+        monkeypatch.setattr(codex_runtime, "RADIO_PREFLIGHT_TTL_S", 0)
+        runtime._radio_refresh_task = asyncio.create_task(runtime._refresh_radio_login())
+        task = runtime._radio_refresh_task
+        await asyncio.wait_for(entered.wait(), 1)
+        await asyncio.wait_for(runtime.close(), 1)
+        assert task.cancelled()
+        assert runtime._radio_refresh_task is None
+        assert lifecycle == ["open", "close"]
+
+    asyncio.run(run())
+
+
+def test_radio_shutdown_during_startup_does_not_leave_refresh_task(monkeypatch, tmp_path):
+    runtime = codex_runtime.CodexRuntime(tmp_path)
+    server = successful_server()
+    lifecycle = tracked_radio_server(monkeypatch, runtime, server)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    preflight = runtime._preflight
+
+    async def delayed_preflight(server):
+        entered.set()
+        await release.wait()
+        return await preflight(server)
+
+    monkeypatch.setattr(runtime, "_preflight", delayed_preflight)
+
+    async def run():
+        start = asyncio.create_task(runtime.start())
+        await asyncio.wait_for(entered.wait(), 1)
+        closed = asyncio.create_task(runtime.close())
+        await asyncio.sleep(0)
+        release.set()
+        await asyncio.wait_for(asyncio.gather(start, closed), 1)
+        assert runtime._radio_refresh_task is None
+        assert runtime._radio_current is None
+        assert lifecycle == ["open", "close"]
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("failure", ["timeout", "protocol"])
+def test_radio_warmup_deadline_preserves_only_an_existing_healthy_server(
+    monkeypatch, tmp_path, existing, failure,
+):
+    runtime = codex_runtime.CodexRuntime(tmp_path)
+    server = successful_server()
+    lifecycle = tracked_radio_server(monkeypatch, runtime, server)
+    monkeypatch.setattr(codex_runtime, "CODEX_TIMEOUT_S", 0.02)
+
+    async def fail(server):
+        if failure == "timeout":
+            await asyncio.Event().wait()
+        raise EngineerRuntimeUnavailable("codex_protocol_invalid")
+
+    async def run():
+        if existing:
+            await runtime._radio_server()
+        monkeypatch.setattr(runtime, "_preflight", fail)
+        await runtime._warm_radio_server(refresh=True)
+        retained = existing and failure == "timeout"
+        assert (runtime._radio_current is server) is retained
+        assert lifecycle == (["open"] if retained else ["open", "close"])
+        await runtime.close()
+        assert lifecycle == ["open", "close"]
+
+    asyncio.run(run())
+
+
+def test_app_server_handles_late_response_after_timeout_without_restarting():
+    async def run():
+        process = FakeProcess([])
+        process.stdout = asyncio.StreamReader()
+        server = codex_runtime._AppServer(process)
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.02):
+                await server.rpc("account/read", {"refreshToken": False})
+        process.stdout.feed_data(b'{"id":1,"result":{"account":{"type":"chatgpt"}}}\n')
+        process.stdout.feed_data(b'{"method":"turn/completed","params":{"threadId":"old"}}\n')
+        process.stdout.feed_data(b'{"id":2,"result":{"data":[]}}\n')
+        assert await server.rpc("model/list", {}) == {"data": []}
+        assert (await server.notification())["params"]["threadId"] == "old"
+        assert [json.loads(value)["id"] for value in process.writes] == [1, 2]
+
+    asyncio.run(run())

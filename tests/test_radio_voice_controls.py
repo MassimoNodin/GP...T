@@ -68,7 +68,7 @@ def test_repeat_uses_frozen_interrupted_message_not_newer_speech(phrase):
     assert radio.last_completed is None
 
 
-@pytest.mark.parametrize("invalidate", ["owner", "scope", "scope_round_trip", "expiry", "freshness", "missing"])
+@pytest.mark.parametrize("invalidate", ["owner", "scope", "scope_round_trip", "expiry", "missing"])
 def test_repeat_abstains_when_frozen_reference_is_invalid(invalidate):
     controller, radio, events, value, voice, hardware, voice_events, clock = prepared("repeat that")
     original = RadioMessage("original", radio.scope, "Old report.", "proactive", 20,
@@ -119,8 +119,8 @@ def test_manual_transcript_submission_uses_same_control_policy():
     assert radio.muted
 
 
-@pytest.mark.parametrize("deadline,now", [(None, 20), (12, 12), (12, 13)])
-def test_frozen_repeat_keeps_original_expiry_and_dispatch_freshness_gates(deadline, now):
+@pytest.mark.parametrize("deadline,now", [(None, 20), (12, 20)])
+def test_frozen_repeat_keeps_expiry_without_an_observed_completion(deadline, now):
     controller, radio, events, value, voice, hardware, voice_events, clock = prepared()
     radio.last_completed = RadioMessage("old", radio.scope, "Old report.", "answer", 20,
                                         dispatch_before=deadline)

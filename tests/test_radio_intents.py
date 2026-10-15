@@ -12,6 +12,7 @@ from f1_engineer.analysis.engineer_runtime import EngineerRuntimeUnavailable
 from f1_engineer.api.app import create_app
 from f1_engineer.radio import command
 from f1_engineer.radio.glossary import DEFAULT_GLOSSARY, load_glossary
+from f1_engineer.radio.intent_prompt import SYSTEM_PROMPT
 from f1_engineer.radio.intents import (LOCAL_CONTROLS, intent_schema, parse_context, parse_intent, render_intent)
 from f1_engineer.radio.questions import plan_question
 from f1_engineer.radio.spoken_numbers import regional_reply
@@ -54,6 +55,98 @@ def test_timing_questions_render_into_the_existing_planner(fields, targets, metr
     rendered = render_intent(intent(action="timing_question", **fields))
     plan = plan_question(rendered.text, names=NAMES)
     assert rendered.kind == "request" and plan.targets == targets and plan.metrics == metrics
+
+
+@pytest.mark.parametrize("metric,phrase", [
+    ("relative_gap", "gap to me"), ("car_ahead", "neighbour ahead"), ("car_behind", "neighbour behind"),
+    ("lap_count", "lap count"), ("laps_remaining", "laps remaining"),
+])
+def test_new_timing_metrics_are_validated_exposed_and_rendered(metric, phrase):
+    value = intent(action="timing_question", targets=[f"name:{LECLERC}"], metrics=[metric])
+    assert metric in intent_schema(context())["properties"]["metrics"]["items"]["enum"]
+    assert render_intent(value).text == f'"charles leclerc" {phrase}'
+
+
+@pytest.mark.parametrize("sector", [1, 2, 3])
+def test_named_lap_sector_uses_its_lap_without_requesting_full_lap_time(sector):
+    metric = f"lap_sector{sector}"
+    assert metric in intent_schema(context())["properties"]["metrics"]["items"]["enum"]
+    value = intent(action="timing_question", targets=["self"], metrics=[metric], lap_number=9)
+    assert render_intent(value).text == f"my lap 9 sector {sector} time"
+    with pytest.raises(ValueError, match="radio_intent_incomplete"):
+        intent(action="timing_question", targets=["self"], metrics=[metric])
+
+
+@pytest.mark.parametrize("metrics,expected", [
+    (["last_lap"], "my lap 2 time"),
+    (["last_lap", "last_lap", "position"], "my lap 2 time and position"),
+    (["last_lap", "lap_sector2"], "my lap 2 sector 2 time"),
+    (["last_sector2", "lap_sector2"], "my lap 2 sector 2 time"),
+    (["lap_sector3", "lap_sector1"], "my lap 2 sector 3 time and lap 2 sector 1 time"),
+])
+def test_numbered_lap_rendering_suppresses_redundant_lap_times(metrics, expected):
+    assert render_intent(intent(action="timing_question", targets=["self"], metrics=metrics,
+                                lap_number=2)).text == expected
+
+
+@pytest.mark.parametrize("action", ["timing_question", "task_create", "task_update"])
+def test_duplicate_metrics_are_removed_stably_without_mutating_input(action):
+    source = {**BASE, "action": action, "targets": ["self"], "metrics": ["position", "last_lap", "position"]}
+    if action != "timing_question":
+        source.update(task_kind="lap_report", task_id=2 if action == "task_update" else None)
+    value = parse_intent(source)
+    assert value["metrics"] == ["position", "last_lap"]
+    assert source["metrics"] == ["position", "last_lap", "position"]
+    assert render_intent(value).text.count("position") == 1
+    assert "position and last lap time" in render_intent(value).text
+
+
+@pytest.mark.parametrize("control,expected", [
+    ("cancel_current", "cancel"), ("cancel_speech", "cancel"), ("quiet", "quiet"), ("resume", "resume"),
+])
+def test_speech_cancellation_is_distinct_from_pausing_coaching(control, expected):
+    assert control in intent_schema(context())["properties"]["control"]["enum"]
+    rendered = render_intent(intent(action="control", control=control))
+    assert LOCAL_CONTROLS[rendered.text] == expected
+
+
+@pytest.mark.parametrize("transcript,targets,metrics,extra", [
+    ("what's my gap to the car ahead", ["self"], ["front_gap"], {}),
+    ("what's my gap to the leader", ["self"], ["leader_gap"], {}),
+    ("what's the gap to Leclerc", [f"name:{LECLERC}"], ["relative_gap"], {}),
+    ("how far is Leclerc behind me", [f"name:{LECLERC}"], ["relative_gap"], {}),
+    ("who's ahead of Leclerc", [f"name:{LECLERC}"], ["car_ahead"], {}),
+    ("who's behind Leclerc", [f"name:{LECLERC}"], ["car_behind"], {}),
+    ("Leclerc's gap to the leader", [f"name:{LECLERC}"], ["leader_gap"], {}),
+    ("tell me my gap to the leader each lap", ["self"], ["leader_gap"],
+     {"action": "task_create", "task_kind": "lap_report"}),
+    ("what was my best lap", ["self"], ["session_best"], {}),
+    ("what was my best fully observed lap", ["self"], ["observed_best"], {}),
+    ("what was lap two", ["self"], [], {"lap_number": 2}),
+    ("sector two on lap nine", ["self"], ["lap_sector2"], {"lap_number": 9}),
+    ("what's my lap count", ["self"], ["lap_count"], {}),
+    ("how many laps are left", ["self"], ["laps_remaining"], {}),
+    ("stop speaking", [], [], {"action": "control", "control": "cancel_current"}),
+    ("quiet radio", [], [], {"action": "control", "control": "quiet"}),
+])
+def test_prompt_examples_define_the_expected_intent_contract(transcript, targets, metrics, extra):
+    prefix = json.dumps(transcript) + " -> "
+    example = next(line[len(prefix):] for line in SYSTEM_PROMPT.splitlines() if line.startswith(prefix))
+    fields = json.loads(example.replace("<Leclerc's full name>", LECLERC))
+    value = parse_intent({**BASE, **fields}, context=context())
+    assert value["targets"] == targets and value["metrics"] == metrics
+    assert value["action"] == extra.get("action", "timing_question")
+    assert all(value[key] == expected for key, expected in extra.items())
+
+
+@pytest.mark.parametrize("action,extra,prefix", [
+    ("task_create", {}, "tell me at the end of each lap"),
+    ("task_update", {"task_id": 2}, "update task 2 tell me at the end of each lap"),
+])
+def test_named_lap_reports_share_numbered_sector_rendering(action, extra, prefix):
+    value = intent(action=action, task_kind="lap_report", targets=["self"],
+                   metrics=["last_lap", "lap_sector2", "lap_sector2"], lap_number=9, **extra)
+    assert render_intent(value).text == f"{prefix} my lap 9 sector 2 time"
 
 
 @pytest.mark.parametrize("fields,kind,expected", [
@@ -348,7 +441,7 @@ def test_dispatch_uses_the_interpreted_request(monkeypatch):
     assert sent == ["radio_intent_dispatch", "my last lap time"]
 
 
-def test_dispatch_speaks_replies_and_falls_back_to_raw_words(monkeypatch):
+def test_dispatch_speaks_replies_and_asks_again_on_interpreter_failure(monkeypatch):
     controller, radio, events, value = live()
     sent = []
     monkeypatch.setattr(command, "dispatch_voice_request", lambda question, *a, **k: sent.append(question))
@@ -359,7 +452,8 @@ def test_dispatch_speaks_replies_and_falls_back_to_raw_words(monkeypatch):
     sent.clear()
     command.dispatch_submission(submission({"status": "unavailable", "reason": "intent_timeout", "intent": None}),
                                 controller, None, now=10)
-    assert sent == ["radio_intent_fallback", "What was my latest time?"]
+    assert sent == ["radio_intent_fallback"]
+    assert radio.pending[-1].text == "Say again."
     sent.clear()
     command.dispatch_submission(submission(None), controller, None, now=10)
     assert sent == ["What was my latest time?"]

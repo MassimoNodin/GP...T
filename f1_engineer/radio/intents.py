@@ -17,11 +17,15 @@ MAX_OUTPUT_BYTES = 4096
 ACTIONS = ("timing_question", "control", "memory", "task_list", "task_cancel_all", "task_cancel",
            "task_extend", "task_create", "task_update", "region_reply", "smalltalk", "unsupported", "unclear")
 TASK_KINDS = ("lap_report", "consistency", "target_pace", "watch", "region", "paired_region", "focus")
-CONTROLS = ("quiet", "resume", "cancel_speech", "repeat")
+CONTROLS = ("quiet", "resume", "cancel_current", "cancel_speech", "repeat")
 MEMORIES = ("last_request", "last_report")
 TOPICS = ("strategy", "tyre_life", "fuel", "setup", "driving_advice", "other")
 TASK_ONLY_METRICS = frozenset({"consistency", "target_pace", "race_watch"})
-TIMING_METRICS = tuple(metric for metric in METRICS if metric not in TASK_ONLY_METRICS)
+NAMED_LAP_SECTORS = ("lap_sector1", "lap_sector2", "lap_sector3")
+TIMING_METRICS = tuple(dict.fromkeys([
+    *(metric for metric in METRICS if metric not in TASK_ONLY_METRICS),
+    "relative_gap", "car_ahead", "car_behind", "lap_count", "laps_remaining", *NAMED_LAP_SECTORS,
+]))
 BASE_TARGETS = ("self", "leader", "ahead", "behind")
 FIELDS = ("action", "heard_as", "corrections", "targets", "metrics", "lap_number", "laps", "task_id",
           "task_kind", "tolerance_ms", "region_start_m", "region_end_m", "region_name",
@@ -32,10 +36,11 @@ LOCAL_CONTROLS = {
     "quiet": "quiet", "quiet radio": "quiet", "pause coaching": "quiet",
     "resume coaching": "resume", "resume radio": "resume",
     "cancel speech": "cancel", "stop speaking": "cancel",
+    "stop talking": "cancel", "shut up": "cancel", "enough": "cancel",
     "repeat that": "repeat", "repeat message": "repeat",
 }
 CONTROL_PHRASES = {"quiet": "quiet radio", "resume": "resume radio",
-                   "cancel_speech": "cancel speech", "repeat": "repeat that"}
+                   "cancel_current": "cancel speech", "cancel_speech": "cancel speech", "repeat": "repeat that"}
 MEMORY_PHRASES = {"last_request": "what was my last request", "last_report": "what did you last report"}
 REPLIES = {
     "smalltalk": "Copy.",
@@ -58,6 +63,9 @@ METRIC_PHRASES = {
     "last_lap": "last lap time", "current_lap": "current lap time", "position": "position",
     "leader_gap": "gap to the leader", "front_gap": "gap to the car ahead",
     "track_name": "track name", "weather": "weather",
+    "relative_gap": "gap to me", "car_ahead": "neighbour ahead", "car_behind": "neighbour behind",
+    "lap_count": "lap count", "laps_remaining": "laps remaining",
+    "lap_sector1": "sector 1 time", "lap_sector2": "sector 2 time", "lap_sector3": "sector 3 time",
 }
 TARGET_PHRASES = {"self": "my", "leader": "the leader's", "ahead": "the car ahead's", "behind": "the car behind's"}
 _SAFE_NAME = re.compile(r"[^\W_](?:[^\W_]|[ '\-.]){0,79}")
@@ -133,6 +141,8 @@ def parse_intent(value, *, context=None) -> dict:
     optional = (("lap_number", 1, 255), ("laps", 1, 20), ("task_id", 1, 999_999_999), ("tolerance_ms", 1, 5000))
     if any(value[key] is not None and not _integer(value[key], low, high) for key, low, high in optional):
         _fail("radio_intent_choice_unsupported")
+    if any(metric in NAMED_LAP_SECTORS for metric in metrics) and value["lap_number"] is None:
+        _fail("radio_intent_incomplete")
     if (value["task_kind"] is not None and value["task_kind"] not in TASK_KINDS
             or value["control"] is not None and value["control"] not in CONTROLS
             or value["memory"] is not None and value["memory"] not in MEMORIES
@@ -178,7 +188,9 @@ def parse_intent(value, *, context=None) -> dict:
         if value["task_id"] is not None and action in ("task_cancel", "task_extend", "task_update") \
                 and value["task_id"] not in active:
             _fail("radio_intent_choice_unsupported")
-    return {key: (list(value[key]) if isinstance(value[key], list) else value[key]) for key in FIELDS}
+    result = {key: (list(value[key]) if isinstance(value[key], list) else value[key]) for key in FIELDS}
+    result["metrics"] = list(dict.fromkeys(metrics))
+    return result
 
 
 def parse_context(value) -> dict:
@@ -270,9 +282,20 @@ def _question(intent) -> str:
             targets.append(f"p{target[9:]}'s")
         else:
             targets.append(TARGET_PHRASES[target])
-    facts = [METRIC_PHRASES[metric] for metric in intent["metrics"]]
-    if intent["lap_number"] is not None:
-        facts.insert(0, f"lap {intent['lap_number']} time")
+    lap_number = intent["lap_number"]
+    metrics = list(dict.fromkeys(intent["metrics"]))
+    facts = []
+    for metric in metrics:
+        if lap_number is not None and metric == "last_lap":
+            continue
+        if lap_number is not None and metric.startswith(("last_sector", "lap_sector")):
+            fact = f"lap {lap_number} sector {metric[-1]} time"
+        else:
+            fact = METRIC_PHRASES[metric]
+        if fact not in facts:
+            facts.append(fact)
+    if lap_number is not None and not any(metric.startswith(("last_sector", "lap_sector")) for metric in metrics):
+        facts.insert(0, f"lap {lap_number} time")
     return " and ".join(targets) + " " + " and ".join(facts)
 
 

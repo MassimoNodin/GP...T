@@ -116,7 +116,7 @@ def test_reference_selection_requires_matching_window_and_known_on_track_compoun
     assert not controller.tasks.active()
 
 
-@pytest.mark.parametrize("change", ["scope", "history", "stale", "track_length", "cancel_all"])
+@pytest.mark.parametrize("change", ["scope", "history", "track_length", "cancel_all"])
 def test_context_discontinuities_clear_bounded_references(change):
     controller, radio, events, value, clock, store, client, captures, evidence = baseline()
     assert controller.region_progress.references
@@ -124,14 +124,37 @@ def test_context_discontinuities_clear_bounded_references(change):
         value["scope"]["epoch"] += 1
     elif change == "history":
         value["event_cursor"] = value["event_floor"] = 20
-    elif change == "stale":
-        value["age_s"] = 3
     elif change == "track_length":
         value["context"]["value"]["track_length_m"] = 110
     else:
         controller.handle_request("cancel all tracking", now=10)
     controller.feed(value, now=10)
     assert not controller.region_progress.references
+
+
+@pytest.mark.parametrize("pause", ["stale", "unavailable"])
+def test_pause_preserves_completed_region_reference_and_fixed_task_reference(pause):
+    controller, radio, events, value, clock, store, client, captures, evidence = baseline()
+    controller.handle_request(COMPARE, now=10)
+    task, = controller.tasks.active()
+    reference = task.region_reference
+    references = deepcopy(controller.region_progress.references)
+    assert reference is not None and controller.region_capture_requests()
+    if pause == "stale":
+        controller.check_freshness(now=14)
+    else:
+        controller.feed({"status": "unavailable", "reason": "replay_paused"}, now=14)
+    assert controller.tasks.active() == (task,)
+    assert controller.region_progress.references == references
+    assert controller.region_capture_requests() == []
+    controller.handle_request(COMPARE, now=14)
+    assert controller.tasks.active() == (task,)
+    value["events"] = []
+    controller.feed(value, now=15)
+    assert controller.tasks.active() == (task,)
+    assert controller.tasks.active()[0].region_reference is reference
+    assert controller.region_progress.references == references
+    assert controller.region_capture_requests()
 
 
 @pytest.mark.parametrize("change", ["invalid", "unknown_invalid", "compound", "window", "track_length", "connected",

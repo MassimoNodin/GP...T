@@ -83,11 +83,13 @@ Each request's schema limits driver names and task numbers to that live
 session, and the reply is validated again against the same context. Exact
 phrases such as "stop speaking" are handled locally and never wait on the
 network. If Luna is busy, slow (8 seconds), or unavailable, the radio falls
-back to the fixed-phrase parser and logs `radio_intent_fallback` with the
-reason. Use `--intent-mode parser` to disable Luna entirely.
+back with a spoken "Say again." and logs `radio_intent_fallback` with the
+reason; it never reinterprets failed requests with the fixed-phrase parser.
+Exact local speech controls bypass the interpreter. Use `--intent-mode parser`
+to explicitly select fixed phrases instead of Luna.
 
 The backend keeps one Codex app-server process for radio requests (recycled
-every 100 requests, login re-checked every five minutes) and starts a fresh
+every 100 requests, login re-checked every minute) and starts a fresh
 ephemeral thread for each one. Requests share the single AI admission slot with
 transcription and `/engineer/ask`. Add your own mishearings or terms in
 `data/radio-glossary.toml` (`[mishearings]` and `[terms]` tables, or pass

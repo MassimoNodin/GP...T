@@ -30,7 +30,11 @@ METRICS = {
     "current_sector1": r"current lap sector (?:1|one)(?: time)?",
     "current_sector2": r"current lap sector (?:2|two)(?: time)?",
     "observed_best": r"best observed(?: valid)? lap(?: time)?",
-    "session_best": r"(?:session )?best(?: valid)? lap(?: time)?",
+    "session_best": r"(?:(?:session )?(?:best|fastest)(?: valid)? lap(?: time)?|pb)",
+    "lap_count": r"(?:current )?lap count",
+    "laps_remaining": r"laps (?:remaining|left|to go)",
+    "car_ahead": r"neighbour ahead",
+    "car_behind": r"neighbour behind",
     "fastest_sector": r"fastest sector(?: time)?",
     "fuel_level": r"(?:current )?fuel(?: level| remaining| load)?",
     "track_name": r"(?:current )?(?:track|circuit) name",
@@ -86,6 +90,10 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
         remaining = "my position"
     if re.fullmatch(r"how far (?:am i )?behind (?:the )?leader[?.!]*", remaining):
         remaining = "my gap to the leader"
+    if re.fullmatch(r"what lap am i on[?.!]*", remaining):
+        remaining = "my lap count"
+    if re.fullmatch(r"how many laps (?:are )?(?:left|remaining|to go)[?.!]*", remaining):
+        remaining = "laps remaining"
     sector_only = re.fullmatch(r"only sector (one|two|three|[1-3])[?.!]*", remaining)
     if sector_only:
         if previous is None:
@@ -130,11 +138,16 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
     metrics = []
     targets = []
     def numbered_lap(match):
-        metrics.append("lap_number:" + str(spoken_integer(match.group(1))))
+        number = spoken_integer(match.group(1))
+        if not 1 <= number <= 255:
+            raise ValueError("Please choose a lap number from 1 to 255.")
+        metric = "lap_number:" + str(number)
+        if match.group(2):
+            metric += ":sector:" + str(spoken_integer(match.group(2)))
+        metrics.append(metric)
         return " "
-    remaining = re.sub(r"\blap ([1-9][0-9]{0,2}|" + WORD_PATTERN + r")(?: time)?\b", numbered_lap, remaining)
-    if any(int(metric.split(":", 1)[1]) > 255 for metric in metrics):
-        raise ValueError("Please choose a lap number from 1 to 255.")
+    remaining = re.sub(r"\blap ([1-9][0-9]{0,2}|" + WORD_PATTERN
+                       + r")(?: sector ([1-3]|one|two|three))?(?: time)?\b", numbered_lap, remaining)
     for metric, pattern in METRICS.items():
         remaining, count = re.subn(r"\b(?:" + pattern + r")\b", " ", remaining)
         if count:

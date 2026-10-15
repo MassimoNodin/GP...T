@@ -93,6 +93,11 @@ def start_typed_request(text: str, client, controller: RadioController, glossary
                                  question_context=controller.capture_question_context())
     context = capture_intent_context(controller, glossary)
     emit({"event": "radio_typed_request", "capture_id": request_id, "text": text, "interpreter": interpret})
+    control = " ".join(text.lower().split()).rstrip(".!?").rstrip()
+    if control in LOCAL_CONTROLS:
+        results.put(({"question": text, "capture_id": request_id, "source": "typed",
+                      "interpretation": None}, voice_like))
+        return
 
     def run():
         started = time.monotonic()
@@ -353,6 +358,9 @@ def capture_intent_context(controller: RadioController, glossary: dict) -> dict:
 def dispatch_submission(submission: dict, controller: RadioController, voice: VoiceInput, *, now: float) -> None:
     """Act on a transcript, using the interpreted request when there is one and the raw words otherwise."""
     question = submission["question"]
+    if " ".join(question.lower().split()).rstrip(".!?").rstrip() in LOCAL_CONTROLS:
+        dispatch_voice_request(question, controller, voice, now=now)
+        return
     interpretation = submission.get("interpretation")
     intent = interpretation.get("intent") if isinstance(interpretation, dict) else None
     if intent is not None:
@@ -362,6 +370,9 @@ def dispatch_submission(submission: dict, controller: RadioController, voice: Vo
             rendered = None
             emit({"event": "radio_intent_fallback", "capture_id": submission.get("capture_id"),
                   "reason": "render_failed"})
+            controller.scheduler.cancel()
+            controller.answer_radio_control("Say again.", now=now)
+            return
         if rendered is not None:
             emit({"event": "radio_intent_dispatch", "capture_id": submission.get("capture_id"),
                   "heard": question, "action": intent["action"], "kind": rendered.kind, "text": rendered.text})
@@ -373,6 +384,9 @@ def dispatch_submission(submission: dict, controller: RadioController, voice: Vo
     elif isinstance(interpretation, dict) and interpretation.get("status") == "unavailable":
         emit({"event": "radio_intent_fallback", "capture_id": submission.get("capture_id"),
               "reason": interpretation.get("reason")})
+        controller.scheduler.cancel()
+        controller.answer_radio_control("Say again.", now=now)
+        return
     dispatch_voice_request(question, controller, voice, now=now)
 
 

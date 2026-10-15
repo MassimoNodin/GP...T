@@ -95,7 +95,7 @@ def test_numbered_lap_plans_are_bounded_and_deduplicated(phrase, metrics):
 
 
 @pytest.mark.parametrize("phrase", ["my lap 0 time", "my lap 256 time", "my lap -1 time",
-    "my lap 4 in rain", "my lap 3 sector one time", "my lap 1 and lap 2 and lap 3 and lap 4"])
+    "my lap 4 in rain", "my lap 1 and lap 2 and lap 3 and lap 4"])
 def test_unsupported_numbered_lap_filters_and_bounds_abstain(phrase):
     with pytest.raises(ValueError):
         plan_question(phrase)

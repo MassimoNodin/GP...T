@@ -190,7 +190,7 @@ def test_unknown_track_length_prevents_installation():
     assert not controller.tasks.active() and "track length" in radio.pending[-1].text
 
 
-@pytest.mark.parametrize("reason", ["scope", "history", "unavailable", "stale"])
+@pytest.mark.parametrize("reason", ["scope", "history"])
 def test_lifecycle_failures_clear_tracking_and_samples(reason):
     controller, radio, events, value = ready()
     collect(controller, radio, value)
@@ -198,12 +198,34 @@ def test_lifecycle_failures_clear_tracking_and_samples(reason):
         value["scope"]["epoch"] += 1
     elif reason == "history":
         value["event_cursor"] = value["event_floor"] = 10
-    elif reason == "unavailable":
-        value["status"] = "unavailable"
-    else:
-        value["age_s"] = 3
     controller.feed(value, now=11)
     assert not controller.tasks.active() and not controller.regions.records
+
+
+@pytest.mark.parametrize("pause", ["stale", "unavailable"])
+def test_pause_retains_region_task_but_disqualifies_partial_samples(pause):
+    controller, radio, events, value = ready()
+    for index in range(7):
+        push(controller, value, distance=float(index * 5), clock=index * 50)
+    tasks = controller.tasks.active()
+    assert any(record["samples"] for record in controller.regions.records.values())
+    if pause == "stale":
+        controller.check_freshness(now=14)
+    else:
+        controller.feed({"status": "unavailable", "reason": "replay_paused"}, now=14)
+    assert controller.tasks.active() == tasks
+    assert all(record["invalid"] for record in controller.regions.records.values())
+    assert radio.scope is None and not radio.pending
+    controller.handle_request(REQUEST.replace("next lap", "next 3 laps"), now=14)
+    assert controller.tasks.active() == tasks
+    controller.feed(value, now=15)
+    assert controller.tasks.active() == tasks
+    for index in range(7, 13):
+        push(controller, value, distance=float(index * 5), clock=index * 50)
+    report = complete(controller, radio, value)
+    assert report["evidence"] is None
+    assert "interrupted or missing lap evidence" in report["text"]
+    assert not controller.region_progress.references
 
 
 def test_sample_memory_is_bounded_and_overflow_abstains():

@@ -114,9 +114,29 @@ def test_dynamic_comparison_role_resolves_again_each_lap():
     assert "Lando Norris" in radio.pending[-1].text and "1.000 seconds faster than you" in radio.pending[-1].text
 
 
-def test_stale_comparisons_are_not_answered_or_retained():
+@pytest.mark.parametrize("pause", ["stale", "unavailable"])
+def test_paused_comparisons_retain_tracking_but_require_fresh_values_after_resume(pause):
     controller, radio, events, value = named_live()
     install(controller, radio, "report at end of each lap compare my last lap with Leclerc")
+    controller.handle_request("compare my last lap with Leclerc", now=10)
+    tasks = controller.tasks.active()
+    history = deepcopy(controller._history)
+    if pause == "stale":
+        controller.check_freshness(now=14)
+    else:
+        controller.feed({"status": "unavailable", "reason": "replay_paused"}, now=14)
+    assert controller.tasks.active() == tasks and controller._history == history
+    assert radio.scope is None and not radio.pending
     controller.handle_request("compare my last lap with Leclerc", now=14)
     assert "No fresh player telemetry" in radio.pending[-1].text
-    assert controller.status()["tasks"] == []
+    assert "faster than you" not in radio.pending[-1].text
+    controller.handle_request("report at end of each lap my position", now=14)
+    assert controller.tasks.active() == tasks
+    assert controller.status()["tasks"] == controller.tasks.views()
+    value["drivers"][1]["lap"]["last_lap_time_ms"] = 100000
+    value["events"] = []
+    controller.feed(value, now=15)
+    assert controller.tasks.active() == tasks
+    controller.handle_request("compare my last lap with Leclerc", now=15)
+    assert "3.500 seconds faster than you" in radio.pending[-1].text
+    assert "2.500 seconds faster than you" not in radio.pending[-1].text
