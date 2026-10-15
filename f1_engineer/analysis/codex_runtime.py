@@ -8,6 +8,8 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from ..radio.intent_prompt import build_intent_messages
+from ..radio.intents import intent_schema, parse_intent
 from .engineer_ask import build_router_messages, parse_router_output, route_schema
 from .engineer_runtime import EngineerRuntimeUnavailable
 
@@ -16,6 +18,10 @@ CODEX_MODEL = "gpt-6-luna"
 CODEX_TIMEOUT_S = 25.0
 MAX_PROTOCOL_BYTES = 2 * 1024 * 1024
 MAX_LINE_BYTES = 256 * 1024
+RADIO_TIMEOUT_S = 8.0
+RADIO_PREFLIGHT_TTL_S = 300.0
+RADIO_RECYCLE_REQUESTS = 100
+RADIO_EFFORT = "low"
 
 
 class _AppServer:
@@ -80,6 +86,12 @@ class CodexRuntime:
     def __init__(self, home: str | Path, *, executable: str = "codex"):
         self.home = Path(home).resolve()
         self.executable = executable
+        self._radio_guard = None
+        self._radio_manager = None
+        self._radio_current = None
+        self._radio_checked = 0.0
+        self._radio_uses = 0
+        self._radio_effort = RADIO_EFFORT
 
     @asynccontextmanager
     async def _open(self):
@@ -170,6 +182,77 @@ class CodexRuntime:
                 "codex_subscription_login_required", "codex_executable_unavailable"
             ) else "unavailable", "reason": reason}
 
+    async def _turn(self, server, *, instructions, prompt, schema, effort=None):
+        """Run one ephemeral, tool-free structured turn and return the final agent message."""
+        started = await server.rpc("thread/start", {
+            "model": CODEX_MODEL, "modelProvider": "openai", "ephemeral": True,
+            "sandbox": "read-only", "approvalPolicy": "untrusted",
+            "baseInstructions": instructions,
+            "developerInstructions": "Use no tools. Return only the required JSON.",
+        })
+        if started.get("model") != CODEX_MODEL or started.get("modelProvider") != "openai":
+            raise EngineerRuntimeUnavailable("codex_model_changed")
+        if started.get("instructionSources", []) != []:
+            raise EngineerRuntimeUnavailable("codex_engineer_profile_not_isolated")
+        thread = started.get("thread")
+        if not isinstance(thread, dict):
+            raise EngineerRuntimeUnavailable("codex_protocol_invalid")
+        thread_id = thread.get("id")
+        if not isinstance(thread_id, str) or not thread_id:
+            raise EngineerRuntimeUnavailable("codex_protocol_invalid")
+        turn = {
+            "threadId": thread_id, "model": CODEX_MODEL,
+            "input": [{"type": "text", "text": prompt}],
+            "outputSchema": schema,
+            "sandboxPolicy": {"type": "readOnly", "networkAccess": False},
+        }
+        try:
+            turn = await server.rpc("turn/start", {**turn, **({"effort": effort} if effort else {})})
+        except EngineerRuntimeUnavailable as exc:
+            if effort is None or exc.reason != "codex_request_failed":
+                raise
+            self._radio_effort = None  # this Codex build rejects the effort option; stop sending it
+            turn = await server.rpc("turn/start", turn)
+        turn_data = turn.get("turn")
+        if not isinstance(turn_data, dict):
+            raise EngineerRuntimeUnavailable("codex_protocol_invalid")
+        turn_id = turn_data.get("id")
+        if not isinstance(turn_id, str) or not turn_id:
+            raise EngineerRuntimeUnavailable("codex_protocol_invalid")
+        content = None
+        while True:
+            event = await server.notification()
+            params = event.get("params") or {}
+            if not isinstance(params, dict):
+                raise EngineerRuntimeUnavailable("codex_protocol_invalid")
+            if params.get("threadId") != thread_id or params.get("turnId", turn_id) != turn_id:
+                continue
+            method = event.get("method")
+            if method in ("item/started", "item/completed"):
+                item = params.get("item") or {}
+                if not isinstance(item, dict):
+                    raise EngineerRuntimeUnavailable("codex_protocol_invalid")
+                if item.get("type") not in ("userMessage", "agentMessage", "reasoning"):
+                    raise EngineerRuntimeUnavailable("codex_tool_use_rejected")
+                if method == "item/completed" and item.get("type") == "agentMessage":
+                    content = item.get("text")
+            if method == "turn/completed":
+                completed = params.get("turn") or {}
+                if not isinstance(completed, dict):
+                    raise EngineerRuntimeUnavailable("codex_protocol_invalid")
+                if completed.get("id") != turn_id:
+                    continue
+                if completed.get("status") != "completed":
+                    raise EngineerRuntimeUnavailable("codex_turn_failed")
+                return content
+
+    def _model_report(self, started_at):
+        return {"runtime": "Codex", "model_name": CODEX_MODEL,
+                "billing": "codex_subscription", "fallback_enabled": False,
+                "model_digest": "not_applicable", "runtime_version": None,
+                "inference_placement": "cloud",
+                "latency_ms": round((time.monotonic() - started_at) * 1000)}
+
     async def route_question(self, question, *, selection_kind, allowed_routes):
         started_at = time.monotonic()
         messages = build_router_messages(
@@ -178,68 +261,77 @@ class CodexRuntime:
         try:
             async with asyncio.timeout(CODEX_TIMEOUT_S), self._open() as server:
                 await self._preflight(server)
-                started = await server.rpc("thread/start", {
-                    "model": CODEX_MODEL, "modelProvider": "openai", "ephemeral": True,
-                    "sandbox": "read-only", "approvalPolicy": "untrusted",
-                    "baseInstructions": messages[0]["content"],
-                    "developerInstructions": "Use no tools. Return only the required JSON.",
-                })
-                if started.get("model") != CODEX_MODEL or started.get("modelProvider") != "openai":
-                    raise EngineerRuntimeUnavailable("codex_model_changed")
-                if started.get("instructionSources", []) != []:
-                    raise EngineerRuntimeUnavailable("codex_engineer_profile_not_isolated")
-                thread = started.get("thread")
-                if not isinstance(thread, dict):
-                    raise EngineerRuntimeUnavailable("codex_protocol_invalid")
-                thread_id = thread.get("id")
-                if not isinstance(thread_id, str) or not thread_id:
-                    raise EngineerRuntimeUnavailable("codex_protocol_invalid")
-                turn = await server.rpc("turn/start", {
-                    "threadId": thread_id, "model": CODEX_MODEL,
-                    "input": [{"type": "text", "text": messages[1]["content"]}],
-                    "outputSchema": route_schema(allowed_routes),
-                    "sandboxPolicy": {"type": "readOnly", "networkAccess": False},
-                })
-                turn_data = turn.get("turn")
-                if not isinstance(turn_data, dict):
-                    raise EngineerRuntimeUnavailable("codex_protocol_invalid")
-                turn_id = turn_data.get("id")
-                if not isinstance(turn_id, str) or not turn_id:
-                    raise EngineerRuntimeUnavailable("codex_protocol_invalid")
-                content = None
-                while True:
-                    event = await server.notification()
-                    params = event.get("params") or {}
-                    if not isinstance(params, dict):
-                        raise EngineerRuntimeUnavailable("codex_protocol_invalid")
-                    if params.get("threadId") != thread_id or params.get("turnId", turn_id) != turn_id:
-                        continue
-                    method = event.get("method")
-                    if method in ("item/started", "item/completed"):
-                        item = params.get("item") or {}
-                        if not isinstance(item, dict):
-                            raise EngineerRuntimeUnavailable("codex_protocol_invalid")
-                        if item.get("type") not in ("userMessage", "agentMessage", "reasoning"):
-                            raise EngineerRuntimeUnavailable("codex_tool_use_rejected")
-                        if method == "item/completed" and item.get("type") == "agentMessage":
-                            content = item.get("text")
-                    if method == "turn/completed":
-                        completed = params.get("turn") or {}
-                        if not isinstance(completed, dict):
-                            raise EngineerRuntimeUnavailable("codex_protocol_invalid")
-                        if completed.get("id") != turn_id:
-                            continue
-                        if completed.get("status") != "completed":
-                            raise EngineerRuntimeUnavailable("codex_turn_failed")
-                        break
+                content = await self._turn(
+                    server, instructions=messages[0]["content"], prompt=messages[1]["content"],
+                    schema=route_schema(allowed_routes))
                 try:
                     route = parse_router_output(content, allowed_routes=allowed_routes)
                 except ValueError as exc:
                     raise EngineerRuntimeUnavailable(str(exc)) from exc
-                return route, {"runtime": "Codex", "model_name": CODEX_MODEL,
-                               "billing": "codex_subscription", "fallback_enabled": False,
-                               "model_digest": "not_applicable", "runtime_version": None,
-                               "inference_placement": "cloud",
-                               "latency_ms": round((time.monotonic() - started_at) * 1000)}
+                return route, self._model_report(started_at)
+        except TimeoutError as exc:
+            raise EngineerRuntimeUnavailable("codex_request_timeout") from exc
+
+    async def _radio_server(self):
+        """Reuse one app-server for the radio so each request skips process start and login checks."""
+        server = self._radio_current
+        if server is not None:
+            process = getattr(server, "process", None)
+            if (process is not None and process.returncode is not None) or self._radio_uses >= RADIO_RECYCLE_REQUESTS:
+                await self._close_radio_server()
+                server = None
+            elif time.monotonic() - self._radio_checked >= RADIO_PREFLIGHT_TTL_S:
+                await self._preflight(server)
+                self._radio_checked = time.monotonic()
+        if server is None:
+            manager = self._open()
+            server = await manager.__aenter__()
+            try:
+                await self._preflight(server)
+            except BaseException:
+                await manager.__aexit__(None, None, None)
+                raise
+            self._radio_manager, self._radio_current = manager, server
+            self._radio_checked, self._radio_uses = time.monotonic(), 0
+        server.bytes_read = 0
+        return server
+
+    async def _close_radio_server(self):
+        manager, self._radio_manager, self._radio_current = self._radio_manager, None, None
+        if manager is not None:
+            try:
+                await manager.__aexit__(None, None, None)
+            except Exception:
+                pass
+
+    async def close(self):
+        async with self._radio_lock():
+            await self._close_radio_server()
+
+    def _radio_lock(self):
+        if self._radio_guard is None:
+            self._radio_guard = asyncio.Lock()
+        return self._radio_guard
+
+    async def interpret_radio(self, transcript, context):
+        """Interpret one radio transcript into a validated intent using the persistent server."""
+        started_at = time.monotonic()
+        messages = build_intent_messages(transcript, context)
+        try:
+            async with asyncio.timeout(RADIO_TIMEOUT_S), self._radio_lock():
+                try:
+                    server = await self._radio_server()
+                    self._radio_uses += 1
+                    content = await self._turn(
+                        server, instructions=messages[0]["content"], prompt=messages[1]["content"],
+                        schema=intent_schema(context), effort=self._radio_effort)
+                except BaseException:
+                    await self._close_radio_server()  # protocol state is unknown after any failure
+                    raise
+            try:
+                intent = parse_intent(content, context=context)
+            except ValueError as exc:
+                raise EngineerRuntimeUnavailable(str(exc)) from exc
+            return intent, self._model_report(started_at)
         except TimeoutError as exc:
             raise EngineerRuntimeUnavailable("codex_request_timeout") from exc

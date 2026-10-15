@@ -47,6 +47,7 @@ from ..analysis.engineer_query import query_engineer_evidence
 from ..analysis.engineer_ask_service import answer_engineer_question
 from ..analysis.ollama_runtime import OllamaRuntime
 from ..analysis.codex_runtime import CodexRuntime
+from ..radio.intents import MAX_CONTEXT_BYTES, MAX_TRANSCRIPT_BYTES, parse_context
 from ..analysis.engineer_runtime import EngineerRuntime, EngineerRuntimeUnavailable
 from ..analysis.race_diagnostics import build_session_race_diagnostics
 from ..analysis.observation_set import build_observation_set
@@ -1124,6 +1125,9 @@ def create_app(
         try:
             yield
         finally:
+            close_runtime = getattr(selected_engineer_runtime, "close", None)
+            if close_runtime is not None:
+                await close_runtime()
             if live_runtime:
                 await run_in_threadpool(engineer_activity.stop)
                 await run_in_threadpool(live_runtime.close)
@@ -3086,6 +3090,60 @@ def create_app(
                 gate_lease.close()
             if lock_acquired:
                 engineer_ask_lock.release()
+
+    @app.post("/api/v2/engineer/radio-intent")
+    async def engineer_radio_intent(
+        request: Request,
+        authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+    ) -> JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(401, "radio_intent_unauthorized")
+        if request.query_params:
+            return _api_error(400, "radio_intent_query_not_allowed")
+        content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            return _api_error(415, "radio_intent_json_required")
+        interpret = getattr(selected_engineer_runtime, "interpret_radio", None)
+        if interpret is None:
+            return _api_error(503, "radio_intent_runtime_unsupported")
+        gate_lease: AIGateLease | None = None
+        try:
+            async with asyncio.timeout(10.0):
+                try:
+                    raw_body = await _read_limited_body(request, MAX_CONTEXT_BYTES + 4_096)
+                    document = json.loads(raw_body)
+                    transcript = document["transcript"] if isinstance(document, dict) else None
+                    if (set(document) != {"transcript", "context"} or not isinstance(transcript, str)
+                            or not transcript.strip()
+                            or len(transcript.encode("utf-8", errors="strict")) > MAX_TRANSCRIPT_BYTES):
+                        raise ValueError("radio_intent_request_invalid")
+                    context = parse_context(document["context"])
+                except _EngineerRequestBodyLimitExceeded:
+                    return _api_error(413, "radio_intent_request_limit_exceeded")
+                except (ValueError, KeyError, TypeError, RecursionError, UnicodeError):
+                    return _api_error(422, "radio_intent_request_invalid")
+                gate_lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
+                if gate_lease is None:
+                    return _api_error(409, "radio_intent_busy")
+                intent, model = await _run_until_client_disconnect(
+                    interpret(transcript.strip(), context), request, gate_lease=gate_lease)
+                return JSONResponse(
+                    status_code=200,
+                    content={"api_version": "v1", "status": "ok", "reason": None,
+                             "data": {"schema_version": 1, "intent": intent, "model": model}},
+                    headers={"Cache-Control": "no-store"},
+                )
+        except TimeoutError:
+            return _api_error(504, "radio_intent_deadline_exceeded")
+        except _EngineerClientDisconnected:
+            return _api_error(499, "radio_intent_client_disconnected")
+        except EngineerRuntimeUnavailable as exc:
+            return _api_error(503, exc.reason[:96] if re.fullmatch(r"[a-z_]{1,96}", exc.reason) else "radio_intent_unavailable")
+        except (OSError, RuntimeError, ValueError):
+            return _api_error(503, "radio_intent_unavailable")
+        finally:
+            if gate_lease is not None:
+                gate_lease.close()
 
     @app.post("/api/v1/engineer/transcribe")
     async def engineer_speech_transcription(

@@ -13,6 +13,8 @@ class QuestionPlan:
     inherited_targets: bool = False
 
 
+SESSION_FACTS = frozenset({"track_name", "weather"})
+
 UNAVAILABLE_FACTS = {
     "session_best": "session-best lap unavailable; qualified game-reported session history is missing",
     "fastest_sector": "fastest sector unavailable; complete session sector history is missing",
@@ -30,6 +32,8 @@ METRICS = {
     "session_best": r"(?:session )?best(?: valid)? lap(?: time)?",
     "fastest_sector": r"fastest sector(?: time)?",
     "fuel_level": r"(?:current )?fuel(?: level| remaining| load)?",
+    "track_name": r"(?:current )?(?:track|circuit) name",
+    "weather": r"(?:current )?weather",
     "tyre_age": r"(?:current )?(?:tyre|tire) ages?(?: in laps)?",
     "tyre_compound": r"(?:current )?(?:tyre|tire) compounds?",
     "speed": r"(?:current )?speed",
