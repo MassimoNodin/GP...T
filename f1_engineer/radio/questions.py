@@ -58,6 +58,12 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
     if not isinstance(question, str) or not 1 <= len(question.encode("utf-8")) <= 1024:
         raise ValueError("Ask a question of at most 1024 bytes.")
     remaining = nearby_comparison(driver_name_key(question))
+    remaining = re.sub(r"^what was (.+ (?:last|previous|latest)(?: completed)? lap(?: time)?s?)[?.!]*$",
+                       r"\1", remaining)
+    if re.fullmatch(r"(?:where am i|what position am i in)[?.!]*", remaining):
+        remaining = "my position"
+    if re.fullmatch(r"how far (?:am i )?behind (?:the )?leader[?.!]*", remaining):
+        remaining = "my gap to the leader"
     sector_only = re.fullmatch(r"only sector (one|two|three|[1-3])[?.!]*", remaining)
     if sector_only:
         if previous is None:
@@ -133,7 +139,7 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
         raise ValueError("Please specify one other driver; that singular pronoun is ambiguous.")
     remaining = re.sub(r"\b(?:what|what's|is|are|the|a|and|also|please|tell|show|give|for|of|about|how|their|his|her|them|him|then)\b", " ", remaining)
     if re.sub(r"[\s?,.!']", "", remaining):
-        raise ValueError("I can answer current or last lap times, retained observed numbered laps, measured current-lap sectors 1 and 2, fully observed last-lap sectors and best observed valid lap, last lap comparisons to you, positions, leader/front-car gaps, your lap-boundary gap changes and observed player speed or brake input. Use me, leader, car ahead, car behind, P1 to P24, or an available driver's full name or surname. Other facts and task instructions are not supported yet.")
+        raise ValueError("Didn't catch that. Say again.")
     if not metrics and not targets:
         raise ValueError("Please specify a driver or timing fact.")
     inherited_targets = not targets and previous is not None

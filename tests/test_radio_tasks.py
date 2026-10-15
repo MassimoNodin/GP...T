@@ -318,7 +318,7 @@ def test_explicit_draft_submission_can_create_and_cancel_tasks_but_not_console_c
     assert controller.status()["tasks"] == [] and not radio.muted
     voice._draft = "quit"
     submit_question("submit", controller, voice, now=10)
-    assert "not supported yet" in radio.pending[-1].text
+    assert radio.pending[-1].text == "Didn't catch that. Say again."
 
 
 def test_no_creation_without_fresh_telemetry_and_task_controls_dont_poison_conversation():

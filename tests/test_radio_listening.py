@@ -15,7 +15,7 @@ from f1_engineer.analysis.local_speech import SPEECH_MAX_SAMPLES, validate_canon
 from f1_engineer.radio import audio, command
 from f1_engineer.radio.audio import NativeRadioAudio, RadioAudioUnavailable, cue_pcm
 from f1_engineer.radio.client import RadioClient
-from f1_engineer.radio.listening import VoiceInput, canonical_wav
+from f1_engineer.radio.listening import VoiceInput, canonical_wav, capture_levels
 from f1_engineer.radio.scheduler import RadioMessage, RadioScheduler
 
 
@@ -122,6 +122,19 @@ def test_invalid_pcm_is_rejected(pcm):
         canonical_wav(pcm)
 
 
+@pytest.mark.parametrize("pcm", [b"", b"\x00\x00" * 320])
+def test_capture_levels_identifies_silence_without_retaining_audio(pcm):
+    assert capture_levels(pcm) == {"audio_rms_dbfs": None, "audio_peak": 0.0,
+                                   "audio_clipped_fraction": 0.0}
+
+
+def test_capture_levels_reports_signal_and_clipping():
+    levels = capture_levels(b"\xff\x7f\x00\x80\x00\x00\x00\x00")
+    assert levels["audio_peak"] == 1
+    assert levels["audio_clipped_fraction"] == 0.5
+    assert levels["audio_rms_dbfs"] == pytest.approx(-3.0104, abs=0.001)
+
+
 def test_start_stop_cues_and_capture_metadata_without_upload_or_persistence():
     voice, hardware, events, clock = listening()
     run_capture(voice)
@@ -129,6 +142,9 @@ def test_start_stop_cues_and_capture_metadata_without_upload_or_persistence():
     assert hardware.calls.index("close") < hardware.calls.index("end")
     completed = next(event for event in events if event["event"] == "radio_capture_complete")
     assert completed["capture_audio_s"] == pytest.approx(0.06)
+    assert completed["audio_peak"] == pytest.approx(1 / 32768)
+    assert completed["audio_rms_dbfs"] < -80
+    assert completed["audio_clipped_fraction"] == 0
     assert not completed["audio_persisted"] and not completed["automatic_stop"]
     assert voice.status()["state"] == "idle"
     assert not any("transcript" in event for event in events)

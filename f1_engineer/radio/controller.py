@@ -1324,7 +1324,7 @@ class RadioController:
                         result = f"{label} (car slot {row['car_index']}): " + ", ".join(
                             self._timing_fact(metric, row, now=now) for metric in plan.metrics) + "."
                     results.append(result)
-                text = " ".join(results)
+                text = re.sub(r" \(car slot [0-9]+\)", "", " ".join(results))
                 self._history.append({"question": question, "plan": plan, "bindings": bindings})
                 self._history = self._history[-8:]
         self._answer_id += 1

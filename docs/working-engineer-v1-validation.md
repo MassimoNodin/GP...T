@@ -207,6 +207,29 @@ a changed or stale previous session remain rejected. A new session cancels
 queued no-session feedback. Regression tests cover these boundaries and
 one-time consumption. Audible user confirmation remains pending.
 
+## Live question failures and concise radio replies
+
+On October 15, 2026, live traces showed five microphone transcripts: three
+"Okay." clips, "This one, Mark.", and "What was my last laptop?". Four were
+processed with live telemetry available; their unsupported-question fallback
+spoke a long feature catalogue instead of a useful brief acknowledgement.
+Captured audio durations were 0.78 to 1.82 seconds. The traces cannot establish
+the actual words spoken or whether the capture omitted the start of a question.
+
+Unrecognized questions now receive only "Didn't catch that. Say again."
+No-session feedback is also short. Timing answers omit internal car-slot
+identifiers from speech while preserving them in structured diagnostics.
+Natural present-position and leader-gap phrasing is accepted, as is "what was
+my last lap time"; historical-position requests are still rejected rather than
+answered with current data. Ambiguous transcription such as "laptop" is not
+silently converted into a telemetry request.
+
+Capture-completion traces now include peak level, RMS dBFS and clipped-sample
+fraction without retaining raw microphone audio. These support distinguishing
+quiet/clipped input from recognition failures on the next real microphone test.
+Recognition accuracy and acoustic response latency remain unverified; the
+pinned speech model and three-second telemetry freshness guards are unchanged.
+
 ## Latency and final sign-off
 
 Measure wheel press to audible listening feedback, capture end to first answer

@@ -301,8 +301,7 @@ def submit_ready_question(controller: RadioController, voice: VoiceInput, *, now
     if submission is None:
         return False
     if submission.get("unavailable_reason") == "session_unavailable":
-        text = ("I received your voice request, but no live F1 telemetry is available. "
-                "Start a session with UDP telemetry enabled, then try again.")
+        text = "No live F1 telemetry. Try again once you're on track."
         controller.scheduler.cancel()
         queued = controller.scheduler.submit(RadioMessage(
             f"voice-unavailable:{submission['capture_id']}", None, text, "answer", now + 15), now=now)

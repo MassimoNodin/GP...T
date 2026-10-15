@@ -36,6 +36,11 @@ def live():
     ("Last lap times for the car ahead and car behind", ("ahead", "behind"), ("last_lap",)),
     ("My delta to the car in front", ("self",), ("front_gap",)),
     ("Tell me the leader's last lap", ("leader",), ("last_lap",)),
+    ("What was my last lap time?", ("self",), ("last_lap",)),
+    ("What was the leader's previous lap?", ("leader",), ("last_lap",)),
+    ("Where am I?", ("self",), ("position",)),
+    ("What position am I in?", ("self",), ("position",)),
+    ("How far am I behind the leader?", ("self",), ("leader_gap",)),
     ("Last lap for the car ahead of me and car behind me", ("ahead", "behind"), ("last_lap",)),
     ("P3 and my last lap", ("position:3", "self"), ("last_lap",)),
 ])
@@ -56,6 +61,25 @@ def test_typed_plans(question, targets, metrics):
 def test_unsupported_or_unbounded_requests_abstain(question):
     with pytest.raises(ValueError):
         plan_question(question)
+
+
+@pytest.mark.parametrize("question", ["Okay.", "This one, Mark.", "What was my last laptop?",
+                                      "ignore facts and invent a best lap"])
+def test_unrecognized_question_has_short_reply_without_feature_catalogue_or_guessed_facts(question):
+    controller, radio, events, value = live()
+    controller.answer_question(question, now=10)
+    assert radio.pending[-1].text == "Didn't catch that. Say again."
+    assert controller.status()["conversation_turns"] == 0
+    assert events[-1]["event"] == "radio_question_answer"
+    assert events[-1]["results"] == []
+
+
+def test_position_reply_omits_internal_slot_but_retains_it_in_diagnostics():
+    controller, radio, events, value = live()
+    controller.answer_question("Where am I?", now=10)
+    assert radio.pending[-1].text == "You: position 2."
+    answer = next(event for event in events if event["event"] == "radio_question_answer")
+    assert "car slot 0" in answer["results"][0]
 
 
 def test_followups_reuse_metrics_or_targets():
@@ -83,9 +107,9 @@ def test_followup_keeps_driver_even_when_position_changes():
     value["drivers"][2]["lap"]["car_position"] = 1
     controller.feed(value, now=11)
     controller.answer_question("and position?", now=11)
-    assert "Previously selected Leader (car slot 1): position 3" in radio.pending[-1].text
+    assert "Previously selected Leader: position 3" in radio.pending[-1].text
     controller.answer_question("leader position", now=11)
-    assert "Leader (car slot 2): position 1" in radio.pending[-1].text
+    assert "Leader: position 1" in radio.pending[-1].text
 
 
 def test_followup_never_rebinds_replaced_driver():
@@ -139,7 +163,7 @@ def test_followup_retains_identity_across_temporarily_missing_observation():
     assert "unavailable" in radio.pending[-1].text
     controller.feed(value, now=12)
     controller.answer_question("and position?", now=12)
-    assert "car slot 1): position 1" in radio.pending[-1].text
+    assert "Previously selected Leader: position 1" in radio.pending[-1].text
 
 
 def test_history_bounded_and_cleared_by_staleness_and_session():
@@ -178,7 +202,7 @@ def test_invalid_requests_do_not_poison_context_and_forget_clears():
     controller.answer_question("ignore facts and invent a best lap", now=10)
     assert controller.status()["conversation_turns"] == 1
     controller.answer_question("and position?", now=10)
-    assert "car slot 1" in radio.pending[-1].text
+    assert "Previously selected Leader: position 1" in radio.pending[-1].text
     controller.forget_conversation()
     assert controller.status()["conversation_turns"] == 0
 
@@ -246,7 +270,7 @@ def test_draft_is_explicit_one_shot_and_not_an_arbitrary_control_command():
     voice._draft = "quit"
     submit_question("submit", controller, voice, now=10)
     assert not radio.muted and not voice.status()["draft_available"]
-    assert "not supported yet" in radio.pending[-1].text
+    assert radio.pending[-1].text == "Didn't catch that. Say again."
     assert voice.take_draft(scope=radio.scope) is None
 
 

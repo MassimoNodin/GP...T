@@ -41,7 +41,7 @@ def test_capture_without_session_speaks_unavailability_without_executing_request
     assert not controller.tasks.active()
     assert len(radio.pending) == 1
     assert radio.pending[0].scope is None
-    assert "no live F1 telemetry" in radio.pending[0].text
+    assert "No live F1 telemetry" in radio.pending[0].text
     assert not any(event["event"] == "radio_question_answer" for event in events)
     rejection = json.loads(capsys.readouterr().out)
     assert rejection["reason"] == "session_unavailable"
@@ -214,7 +214,7 @@ def test_voice_submission_does_not_execute_arbitrary_console_or_configuration_co
     controller, radio, events, value, voice, hardware, voice_events, clock = prepared(question)
     assert command.submit_ready_question(controller, voice, now=10, input_status=WHEEL)
     assert not radio.muted and not controller.tasks.active()
-    assert "not supported" in radio.pending[-1].text
+    assert radio.pending[-1].text == "Didn't catch that. Say again."
 
 
 def test_real_capture_worker_finishes_and_closes_mock_microphone_before_submission():

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import array
 import io
 import math
 import queue
+import sys
 import threading
 import time
 import uuid
@@ -12,6 +14,18 @@ import wave
 from ..analysis.local_speech import SPEECH_MAX_SECONDS, SPEECH_MAX_SAMPLES, SPEECH_SAMPLE_RATE, SPEECH_MAX_TRANSCRIPT_BYTES
 from .audio import NativeRadioAudio, RadioAudioUnavailable
 from .diagnostics import exception_trace
+
+
+def capture_levels(pcm: bytes) -> dict:
+    samples = array.array("h", pcm)
+    if sys.byteorder != "little":
+        samples.byteswap()
+    if not samples:
+        return {"audio_rms_dbfs": None, "audio_peak": 0.0, "audio_clipped_fraction": 0.0}
+    rms = math.sqrt(sum(sample * sample for sample in samples) / len(samples)) / 32768
+    return {"audio_rms_dbfs": 20 * math.log10(rms) if rms else None,
+            "audio_peak": max(abs(sample) for sample in samples) / 32768,
+            "audio_clipped_fraction": sum(abs(sample) >= 32767 for sample in samples) / len(samples)}
 
 
 def canonical_wav(pcm: bytes) -> bytes:
@@ -281,7 +295,7 @@ class VoiceInput:
                       capture_elapsed_s=elapsed, capture_audio_s=len(pcm) / (SPEECH_SAMPLE_RATE * 2),
                       capture_samples=len(pcm) // 2,
                       capture_gap_s=max(0, elapsed - len(pcm) / (SPEECH_SAMPLE_RATE * 2)),
-                      automatic_stop=not finish.is_set(), audio_persisted=False)
+                      automatic_stop=not finish.is_set(), audio_persisted=False, **capture_levels(pcm))
             if not pcm:
                 raise RadioAudioUnavailable("radio_capture_empty")
             if self._transcribe is not None:
