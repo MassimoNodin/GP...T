@@ -9,7 +9,7 @@ from copy import deepcopy
 from dataclasses import replace
 
 from ..driver_names import display_driver_name, driver_name_aliases
-from .gaps import GAP_CHANGES, LapGapTracker
+from .gaps import GAP_CHANGES, LapGapTracker, relative_gap_ms
 from .questions import QuestionPlan, SESSION_FACTS, UNAVAILABLE_FACTS, plan_question, timing_fact
 from .scheduler import RadioMessage, RadioScheduler
 from .tasks import LapReportRegistry, TaskAction, parse_task_request
@@ -830,6 +830,31 @@ class RadioController:
                            brake=values["brake"], throttle=None, steering=None, gear=None, drs_active=None)
 
     def _timing_fact(self, metric: str, row: dict, *, now: float) -> str:
+        if metric == "relative_gap":
+            gap = relative_gap_ms(self._player, row)
+            if gap is None:
+                return "gap to you unavailable; both cars must be racing on the same lap with known gaps"
+            if row["identity"] == self._player["identity"]:
+                return "this is your car"
+            if gap == 0:
+                return "level with you on reported timing"
+            return f"{abs(gap) / 1000:.3f} seconds {'behind' if gap > 0 else 'ahead of'} you"
+        if metric in ("car_ahead", "car_behind"):
+            position = row["lap"].get("car_position")
+            label = metric.replace("_", " ")
+            if not _integer(position, 1, 24):
+                return label + " unavailable; race position missing"
+            wanted = position + (1 if metric == "car_behind" else -1)
+            neighbour = self._resolve_target(f"position:{wanted}") if 1 <= wanted <= 24 else None
+            if neighbour is None:
+                return label + " unavailable; no unique neighbouring driver"
+            name = self._participant_name(neighbour)
+            if name is None:
+                return label + " unavailable; driver name missing"
+            gap = relative_gap_ms(row, neighbour)
+            interval = (f", {abs(gap) / 1000:.3f} seconds" if gap is not None
+                        else ", gap unavailable; cars must be racing on the same lap with known gaps")
+            return f"{label}: {name.title()}{interval}"
         if metric == "lap_comparison" and row["identity"] == self._player["identity"]:
             return "player comparison reference: " + timing_fact("last_lap", row["lap"], self._player["lap"])
         if metric == "session_best":

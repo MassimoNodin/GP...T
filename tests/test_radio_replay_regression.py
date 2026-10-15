@@ -120,10 +120,19 @@ def test_managed_replay_pause_preserves_radio_state_until_session_changes(tmp_pa
                 value["events"] = []
                 value["event_cursor"] += 5
                 value["event_floor"] = value["event_cursor"]
+                for row, leader_gap in zip(value["drivers"], (2000, 5000, 7000)):
+                    row["lap"].update(
+                        current_lap_number=value["drivers"][0]["lap"]["current_lap_number"],
+                        delta_to_race_leader_ms=leader_gap,
+                        pit_status_id=0,
+                        result_status_id=2,
+                    )
                 radio_controller.feed(value, now=43)
                 assert radio_controller.tasks.active()
                 assert radio_controller.pace.best == prior_best
                 assert radio_controller.conversation.turns == prior_turns
+                radio_controller.handle_request("what's the gap to Leclerc?", now=43.1)
+                assert "3.000 seconds behind you" in radio.pending[-1].text
 
                 value["scope"]["session_uid"] += 1
                 radio_controller.feed(value, now=44)

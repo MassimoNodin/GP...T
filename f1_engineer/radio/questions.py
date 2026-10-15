@@ -23,6 +23,7 @@ UNAVAILABLE_FACTS = {
 
 
 METRICS = {
+    "relative_gap": r"gap to me",
     "last_sector1": r"(?:last|previous|latest)(?: completed)? lap sector (?:1|one)(?: time)?",
     "last_sector2": r"(?:last|previous|latest)(?: completed)? lap sector (?:2|two)(?: time)?",
     "last_sector3": r"(?:last|previous|latest)(?: completed)? lap sector (?:3|three)(?: time)?",
@@ -62,6 +63,23 @@ def plan_question(question: str, previous: QuestionPlan | None = None, *, names:
     if not isinstance(question, str) or not 1 <= len(question.encode("utf-8")) <= 1024:
         raise ValueError("Ask a question of at most 1024 bytes.")
     remaining = nearby_comparison(driver_name_key(question))
+    neighbour_fact = re.fullmatch(r"(.+?) car (ahead|behind)[?.!]*", remaining)
+    if neighbour_fact and not re.search(r"\b(?:lap|gap|delta|time|sector)\b", neighbour_fact.group(1)):
+        target = plan_question(neighbour_fact.group(1) + " position", names=names)
+        return QuestionPlan(target.targets, ("car_" + neighbour_fact.group(2),))
+    relative = re.fullmatch(r"(?:what(?:'s| is) (?:my |the )?|my )?gap to (.+?)[?.!]*", remaining)
+    if (relative and not re.search(r"\b(?:change|and)\b", relative.group(1))
+            and relative.group(1) not in ("leader", "the leader", "car ahead", "the car ahead", "car in front", "the car in front")):
+        target = plan_question(relative.group(1) + " position", names=names)
+        return QuestionPlan(target.targets, ("relative_gap",))
+    neighbour = re.fullmatch(r"who(?:'s| is) (ahead of|behind) (.+?)[?.!]*", remaining)
+    if neighbour:
+        target = plan_question(neighbour.group(2) + " position", names=names)
+        return QuestionPlan(target.targets, ("car_ahead" if neighbour.group(1) == "ahead of" else "car_behind",))
+    relative = re.fullmatch(r"how far (?:is )?(.+?) (?:ahead of|behind) me[?.!]*", remaining)
+    if relative:
+        target = plan_question(relative.group(1) + " position", names=names)
+        return QuestionPlan(target.targets, ("relative_gap",))
     remaining = re.sub(r"^what was (.+ (?:last|previous|latest)(?: completed)? lap(?: time)?s?)[?.!]*$",
                        r"\1", remaining)
     if re.fullmatch(r"(?:where am i|what position am i in)[?.!]*", remaining):

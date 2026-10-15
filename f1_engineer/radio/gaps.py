@@ -11,6 +11,18 @@ def integer(value, minimum, maximum):
     return type(value) is int and minimum <= value <= maximum
 
 
+def relative_gap_ms(player, target):
+    laps = [row.get("lap", {}) for row in (player, target)]
+    if any(type(lap.get("pit_status_id")) is not int or lap["pit_status_id"] != 0
+           or type(lap.get("result_status_id")) is not int or lap["result_status_id"] != 2
+           or not integer(lap.get("current_lap_number"), 1, 255)
+           or not integer(lap.get("delta_to_race_leader_ms"), 0, 2**32 - 1) for lap in laps):
+        return None
+    if laps[0]["current_lap_number"] != laps[1]["current_lap_number"]:
+        return None
+    return laps[1]["delta_to_race_leader_ms"] - laps[0]["delta_to_race_leader_ms"]
+
+
 class LapGapTracker:
     def __init__(self):
         self.clear()
