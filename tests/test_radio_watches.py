@@ -59,7 +59,7 @@ def test_three_boundaries_support_catch_and_defend(behind, question, phrase):
     step(controller, radio, value, 4, 3000, behind=behind)
     assert "collecting three" in radio.pending[-1].text
     step(controller, radio, value, 5, 2700, behind=behind)
-    assert not radio.pending
+    assert len(radio.pending) == 1 and radio.pending[0].text.startswith("Lap 4:")
     step(controller, radio, value, 6, 2400, behind=behind)
     text = radio.pending[-1].text
     assert phrase in text and "0.600 seconds over two observed laps" in text
@@ -67,7 +67,7 @@ def test_three_boundaries_support_catch_and_defend(behind, question, phrase):
     controller.feed(value, now=13.1)
     assert len(radio.pending) == 1
     step(controller, radio, value, 7, 2000, behind=behind)
-    assert not radio.pending
+    assert len(radio.pending) == 1 and radio.pending[0].text.startswith("Lap 6:")
 
 
 @pytest.mark.parametrize("gaps,phrase", [
@@ -128,7 +128,7 @@ def test_role_reference_is_frozen_not_rebound_to_new_adjacent_driver():
     step(controller, radio, value, 5, 2700)
     assert "Lando Norris" in radio.pending[-1].text and "no longer adjacent" in radio.pending[-1].text
     step(controller, radio, value, 6, 2400)
-    assert not radio.pending
+    assert len(radio.pending) == 1 and radio.pending[0].text.startswith("Lap 5:")
     assert "identity fixed" in controller.status()["tasks"][0]["reference_policy"]
 
 
@@ -218,7 +218,7 @@ def test_quiet_consumes_notices_without_replay():
     assert not radio.pending
     radio.muted = False
     step(controller, radio, value, 7, 2000)
-    assert not radio.pending
+    assert len(radio.pending) == 1 and radio.pending[0].text.startswith("Lap 6:")
 
 
 @pytest.mark.parametrize("failure", ["scope", "stale", "history_gap", "rewind", "pause"])

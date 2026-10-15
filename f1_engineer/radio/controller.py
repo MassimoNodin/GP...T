@@ -99,6 +99,7 @@ class RadioController:
         self._session_binding = None
         self._paused = False
         self._last_lap = None
+        self._tracking_notice = None
 
     def _unavailable(self, reason: str) -> None:
         reason = reason if re.fullmatch(r"[a-z0-9_]{1,96}", reason) else "unavailable"
@@ -109,6 +110,8 @@ class RadioController:
             self._drivers = []
             self._pending_region = None
             self._reset_gaps()
+            self.pit_benchmarks.clear()
+            self.scheduler.cancel_owner("pit_benchmark")
             for state in self.lap_history.drivers.values():
                 state.tracker.interrupt()
                 state.open_conditions = None
@@ -132,7 +135,7 @@ class RadioController:
         self.conversation.clear()
         safe_reason = reason if re.fullmatch(r"[a-z0-9_]{1,96}", reason) else "unavailable"
         self._reset_gaps()
-        self.tasks.clear(safe_reason)
+        self._clear_task_registry(safe_reason)
         self.watches.clear()
         self.pace.clear()
         self.lap_history.clear()
@@ -194,7 +197,7 @@ class RadioController:
             self._pending_region = None
             self._history.clear()
             self.conversation.clear()
-            self.tasks.clear("scope_changed")
+            self._clear_task_registry("scope_changed")
             self.watches.clear()
             self.pace.clear()
             self.lap_history.clear()
@@ -284,11 +287,12 @@ class RadioController:
             self.scheduler.cancel_owner("lap_reports")
         cursor = snapshot["event_cursor"]
         self._report("available")
+        self._flush_tracking_notice(now=now)
         if (changed or resumed or self._cursor is None or cursor < self._cursor
                 or snapshot["event_floor"] > self._cursor):
             if not changed and not resumed and self._cursor is not None:
                 self.scheduler.cancel()
-                self.tasks.clear("event_history_gap")
+                self._clear_task_registry("event_history_gap")
                 self._history.clear()
                 self.conversation.clear()
                 self.watches.clear()
@@ -299,6 +303,7 @@ class RadioController:
                 self.region_progress.clear()
                 self._reset_gaps()
                 self.notify({"event": "radio_resynchronised", "reason": "event_history_gap"})
+                self._flush_tracking_notice(now=now)
             self._cursor = cursor
             self.lap_history.feed(snapshot, now=now, after_cursor=cursor, age_s=age)
             return
@@ -400,6 +405,7 @@ class RadioController:
             self.tasks.complete_lap(number - 1)
         self.regions.prune(self.tasks.active())
         self._report_opponent_regions(now=now)
+        self._flush_tracking_notice(now=now)
 
     def region_capture_requests(self):
         if not self._backend_regions or self._player is None or self.scheduler.scope is None:
@@ -767,12 +773,26 @@ class RadioController:
             self.lap_history.clear()
             self.pit_benchmarks.clear()
             self.scheduler.cancel_owner("pit_benchmark")
-        self.tasks.clear(reason)
+        self._clear_task_registry(reason)
         self.watches.clear()
         self.pace.clear()
         self.regions.clear()
         self.region_progress.clear()
         self._reset_gaps()
+
+    def _clear_task_registry(self, reason: str) -> None:
+        if self.tasks.active() and reason != "cancelled":
+            labels = {"scope_changed": "session changed", "lap_number_discontinuity": "lap number changed",
+                      "driver_discontinuity": "telemetry discontinuity", "event_history_gap": "telemetry history gap"}
+            self._tracking_notice = "Tracking cleared: " + labels.get(reason, "telemetry reset") + "."
+        self.tasks.clear(reason)
+
+    def _flush_tracking_notice(self, *, now: float) -> None:
+        if self._tracking_notice is not None and self.scheduler.scope is not None:
+            self._answer_id += 1
+            self.scheduler.submit(RadioMessage(f"tracking-cleared:{self._answer_id}", self.scheduler.scope,
+                                              self._tracking_notice, "answer", now + 15), now=now)
+            self._tracking_notice = None
 
     def _reset_gaps(self) -> None:
         self.gaps.clear()
@@ -1378,10 +1398,13 @@ class RadioController:
             reports.append(f"Task {task.task_id}: " + " ".join(pieces))
         if not reports:
             self.tasks.complete_lap(event["lap_number"])
-            return True
-        text = f"Lap {event['lap_number']} reports. " + " ".join(reports)
+            return False
+        prefix = lap_message(event["lap_number"], elapsed) if _integer(elapsed, 1, 2**32 - 1) else ""
+        if prefix and event.get("previous_observed_invalid") == 1:
+            prefix += " Observed invalid."
+        text = prefix + f" Lap {event['lap_number']} reports. " + " ".join(reports)
         if len(text.encode("utf-8")) > 1024:
-            text = "The lap reports are too long to speak safely. Request fewer drivers or facts."
+            text = prefix + " The lap reports are too long to speak safely. Request fewer drivers or facts."
         self.notify({"event": "radio_task_report", "task_ids": [task.task_id for task in tasks],
                      "lap_number": event["lap_number"], "text": text})
         age = max(age, self._fact_age_s or 0)
