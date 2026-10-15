@@ -356,18 +356,86 @@ def test_invalid_learning_timeout_never_opens_device(timeout, monkeypatch):
 
 def test_sdl_adapter_initializes_background_input_without_window_or_audio(monkeypatch):
     calls = []
-    stick = SimpleNamespace(init=lambda: None, get_instance_id=lambda: 7, get_guid=lambda: GUID,
+    stick = SimpleNamespace(init=lambda: pytest.fail("do not reinitialize an open joystick"),
+                            get_instance_id=lambda: 7, get_guid=lambda: GUID,
                             get_name=lambda: "MOZA R3", get_numbuttons=lambda: 3,
                             get_button=lambda button: button == 1, quit=lambda: calls.append("stick-close"))
     pygame = SimpleNamespace(error=RuntimeError, JOYBUTTONDOWN=1, JOYBUTTONUP=2,
+        JOYDEVICEADDED=3, JOYDEVICEREMOVED=4,
         display=SimpleNamespace(init=lambda: calls.append("display"), quit=lambda: calls.append("display-close")),
         joystick=SimpleNamespace(init=lambda: calls.append("joystick"), get_count=lambda: 1,
-                                 Joystick=lambda index: stick, quit=lambda: calls.append("joystick-close")),
+                                 Joystick=lambda index: (calls.append("open"), stick)[1],
+                                 quit=lambda: calls.append("joystick-close")),
         event=SimpleNamespace(get=lambda: [SimpleNamespace(type=1, instance_id=7, button=1)]))
     monkeypatch.setattr(wheel_input.sys, "platform", "win32")
     monkeypatch.setitem(wheel_input.sys.modules, "pygame", pygame)
     source = SDLWheelInput()
     assert wheel_input.os.environ["SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS"] == "1"
     assert source.poll() == frame(held=True, edges=[(1, True)])
+    for iteration in range(100):
+        assert source.poll() == frame(held=True, edges=[(1, True)])
     source.close()
-    assert calls == ["display", "joystick", "stick-close", "joystick-close", "display-close"]
+    assert calls == ["display", "joystick", "open", "stick-close", "joystick-close", "display-close"]
+
+
+def test_sdl_adapter_hotplug_releases_removed_handle_and_opens_replacement_once(monkeypatch):
+    calls = []
+    sticks = [SimpleNamespace(get_instance_id=lambda instance=instance: instance, get_guid=lambda: GUID,
+              get_name=lambda: "MOZA R3", get_numbuttons=lambda: 3, get_button=lambda button: False,
+              quit=lambda instance=instance: calls.append(("close", instance))) for instance in (7, 9)]
+    events = [[], [SimpleNamespace(type=4, instance_id=7), SimpleNamespace(type=3, device_index=0)], []]
+    def open_stick(index):
+        calls.append(("open", index))
+        return sticks.pop(0)
+    pygame = SimpleNamespace(error=RuntimeError, JOYBUTTONDOWN=1, JOYBUTTONUP=2,
+        JOYDEVICEADDED=3, JOYDEVICEREMOVED=4,
+        display=SimpleNamespace(init=lambda: None, quit=lambda: None),
+        joystick=SimpleNamespace(init=lambda: None, get_count=lambda: 1, Joystick=open_stick, quit=lambda: None),
+        event=SimpleNamespace(get=lambda: events.pop(0)))
+    monkeypatch.setattr(wheel_input.sys, "platform", "win32")
+    monkeypatch.setitem(wheel_input.sys.modules, "pygame", pygame)
+    source = SDLWheelInput()
+    assert source.poll().devices[0].instance_id == 7
+    assert source.poll().devices[0].instance_id == 9
+    assert source.poll().devices[0].instance_id == 9
+    source.close()
+    assert calls == [("open", 0), ("close", 7), ("open", 0), ("close", 9)]
+
+
+def test_sdl_access_denial_has_safe_distinct_reason(monkeypatch):
+    def denied(index):
+        raise RuntimeError("IDirectInputDevice8::Acquire() DirectX error 0x80070005")
+    pygame = SimpleNamespace(error=RuntimeError, JOYBUTTONDOWN=1, JOYBUTTONUP=2,
+        JOYDEVICEADDED=3, JOYDEVICEREMOVED=4,
+        display=SimpleNamespace(init=lambda: None, quit=lambda: None),
+        joystick=SimpleNamespace(init=lambda: None, get_count=lambda: 1, Joystick=denied, quit=lambda: None),
+        event=SimpleNamespace(get=lambda: []))
+    monkeypatch.setattr(wheel_input.sys, "platform", "win32")
+    monkeypatch.setitem(wheel_input.sys.modules, "pygame", pygame)
+    source = SDLWheelInput()
+    with pytest.raises(WheelInputUnavailable, match="radio_wheel_access_denied_restart_required"):
+        source.poll()
+    source.close()
+
+
+@pytest.mark.parametrize("during_initialization", [False, True])
+def test_access_denial_releases_device_and_never_retries_automatically(tmp_path, during_initialization):
+    source = Source(WheelInputUnavailable("radio_wheel_access_denied_restart_required"))
+    watcher, settings, events = monitor(tmp_path, source)
+    calls = []
+    def factory():
+        calls.append("open")
+        if during_initialization:
+            raise WheelInputUnavailable("radio_wheel_access_denied_restart_required")
+        return source
+    watcher._source_factory = factory
+    assert not watcher.poll(now=0)
+    save_binding(settings, replace(BINDING, button=2))
+    for now in (0.05, 1, 10, 60, 3600):
+        assert not watcher.poll(now=now)
+    assert calls == ["open"]
+    assert source.closed == (not during_initialization)
+    assert len([event for event in events if event["event"] == "radio_input_failure"]) == 1
+    assert watcher.status()["reason"] == "radio_wheel_access_denied_restart_required"
+    assert watcher.status()["connection_instance"] is None
+    watcher.close()

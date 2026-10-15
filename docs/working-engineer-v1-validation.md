@@ -230,6 +230,25 @@ quiet/clipped input from recognition failures on the next real microphone test.
 Recognition accuracy and acoustic response latency remain unverified; the
 pinned speech model and three-second telemetry freshness guards are unchanged.
 
+## Wheel lag and access-conflict incident
+
+On October 15, 2026, the user reported severe computer lag while the wheel was
+powered on and loss of F1 wheel control. A local input check had reported
+IDirectInputDevice8::Acquire() HRESULT 0x80070005. The engineer radio was stopped
+and left off. The user restored game control by restarting the wheel in F1 and
+confirmed that the lag stopped when the wheel was powered off. This association
+does not independently establish the driver-level cause.
+
+Inspection found joystick construction/initialization on every poll, plus
+one-second reacquisition attempts after driver failure. Handles are now cached
+until removal, with hotplug additions opened once. Recognized access denial
+releases the source and latches wheel input off for that process without further
+automatic acquisition, including after button reassignment. Sanitized failure
+traces preserve exception frame/type chains. Ordinary reconnect behavior remains
+covered by mocks. No physical wheel access or engineer restart was performed to
+validate this patch; shared game access, absence of lag and wheel-triggered
+speech must be reverified with the user before accepting the branch.
+
 ## Latency and final sign-off
 
 Measure wheel press to audible listening feedback, capture end to first answer

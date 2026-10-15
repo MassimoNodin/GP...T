@@ -6,11 +6,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..errors import F1EngineerError
+from ..diagnostics import exception_trace
 from .input_settings import ButtonBinding, load_binding
 
 
 class WheelInputUnavailable(F1EngineerError):
     pass
+
+
+def input_error_reason(exception: Exception, fallback: str) -> str:
+    if "0x80070005" in str(exception).lower():
+        return "radio_wheel_access_denied_restart_required"
+    return fallback
 
 
 @dataclass(frozen=True)
@@ -46,47 +53,59 @@ class SDLWheelInput:
             raise WheelInputUnavailable("radio_wheel_requires_radio_extra") from exception
         self._pygame = pygame
         self._sticks = {}
+        self._enumerated = False
         try:
             pygame.display.init()
             pygame.joystick.init()
         except pygame.error as exception:
             self.close()
-            raise WheelInputUnavailable("radio_wheel_initialization_failed") from exception
+            raise WheelInputUnavailable(input_error_reason(exception, "radio_wheel_initialization_failed")) from exception
+
+    def _open(self, index: int) -> None:
+        stick = self._pygame.joystick.Joystick(index)
+        self._sticks[stick.get_instance_id()] = stick
 
     def poll(self) -> InputFrame:
         pygame = self._pygame
         try:
             events = pygame.event.get()
             devices = []
-            connected = set()
-            if pygame.joystick.get_count() > 64:
+            device_count = pygame.joystick.get_count()
+            if device_count > 64:
                 raise WheelInputUnavailable("radio_wheel_device_limit")
-            for index in range(pygame.joystick.get_count()):
-                stick = pygame.joystick.Joystick(index)
-                stick.init()
-                instance = stick.get_instance_id()
-                connected.add(instance)
-                self._sticks[instance] = stick
+            for event in events:
+                if event.type == pygame.JOYDEVICEREMOVED:
+                    stick = self._sticks.pop(event.instance_id, None)
+                    if stick is not None:
+                        stick.quit()
+            if not self._enumerated:
+                for index in range(device_count):
+                    self._open(index)
+                self._enumerated = True
+            else:
+                for index in sorted({event.device_index for event in events if event.type == pygame.JOYDEVICEADDED}):
+                    if type(index) is not int or not 0 <= index < device_count:
+                        raise WheelInputUnavailable("radio_wheel_device_index_invalid")
+                    self._open(index)
+            for instance, stick in self._sticks.items():
                 count = stick.get_numbuttons()
                 if not 0 <= count <= 512:
                     raise WheelInputUnavailable("radio_wheel_button_limit")
                 devices.append(WheelDevice(instance, stick.get_guid().lower(), stick.get_name(),
                                            tuple(bool(stick.get_button(button)) for button in range(count))))
-            for instance in tuple(self._sticks):
-                if instance not in connected:
-                    self._sticks.pop(instance).quit()
             edges = tuple(ButtonEdge(event.instance_id, event.button, event.type == pygame.JOYBUTTONDOWN)
                           for event in events if event.type in (pygame.JOYBUTTONDOWN, pygame.JOYBUTTONUP))
             if len(edges) > 256:
                 raise WheelInputUnavailable("radio_wheel_event_overflow")
             return InputFrame(tuple(devices), edges)
         except pygame.error as exception:
-            raise WheelInputUnavailable("radio_wheel_poll_failed") from exception
+            raise WheelInputUnavailable(input_error_reason(exception, "radio_wheel_poll_failed")) from exception
 
     def close(self) -> None:
         for stick in self._sticks.values():
             stick.quit()
         self._sticks.clear()
+        self._enumerated = False
         self._pygame.joystick.quit()
         self._pygame.display.quit()
 
@@ -117,6 +136,7 @@ class WheelButtonMonitor:
         self._next_settings = 0.0
         self._next_source = 0.0
         self._status = None
+        self._access_blocked = False
 
     def _report(self, status: str, reason=None) -> None:
         if (status, reason) != self._status:
@@ -128,6 +148,8 @@ class WheelButtonMonitor:
         self._armed = False
 
     def poll(self, *, now: float) -> bool:
+        if self._access_blocked:
+            return False
         if now >= self._next_settings:
             self._next_settings = now + 0.5
             try:
@@ -178,6 +200,10 @@ class WheelButtonMonitor:
                 self._armed = True
             return activated
         except WheelInputUnavailable as exception:
+            self._notify({"event": "radio_input_failure", "reason": str(exception),
+                          "exception": exception_trace(exception)})
+            if str(exception) == "radio_wheel_access_denied_restart_required":
+                self._access_blocked = True
             self._reset()
             self._report("unavailable", str(exception))
             if self._source is not None:

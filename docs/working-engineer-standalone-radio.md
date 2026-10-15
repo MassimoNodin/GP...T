@@ -106,6 +106,24 @@ plays. Dry-run, once, device-listing and wheel-only testing never record audio.
 
 ## Learn or change the wheel button
 
+### Wheel access safety
+
+Joystick handles are opened once and reused until SDL reports removal; added
+devices are opened on hotplug rather than reopening/reinitializing every device
+on every poll. Access denial (DirectInput HRESULT 0x80070005) releases the input
+source and disables further wheel acquisition for that radio process. Status
+reports radio_wheel_access_denied_restart_required. Changing the saved button
+does not bypass this safety latch. Ordinary disconnect/reconnect recovery is
+unchanged. Failure diagnostics retain sanitized exception frames/type chains.
+
+If lag or game wheel-control loss occurs, stop the radio and restore game wheel
+control before any further engineer test. Do not run discovery, learning or
+wheel-only tests while diagnosing a conflict. The radio can still accept console
+requests after an access-denial latch, but wheel-triggered requests cannot resume
+until a deliberate radio restart. Do not automatically restart it during a
+gameplay incident. These safeguards are mock-tested; simultaneous MOZA/F1
+hardware operation and absence of lag still require an explicitly agreed test.
+
 Wheel support is optional and installed with the `radio` extra. No button number
 is hardcoded. List the currently connected controllers, select the MOZA device's
 index, then press the desired button when prompted:
