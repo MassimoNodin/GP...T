@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tomllib
+import unicodedata
 from pathlib import Path
 
 
@@ -37,6 +38,33 @@ DEFAULT_GLOSSARY = {
     },
 }
 MAX_ENTRIES = 64
+
+
+def speech_hint(context, limit: int = 300) -> str | None:
+    """Plain-ASCII vocabulary for the transcriber: this session's drivers and corner names."""
+    if not isinstance(context, dict):
+        return None
+
+    def ascii_text(value):
+        folded = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode()
+        return " ".join("".join(c for c in folded if c.isalnum() or c in " '-.").split())
+
+    names = [ascii_text(driver["name"]) for driver in context.get("drivers", []) if isinstance(driver, dict)]
+    corners = [ascii_text(label) for label in context.get("regions", [])]
+    hint = "Formula 1 race radio. Lap time, sector, gap."
+    for label, entries in (("Drivers", names), ("Corners", corners)):
+        entries = [entry for entry in entries if entry]
+        if not entries:
+            continue
+        line = f" {label}:"
+        for entry in entries:
+            candidate = f"{line} {entry},"
+            if len((hint + candidate).encode()) > limit - 1:
+                break
+            line = candidate
+        if line != f" {label}:":
+            hint += line.rstrip(",") + "."
+    return hint
 
 
 def _clean(entries, limit):

@@ -14,6 +14,7 @@ import wave
 from ..analysis.local_speech import SPEECH_MAX_SECONDS, SPEECH_MAX_SAMPLES, SPEECH_SAMPLE_RATE, SPEECH_MAX_TRANSCRIPT_BYTES
 from .audio import NativeRadioAudio, RadioAudioUnavailable
 from .diagnostics import exception_trace
+from .glossary import speech_hint
 from .intents import LOCAL_CONTROLS
 
 
@@ -42,7 +43,7 @@ def canonical_wav(pcm: bytes) -> bytes:
 
 
 class VoiceInput:
-    def __init__(self, *, transcribe=None, interpret=None, notify=None, enabled=True, microphone=None, output=None,
+    def __init__(self, *, transcribe=None, interpret=None, speech_hints=False, notify=None, enabled=True, microphone=None, output=None,
                  cue_volume=0.08, maximum_seconds=SPEECH_MAX_SECONDS, audio_factory=NativeRadioAudio,
                  clock=time.monotonic) -> None:
         if (not math.isfinite(maximum_seconds) or not 1 <= maximum_seconds <= SPEECH_MAX_SECONDS
@@ -50,6 +51,7 @@ class VoiceInput:
             raise ValueError("radio_capture_settings_invalid")
         self._transcribe = transcribe
         self._interpret = interpret
+        self._speech_hints = speech_hints
         self._notify = notify or (lambda event: None)
         self._enabled = enabled
         self._audio_factory = audio_factory
@@ -329,7 +331,8 @@ class VoiceInput:
                 raise RadioAudioUnavailable("radio_capture_empty")
             if self._transcribe is not None:
                 wav = canonical_wav(bytes(pcm))
-                result = asyncio.run(self._transcribe(wav, capture_id, cancelled))
+                hint = speech_hint(self.intent_context) if self._speech_hints else None
+                result = asyncio.run(self._transcribe(wav, capture_id, cancelled, *((hint,) if hint else ())))
                 if cancelled.is_set():
                     return
                 if result.get("status") != "available":

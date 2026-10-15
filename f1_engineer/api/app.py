@@ -39,6 +39,7 @@ from ..analysis.local_speech import (
     LocalSpeechUnavailable,
     SPEECH_MAX_AUDIO_BYTES,
     SPEECH_MAX_RESPONSE_BYTES,
+    valid_speech_hint,
     validate_canonical_wav,
 )
 from ..analysis.session_best import assess_session_best
@@ -3151,9 +3152,12 @@ def create_app(
         authorization: Annotated[str | None, Header(alias="Authorization")] = None,
         request_id: Annotated[str | None, Header(alias="X-Request-ID")] = None,
         expected_audio_sha256: Annotated[str | None, Header(alias="X-Audio-SHA256")] = None,
+        speech_hint: Annotated[str | None, Header(alias="X-Speech-Hint")] = None,
     ) -> JSONResponse:
         if not _authorized(authorization, control_token):
             return _api_error(401, "engineer_speech_unauthorized")
+        if speech_hint is not None and not valid_speech_hint(speech_hint):
+            return _api_error(422, "engineer_speech_hint_invalid")
         if request.query_params:
             return _api_error(400, "engineer_speech_query_not_allowed")
         content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
@@ -3186,7 +3190,7 @@ def create_app(
                 if gate_lease is None:
                     return _api_error(409, "engineer_ask_busy")
                 transcription = await _run_until_client_disconnect(
-                    local_speech_runtime.transcribe(wav, gate_lease=gate_lease),
+                    local_speech_runtime.transcribe(wav, gate_lease=gate_lease, hint=speech_hint),
                     request,
                     gate_lease=gate_lease,
                 )

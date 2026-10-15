@@ -350,3 +350,32 @@ def test_ai_gate_remains_held_for_cancel_detached_worker() -> None:
     next_lease = gate.try_acquire()
     assert next_lease is not None
     next_lease.close()
+
+
+def test_speech_hint_is_passed_to_whisper_as_an_argument_not_a_shell_string(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_pin(tmp_path)
+    runtime = LocalSpeechRuntime(tmp_path / "pin.json", tmp_path / "temporary")
+    observed: dict[str, object] = {}
+
+    async def create_process(*arguments: str, **kwargs: object) -> FakeProcess:
+        observed["arguments"] = arguments
+        Path(f"{arguments[-1]}.txt").write_text("Ready.", encoding="utf-8")
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    hint = "Formula 1 race radio. Drivers: Charles Leclerc, Max Verstappen."
+    asyncio.run(runtime.transcribe(canonical_wav(16_000), hint=hint))
+    arguments = observed["arguments"]
+    assert arguments[arguments.index("--prompt") + 1] == hint
+
+    asyncio.run(runtime.transcribe(canonical_wav(16_000)))
+    assert "--prompt" not in observed["arguments"]
+
+
+@pytest.mark.parametrize("hint", ["", "-m other-model", "x" * 301, "a; rm -rf /", "line\nbreak", "café"])
+def test_unsafe_speech_hints_are_rejected(tmp_path: Path, hint: str) -> None:
+    runtime = LocalSpeechRuntime(tmp_path / "pin.json", tmp_path / "temporary")
+    with pytest.raises(LocalSpeechUnavailable, match="speech_hint_invalid"):
+        asyncio.run(runtime.transcribe(canonical_wav(16_000), hint=hint))

@@ -56,11 +56,49 @@ protocol output is capped at 2 MiB and lines at 256 KiB. Cancellation/timeout
 terminates and reaps the request's process. Raw stderr, account email, auth
 tokens and protocol errors are not exposed in API responses.
 
-Only the current question and routing capabilities are sent to Codex. Recorded
+Only the current question and routing capabilities are sent to Codex by the ask router (the radio sends more; see below). Recorded
 telemetry remains local; answers are rendered from admitted evidence, not
 model-authored measurements. V2 braking questions now use supported numeric
 brake-onset regions and uncertainty brackets. Unsupported focused measurements
 abstain rather than returning an unrelated lap delta as an answer.
+
+## Radio voice interpretation
+
+The standalone radio sends every spoken request to `POST /api/v2/engineer/radio-intent`
+and `gpt-6-luna` decides what was asked. Luna only classifies: it returns one
+JSON object (action, targets, facts, task options) from a closed schema and never
+writes an answer or a number. The radio renders the validated intent into the
+fixed phrases its existing parsers and controller already handle, so every
+reading still comes from live telemetry.
+
+Unlike the engineer ask router, this path sends more than the question:
+
+- the transcript of the request;
+- the session's driver names, race numbers and positions, the track name and
+  reviewed corner labels, the active tracking tasks, the last three turns, and a
+  glossary of radio terms and common mishearings, so Luna can repair
+  misheard names and words.
+
+Each request's schema limits driver names and task numbers to that live
+session, and the reply is validated again against the same context. Exact
+phrases such as "stop speaking" are handled locally and never wait on the
+network. If Luna is busy, slow (8 seconds), or unavailable, the radio falls
+back to the fixed-phrase parser and logs `radio_intent_fallback` with the
+reason. Use `--intent-mode parser` to disable Luna entirely.
+
+The backend keeps one Codex app-server process for radio requests (recycled
+every 100 requests, login re-checked every five minutes) and starts a fresh
+ephemeral thread for each one. Requests share the single AI admission slot with
+transcription and `/engineer/ask`. Add your own mishearings or terms in
+`data/radio-glossary.toml` (`[mishearings]` and `[terms]` tables, or pass
+`--glossary-file`).
+
+The radio also sends a plain-ASCII vocabulary hint (driver and corner names) to
+the local whisper.cpp transcription as `--prompt`, via the `X-Speech-Hint`
+header, to improve name recognition. It is validated (ASCII letters, digits and
+basic punctuation, at most 300 bytes, never starting with a dash). Prompts can
+occasionally be echoed on near-silent audio; disable the hint with
+`--no-speech-hint` if transcripts start repeating names.
 
 ## Validation and remaining work
 

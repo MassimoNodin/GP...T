@@ -93,9 +93,11 @@ class LocalSpeechRuntime:
         }
 
     async def transcribe(
-        self, wav: bytes, *, gate_lease: AIGateLease | None = None
+        self, wav: bytes, *, gate_lease: AIGateLease | None = None, hint: str | None = None
     ) -> LocalTranscription:
         _validate_canonical_wav(wav)
+        if hint is not None and not valid_speech_hint(hint):
+            raise LocalSpeechUnavailable("speech_hint_invalid")
         pin_verification = asyncio.create_task(
             asyncio.to_thread(self._load_verified_pin)
         )
@@ -134,6 +136,7 @@ class LocalSpeechRuntime:
                 str(wav_path),
                 "-l",
                 "en",
+                *(["--prompt", hint] if hint else []),
                 "-t",
                 "2",
                 *(["-dev", "0"] if pin.device == "cuda" else []),
@@ -410,6 +413,16 @@ class LocalSpeechRuntime:
             "maximum_clip_seconds": SPEECH_MAX_SECONDS,
             "audio_persisted": False,
         }
+
+
+SPEECH_HINT_MAX_BYTES = 300
+_SPEECH_HINT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ,.:'\-]*")
+
+
+def valid_speech_hint(hint: object) -> bool:
+    """A short plain-ASCII vocabulary hint for the transcriber; never starts with a dash."""
+    return (isinstance(hint, str) and 0 < len(hint) <= SPEECH_HINT_MAX_BYTES
+            and _SPEECH_HINT.fullmatch(hint) is not None)
 
 
 def validate_canonical_wav(wav: bytes) -> None:

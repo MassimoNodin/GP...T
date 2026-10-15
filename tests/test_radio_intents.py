@@ -373,3 +373,56 @@ def test_session_facts_answer_without_a_driver_label():
     controller.feed(value, now=10)
     controller.answer_question("my track name and weather", now=10)
     assert radio.pending[-1].text == "track Bahrain, weather clear, air 28 degrees, track 35 degrees."
+
+
+def test_speech_hint_lists_the_session_vocabulary_in_plain_ascii_within_the_limit():
+    from f1_engineer.radio.glossary import speech_hint
+    from f1_engineer.analysis.local_speech import valid_speech_hint
+    ctx = context(drivers=[{"name": "Nico Hülkenberg", "race_number": 27, "position": 1, "role": "leader"},
+                           {"name": LECLERC, "race_number": 16, "position": 2, "role": "ahead"}])
+    hint = speech_hint(ctx)
+    assert "Nico Hulkenberg, Charles Leclerc" in hint and "Corners: Turn 5." in hint and valid_speech_hint(hint)
+    crowded = context(drivers=[{"name": f"Driver Number {chr(65 + n)}{chr(65 + n)}{chr(65 + n)}", "race_number": n,
+                                "position": n + 1, "role": "other"} for n in range(24)])
+    assert valid_speech_hint(speech_hint(crowded)) and len(speech_hint(crowded).encode()) <= 300
+    assert speech_hint(None) is None
+
+
+def test_voice_input_sends_the_hint_to_the_transcriber_only_when_enabled():
+    from tests.test_radio_listening import run_capture
+    received = []
+
+    async def transcribe(wav, request_id, cancelled, *hint):
+        received.append(hint)
+        return {"status": "available", "transcript": "Hello"}
+
+    for enabled, expected in ((True, 1), (False, 0)):
+        voice, hardware, events, clock = listening(transcribe=transcribe)
+        voice._speech_hints, voice.intent_context = enabled, context()
+        run_capture(voice)
+        assert len(received[-1]) == expected
+
+
+def test_transcription_endpoint_forwards_a_valid_hint_and_rejects_an_unsafe_one(tmp_path, monkeypatch):
+    import hashlib
+    from tests.test_api import _canonical_speech_wav
+    app = create_app(tmp_path / "a.sqlite3", recordings_root=tmp_path / "r", control_token=TOKEN,
+                     automatic_acquisition=False, engineer_runtime=StubRuntime())
+    audio = _canonical_speech_wav()
+    seen = []
+
+    async def transcribe(wav, *, gate_lease=None, hint=None):
+        seen.append(hint)
+        raise EngineerRuntimeUnavailable("stop_here")
+
+    def headers(hint):
+        return {"Authorization": f"Bearer {TOKEN}", "Content-Type": "audio/wav", "X-Speech-Hint": hint,
+                "X-Request-ID": "12345678-1234-4abc-8abc-123456789abc",
+                "X-Audio-SHA256": hashlib.sha256(audio).hexdigest()}
+
+    with TestClient(app) as client:
+        monkeypatch.setattr(app.state.local_speech_runtime, "transcribe", transcribe)
+        client.post("/api/v1/engineer/transcribe", headers=headers("Formula 1 race radio. Drivers: Max."), content=audio)
+        bad = client.post("/api/v1/engineer/transcribe", headers=headers("-m evil"), content=audio)
+    assert seen == ["Formula 1 race radio. Drivers: Max."]
+    assert bad.status_code == 422 and bad.json()["reason"] == "engineer_speech_hint_invalid"

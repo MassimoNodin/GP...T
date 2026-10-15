@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from ..analysis.local_speech import (SPEECH_MAX_RESPONSE_BYTES, SPEECH_MAX_TRANSCRIPT_BYTES,
-                                    LocalSpeechUnavailable, validate_canonical_wav)
+                                    LocalSpeechUnavailable, valid_speech_hint, validate_canonical_wav)
 from .diagnostics import exception_trace, trace_enabled, trace_event
 from .intents import MAX_CONTEXT_BYTES, parse_context, parse_intent
 
@@ -188,7 +188,7 @@ class RadioClient:
     def close(self) -> None:
         self._client.close()
 
-    async def transcribe(self, wav: bytes, request_id: str, cancelled) -> dict:
+    async def transcribe(self, wav: bytes, request_id: str, cancelled, hint: str | None = None) -> dict:
         try:
             validate_canonical_wav(wav)
         except LocalSpeechUnavailable:
@@ -202,7 +202,7 @@ class RadioClient:
             while not cancelled.is_set():
                 await asyncio.sleep(0.05)
 
-        request = asyncio.create_task(self._transcribe(wav, request_id))
+        request = asyncio.create_task(self._transcribe(wav, request_id, hint))
         cancellation = asyncio.create_task(watch_cancel())
         try:
             done, pending = await asyncio.wait((request, cancellation), timeout=65, return_when=asyncio.FIRST_COMPLETED)
@@ -277,9 +277,11 @@ class RadioClient:
                          "exception_chain": exception_trace(exception)})
             return {"status": "unavailable", "reason": "intent_response_invalid_or_unavailable"}
 
-    async def _transcribe(self, wav: bytes, request_id: str) -> dict:
+    async def _transcribe(self, wav: bytes, request_id: str, hint: str | None = None) -> dict:
         digest = hashlib.sha256(wav).hexdigest()
         headers = {"Content-Type": "audio/wav", "X-Request-ID": request_id, "X-Audio-SHA256": digest}
+        if hint and valid_speech_hint(hint):
+            headers["X-Speech-Hint"] = hint
         try:
             async with httpx.AsyncClient(base_url=self._base_url, headers=self._headers,
                                          timeout=httpx.Timeout(62, connect=2, write=5, pool=2),

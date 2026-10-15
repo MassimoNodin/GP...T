@@ -142,7 +142,7 @@ def _run_radio(args) -> int:
         voice = VoiceInput(transcribe=client.transcribe if client and not args.dry_run else None, notify=emit,
                            enabled=not args.dry_run, microphone=args.microphone, output=args.cue_output,
                            cue_volume=args.cue_volume, maximum_seconds=args.capture_seconds,
-                           interpret=interpret)
+                           interpret=interpret, speech_hints=not getattr(args, "no_speech_hint", False))
         glossary, glossary_problem = load_glossary(getattr(args, "glossary_file", None))
         if glossary_problem is not None:
             emit({"event": "radio_glossary_unavailable", "reason": glossary_problem})
