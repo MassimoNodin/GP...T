@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import math
 import queue
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 from .audio import list_audio_devices
 from .client import RadioClient
@@ -48,8 +51,65 @@ def _commands(inbox: queue.Queue, stream) -> None:
                 line = stream.readline(1025)
             inbox.put("invalid")
         else:
-            text = line.strip().removeprefix("/")
-            inbox.put("ask " + text[4:] if text[:4].lower() == "ask " else text.lower())
+            inbox.put(_command_text(line))
+
+
+def _command_text(line: str) -> str:
+    text = line.strip().removeprefix("/")
+    prefix = text[:4].lower()
+    return prefix + text[4:] if prefix in ("ask ", "say ") else text.lower()
+
+
+def _tail_commands(inbox: queue.Queue, path: Path, stop: threading.Event) -> None:
+    """Read commands appended to a file; it is opened only briefly so writers are never blocked."""
+    offset = path.stat().st_size if path.exists() else 0
+    pending = ""
+    while not stop.wait(0.2):
+        try:
+            size = path.stat().st_size
+            if size < offset:
+                offset, pending = 0, ""
+            if size == offset:
+                continue
+            with path.open("rb") as stream:
+                stream.seek(offset)
+                data = stream.read(size - offset)
+            offset += len(data)
+        except OSError:
+            continue
+        pending += data.decode("utf-8", errors="replace")
+        *lines, pending = pending.split("\n")
+        for line in lines:
+            if line.strip() and len(line.encode("utf-8")) <= 1024:
+                inbox.put(_command_text(line))
+
+
+def start_typed_request(text: str, client, controller: RadioController, glossary: dict, results: queue.Queue,
+                        *, interpret: bool) -> None:
+    """Treat typed text exactly like a finished voice transcript: same contexts, same interpreter, same dispatch."""
+    request_id = str(uuid.uuid4())
+    voice_like = SimpleNamespace(repeat_reference=controller.scheduler.capture_repeat_reference(),
+                                 task_context=controller.capture_task_context(),
+                                 question_context=controller.capture_question_context())
+    context = capture_intent_context(controller, glossary)
+    emit({"event": "radio_typed_request", "capture_id": request_id, "text": text, "interpreter": interpret})
+
+    def run():
+        started = time.monotonic()
+        interpretation = None
+        if interpret:
+            result = asyncio.run(client.interpret(text, context, request_id, threading.Event()))
+            interpretation = ({"status": "available", "reason": None, "intent": result["intent"],
+                               "latency_s": time.monotonic() - started}
+                              if result.get("status") == "available" else
+                              {"status": "unavailable", "reason": result.get("reason"), "intent": None,
+                               "latency_s": time.monotonic() - started})
+            emit({"event": "radio_transcript", "capture_id": request_id, "transcript": text, "source": "typed",
+                  "interpretation": interpretation})
+        results.put(({"question": text, "capture_id": request_id, "source": "typed",
+                      "interpretation": interpretation}, voice_like))
+
+    threading.Thread(target=run, name="radio-typed-request", daemon=True).start()
 
 
 def _poll(client: RadioClient, inbox: queue.Queue, stop: threading.Event, interval: float, captures=None, opponent_captures=None, geometry=None) -> None:
@@ -154,7 +214,7 @@ def _run_radio(args) -> int:
               "poll_interval_s": args.poll_interval, "capture_seconds": args.capture_seconds,
               "voice_submission": ("disabled" if args.capture_test else
                                    "manual" if getattr(args, "manual_submit", False) else "automatic"),
-              "commands": ["lap", "listen", "finish", "ask <question>", "submit", "tasks", "forget",
+              "commands": ["lap", "listen", "finish", "ask <question>", "say <words>", "submit", "tasks", "forget",
                            "quiet", "resume", "cancel", "repeat", "status", "quit"]})
         snapshots: queue.Queue = queue.Queue(maxsize=1)
         commands: queue.Queue = queue.Queue(maxsize=16)
@@ -163,6 +223,10 @@ def _run_radio(args) -> int:
                                       name="radio-backend", daemon=True)
             worker.start()
         threading.Thread(target=_commands, args=(commands, sys.stdin), name="radio-commands", daemon=True).start()
+        typed_results: queue.Queue = queue.Queue()
+        if getattr(args, "command_file", None):
+            threading.Thread(target=_tail_commands, args=(commands, Path(args.command_file), stop),
+                             name="radio-command-file", daemon=True).start()
         while not stop.is_set():
             now = time.monotonic()
             scheduler.suspended = voice.blocks_playback
@@ -199,6 +263,12 @@ def _run_radio(args) -> int:
                     voice.cancel()
                     scheduler.cancel()
                     controller.handle_request("list tasks", now=now)
+                elif command.startswith("say "):
+                    if client is None or args.capture_test:
+                        emit({"event": "radio_question_unavailable", "reason": "backend_unavailable"})
+                    else:
+                        start_typed_request(command[4:].strip(), client, controller, glossary, typed_results,
+                                            interpret=getattr(args, "intent_mode", "luna") == "luna")
                 elif command == "submit" or command.startswith("ask "):
                     if args.capture_test:
                         emit({"event": "radio_question_unavailable", "reason": "capture_test"})
@@ -227,6 +297,11 @@ def _run_radio(args) -> int:
                     emit({"event": "radio_command_unavailable"})
             except queue.Empty:
                 pass
+            while not typed_results.empty():
+                submission, voice_like = typed_results.get_nowait()
+                now = time.monotonic()
+                controller.check_freshness(now=now)
+                dispatch_submission(submission, controller, voice_like, now=now)
             if not stop.is_set():
                 now = time.monotonic()
                 if not args.capture_test and not getattr(args, "manual_submit", False):

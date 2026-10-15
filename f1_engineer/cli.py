@@ -892,6 +892,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="luna: gpt-6-luna interprets every spoken request (falls back to the parser if unavailable); parser: fixed phrases only")
     radio.add_argument("--no-speech-hint", action="store_true",
                        help="do not send driver and corner names to the transcriber as a vocabulary hint")
+    radio.add_argument("--command-file",
+                       help="also read commands appended to this file, e.g. 'say what is my gap' for typed requests through the interpreter")
     radio.add_argument("--glossary-file", default="data/radio-glossary.toml",
                        help="optional TOML with [terms] and [mishearings] tables merged into the interpreter glossary")
     radio.add_argument("--log-file", help="append timestamped JSONL diagnostics with bounded rotation; includes spoken text, not raw audio or credentials")

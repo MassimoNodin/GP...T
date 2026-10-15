@@ -426,3 +426,58 @@ def test_transcription_endpoint_forwards_a_valid_hint_and_rejects_an_unsafe_one(
         bad = client.post("/api/v1/engineer/transcribe", headers=headers("-m evil"), content=audio)
     assert seen == ["Formula 1 race radio. Drivers: Max."]
     assert bad.status_code == 422 and bad.json()["reason"] == "engineer_speech_hint_invalid"
+
+
+def test_typed_say_requests_keep_case_and_other_commands_are_lowercased():
+    assert command._command_text("say What's my GAP to Leclerc?\n") == "say What's my GAP to Leclerc?"
+    assert command._command_text("/ASK Last lap\n") == "ask Last lap"
+    assert command._command_text("STATUS\n") == "status"
+
+
+def test_command_file_is_tailed_without_holding_it_open(tmp_path):
+    import queue
+    import threading
+    import time
+    path = tmp_path / "commands.txt"
+    path.write_text("say ignored because it existed before start\n")
+    inbox, stop = queue.Queue(), threading.Event()
+    worker = threading.Thread(target=command._tail_commands, args=(inbox, path, stop), daemon=True)
+    worker.start()
+    time.sleep(0.3)
+    with path.open("a") as stream:
+        stream.write("say What is my position?\nstatus\n")
+    path.rename(tmp_path / "renamed.txt")  # would fail on Windows if the reader held the file open
+    (tmp_path / "renamed.txt").rename(path)
+    deadline = time.monotonic() + 3
+    seen = []
+    while time.monotonic() < deadline and len(seen) < 2:
+        try:
+            seen.append(inbox.get(timeout=0.2))
+        except queue.Empty:
+            pass
+    stop.set()
+    assert seen == ["say What is my position?", "status"]
+
+
+def test_typed_request_uses_the_interpreter_with_live_contexts(monkeypatch):
+    import queue
+    controller, radio, events, value = live()
+    emitted = []
+    monkeypatch.setattr(command, "emit", emitted.append)
+
+    class Client:
+        async def interpret(self, text, ctx, request_id, cancelled):
+            assert text == "What was my latest time?" and ctx["glossary"] == {"terms": {}, "mishearings": {}}
+            return {"status": "available", "intent": intent(action="timing_question", targets=["self"],
+                                                              metrics=["last_lap"])}
+
+    results = queue.Queue()
+    command.start_typed_request("What was my latest time?", Client(), controller,
+                                {"terms": {}, "mishearings": {}}, results, interpret=True)
+    submission, voice_like = results.get(timeout=5)
+    assert submission["interpretation"]["intent"]["metrics"] == ["last_lap"]
+    assert voice_like.task_context is not None and voice_like.question_context is None  # nothing asked yet
+    command.dispatch_submission(submission, controller, voice_like, now=10)
+    assert radio.pending[-1].text.startswith("You:")
+    kinds = [event["event"] for event in emitted]
+    assert kinds[:2] == ["radio_typed_request", "radio_transcript"] and "radio_intent_dispatch" in kinds
