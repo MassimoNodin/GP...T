@@ -133,7 +133,7 @@ def test_pipeline_publishes_names_without_changing_detail_selection():
 def test_full_names_surnames_case_and_possessives(question):
     controller, radio, events, value = named_live()
     controller.answer_question(question, now=10)
-    assert "Charles Leclerc (car slot 1): lap 2 101.000 seconds" in radio.pending[-1].text
+    assert "Charles Leclerc: lap 2 101.000 seconds" in radio.pending[-1].text
 
 
 def test_multi_named_targets_and_facts():
@@ -234,4 +234,4 @@ def test_real_roster_to_facts_to_named_radio_answer():
     controller, radio, events, unused = live()
     controller.feed(value, now=10)
     controller.answer_question("Leclerc last lap", now=10)
-    assert "Charles Leclerc (car slot 1): lap 2 103.500 seconds" in radio.pending[-1].text
+    assert "Charles Leclerc: lap 2 103.500 seconds" in radio.pending[-1].text

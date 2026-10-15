@@ -14,6 +14,10 @@ import httpx
 from ..analysis.local_speech import (SPEECH_MAX_RESPONSE_BYTES, SPEECH_MAX_TRANSCRIPT_BYTES,
                                     LocalSpeechUnavailable, validate_canonical_wav)
 from .diagnostics import exception_trace, trace_enabled, trace_event
+from .intents import MAX_CONTEXT_BYTES, parse_context, parse_intent
+
+INTENT_TIMEOUT_S = 10
+INTENT_MAX_RESPONSE_BYTES = 32 * 1024
 
 
 def _trace_request(request):
@@ -210,6 +214,68 @@ class RadioClient:
             request.cancel()
             cancellation.cancel()
             await asyncio.gather(request, cancellation, return_exceptions=True)
+
+    async def interpret(self, transcript: str, context: dict, request_id: str, cancelled) -> dict:
+        """Ask the backend to interpret one transcript; failures are reported, never raised."""
+        try:
+            body = json.dumps({"transcript": transcript, "context": parse_context(context)},
+                              ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            if len(body) > MAX_CONTEXT_BYTES + 2048:
+                raise ValueError
+        except (ValueError, TypeError, UnicodeError, RecursionError):
+            return {"status": "unavailable", "reason": "intent_context_invalid"}
+        if cancelled.is_set():
+            return {"status": "unavailable", "reason": "intent_cancelled"}
+
+        async def watch_cancel():
+            while not cancelled.is_set():
+                await asyncio.sleep(0.05)
+
+        request = asyncio.create_task(self._interpret(body, request_id))
+        cancellation = asyncio.create_task(watch_cancel())
+        try:
+            done, _pending = await asyncio.wait((request, cancellation), timeout=INTENT_TIMEOUT_S,
+                                                return_when=asyncio.FIRST_COMPLETED)
+            if request in done and not cancelled.is_set():
+                return request.result()
+            return {"status": "unavailable", "reason": "intent_cancelled" if cancelled.is_set() else "intent_timeout"}
+        finally:
+            request.cancel()
+            cancellation.cancel()
+            await asyncio.gather(request, cancellation, return_exceptions=True)
+
+    async def _interpret(self, body: bytes, request_id: str) -> dict:
+        headers = {"Content-Type": "application/json", "X-Request-ID": request_id}
+        try:
+            async with httpx.AsyncClient(base_url=self._base_url, headers=self._headers,
+                                         timeout=httpx.Timeout(INTENT_TIMEOUT_S, connect=2, write=5, pool=2),
+                                         follow_redirects=False, trust_env=False, transport=self._transport,
+                                         event_hooks={"request": [_trace_async_request], "response": [_trace_async_response]}) as client:
+                async with client.stream("POST", "/api/v2/engineer/radio-intent", headers=headers, content=body) as response:
+                    payload = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        payload.extend(chunk)
+                        if len(payload) > INTENT_MAX_RESPONSE_BYTES:
+                            raise ValueError
+                    document = json.loads(payload) if payload else {}
+                    reason = document.get("reason") if isinstance(document, dict) else None
+                    reason = reason if isinstance(reason, str) and re.fullmatch(r"[a-z0-9_]{1,96}", reason) else None
+                    if response.status_code in (401, 403):
+                        return {"status": "unavailable", "reason": "backend_authentication_failed"}
+                    if response.status_code != 200:
+                        return {"status": "unavailable", "reason": reason or f"intent_http_{response.status_code}"}
+                    data = document.get("data") if isinstance(document, dict) else None
+                    if (document.get("status") != "ok" or not isinstance(data, dict)
+                            or type(data.get("schema_version")) is not int or data["schema_version"] != 1):
+                        raise ValueError
+                    model = data.get("model") if isinstance(data.get("model"), dict) else {}
+                    latency = model.get("latency_ms")
+                    return {"status": "available", "intent": parse_intent(data.get("intent")),
+                            "model_latency_ms": latency if type(latency) is int else None}
+        except (httpx.RequestError, ValueError, RecursionError, RuntimeError, AttributeError) as exception:
+            trace_event({"event": "radio_http_failure", "operation": "intent", "capture_id": request_id,
+                         "exception_chain": exception_trace(exception)})
+            return {"status": "unavailable", "reason": "intent_response_invalid_or_unavailable"}
 
     async def _transcribe(self, wav: bytes, request_id: str) -> dict:
         digest = hashlib.sha256(wav).hexdigest()

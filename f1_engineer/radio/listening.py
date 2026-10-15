@@ -14,6 +14,7 @@ import wave
 from ..analysis.local_speech import SPEECH_MAX_SECONDS, SPEECH_MAX_SAMPLES, SPEECH_SAMPLE_RATE, SPEECH_MAX_TRANSCRIPT_BYTES
 from .audio import NativeRadioAudio, RadioAudioUnavailable
 from .diagnostics import exception_trace
+from .intents import LOCAL_CONTROLS
 
 
 def capture_levels(pcm: bytes) -> dict:
@@ -41,13 +42,14 @@ def canonical_wav(pcm: bytes) -> bytes:
 
 
 class VoiceInput:
-    def __init__(self, *, transcribe=None, notify=None, enabled=True, microphone=None, output=None,
+    def __init__(self, *, transcribe=None, interpret=None, notify=None, enabled=True, microphone=None, output=None,
                  cue_volume=0.08, maximum_seconds=SPEECH_MAX_SECONDS, audio_factory=NativeRadioAudio,
                  clock=time.monotonic) -> None:
         if (not math.isfinite(maximum_seconds) or not 1 <= maximum_seconds <= SPEECH_MAX_SECONDS
                 or not math.isfinite(cue_volume) or not 0 < cue_volume <= 0.3):
             raise ValueError("radio_capture_settings_invalid")
         self._transcribe = transcribe
+        self._interpret = interpret
         self._notify = notify or (lambda event: None)
         self._enabled = enabled
         self._audio_factory = audio_factory
@@ -68,6 +70,7 @@ class VoiceInput:
         self._cancel_at = None
         self._watchdog_reported = False
         self._draft = None
+        self._draft_interpretation = None
         self._requested_at = None
         self._capture_started_at = None
         self._stop_at = None
@@ -78,6 +81,7 @@ class VoiceInput:
         self.repeat_reference = None
         self.task_context = None
         self.question_context = None
+        self.intent_context = None
 
     @property
     def blocks_playback(self) -> bool:
@@ -88,7 +92,7 @@ class VoiceInput:
                 "maximum_seconds": self._maximum_seconds, "draft_available": self._draft is not None}
 
     def request(self, *, source: str, scope: str | None, binding=None, connection=None,
-                repeat_reference=None, task_context=None, question_context=None) -> None:
+                repeat_reference=None, task_context=None, question_context=None, intent_context=None) -> None:
         self._notify({"event": "radio_listen_requested", "source": source})
         if not self._enabled:
             self._notify({"event": "radio_listen_unavailable", "reason": "dry_run"})
@@ -108,6 +112,8 @@ class VoiceInput:
         self.repeat_reference = repeat_reference
         self.task_context = task_context
         self.question_context = question_context
+        self.intent_context = intent_context
+        self._draft_interpretation = None
         self._finish = threading.Event()
         self._cancelled = threading.Event()
         self._discard = False
@@ -163,16 +169,19 @@ class VoiceInput:
             self._consumed_capture_id = self._capture_id
             return {"unavailable_reason": "session_unavailable", "capture_id": self._capture_id,
                     "source": self._source}
+        interpretation = self._draft_interpretation
         question = self.take_draft(scope=scope)
         if question is None:
             self._notify({"event": "radio_voice_submission_unavailable", "reason": "no_current_draft"})
             return None
         wait = self._clock() - self._draft_ready_at if self._draft_ready_at is not None else None
         return {"question": question, "capture_id": self._capture_id, "source": self._source,
-                "submission_wait_s": max(0, wait) if wait is not None else None}
+                "submission_wait_s": max(0, wait) if wait is not None else None,
+                "interpretation": interpretation}
 
     def cancel(self, reason="cancelled") -> None:
         self._draft = None
+        self._draft_interpretation = None
         if self._capture_id is not None and not self._discard:
             self._discard = True
             self._cancel_at = self._clock()
@@ -219,6 +228,7 @@ class VoiceInput:
                                   "reason": "transcription_response_invalid"})
                     continue
                 self._draft = transcript
+                self._draft_interpretation = event.get("interpretation")
                 self._draft_ready_at = self._clock()
             self._notify(event)
         if self._worker is not None and not self._worker.is_alive():
@@ -243,6 +253,25 @@ class VoiceInput:
             self._events.put_nowait({"event": event, "capture_id": capture_id, **fields})
         except queue.Full:
             self._cancelled.set()
+
+    def _interpretation(self, capture_id: str, transcript: str, stopped_at: float, cancelled) -> dict:
+        """Interpret the transcript on the capture worker thread; falls back to the plain parser on any failure."""
+        control = " ".join(transcript.lower().split()).rstrip(".!?").rstrip()
+        if control in LOCAL_CONTROLS:
+            return {"status": "skipped", "reason": "local_control", "intent": None}
+        self._put(capture_id, "radio_transcribed", transcript=transcript,
+                  end_to_transcript_s=self._clock() - stopped_at)
+        started = self._clock()
+        try:
+            result = asyncio.run(self._interpret(transcript, self.intent_context, capture_id, cancelled))
+        except (OSError, ValueError, RuntimeError):
+            result = {"status": "unavailable", "reason": "intent_failed"}
+        if not isinstance(result, dict) or result.get("status") != "available":
+            reason = result.get("reason") if isinstance(result, dict) else None
+            return {"status": "unavailable", "reason": reason or "intent_unavailable", "intent": None,
+                    "latency_s": self._clock() - started}
+        return {"status": "available", "reason": None, "intent": result["intent"],
+                "latency_s": self._clock() - started, "model_latency_ms": result.get("model_latency_ms")}
 
     def _run(self, capture_id: str, requested_at: float, finish, cancelled) -> None:
         audio = None
@@ -307,8 +336,15 @@ class VoiceInput:
                     self._put(capture_id, "radio_transcription_unavailable", state="idle",
                               reason=result.get("reason", "transcription_unavailable"))
                 else:
+                    fields = {}
+                    if self._interpret is not None:
+                        fields["interpretation"] = self._interpretation(capture_id, result["transcript"],
+                                                                        stopped_at, cancelled)
+                        if cancelled.is_set():
+                            return
                     self._put(capture_id, "radio_transcript", state="idle", transcript=result["transcript"],
-                              verified=False, submitted=False, end_to_transcript_s=self._clock() - stopped_at)
+                              verified=False, submitted=False, end_to_transcript_s=self._clock() - stopped_at,
+                              **fields)
         except (RadioAudioUnavailable, OSError, ValueError, RuntimeError) as exception:
             safe_reasons = {"radio_audio_requires_radio_extra", "radio_microphone_unavailable",
                             "radio_microphone_overflow", "radio_microphone_read_failed",

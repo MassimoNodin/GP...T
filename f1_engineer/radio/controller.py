@@ -10,7 +10,7 @@ from dataclasses import replace
 
 from ..driver_names import display_driver_name, driver_name_aliases
 from .gaps import GAP_CHANGES, LapGapTracker
-from .questions import QuestionPlan, UNAVAILABLE_FACTS, plan_question, timing_fact
+from .questions import QuestionPlan, SESSION_FACTS, UNAVAILABLE_FACTS, plan_question, timing_fact
 from .scheduler import RadioMessage, RadioScheduler
 from .tasks import LapReportRegistry, TaskAction, parse_task_request
 from .watches import RaceWatchTracker
@@ -21,7 +21,8 @@ from .pit_benchmark import PitBenchmarkTracker
 from .regions import RegionTracker, RegionWindow
 from .region_progress import RegionProgress
 from .opponent_regions import compare_opponent_region
-from .track_geometry import geometry_binding, resolve_named_region
+from .intents import safe_name, safe_region
+from .track_geometry import geometry_binding, region_labels, resolve_named_region
 from .reported_history import reported_best_fact, reported_lap_fact
 from .focus_coach import FOCUS_POLICY, choose_focus_reference, choose_focus_loss, focus_cue, focus_progress
 from .spoken_numbers import regional_reply
@@ -44,6 +45,10 @@ def _identity(value):
             and _integer(value.get("tenure_ordinal"), 1)
             and isinstance(value.get("participant_identity_fingerprint"), str)
             and re.fullmatch(r"[a-f0-9]{64}", value["participant_identity_fingerprint"]) is not None)
+
+
+def _clip(text, limit: int) -> str:
+    return str(text).encode("utf-8")[:limit].decode("utf-8", errors="ignore")
 
 
 def lap_message(number: int, milliseconds: int) -> str:
@@ -539,6 +544,47 @@ class RadioController:
                      "request_latency_s": item["request_age_s"]})
         return result["text"], deepcopy(evidence)
 
+    def intent_context(self) -> dict:
+        """Live facts the interpreter may use to repair mishearings; the glossary is added by the caller."""
+        player_position = (self._player or {}).get("lap", {}).get("car_position")
+        drivers = []
+        for row in self._drivers:
+            name = self._participant_name(row) if isinstance(row, dict) else None
+            if name is None or not safe_name(name):
+                continue
+            position = row.get("lap", {}).get("car_position")
+            position = position if _integer(position, 1, 24) else None
+            number = row["participant"]["value"].get("race_number")
+            is_player = self._player is not None and row.get("identity") == self._player.get("identity")
+            role = ("player" if is_player else "leader" if position == 1 else
+                    "ahead" if position is not None and position == (player_position or 0) - 1 else
+                    "behind" if position is not None and position == (player_position or 0) + 1 else "other")
+            drivers.append({"name": name, "race_number": number if _integer(number, 0, 255) else None,
+                            "position": position, "role": role})
+        drivers.sort(key=lambda driver: (driver["position"] is None, driver["position"] or 0))
+        track = (self._focus_context or {}).get("track_name")
+        tasks = []
+        for task in self.tasks.views():
+            if task["state"] != "active":
+                continue
+            targets = ", ".join(target.removeprefix("name:").replace("position:", "P") for target in task["targets"])
+            facts = ", ".join(metric.replace("_", " ") for metric in task["metrics"])
+            until = f"through lap {task['until_lap']}" if task["until_lap"] is not None else "until cancelled"
+            tasks.append({"task_id": task["task_id"], "summary": _clip(f"{targets}: {facts}; {until}", 240)})
+        recent = [{"heard": _clip(turn["request"], 240), "reply": _clip(turn["response"], 240)}
+                  for turn in self.conversation.turns
+                  if turn["kind"] in ("question", "instruction") and turn["request"] is not None][-3:]
+        pending = None
+        if self._pending_region is not None and self._pending_region.get("scope") == self.scheduler.scope:
+            opponent = self._pending_region.get("opponent")
+            pending = {"opponent": opponent if safe_name(opponent) else None,
+                       "laps": min(20, max(1, self._pending_region["requested_laps"])),
+                       "focus": bool(self._pending_region.get("focus_coach"))}
+        return {"drivers": drivers[:24], "track": _clip(track, 80) if isinstance(track, str) else None,
+                "regions": [label for label in region_labels(self._geometry_result) if safe_region(label)][:64],
+                "tasks": tasks[:8], "recent": recent, "pending_region": pending,
+                "glossary": {"terms": {}, "mishearings": {}}}
+
     def check_freshness(self, *, now: float) -> None:
         if self._player is not None and self._age_s + now - self._received_at >= 3:
             self._unavailable("lap_observations_stale")
@@ -772,6 +818,18 @@ class RadioController:
                 return text
         if metric in UNAVAILABLE_FACTS:
             return UNAVAILABLE_FACTS[metric]
+        if metric in SESSION_FACTS:
+            context = self._focus_context or {}
+            if metric == "track_name":
+                name = context.get("track_name")
+                return f"track {name}" if isinstance(name, str) and 0 < len(name) <= 80 else "track name unavailable"
+            weather = context.get("weather_name")
+            if not isinstance(weather, str) or not 0 < len(weather) <= 40:
+                return "weather unavailable"
+            temperatures = [f"{label} {context[key]} degrees" for label, key in
+                            (("air", "air_temperature_c"), ("track", "track_temperature_c"))
+                            if _integer(context.get(key), -50, 100)]
+            return ", ".join([f"weather {weather.lower()}", *temperatures])
         if metric in ("tyre_age", "tyre_compound"):
             tyre = row.get("tyre")
             value = tyre.get("value") if isinstance(tyre, dict) and tyre.get("status") == "available" else None
@@ -1320,6 +1378,8 @@ class RadioController:
                         result = f"{label}: driver unavailable or ambiguous."
                         if target.startswith("name:"):
                             result += " Use a full name or P1 to P24."
+                    elif all(metric in SESSION_FACTS for metric in plan.metrics):
+                        result = ", ".join(self._timing_fact(metric, row, now=now) for metric in plan.metrics) + "."
                     else:
                         result = f"{label} (car slot {row['car_index']}): " + ", ".join(
                             self._timing_fact(metric, row, now=now) for metric in plan.metrics) + "."

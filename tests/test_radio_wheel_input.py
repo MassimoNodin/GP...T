@@ -304,7 +304,8 @@ def test_listening_request_cancels_radio_and_forwards_session_binding():
                                              capture_repeat_reference=lambda: "frozen"),
                               voice, source="wheel", binding="button", connection=7)
     assert calls == ["cancel", {"source": "wheel", "scope": "session", "binding": "button", "connection": 7,
-                               "repeat_reference": "frozen", "task_context": None, "question_context": None}]
+                               "repeat_reference": "frozen", "task_context": None, "question_context": None,
+                               "intent_context": None}]
 
 
 def test_radio_loop_routes_bound_button_request_and_closes_input(tmp_path, monkeypatch, capsys):

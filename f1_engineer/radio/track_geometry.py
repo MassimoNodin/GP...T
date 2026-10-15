@@ -63,6 +63,15 @@ def _name(value):
     return region_name_key(value)
 
 
+def region_labels(result):
+    """Labels of the reviewed regions in a geometry result; resolution still validates strictly."""
+    try:
+        models = [model for model in result["data"]["models"] if model.get("origin") == "reviewed"]
+        return [region["label"] for region in models[0]["regions"] if isinstance(region.get("label"), str)]
+    except (KeyError, TypeError, IndexError, AttributeError):
+        return []
+
+
 def resolve_named_region(result, binding, name):
     message = "No unambiguous reviewed corner geometry is available. Choose explicit start and end distances in metres."
     if not isinstance(result, dict) or result.get("status") != "available":

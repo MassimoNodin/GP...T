@@ -19,6 +19,8 @@ from .scheduler import RadioMessage, RadioScheduler
 from .wheel_input import WheelButtonMonitor
 from .windows_speech import WindowsSpeech
 from .diagnostics import emit, radio_event_log, trace_event
+from .glossary import load_glossary
+from .intents import LOCAL_CONTROLS, render_intent
 
 
 class DryRunPlayback:
@@ -135,10 +137,17 @@ def _run_radio(args) -> int:
         if args.once:
             return 0 if controller.status()["backend"] == "available" else 2
         wheel = WheelButtonMonitor(Path(getattr(args, "input_settings", DEFAULT_INPUT_SETTINGS)), notify=emit)
+        interpret = (client.interpret if client and not args.dry_run
+                     and getattr(args, "intent_mode", "luna") == "luna" else None)
         voice = VoiceInput(transcribe=client.transcribe if client and not args.dry_run else None, notify=emit,
                            enabled=not args.dry_run, microphone=args.microphone, output=args.cue_output,
-                           cue_volume=args.cue_volume, maximum_seconds=args.capture_seconds)
-        emit({"event": "radio_ready", "dry_run": args.dry_run, "voice": getattr(playback, "voice", None),
+                           cue_volume=args.cue_volume, maximum_seconds=args.capture_seconds,
+                           interpret=interpret)
+        glossary, glossary_problem = load_glossary(getattr(args, "glossary_file", None))
+        if glossary_problem is not None:
+            emit({"event": "radio_glossary_unavailable", "reason": glossary_problem})
+        emit({"event": "radio_ready", "intent_mode": "luna" if interpret is not None else "parser",
+              "glossary_terms": len(glossary["terms"]), "glossary_mishearings": len(glossary["mishearings"]), "dry_run": args.dry_run, "voice": getattr(playback, "voice", None),
               "rate": args.rate, "volume": args.volume,
               "capture_test": args.capture_test,
               "microphone": args.microphone, "cue_output": args.cue_output,
@@ -170,7 +179,8 @@ def _run_radio(args) -> int:
                 request_listening(scheduler, voice, source="wheel", binding=wheel.status()["binding"],
                                   connection=wheel.status().get("connection_instance"),
                                   task_context=controller.capture_task_context(),
-                                  question_context=controller.capture_question_context())
+                                  question_context=controller.capture_question_context(),
+                                  intent_context=capture_intent_context(controller, glossary))
             try:
                 command = commands.get_nowait()
                 if command == "quit":
@@ -181,7 +191,8 @@ def _run_radio(args) -> int:
                 elif command == "listen":
                     request_listening(scheduler, voice, source="console",
                                       task_context=controller.capture_task_context(),
-                                      question_context=controller.capture_question_context())
+                                      question_context=controller.capture_question_context(),
+                                      intent_context=capture_intent_context(controller, glossary))
                 elif command == "finish":
                     voice.finish()
                 elif command == "tasks":
@@ -249,22 +260,51 @@ def _run_radio(args) -> int:
 
 
 def request_listening(scheduler: RadioScheduler, voice: VoiceInput, *, source: str, binding=None, connection=None,
-                      task_context=None, question_context=None) -> None:
+                      task_context=None, question_context=None, intent_context=None) -> None:
     reference = scheduler.capture_repeat_reference()
     scheduler.cancel()
     voice.request(source=source, scope=scheduler.scope, binding=binding, connection=connection,
-                  repeat_reference=reference, task_context=task_context, question_context=question_context)
+                  repeat_reference=reference, task_context=task_context, question_context=question_context,
+                  intent_context=intent_context)
+
+
+def capture_intent_context(controller: RadioController, glossary: dict) -> dict:
+    """Snapshot of what the interpreter needs, taken when listening starts like the task and question contexts."""
+    context = controller.intent_context()
+    context["glossary"] = glossary
+    return context
+
+
+def dispatch_submission(submission: dict, controller: RadioController, voice: VoiceInput, *, now: float) -> None:
+    """Act on a transcript, using the interpreted request when there is one and the raw words otherwise."""
+    question = submission["question"]
+    interpretation = submission.get("interpretation")
+    intent = interpretation.get("intent") if isinstance(interpretation, dict) else None
+    if intent is not None:
+        try:
+            rendered = render_intent(intent)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            rendered = None
+            emit({"event": "radio_intent_fallback", "capture_id": submission.get("capture_id"),
+                  "reason": "render_failed"})
+        if rendered is not None:
+            emit({"event": "radio_intent_dispatch", "capture_id": submission.get("capture_id"),
+                  "heard": question, "action": intent["action"], "kind": rendered.kind, "text": rendered.text})
+            if rendered.kind == "reply":
+                controller.scheduler.cancel()
+                controller.answer_radio_control(rendered.text, now=now)
+                return
+            question = rendered.text
+    elif isinstance(interpretation, dict) and interpretation.get("status") == "unavailable":
+        emit({"event": "radio_intent_fallback", "capture_id": submission.get("capture_id"),
+              "reason": interpretation.get("reason")})
+    dispatch_voice_request(question, controller, voice, now=now)
 
 
 def dispatch_voice_request(question: str, controller: RadioController, voice: VoiceInput, *, now: float) -> None:
     control = " ".join(question.lower().split()).rstrip(".!?").rstrip()
     scheduler = controller.scheduler
-    action = {
-        "quiet": "quiet", "quiet radio": "quiet", "pause coaching": "quiet",
-        "resume coaching": "resume", "resume radio": "resume",
-        "cancel speech": "cancel", "stop speaking": "cancel",
-        "repeat that": "repeat", "repeat message": "repeat",
-    }.get(control)
+    action = LOCAL_CONTROLS.get(control)
     if action == "quiet":
         scheduler.quiet()
         controller.answer_radio_control("Proactive coaching paused. Tracking continues.", now=now)
@@ -309,7 +349,7 @@ def submit_ready_question(controller: RadioController, voice: VoiceInput, *, now
               "capture_id": submission["capture_id"], "source": submission["source"],
               "response_queued": queued, "text": text})
         return False
-    dispatch_voice_request(submission["question"], controller, voice, now=now)
+    dispatch_submission(submission, controller, voice, now=now)
     emit({"event": "radio_voice_submitted", "capture_id": submission["capture_id"],
           "source": submission["source"], "submitted": True, "verified": False,
           "submission_wait_s": submission["submission_wait_s"]})
