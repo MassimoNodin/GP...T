@@ -249,6 +249,23 @@ covered by mocks. No physical wheel access or engineer restart was performed to
 validate this patch; shared game access, absence of lag and wheel-triggered
 speech must be reverified with the user before accepting the branch.
 
+## Controlled wheel retest after access-conflict safeguards
+
+At the user's request, a bounded wheel-only test ran on October 15, 2026, at
+01:26:22 UTC (12:26:22 Australia/Sydney), with F1_25.exe running. The full
+engineer remained stopped; the test used no microphone, speech, or backend.
+It retained the saved R3/button-32 mapping and attempted initial device index 0
+once. DirectInput access was denied before the device identity or button could
+be read. The safety stop closed input and ended the process after 0.414 seconds,
+with zero successful button observations and no acquisition retry. Evidence
+is retained privately in data/radio-tests/wheel-safety-20261015-122622.jsonl.
+
+This verifies the fail-closed behavior on the real host, not simultaneous
+game/engineer wheel access. The conflict remains unresolved. Absence of lag or
+game-control disruption requires user confirmation; no further wheel access or
+radio restart was attempted. The earlier mock-only patch validation must not
+be treated as a successful hardware acceptance test.
+
 ## Latency and final sign-off
 
 Measure wheel press to audible listening feedback, capture end to first answer
