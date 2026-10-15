@@ -266,6 +266,55 @@ game-control disruption requires user confirmation; no further wheel access or
 radio restart was attempted. The earlier mock-only patch validation must not
 be treated as a successful hardware acceptance test.
 
+## Native shared-input implementation and hardware test
+
+On October 15, 2026, wheel monitoring and the input CLI switched to native
+nonexclusive/background DirectInput. Normal monitoring opens only the saved
+controller, acquires once, caches its handle and reads buffered button events
+plus current button state. It does not request force feedback, exclusive access
+or an automatic SDL fallback. The saved R3 GUID/name and zero-based button 32
+remain unchanged; button reassignment remains dynamic.
+
+The initial bounded prototype acquired shared access but stopped after 0.259
+seconds because its Poll vtable slot was incorrect. This was corrected from
+slot 24 (Escape) to slot 25 (Poll), with an independent vtable-dispatch regression
+test. A corrected 20-second baseline completed with 329 ready polls, one open
+and one acquisition. No button was pressed during that baseline. Device metadata
+refresh was subsequently reduced from once a second to once every five seconds.
+
+The final 60-second wheel-only test started at 01:48:38 UTC (12:48:38
+Australia/Sydney) while F1_25.exe remained running. It completed 1,030 polls, all
+ready, with one device open, one acquisition and cooperative flags 10
+(nonexclusive/background). Button 32 pressed and released generated one
+listening request. Input closed successfully at test end without retrying
+acquisition. The user subsequently confirmed: "f1 works fine and i pressed
+buytton 32". The full engineer remained off; this test used no microphone,
+speech or backend calls. F1 foreground focus was not independently verified.
+
+Elapsed time was 60.012 seconds and process CPU time was 2.688 seconds
+(approximately 4.48% of one CPU core, not total machine utilization). Aggregate
+enumeration time was 2.981 seconds; the slowest poll took 0.558 seconds, including
+enumeration/OS scheduling while regression tests ran. These are diagnostic
+measurements, not acoustic response latency. Private evidence is retained in
+data/radio-tests/wheel-shared-20261015-124308.jsonl,
+data/radio-tests/wheel-shared-20261015-124528.jsonl and
+data/radio-tests/wheel-shared-20261015-124838.jsonl. Do not commit raw test traces.
+
+The radio and standalone regression suite passed 1,576 tests in 24.57 seconds
+with one existing Starlette/httpx deprecation warning. Coverage includes ABI
+layout, explicit shared access, cleanup and failure latching, handle reuse,
+short taps, dynamic reassignment, ambiguity refusal and reconnect identity.
+An additional whole-repository run was interrupted before completion during
+session-evidence load tests; it must not be reported as a complete suite pass.
+It exposed six failures in test_live_driver_names.py. A focused rerun reproduced
+six failures and 29 passes: the assertions still expect spoken car-slot labels
+removed by the earlier concise-reply change, not this input patch. Those unrelated
+expectations are left unchanged here. The complete radio/standalone suite above
+remains the validation scope for this fix.
+This resolves the previously unverified shared-button access for this bounded
+test, not full voice/coaching acceptance. Microphone recognition, wheel-triggered
+speech, extended gameplay stability and acoustic latency remain pending.
+
 ## Latency and final sign-off
 
 Measure wheel press to audible listening feedback, capture end to first answer

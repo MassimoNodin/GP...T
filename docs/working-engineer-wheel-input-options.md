@@ -22,6 +22,15 @@ the observed game-control conflict; it is not proof of the precise driver-level
 cause of all reported computer lag. Caching handles and stopping retries after
 access denial address churn and failure safety, not this exclusive-access mode.
 
+## Implementation update
+
+The native nonexclusive/background reader is now the Windows default for wheel
+monitoring and input discovery/learning. A bounded 60-second test with F1 running
+detected the saved R3 button 32, acquired once and closed cleanly; the user
+confirmed the game worked fine. The full engineer remained stopped. See
+working-engineer-v1-validation.md for measurements and remaining voice/gameplay
+acceptance work. The investigation below records the alternatives considered.
+
 ## Option 1: native nonexclusive DirectInput
 
 Recommended first bounded prototype: bypass pygame/SDL and use a Windows

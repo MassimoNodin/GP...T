@@ -263,7 +263,7 @@ def test_learning_aborts_on_reconnection():
 def test_cli_show_and_clear_need_no_device_backend_or_audio(tmp_path, monkeypatch, capsys):
     settings = tmp_path / "input.json"
     save_binding(settings, BINDING)
-    monkeypatch.setattr(input_command, "SDLWheelInput", lambda: pytest.fail("no device access"))
+    monkeypatch.setattr(input_command, "SharedWheelInput", lambda: pytest.fail("no device access"))
     args = cli.build_parser().parse_args(["radio-input", "--input-settings", str(settings), "show"])
     assert args.handler(args) == 0
     assert json.loads(capsys.readouterr().out)["binding"]["button"] == 1
@@ -276,7 +276,7 @@ def test_cli_binding_is_saved_only_after_successful_learning(tmp_path, monkeypat
     settings = tmp_path / "input.json"
     save_binding(settings, BINDING)
     source = Source(frame(), frame(edges=[(2, True)]))
-    monkeypatch.setattr(input_command, "SDLWheelInput", lambda: source)
+    monkeypatch.setattr(input_command, "SharedWheelInput", lambda: source)
     args = cli.build_parser().parse_args(["radio-input", "--input-settings", str(settings),
                                           "bind", "--device-index", "0"])
     assert args.handler(args) == 0
@@ -288,7 +288,7 @@ def test_failed_learning_preserves_previous_binding_and_closes_device(tmp_path, 
     settings = tmp_path / "input.json"
     save_binding(settings, BINDING)
     source = Source(frame(), frame(devices=()))
-    monkeypatch.setattr(input_command, "SDLWheelInput", lambda: source)
+    monkeypatch.setattr(input_command, "SharedWheelInput", lambda: source)
     args = cli.build_parser().parse_args(["radio-input", "--input-settings", str(settings),
                                           "bind", "--device-index", "0"])
     with pytest.raises(WheelInputUnavailable):
@@ -348,7 +348,7 @@ def test_radio_loop_routes_bound_button_request_and_closes_input(tmp_path, monke
 
 @pytest.mark.parametrize("timeout", [float("nan"), float("inf"), 0, -1, 121])
 def test_invalid_learning_timeout_never_opens_device(timeout, monkeypatch):
-    monkeypatch.setattr(input_command, "SDLWheelInput", lambda: pytest.fail("no device access"))
+    monkeypatch.setattr(input_command, "SharedWheelInput", lambda: pytest.fail("no device access"))
     args = SimpleNamespace(input_action="bind", input_settings="unused", timeout=timeout)
     with pytest.raises(ValueError, match="timeout_invalid"):
         input_command.run_input(args)

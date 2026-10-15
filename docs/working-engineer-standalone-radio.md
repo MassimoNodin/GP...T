@@ -108,21 +108,30 @@ plays. Dry-run, once, device-listing and wheel-only testing never record audio.
 
 ### Wheel access safety
 
-Joystick handles are opened once and reused until SDL reports removal; added
-devices are opened on hotplug rather than reopening/reinitializing every device
-on every poll. Access denial (DirectInput HRESULT 0x80070005) releases the input
-source and disables further wheel acquisition for that radio process. Status
-reports radio_wheel_access_denied_restart_required. Changing the saved button
-does not bypass this safety latch. Ordinary disconnect/reconnect recovery is
-unchanged. Failure diagnostics retain sanitized exception frames/type chains.
+Windows wheel input uses native DirectInput with nonexclusive/background access,
+not the SDL joystick backend. The reader requests buttons only, never force
+feedback or exclusive access, and never falls back to SDL. Normal monitoring
+opens only the saved matching controller and reuses its acquired handle. Device
+metadata is refreshed every five seconds; buffered transitions retain short taps
+between polls. Discovery/learning commands can open other attached controllers.
+
+Access denial (DirectInput HRESULT 0x80070005) releases the input source and
+disables further wheel acquisition for that radio process. Status reports
+radio_wheel_access_denied_restart_required. Other native setup/read failures
+marked restart_required also latch input off instead of repeatedly reacquiring.
+Changing the saved button does not bypass this safety latch. Disconnects release
+the old handle; reconnects receive a new connection identity. Failure diagnostics
+retain numeric HRESULT values and sanitized exception frames/type chains.
 
 If lag or game wheel-control loss occurs, stop the radio and restore game wheel
 control before any further engineer test. Do not run discovery, learning or
 wheel-only tests while diagnosing a conflict. The radio can still accept console
 requests after an access-denial latch, but wheel-triggered requests cannot resume
 until a deliberate radio restart. Do not automatically restart it during a
-gameplay incident. These safeguards are mock-tested; simultaneous MOZA/F1
-hardware operation and absence of lag still require an explicitly agreed test.
+gameplay incident. A bounded shared-input test detected the saved R3 button 32
+with F1 running, and the user confirmed F1 worked fine. See the validation log
+for evidence and limitations; full wheel-triggered voice operation still needs
+a separate agreed test.
 
 Wheel support is optional and installed with the `radio` extra. No button number
 is hardcoded. List the currently connected controllers, select the MOZA device's
@@ -147,10 +156,11 @@ The saved assignment lives in `data/radio-input.json` (ignored by Git). Re-run
 settings every half second without a restart. Use `radio-input clear` to disable
 wheel activation. For a custom file, place `--input-settings PATH` before the
 `radio-input` action, and pass the same option to `radio`. Neither `show` nor
-`clear` opens a controller. No SDL subsystem is opened by an unbound radio.
+`clear` opens a controller. An unbound radio does not initialize wheel input.
 
-Assignments match controller GUID and name, not enumeration index. SDL GUIDs
-identify device types rather than guaranteeing unique hardware serials: two
+Assignments match controller GUID and name, not enumeration index. The native
+reader preserves the saved R3 SDL-compatible GUID. These identifiers describe
+device types rather than guaranteeing unique hardware serials: two
 identical matching devices cause an explicit ambiguous-device status, never a
 guess. Disconnects, changed button counts and invalid settings fail closed.
 Held buttons on startup/rebinding/reconnection cannot activate until released;

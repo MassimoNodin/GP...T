@@ -123,8 +123,13 @@ def bound_device(frame: InputFrame, binding: ButtonBinding) -> WheelDevice:
     return device
 
 
+def shared_input_source():
+    from .directinput import SharedWheelInput
+    return SharedWheelInput()
+
+
 class WheelButtonMonitor:
-    def __init__(self, settings: Path, *, source_factory=SDLWheelInput, notify=None) -> None:
+    def __init__(self, settings: Path, *, source_factory=shared_input_source, notify=None) -> None:
         self.settings = settings
         self._source_factory = source_factory
         self._notify = notify or (lambda event: None)
@@ -177,6 +182,8 @@ class WheelButtonMonitor:
         try:
             if self._source is None:
                 self._source = self._source_factory()
+            if hasattr(self._source, "select_binding"):
+                self._source.select_binding(self._binding)
             frame = self._source.poll()
             device = bound_device(frame, self._binding)
             connection = (device.instance_id, self._binding)
@@ -201,8 +208,9 @@ class WheelButtonMonitor:
             return activated
         except WheelInputUnavailable as exception:
             self._notify({"event": "radio_input_failure", "reason": str(exception),
+                          "hresult": getattr(exception, "hresult", None),
                           "exception": exception_trace(exception)})
-            if str(exception) == "radio_wheel_access_denied_restart_required":
+            if str(exception).endswith("_restart_required"):
                 self._access_blocked = True
             self._reset()
             self._report("unavailable", str(exception))

@@ -7,7 +7,8 @@ from pathlib import Path
 
 from .command import emit
 from .input_settings import ButtonBinding, load_binding, save_binding
-from .wheel_input import SDLWheelInput, WheelButtonMonitor, WheelInputUnavailable, bound_device
+from .directinput import SharedWheelInput
+from .wheel_input import WheelButtonMonitor, WheelInputUnavailable, bound_device
 
 
 def _learn(source, index: int, *, timeout: float, notify=emit, clock=time.monotonic, sleep=time.sleep) -> ButtonBinding:
@@ -64,7 +65,7 @@ def run_input(args) -> int:
             monitor.close()
     if args.input_action == "bind" and (not math.isfinite(args.timeout) or not 1 <= args.timeout <= 120):
         raise ValueError("radio_input_timeout_invalid")
-    source = SDLWheelInput()
+    source = SharedWheelInput()
     try:
         if args.input_action == "list":
             frame = source.poll()
