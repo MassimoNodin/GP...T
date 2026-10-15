@@ -18,6 +18,7 @@ from .pipeline import PipelineResult, TelemetryPipeline
 from .recording.capture import CaptureReader
 from .recording.service import record_udp_capture
 from .recording.udp_replay import replay_udp_capture
+from .recording.journal_export import export_journal_session, list_journal_sessions
 from .sessions.context import SessionContext
 from .analysis.resampling import ResamplingConfig
 from .analysis.comparison_window import optional_distance_window
@@ -251,6 +252,18 @@ async def _replay_udp(args: argparse.Namespace) -> int:
         confirm_idle=args.confirm_idle, dry_run=args.dry_run,
     )
     _json_line(result)
+    return 0
+
+
+def _export_journal(args: argparse.Namespace) -> int:
+    if args.list:
+        for session in list_journal_sessions(args.database):
+            _json_line(session)
+        return 0
+    if args.session_uid is None or args.output is None:
+        raise ValueError("--session-uid and --output are required unless --list is given")
+    _json_line(export_journal_session(args.database, args.session_uid, args.output,
+                                      max_gap_s=args.max_gap, overwrite=args.overwrite))
     return 0
 
 
@@ -927,6 +940,17 @@ def build_parser() -> argparse.ArgumentParser:
     replay_udp.add_argument("--confirm-idle", action="store_true", help="confirm F1 is off and no other sender is using this receiver")
     replay_udp.add_argument("--dry-run", action="store_true", help="validate and summarize without sending packets")
     replay_udp.set_defaults(handler=_replay_udp)
+
+    export = commands.add_parser(
+        "export-journal", help="export a live session from the evidence journal as a replayable capture")
+    export.add_argument("--database", required=True, help="evidence database (*-evidence.sqlite3), opened read-only")
+    export.add_argument("--list", action="store_true", help="list journaled sessions, longest first")
+    export.add_argument("--session-uid", help="game session UID to export (see --list)")
+    export.add_argument("--output", help="new .f1ecap file to write")
+    export.add_argument("--max-gap", type=float, default=None,
+                        help="shorten idle gaps longer than this many seconds (packet bytes and order unchanged)")
+    export.add_argument("--overwrite", action="store_true", help="replace an existing output file")
+    export.set_defaults(handler=_export_journal)
 
     import_command = commands.add_parser("import", help="import a capture into SQLite and Parquet")
     import_command.add_argument("capture", help="source .f1ecap capture")
