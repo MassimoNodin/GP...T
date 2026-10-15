@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 import stat
@@ -15,6 +16,9 @@ from .local_speech import (SPEECH_MAX_TRANSCRIPT_BYTES, LocalSpeechUnavailable, 
 OPENAI_TRANSCRIPTION_MODEL = "gpt-transcribe"
 OPENAI_TRANSCRIPTION_URL = "https://api.openai.com/v1/audio/transcriptions"
 OPENAI_TRANSCRIPTION_TIMEOUT_S = 20.0
+OPENAI_MODELS_URL = "https://api.openai.com/v1/models"
+OPENAI_CONNECT_TIMEOUT_S = 4.0
+OPENAI_KEEPALIVE_INTERVAL_S = 45.0
 _MAX_RESPONSE_BYTES = 64 * 1024
 
 
@@ -25,6 +29,46 @@ class OpenAISpeechRuntime:
         self.key_file = Path(key_file)
         self.model = model
         self._transport = transport
+        self._client: httpx.AsyncClient | None = None
+        self._keepalive: asyncio.Task | None = None
+
+    def _new_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(timeout=httpx.Timeout(OPENAI_TRANSCRIPTION_TIMEOUT_S, connect=OPENAI_CONNECT_TIMEOUT_S),
+                                 limits=httpx.Limits(max_keepalive_connections=2, keepalive_expiry=600),
+                                 follow_redirects=False, trust_env=False, transport=self._transport)
+
+    async def start(self) -> None:
+        """Open a shared connection and keep it warm; new connections to the API can be slow to establish."""
+        if self._client is None:
+            self._client = self._new_client()
+            self._keepalive = asyncio.create_task(self._keep_warm())
+
+    async def close(self) -> None:
+        if self._keepalive is not None:
+            self._keepalive.cancel()
+            await asyncio.gather(self._keepalive, return_exceptions=True)
+            self._keepalive = None
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    async def _keep_warm(self) -> None:
+        while True:
+            try:
+                await self._client.get(OPENAI_MODELS_URL, headers={"Authorization": f"Bearer {self._key()}"})
+            except (httpx.HTTPError, LocalSpeechUnavailable):
+                pass
+            await asyncio.sleep(OPENAI_KEEPALIVE_INTERVAL_S)
+
+    async def _post(self, client, key, data, wav):
+        for attempt in range(2):
+            try:
+                return await client.post(OPENAI_TRANSCRIPTION_URL, data=data,
+                                         files={"file": ("clip.wav", wav, "audio/wav")},
+                                         headers={"Authorization": f"Bearer {key}"})
+            except (httpx.ConnectTimeout, httpx.ConnectError):
+                if attempt:
+                    raise
 
     def _key(self) -> str:
         try:
@@ -65,12 +109,11 @@ class OpenAISpeechRuntime:
         if hint:
             data["prompt"] = hint
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(OPENAI_TRANSCRIPTION_TIMEOUT_S, connect=5),
-                                         follow_redirects=False, trust_env=False,
-                                         transport=self._transport) as client:
-                response = await client.post(OPENAI_TRANSCRIPTION_URL, data=data,
-                                             files={"file": ("clip.wav", wav, "audio/wav")},
-                                             headers={"Authorization": f"Bearer {key}"})
+            if self._client is not None:
+                response = await self._post(self._client, key, data, wav)
+            else:
+                async with self._new_client() as client:
+                    response = await self._post(client, key, data, wav)
         except httpx.TimeoutException as exc:
             raise LocalSpeechUnavailable("openai_transcription_timeout") from exc
         except httpx.RequestError as exc:

@@ -111,3 +111,28 @@ def test_app_selects_the_openai_runtime_only_when_asked(tmp_path):
         assert not isinstance(default.state.local_speech_runtime, OpenAISpeechRuntime)
     with pytest.raises(ValueError):
         make(speech_provider="azure")
+
+
+def test_shared_connection_is_reused_kept_warm_and_retried_once(tmp_path, monkeypatch):
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        if request.url.path.endswith("/transcriptions") and calls.count("/v1/audio/transcriptions") == 1:
+            raise httpx.ConnectTimeout("slow connect")
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": []})
+        return httpx.Response(200, json={"text": "Copy"})
+
+    speech = runtime(tmp_path, handler)
+
+    async def scenario():
+        await speech.start()
+        await asyncio.sleep(0)
+        result = await speech.transcribe(canonical_wav(16_000))
+        await speech.close()
+        return result
+
+    assert asyncio.run(scenario()).transcript == "Copy"
+    assert calls[0] == "/v1/models" and calls.count("/v1/audio/transcriptions") == 2
+    assert speech._client is None and speech._keepalive is None

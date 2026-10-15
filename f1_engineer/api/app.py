@@ -1123,6 +1123,9 @@ def create_app(
             engineer_activity.start()
         import_controller.enable_dispatch()
         await run_in_threadpool(local_speech_runtime.cleanup_stale_temporary_files)
+        start_speech = getattr(local_speech_runtime, "start", None)
+        if start_speech is not None:
+            await start_speech()
         app.state.import_controller = import_controller
         app.state.recording_controller = recording_controller
         app.state.replay_controller = replay_controller
@@ -1135,6 +1138,9 @@ def create_app(
         try:
             yield
         finally:
+            close_speech = getattr(local_speech_runtime, "close", None)
+            if close_speech is not None:
+                await close_speech()
             close_runtime = getattr(selected_engineer_runtime, "close", None)
             if close_runtime is not None:
                 await close_runtime()
