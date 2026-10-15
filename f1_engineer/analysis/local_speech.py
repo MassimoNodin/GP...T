@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import stat
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from .ai_admission import AIGateLease
 
 SPEECH_RUNTIME_NAME = "whisper.cpp"
 SPEECH_MODEL_NAME = "tiny.en"
+SPEECH_MODELS = {"tiny.en": 128 * 1024 * 1024, "large-v3": 4 * 1024 * 1024 * 1024}
 SPEECH_SAMPLE_RATE = 16_000
 SPEECH_MAX_SECONDS = 12
 SPEECH_MAX_SAMPLES = SPEECH_SAMPLE_RATE * SPEECH_MAX_SECONDS
@@ -47,6 +49,8 @@ class WhisperPin:
     model_sha256: str
     dependencies: tuple[tuple[Path, str], ...]
     runtime_id: str
+    model_name: str = SPEECH_MODEL_NAME
+    device: str = "cpu"
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +61,7 @@ class LocalTranscription:
     runtime_version: str
     model_name: str
     model_sha256: str
+    placement: str = "CPU"
 
 
 class LocalSpeechRuntime:
@@ -65,6 +70,8 @@ class LocalSpeechRuntime:
     def __init__(self, pin_path: str | Path, temporary_root: str | Path) -> None:
         self._pin_path = Path(os.path.abspath(Path(pin_path).expanduser()))
         self._temporary_root = Path(os.path.abspath(Path(temporary_root).expanduser()))
+        self._pin_verification_lock = threading.Lock()
+        self._verified_pin_cache: tuple[tuple[Any, ...], WhisperPin] | None = None
 
     def status(self) -> dict[str, object]:
         try:
@@ -76,11 +83,11 @@ class LocalSpeechRuntime:
             "reason": None,
             "runtime": SPEECH_RUNTIME_NAME,
             "runtime_version": pin.runtime_version,
-            "model_name": SPEECH_MODEL_NAME,
+            "model_name": pin.model_name,
             "model_sha256": pin.model_sha256,
             "runtime_id": pin.runtime_id,
             "language": "en",
-            "placement": "CPU",
+            "placement": pin.device.upper(),
             "maximum_clip_seconds": SPEECH_MAX_SECONDS,
             "audio_persisted": False,
         }
@@ -129,7 +136,8 @@ class LocalSpeechRuntime:
                 "en",
                 "-t",
                 "2",
-                "-ng",
+                *(["-dev", "0"] if pin.device == "cuda" else []),
+                *(["-ng"] if pin.device == "cpu" else []),
                 "-nt",
                 "-np",
                 "-otxt",
@@ -200,8 +208,9 @@ class LocalSpeechRuntime:
                 audio_sha256=audio_sha256,
                 runtime_id=pin.runtime_id,
                 runtime_version=pin.runtime_version,
-                model_name=SPEECH_MODEL_NAME,
+                model_name=pin.model_name,
                 model_sha256=pin.model_sha256,
+                placement=pin.device.upper(),
             )
         except asyncio.CancelledError:
             if process is not None:
@@ -253,6 +262,10 @@ class LocalSpeechRuntime:
             return 0
 
     def _load_verified_pin(self) -> WhisperPin:
+        with self._pin_verification_lock:
+            return self._load_verified_pin_locked()
+
+    def _load_verified_pin_locked(self) -> WhisperPin:
         try:
             info = self._pin_path.lstat()
             if (
@@ -283,12 +296,16 @@ class LocalSpeechRuntime:
             "dependencies",
             "runtime_id",
         }
-        if not isinstance(value, dict) or set(value) != required:
+        if not isinstance(value, dict) or set(value) not in (required, required | {"device"}):
             raise LocalSpeechUnavailable("runtime_pin_invalid")
+        model_name = value.get("model_name")
+        device = value.get("device", "cpu")
         if (
             value.get("schema_version") != 1
             or value.get("runtime") != SPEECH_RUNTIME_NAME
-            or value.get("model_name") != SPEECH_MODEL_NAME
+            or not isinstance(model_name, str)
+            or model_name not in SPEECH_MODELS
+            or device not in ("cpu", "cuda")
         ):
             raise LocalSpeechUnavailable("runtime_pin_invalid")
         runtime_version = value.get("runtime_version")
@@ -301,7 +318,7 @@ class LocalSpeechRuntime:
             value.get("executable_path"), "runtime_executable_invalid", 128 * 1024 * 1024
         )
         model = _absolute_regular_file(
-            value.get("model_path"), "runtime_model_invalid", 128 * 1024 * 1024
+            value.get("model_path"), "runtime_model_invalid", SPEECH_MODELS[model_name]
         )
         executable_digest = _digest(value.get("executable_sha256"))
         model_digest = _digest(value.get("model_sha256"))
@@ -340,11 +357,18 @@ class LocalSpeechRuntime:
             raise LocalSpeechUnavailable("runtime_dependency_unavailable") from exc
         if actual_dependency_names != dependency_names:
             raise LocalSpeechUnavailable("runtime_dependency_set_changed")
+        verified_paths = (self._pin_path, executable, model, *(path for path, _ in dependencies))
+        fingerprint = tuple(_file_fingerprint(path) for path in verified_paths)
+        cached = self._verified_pin_cache
+        if cached is not None and cached[0] == fingerprint:
+            return cached[1]
         expected_runtime_id = _runtime_identity(
             runtime_version,
             executable_digest,
             model_digest,
             tuple((path.name, digest) for path, digest in dependencies),
+            model_name=model_name,
+            device=device,
         )
         if runtime_id != expected_runtime_id:
             raise LocalSpeechUnavailable("runtime_pin_invalid")
@@ -355,7 +379,9 @@ class LocalSpeechRuntime:
         for path, expected_digest in dependencies:
             if _file_sha256(path) != expected_digest:
                 raise LocalSpeechUnavailable("runtime_dependency_changed")
-        return WhisperPin(
+        if tuple(_file_fingerprint(path) for path in verified_paths) != fingerprint:
+            raise LocalSpeechUnavailable("runtime_changed_during_verification")
+        pin = WhisperPin(
             runtime_version=runtime_version,
             executable=executable,
             executable_sha256=executable_digest,
@@ -363,7 +389,11 @@ class LocalSpeechRuntime:
             model_sha256=model_digest,
             dependencies=tuple(dependencies),
             runtime_id=runtime_id,
+            model_name=model_name,
+            device=device,
         )
+        self._verified_pin_cache = (fingerprint, pin)
+        return pin
 
     @staticmethod
     def _unavailable(reason: str) -> dict[str, object]:
@@ -543,22 +573,38 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _file_fingerprint(path: Path) -> tuple[int, int, int, int, int, int]:
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise LocalSpeechUnavailable("runtime_file_unavailable") from exc
+    if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        raise LocalSpeechUnavailable("runtime_file_invalid")
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns,
+            stat.S_IMODE(info.st_mode))
+
+
 def _runtime_identity(
     runtime_version: str,
     executable_sha256: str,
     model_sha256: str,
     dependencies: tuple[tuple[str, str], ...],
+    *,
+    model_name: str = SPEECH_MODEL_NAME,
+    device: str = "cpu",
 ) -> str:
     identity = {
         "runtime": SPEECH_RUNTIME_NAME,
         "runtime_version": runtime_version,
         "executable_sha256": executable_sha256,
-        "model_name": SPEECH_MODEL_NAME,
+        "model_name": model_name,
         "model_sha256": model_sha256,
         "dependencies": [
             {"name": name, "sha256": digest}
             for name, digest in sorted(dependencies, key=lambda entry: entry[0].casefold())
         ],
     }
+    if device != "cpu":
+        identity["device"] = device
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

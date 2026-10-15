@@ -265,6 +265,11 @@ The default build uses two jobs, CPU-only static whisper/ggml libraries and
 the system C/C++ runtime. Source, build output and model live under
 `~/.local/share/GP...T/speech-runtime/v1.9.3`; the verified pin is beside the
 configured database. Pass `--database` when using a different data directory.
+For a CUDA host, install the matching CUDA toolkit and build tools, then pass
+`--model large-v3 --device cuda --cuda-architectures 61` with the GPU's compute
+capability. `--cuda-host-compiler` can select a supported host compiler. The
+full large-v3 model requires several gigabytes of storage and GPU memory; build
+and inference fit depends on the GPU and other active GPU workloads.
 The API rereads this pin, so installing speech does not require a service
 restart. A changed pin is refused unless you explicitly review and accept it
 with `--accept-runtime-update`. Microphone clips remain bounded to 12 seconds;

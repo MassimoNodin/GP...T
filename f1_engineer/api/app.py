@@ -3150,7 +3150,7 @@ def create_app(
                                 "model_name": transcription.model_name,
                                 "model_sha256": transcription.model_sha256,
                                 "runtime_id": transcription.runtime_id,
-                                "placement": "CPU",
+                                "placement": transcription.placement,
                             },
                         },
                         "reason": None,
