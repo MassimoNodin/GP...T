@@ -168,7 +168,7 @@ def test_followup_retains_identity_across_temporarily_missing_observation():
     assert "Previously selected Leader: position 1" in radio.pending[-1].text
 
 
-def test_history_bounded_and_cleared_by_staleness_and_session():
+def test_history_bounded_and_preserved_on_pause_but_cleared_by_session():
     controller, radio, events, value = live()
     for turn in range(10):
         controller.answer_question("my position", now=10)
@@ -178,7 +178,7 @@ def test_history_bounded_and_cleared_by_staleness_and_session():
     assert controller.status()["conversation_turns"] == 0
     controller.answer_question("my position", now=11)
     controller.answer_question("and current lap?", now=14)
-    assert controller.status()["conversation_turns"] == 0
+    assert controller.status()["conversation_turns"] == 1
     assert "No fresh" in radio.pending[-1].text
 
 

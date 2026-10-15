@@ -14,7 +14,7 @@ from .questions import QuestionPlan, SESSION_FACTS, UNAVAILABLE_FACTS, plan_ques
 from .scheduler import RadioMessage, RadioScheduler
 from .tasks import LapReportRegistry, TaskAction, parse_task_request
 from .watches import RaceWatchTracker
-from .pace import PaceTracker
+from .pace import PaceReference, PaceTracker
 from .lap_history import FieldLapHistory
 from .conversation import ConversationMemory, QuestionContext, TaskContext
 from .pit_benchmark import PitBenchmarkTracker
@@ -96,8 +96,28 @@ class RadioController:
         self._focus_first_lap = None
         self._clarification_id = 0
         self._pending_region = None
+        self._session_binding = None
+        self._paused = False
+        self._last_lap = None
 
     def _unavailable(self, reason: str) -> None:
+        reason = reason if re.fullmatch(r"[a-z0-9_]{1,96}", reason) else "unavailable"
+        if self._session_binding is not None and reason != "backend_snapshot_invalid":
+            self._paused = True
+            self.scheduler.set_scope(None)
+            self._player = None
+            self._drivers = []
+            self._pending_region = None
+            self._reset_gaps()
+            for state in self.lap_history.drivers.values():
+                state.tracker.interrupt()
+                state.open_conditions = None
+                state.pending_conditions = None
+            self._report("unavailable", reason)
+            return
+        self._session_binding = None
+        self._paused = False
+        self._last_lap = None
         self._pending_region = None
         self._focus_context = None
         self._focus_binding = None
@@ -164,8 +184,11 @@ class RadioController:
         player = players[0]
         binding = json.dumps([snapshot["generation"], snapshot["session_id"], scope, player["identity"]],
                              sort_keys=True, separators=(",", ":"))
-        changed = self.scheduler.scope != binding
-        previous_lap = self._player["lap"].get("current_lap_number") if self._player is not None else None
+        changed = self._session_binding != binding
+        resumed = self._paused and not changed
+        previous_lap = self._last_lap
+        self._session_binding = binding
+        self._paused = False
         self.scheduler.set_scope(binding)
         if changed:
             self._pending_region = None
@@ -186,6 +209,7 @@ class RadioController:
             if difference < 0 or difference > 1:
                 self._clear_tasks("lap_number_discontinuity")
         self._player = deepcopy(player)
+        self._last_lap = player["lap"].get("current_lap_number")
         self._focus_context = deepcopy(scoped_region_context(snapshot))
         focus_context = self._focus_context or {}
         focus_length = focus_context.get("track_length_m")
@@ -260,9 +284,9 @@ class RadioController:
             self.scheduler.cancel_owner("lap_reports")
         cursor = snapshot["event_cursor"]
         self._report("available")
-        if (changed or self._cursor is None or cursor < self._cursor
+        if (changed or resumed or self._cursor is None or cursor < self._cursor
                 or snapshot["event_floor"] > self._cursor):
-            if not changed and self._cursor is not None:
+            if not changed and not resumed and self._cursor is not None:
                 self.scheduler.cancel()
                 self.tasks.clear("event_history_gap")
                 self._history.clear()
@@ -1112,7 +1136,20 @@ class RadioController:
                         region_reference = choose_focus_reference(
                             self.region_progress.focus_candidates, region_window, region_reference.actual_compound,
                             regional_sample_context(self._focus_context, self._player))
-                pace_reference = self.pace.reference(self._player) if "target_pace" in plan.metrics else None
+                pace_reference = None
+                game_pace_reference = False
+                if "target_pace" in plan.metrics:
+                    try:
+                        pace_reference = self.pace.reference(self._player)
+                    except ValueError:
+                        best = reported_best_fact(self._player, self._observation_frame,
+                                                  live_age_s=self._age_s + now - self._received_at)
+                        healthy, compound = self.pace._health(self._player)
+                        if not healthy or best is None or best[1] is None:
+                            raise
+                        selected = self._player["reported_history"]["session_best"]
+                        pace_reference = PaceReference(selected["lap_number"], selected["lap_time_ms"], compound)
+                        game_pace_reference = True
                 watching = "race_watch" in plan.metrics
                 if watching and (len(plan.targets) != 1 or plan.metrics != ("race_watch",)):
                     raise ValueError("Watch one explicit driver at a time without additional facts.")
@@ -1197,9 +1234,12 @@ class RadioController:
                     text += (f" Watching {name}; driver identity fixed. Three comparable lap boundaries required. "
                              "Named non-adjacent drivers use qualified shared-leader gap differences. Alerts report trend changes.")
                 if pace_reference is not None:
-                    text += (f" Fixed reference: best fully observed valid radio lap {pace_reference.lap_number}, "
+                    source = "game-reported session-best valid lap" if game_pace_reference else "best fully observed valid radio lap"
+                    text += (f" Fixed reference: {source} {pace_reference.lap_number}, "
                              f"{pace_reference.elapsed_ms / 1000:.3f} seconds on compound {pace_reference.compound}. "
                              f"Stay within {task.pace_tolerance_ms / 1000:.3f} seconds; reference does not update automatically.")
+                    if game_pace_reference:
+                        text += " Historical tyre compound is unverified; current compound is used only to bind this report."
                     text += (" Observed sector feedback enabled." if pace_reference.sector_times_ms is not None
                              else " Sector feedback unavailable for this reference; lap feedback remains enabled.")
                 if named_source is not None:

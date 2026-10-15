@@ -261,11 +261,11 @@ def test_failed_compound_update_preserves_active_reference():
     assert "No fully observed valid radio lap" in radio.pending[-1].text
 
 
-def test_unavailable_scope_and_cancel_all_remove_best_inventory():
+def test_cancel_all_removes_best_inventory_but_silence_preserves_it():
     controller, radio, events, value = ready()
     assert controller.status()["pace_bests"]
     controller.handle_request("cancel all tracking", now=12)
     assert controller.status()["pace_bests"] == []
     controller, radio, events, value = ready()
     controller.feed({"status": "unavailable", "reason": "telemetry_silence"}, now=12.1)
-    assert controller.status()["pace_bests"] == []
+    assert controller.status()["pace_bests"]

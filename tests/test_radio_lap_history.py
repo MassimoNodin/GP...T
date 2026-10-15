@@ -168,7 +168,7 @@ def test_opponent_history_is_fenced_per_driver(fault):
     assert value["drivers"][0]["identity"] == other_identity
 
 
-@pytest.mark.parametrize("fault", ["session", "stale", "event_gap", "cursor_reset"])
+@pytest.mark.parametrize("fault", ["session", "event_gap", "cursor_reset"])
 def test_all_history_is_cleared_on_global_context_loss(fault):
     controller, radio, events, value = opponent_ready()
     if fault == "stale":
