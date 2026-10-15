@@ -584,6 +584,8 @@ def _api(args: argparse.Namespace) -> int:
             engineer_ai_provider=args.engineer_ai_provider,
             codex_executable=args.codex_executable,
             codex_home=args.codex_home,
+            speech_provider=args.speech_provider,
+            openai_api_key_file=args.openai_api_key_file,
         ),
         host="127.0.0.1",
         port=args.port,
@@ -1101,6 +1103,10 @@ def build_parser() -> argparse.ArgumentParser:
     api.add_argument("--codex-executable", default="codex", help="Codex CLI executable path")
     api.add_argument("--codex-home", default=None,
                      help="isolated subscription login profile; defaults beside the database")
+    api.add_argument("--speech-provider", choices=("local", "openai"), default="local",
+                     help="radio transcription: local whisper.cpp, or OpenAI gpt-transcribe (separately billed API key)")
+    api.add_argument("--openai-api-key-file", default=None,
+                     help="owner-only file holding the OpenAI API key; defaults to .openai-api-key beside the database")
     api.add_argument("--detail-profile", choices=("full", "demand_v1"), default="full",
                      help="opt in to demand-driven live opponent detail")
     api.add_argument("--recordings-root", default="recordings", help="folder containing local .f1ecap files")

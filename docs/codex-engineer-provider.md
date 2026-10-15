@@ -100,6 +100,17 @@ basic punctuation, at most 300 bytes, never starting with a dash). Prompts can
 occasionally be echoed on near-silent audio; disable the hint with
 `--no-speech-hint` if transcripts start repeating names.
 
+### OpenAI transcription (optional)
+
+`f1-engineer api --speech-provider openai` replaces local whisper.cpp with OpenAI
+`gpt-transcribe` for radio transcription. Unlike the engineer and radio
+interpretation paths, this is not covered by the Codex subscription: it uses a
+separately billed OpenAI API key, and each recorded clip (plus the driver and
+corner hint) is sent to OpenAI. The key is read from an owner-only file
+(`chmod 600`), by default `.openai-api-key` beside the database, or
+`--openai-api-key-file`. It is never logged or returned by the API. The default
+remains `--speech-provider local`.
+
 ## Validation and remaining work
 
 The local CLI model catalog advertised `gpt-6-luna` on October 11, 2026.

@@ -48,6 +48,7 @@ from ..analysis.engineer_query import query_engineer_evidence
 from ..analysis.engineer_ask_service import answer_engineer_question
 from ..analysis.ollama_runtime import OllamaRuntime
 from ..analysis.codex_runtime import CodexRuntime
+from ..analysis.openai_speech import OpenAISpeechRuntime
 from ..radio.intents import MAX_CONTEXT_BYTES, MAX_TRANSCRIPT_BYTES, parse_context
 from ..analysis.engineer_runtime import EngineerRuntime, EngineerRuntimeUnavailable
 from ..analysis.race_diagnostics import build_session_race_diagnostics
@@ -1027,6 +1028,8 @@ def create_app(
     engineer_ai_provider: Literal["codex", "ollama"] = "codex",
     codex_executable: str = "codex",
     codex_home: str | Path | None = None,
+    speech_provider: Literal["local", "openai"] = "local",
+    openai_api_key_file: str | Path | None = None,
     automatic_acquisition: bool = True,
     evidence_database_path: str | Path | None = None,
     detail_profile: str = "full",
@@ -1094,9 +1097,15 @@ def create_app(
         if engineer_ai_provider == "codex"
         else OllamaRuntime(configured_database_path.parent / ".f1-engineer-ollama-model.json")
     )
-    local_speech_runtime = LocalSpeechRuntime(
-        configured_database_path.parent / ".f1-engineer-whisper-pin.json",
-        configured_database_path.parent / ".f1-engineer-speech",
+    if speech_provider not in ("local", "openai"):
+        raise ValueError("speech_provider_invalid")
+    local_speech_runtime = (
+        OpenAISpeechRuntime(openai_api_key_file or configured_database_path.parent / ".openai-api-key")
+        if speech_provider == "openai"
+        else LocalSpeechRuntime(
+            configured_database_path.parent / ".f1-engineer-whisper-pin.json",
+            configured_database_path.parent / ".f1-engineer-speech",
+        )
     )
     engineer_ask_lock = asyncio.Lock()
     engineer_activity = build_engineer_activity(configured_database_path, evidence_store, live_runtime)
@@ -3207,7 +3216,7 @@ def create_app(
                             "language": "en",
                             "verified": False,
                             "runtime": {
-                                "name": "whisper.cpp",
+                                "name": "OpenAI" if transcription.placement == "cloud" else "whisper.cpp",
                                 "version": transcription.runtime_version,
                                 "model_name": transcription.model_name,
                                 "model_sha256": transcription.model_sha256,
