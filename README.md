@@ -135,8 +135,10 @@ The dashboard and the radio share one backend and can run together.
   capture length) arrive on the radio's existing live poll, normally within a
   few hundred milliseconds. Nothing restarts: the current sentence, capture or
   request finishes, and each change applies at its next natural point. Until
-  something is saved the radio keeps its command-line values; once saved, the
-  dashboard values win. See [radio live settings](docs/radio-live-settings.md).
+  the Radio card is saved, the radio keeps its command-line values for voice,
+  rate, volume, modes and capture. Assistance preferences apply on their own,
+  including before that first save. After a Radio card save, those dashboard
+  values win. See [radio live settings](docs/radio-live-settings.md).
 - **Radio History includes the radio.** Questions asked on the radio and what
   it actually spoke appear on **Drive** with the **Radio** filter. See
   [radio activity history](docs/radio-activity-history.md).

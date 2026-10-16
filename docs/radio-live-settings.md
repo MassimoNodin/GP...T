@@ -11,7 +11,7 @@ interpreter, or playback task is restarted by a settings update.
 for the initial document:
 
 ```json
-{"api_version":"v2","status":"ok","reason":null,"data":{"schema_version":1,"revision":0,"proactive_mode":"rules","answer_mode":"intent","intent_mode":"luna","tts_engine":"edge","voice":null,"rate":0,"volume":100,"microphone":null,"cue_output":null,"cue_volume":0.08,"capture_seconds":8}}
+{"api_version":"v2","status":"ok","reason":null,"data":{"schema_version":1,"revision":0,"proactive_mode":"rules","answer_mode":"intent","intent_mode":"luna","tts_engine":"edge","voice":null,"rate":4,"volume":75,"microphone":null,"cue_output":null,"cue_volume":0.08,"capture_seconds":12}}
 ```
 
 `PUT` at the same path takes the complete `data` object **without**
