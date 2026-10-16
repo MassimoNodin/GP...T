@@ -910,7 +910,7 @@ def build_parser() -> argparse.ArgumentParser:
     radio.set_defaults(handler=_radio)
 
     radio_scenario = commands.add_parser("radio-scenario", help="replay offline synthetic proactive radio scenarios without hardware or model access")
-    radio_scenario.add_argument("--scenario", choices=("all", "closing", "pace", "quiet", "session-change"), default="all")
+    radio_scenario.add_argument("--scenario", choices=("all", "closing", "pace", "quiet", "session-change", "mid-lap", "busy-radio"), default="all")
     radio_scenario.add_argument("--log-file", help="optional timestamped JSONL scenario log")
     radio_scenario.set_defaults(handler=_radio_scenario)
 

@@ -29,7 +29,7 @@ class RadioMessage:
 
     @property
     def priority(self) -> int:
-        return 1 if self.kind == "answer" else 0
+        return 2 if self.kind == "answer" else 1 if self.owner == "automatic_gaps" else 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +103,7 @@ class RadioScheduler:
         self._seen[message.key] = None
         while len(self._seen) > 128:
             self._seen.popitem(last=False)
-        if self.active is not None and message.priority > self.active.priority:
+        if self.active is not None and message.kind == "answer" and message.priority > self.active.priority:
             self.playback.cancel()
             self._drop(self.active, "interrupted_by_answer")
             self.active = None
@@ -155,6 +155,12 @@ class RadioScheduler:
             self.playback.cancel()
             self.active = None
         self.pending.clear()
+
+    def cancel_pending(self, key, *, reason="development_superseded") -> None:
+        for message in tuple(self.pending):
+            if message.key == key:
+                self.pending.remove(message)
+                self._drop(message, reason)
 
     def cancel_owner(self, owner: str) -> None:
         if (self.active is not None and self.active.owner == owner

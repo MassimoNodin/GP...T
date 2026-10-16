@@ -5,10 +5,18 @@ from copy import deepcopy
 from .command import DryRunPlayback
 from .controller import RadioController
 from .diagnostics import emit, radio_event_log
-from .scheduler import RadioScheduler
+from .scheduler import RadioMessage, RadioScheduler
 
 
-SCENARIOS = ("closing", "pace", "quiet", "session-change")
+SCENARIOS = ("closing", "pace", "quiet", "session-change", "mid-lap", "busy-radio")
+
+
+class ScenarioPlayback(DryRunPlayback):
+    now = 0.0
+    busy_until = 0.0
+
+    def busy(self):
+        return self.now < self.busy_until
 
 
 def _snapshot():
@@ -40,15 +48,33 @@ def play_scenario(name, *, notify):
         if event.get("event") == "radio_proactive_started":
             automatic_starts += 1
         notify({"scenario": name, **event})
-    radio = RadioScheduler(DryRunPlayback(), notify=record)
+    playback = ScenarioPlayback()
+    radio = RadioScheduler(playback, notify=record)
     controller = RadioController(radio, notify=record)
     value = _snapshot()
+    if name in ("mid-lap", "busy-radio"):
+        value["drivers"][2]["lap"]["delta_to_car_in_front_ms"] = 5000
     now = 0.0
     controller.feed(value, now=now)
     if name == "quiet":
         radio.quiet()
     durations = (99000, 100000, 100300, 100700) if name == "pace" else (100000,) * (4 if name == "quiet" else 3)
+    if name in ("mid-lap", "busy-radio"):
+        durations = ()
     try:
+        if name in ("mid-lap", "busy-radio"):
+            for index in range(1, 35):
+                now = playback.now = float(index)
+                value["received_monotonic_ns"] += 1_000_000_000
+                value["drivers"][2]["lap"]["delta_to_car_in_front_ms"] = 5000 - index * 30
+                if name == "busy-radio" and index == 29:
+                    playback.busy_until = 32
+                    radio.submit(RadioMessage("answer:scenario", radio.scope, "Your last lap comparison.",
+                                              "answer", now + 10), now=now)
+                    radio.tick(now=now)
+                controller.feed(value, now=now)
+                controller.poll_proactive(now=now)
+                radio.tick(now=now)
         for index, duration in enumerate(durations):
             number = index + 3
             gap = 8000 if name == "pace" else 4000 - index * 400
@@ -63,6 +89,7 @@ def play_scenario(name, *, notify):
                                       total_distance_m=distance, lap_distance_m=distance % 5000,
                                       current_lap_time_ms=elapsed)
                 controller.feed(value, now=now)
+                controller.poll_proactive(now=now)
                 radio.tick(now=now)
             now += 1
             value["received_monotonic_ns"] += 1_000_000_000
@@ -85,7 +112,7 @@ def play_scenario(name, *, notify):
             radio.tick(now=now)
             if name == "quiet" and index == 2:
                 radio.muted = False
-        expected = 1 if name in ("closing", "pace") else 0
+        expected = 1 if name in ("closing", "pace", "mid-lap", "busy-radio") else 0
         success = automatic_starts == expected
         notify({"event": "radio_scenario_complete", "scenario": name,
                 "automatic_starts": automatic_starts, "expected_automatic_starts": expected,

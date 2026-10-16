@@ -125,7 +125,7 @@ def test_model_selection_reuses_dispatch_revalidation_and_original_deadline():
     assert not closing(controller, radio, value)
     assert len(captured) == 1 and not radio.pending
     controller.poll_proactive(now=13.2)
-    assert radio.pending[0].expires_at <= 23
+    assert radio.pending[0].dispatch_before <= 23
     value["drivers"][2]["lap"]["pit_status_id"] = 1
     controller.feed(value, now=13.3)
     assert not radio.pending

@@ -14,6 +14,10 @@ def test_synthetic_scenario_uses_the_real_controller_and_scheduler(name):
         assert any(event.get("event") == "radio_started" and "car behind is closing" in event["text"] for event in events)
     elif name == "pace":
         assert any(event.get("event") == "radio_started" and "getting slower" in event["text"] for event in events)
+    elif name in ("mid-lap", "busy-radio"):
+        assert any(event.get("event") == "radio_started" and "over 30 seconds" in event["text"] for event in events)
+        if name == "busy-radio":
+            assert any(event.get("reason") == "radio_busy" for event in events)
 
 
 def test_cli_exposes_proactive_modes_and_offline_scenarios():

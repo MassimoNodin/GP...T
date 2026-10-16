@@ -14,7 +14,8 @@ from .questions import QuestionPlan, SESSION_FACTS, UNAVAILABLE_FACTS, plan_ques
 from .scheduler import RadioMessage, RadioScheduler
 from .tasks import LapReportRegistry, TaskAction, parse_task_request
 from .watches import RaceWatchTracker
-from .proactive import PaceNotice, ProactiveGapTracker, ProactivePaceTracker, ProactiveSpeechPolicy
+from .proactive import (EVALUATION_INTERVAL_S, NOTICE_LIFETIME_S, PaceNotice,
+                        ProactiveGapTracker, ProactivePaceTracker, ProactiveSpeechPolicy)
 from .pace import PaceReference, PaceTracker
 from .lap_history import FieldLapHistory
 from .conversation import ConversationMemory, QuestionContext, TaskContext
@@ -85,9 +86,12 @@ class RadioController:
         self.tasks = LapReportRegistry(notify=self.notify)
         self.gaps = LapGapTracker()
         self.watches = RaceWatchTracker()
-        self.proactive = ProactiveGapTracker()
+        self.proactive = ProactiveGapTracker(notify=self.notify)
         self.automatic_pace = ProactivePaceTracker()
         self.proactive_policy = ProactiveSpeechPolicy()
+        self._developments = {}
+        self._development_attempt = 0
+        self._next_evaluation = None
         self.pace = PaceTracker()
         self.lap_history = FieldLapHistory()
         self.pit_benchmarks = PitBenchmarkTracker()
@@ -302,6 +306,8 @@ class RadioController:
                          and context_value.get("session_type") in ("race", "race_2", "race_3"))
         self.proactive.observe(self._player, self._resolve_target, now=now, age_s=age,
                                track_length_m=self._track_length_m, eligible=race_eligible)
+        if self._next_evaluation is None and race_eligible:
+            self._next_evaluation = now + EVALUATION_INTERVAL_S
         self.automatic_pace.observe(self.pace, eligible=race_eligible, now=now, age_s=age)
         for message in tuple(self.scheduler.pending):
             if message.owner == "automatic_gaps" and message.dispatch_guard is not None:
@@ -430,7 +436,8 @@ class RadioController:
             if event.get("previous_observed_invalid") == 1:
                 text += " Observed invalid."
             self.scheduler.submit(RadioMessage(f"lap:{event['id']}", binding, text, "proactive",
-                                              now + 10 - event_age, observation_age_s=event_age), now=now)
+                                              now + 10 - event_age, observation_age_s=event_age,
+                                              owner="lap_time"), now=now)
         self._cursor = cursor
         number = player["lap"].get("current_lap_number")
         if _integer(number, 1, 255):
@@ -447,6 +454,8 @@ class RadioController:
             raise ValueError("invalid proactive mode")
         if mode != self.proactive_mode:
             self.proactive_mode = mode
+            self._clear_developments("mode_changed")
+            self._next_evaluation = None
             self.proactive.clear()
             self.automatic_pace.clear()
             self.scheduler.cancel_owner("automatic_gaps")
@@ -470,59 +479,155 @@ class RadioController:
                 return "driver_workload"
         return None
 
-    def poll_proactive(self, *, now):
-        if self.selector is None:
-            return
-        if (self.proactive_mode != "model" or self.scheduler.muted or self.scheduler.suspended
-                or self._player is None or self._paused):
-            self.selector.cancel()
-            return
-        result = self.selector.poll(scope=self.scheduler.scope, now=now)
-        if result is not None:
-            notice, event, deadline = result
-            age = self._age_s + now - self._received_at
-            self._report_proactive([notice], event, now=now, age=age, reported=False,
-                                   selected=True, deadline=deadline)
+    def _clear_developments(self, reason):
+        for topic in tuple(self._developments):
+            self._drop_development(topic, reason)
 
-    def _report_proactive(self, notices, event, *, now, age, reported, selected=False, deadline=None):
-        queued = False
-        deferred = []
-        for notice in notices:
-            reason = ("explicit_report" if reported else "higher_ranked_development" if queued else
-                      "quiet" if self.scheduler.muted else "listening" if self.scheduler.suspended else
-                      self._validate_proactive(notice, now=now) or
-                      self.proactive_policy.suppression(notice, now=now))
-            if reason is None and (self.scheduler.active is not None
-                                   or any(message.owner != "automatic_gaps" for message in self.scheduler.pending)):
-                reason = "radio_busy"
-            if reason is not None:
-                self.notify({"event": "radio_proactive_suppressed", "reason": reason, **notice.evidence()})
-                continue
-            if self.proactive_mode == "model" and not notice.rank[0] and not selected:
-                deferred.append(notice)
-                continue
+    def _drop_development(self, topic, reason):
+        entry = self._developments.pop(topic, None)
+        if entry is not None:
+            self.scheduler.cancel_pending(entry.get("queue_key"))
+            self.notify({"event": "radio_proactive_discarded", "reason": reason, **entry["notice"].evidence()})
+
+    def _defer_development(self, entry, reason):
+        if entry.get("reason") != reason:
+            entry["reason"] = reason
+            self.notify({"event": "radio_proactive_deferred", "reason": reason, **entry["notice"].evidence()})
+
+    def poll_proactive(self, *, now):
+        notices = []
+        if (self.proactive_mode != "off" and self._player is not None and not self._paused
+                and self._next_evaluation is not None and now >= self._next_evaluation):
+            self._next_evaluation = now + EVALUATION_INTERVAL_S
+            started = time.perf_counter()
+            notices = self.proactive.evaluate(now=now)
+            self.notify({"event": "radio_proactive_evaluation", "candidates": len(notices),
+                         "duration_ms": (time.perf_counter() - started) * 1000})
+        if (self.proactive_mode == "off" or self.scheduler.muted or self.scheduler.suspended
+                or self._player is None or self._paused):
+            self._clear_developments("quiet" if self.scheduler.muted else
+                                     "listening" if self.scheduler.suspended else "inactive")
             if self.selector is not None:
                 self.selector.cancel()
+            for notice in notices:
+                self.notify({"event": "radio_proactive_suppressed",
+                             "reason": "quiet" if self.scheduler.muted else "listening", **notice.evidence()})
+            return
+        if self.selector is not None and self.proactive_mode == "model":
+            result = self.selector.poll(scope=self.scheduler.scope, now=now)
+            if result is not None:
+                notice, event, deadline = result
+                topic = (notice.kind, notice.role)
+                entry = self._developments.get(topic)
+                if entry is not None and entry["notice"] == notice:
+                    entry["selected"] = True
+                    entry["expires_at"] = min(entry["expires_at"], deadline)
+            decision = getattr(self.selector, "last_decision", None)
+            for topic, entry in tuple(self._developments.items()):
+                generation = entry.get("selection_generation")
+                if generation is not None and decision is not None and decision[0] == generation and not entry["selected"]:
+                    self._drop_development(topic, "model_silence")
+                elif generation is not None and generation != getattr(self.selector, "generation", generation):
+                    self._drop_development(topic, "selection_cancelled")
+        if notices:
+            self._report_proactive(notices, {"id": f"window-{self._development_attempt}"},
+                                   now=now, age=self._age_s + now - self._received_at, reported=False)
+        self._dispatch_developments(now=now)
+
+    def _dispatch_developments(self, *, now):
+        queued = False
+        for topic, entry in sorted(tuple(self._developments.items()), key=lambda item: item[1]["notice"].rank, reverse=True):
+            notice = entry["notice"]
+            reason = ("expired" if now >= entry["expires_at"] else
+                      "scope_changed" if entry["scope"] != self.scheduler.scope else
+                      self._validate_proactive(notice, now=now))
+            if reason is not None and reason != "driver_workload":
+                self._drop_development(topic, reason)
+                continue
+            if reason is None:
+                reason = self.proactive_policy.suppression(notice, now=now)
+            if any(message.key == entry.get("queue_key") for message in self.scheduler.pending):
+                queued = True
+                continue
+            if reason is None and not entry["selected"]:
+                reason = "awaiting_selection"
+            if reason is None and queued:
+                reason = "higher_ranked_development"
+            if reason is None and (self.scheduler.active is not None or
+                    any(message.owner not in ("automatic_gaps", "lap_time")
+                        and not message.key.startswith("lap:") for message in self.scheduler.pending)):
+                reason = "radio_busy"
+            if reason is not None:
+                self._defer_development(entry, reason)
+                continue
             self.scheduler.cancel_owner("automatic_gaps")
-            key = f"automatic-{notice.kind}:{event['id']}:{notice.role}"
-            def guard(dispatch_now, candidate=notice):
-                return (self._validate_proactive(candidate, now=dispatch_now)
+            for message in tuple(self.scheduler.pending):
+                if message.owner == "lap_time" or message.key.startswith("lap:"):
+                    self.scheduler.cancel_pending(message.key, reason="replaced_by_development")
+            self._development_attempt += 1
+            key = f"automatic-{notice.kind}:{self._development_attempt}:{notice.role}"
+            entry["queue_key"] = key
+            def guard(dispatch_now, candidate=notice, retained=entry):
+                return ("expired" if dispatch_now >= retained["expires_at"] else
+                        self._validate_proactive(candidate, now=dispatch_now)
                         or self.proactive_policy.suppression(candidate, now=dispatch_now))
-            def started(dispatch_now, candidate=notice, message_key=key):
+            def started(dispatch_now, candidate=notice, message_key=key, retained=entry, retained_topic=topic):
                 self.proactive_policy.record_started(candidate, now=dispatch_now)
+                if self._developments.get(retained_topic) is retained:
+                    del self._developments[retained_topic]
                 self.notify({"event": "radio_proactive_started", "key": message_key, **candidate.evidence()})
+            age = self._age_s + now - self._received_at
+            event = entry["event"]
+            text = notice.text
+            if isinstance(notice, PaceNotice) and _integer(event.get("lap_time_ms"), 1, 2**32 - 1):
+                text = lap_message(event["lap_number"], event["lap_time_ms"]) + " " + text
             queued = self.scheduler.submit(RadioMessage(
-                key, self.scheduler.scope, notice.text, "proactive",
-                min(now + 10 - age, deadline) if deadline is not None else now + 10 - age,
-                observation_age_s=age, dispatch_before=now + 3 - age, owner="automatic_gaps",
+                key, self.scheduler.scope, text, "proactive", entry["expires_at"] + 30,
+                observation_age_s=age, dispatch_before=entry["expires_at"], owner="automatic_gaps",
                 dispatch_guard=guard, on_started=started), now=now)
             self.notify({"event": "radio_proactive_candidate", "key": key, "queued": queued,
                          "observation_age_s": age, **notice.evidence()})
-        if deferred and not queued:
-            if self.selector is not None:
-                return self.selector.submit(tuple(deferred), event, scope=self.scheduler.scope, now=now)
-            self.notify({"event": "radio_strategy_unavailable", "reason": "selector_not_configured"})
         return queued
+
+    def _report_proactive(self, notices, event, *, now, age, reported, selected=False, deadline=None):
+        deferred = []
+        admitted = False
+        for notice in notices:
+            reason = ("quiet" if self.scheduler.muted else
+                      "listening" if self.scheduler.suspended else self._validate_proactive(notice, now=now))
+            if reason in (None, "driver_workload") and self.proactive_policy.suppression(notice, now=now) == "outside_attention_range":
+                reason = "outside_attention_range"
+            if reason is not None and reason != "driver_workload":
+                self.notify({"event": "radio_proactive_suppressed", "reason": reason, **notice.evidence()})
+                continue
+            topic = (notice.kind, notice.role)
+            if topic in self._developments:
+                self._drop_development(topic, "replaced_by_newer_development")
+            entry = {"notice": notice, "event": dict(event), "scope": self.scheduler.scope,
+                     "expires_at": min(now + NOTICE_LIFETIME_S - age, deadline) if deadline is not None
+                     else now + NOTICE_LIFETIME_S - age,
+                     "selected": selected or self.proactive_mode != "model" or notice.rank[0]}
+            self._developments[topic] = entry
+            admitted = True
+            self.notify({"event": "radio_proactive_detected", **notice.evidence()})
+            if reported:
+                self._defer_development(entry, "explicit_report")
+            if not entry["selected"]:
+                deferred.append(notice)
+        if deferred:
+            if self.selector is not None:
+                if self.selector.submit(tuple(deferred), event, scope=self.scheduler.scope, now=now):
+                    for notice in deferred:
+                        self._developments[notice.kind, notice.role]["selection_generation"] = getattr(self.selector, "generation", None)
+                else:
+                    for notice in deferred:
+                        self._drop_development((notice.kind, notice.role), "selection_unavailable")
+            else:
+                self.notify({"event": "radio_strategy_unavailable", "reason": "selector_not_configured"})
+                for notice in deferred:
+                    self._drop_development((notice.kind, notice.role), "selector_not_configured")
+        self._dispatch_developments(now=now)
+        return admitted and any((notice.kind, notice.role) in self._developments for notice in notices)
 
     def region_capture_requests(self):
         if not self._backend_regions or self._player is None or self.scheduler.scope is None:
@@ -760,6 +865,8 @@ class RadioController:
                                                    if key != "action"} if self._pending_region is not None else None),
                 "watches": self.watches.views(),
                 "proactive_mode": self.proactive_mode,
+                "proactive_evaluation_interval_s": EVALUATION_INTERVAL_S,
+                "retained_developments": len(self._developments),
                 "strategy_running": bool(self.selector is not None and self.selector.thread is not None
                                          and self.selector.thread.is_alive()),
                 "automatic_pace": {"trend": self.automatic_pace.trend,
@@ -920,6 +1027,8 @@ class RadioController:
             self._tracking_notice = None
 
     def _reset_gaps(self) -> None:
+        self._clear_developments("observation_continuity_lost")
+        self._next_evaluation = None
         if self.selector is not None:
             self.selector.cancel()
         self.proactive.clear()

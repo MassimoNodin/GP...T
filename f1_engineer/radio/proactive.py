@@ -9,6 +9,10 @@ from .gaps import integer
 from .watches import RaceWatchTracker
 
 
+EVALUATION_INTERVAL_S = 15.0
+NOTICE_LIFETIME_S = 20.0
+
+
 @dataclass(frozen=True, slots=True)
 class GapNotice:
     role: str
@@ -20,6 +24,7 @@ class GapNotice:
     change_ms: int
     near: bool
     boundaries: tuple[tuple[int, int], ...] = ()
+    sample_times_ms: tuple[int, ...] = ()
 
     @property
     def kind(self):
@@ -35,15 +40,17 @@ class GapNotice:
                    ("behind", "closing"): "The car behind is closing",
                    ("ahead", "opening"): "The car ahead is pulling away",
                    ("behind", "opening"): "You are pulling away from the car behind"}
+        window = (f"over {self.sample_times_ms[-1] / 1000:.0f} seconds."
+                  if self.sample_times_ms else "over two laps.")
         return (f"{actions[self.role, self.trend]}. Gap {self.gap_ms / 1000:.1f} seconds, "
                 f"{'down' if self.change_ms < 0 else 'up'} {abs(self.change_ms) / 1000:.1f} "
-                "over two laps.")
+                f"{window}")
 
     def evidence(self):
         return {"kind": self.kind, "role": self.role, "subject": self.subject, "trend": self.trend,
                 "lap_number": self.lap_number, "gap_ms": self.gap_ms,
                 "change_ms": self.change_ms, "near": self.near,
-                "boundaries": self.boundaries}
+                "boundaries": self.boundaries, "sample_times_ms": self.sample_times_ms}
 
 
 @dataclass
@@ -57,14 +64,20 @@ class GapState:
     near: bool = False
     attention: bool = False
     revision: int = 0
+    window: deque = field(default_factory=lambda: deque(maxlen=46))
+    basis: str | None = None
+    window_neutral: int = 0
 
 
 class ProactiveGapTracker:
-    def __init__(self):
+    def __init__(self, *, notify=None):
+        self.notify = notify or (lambda event: None)
         self._revision = 0
         self.clear()
 
-    def clear(self):
+    def clear(self, reason="observation_continuity_lost"):
+        for role in getattr(self, "states", {}):
+            self.notify({"event": "radio_proactive_history_reset", "role": role, "reason": reason})
         self.states = {}
         self.number = None
         self.received_at = None
@@ -81,7 +94,7 @@ class ProactiveGapTracker:
         self.number, self.received_at, self.age_s = number, now, age_s
         for role in ("ahead", "behind"):
             row = resolve(role)
-            sample, token, _reason = RaceWatchTracker.sample(
+            sample, token, reason = RaceWatchTracker.sample(
                 player, row, resolve, track_length_m=track_length_m)
             distances = [participant["lap"].get("total_distance_m")
                          for participant in (player, row) if participant is not None]
@@ -92,16 +105,61 @@ class ProactiveGapTracker:
             if (sample is None or not physical or sample[0] != role
                     or not 0 < abs(distances[1] - distances[0]) < track_length_m
                     or (distances[1] > distances[0]) != (role == "ahead")):
-                self.states.pop(role, None)
+                if self.states.pop(role, None) is not None:
+                    self.notify({"event": "radio_proactive_history_reset", "role": role,
+                                 "reason": reason or "physical_order_unavailable"})
                 continue
             subject = json.dumps(row["identity"], sort_keys=True, separators=(",", ":"))
             state = self.states.get(role)
             if (state is None or state.subject != subject or state.token != token
                     or sample[2] - state.sample[2] not in (0, 1)):
                 self._revision += 1
+                if state is not None:
+                    self.notify({"event": "radio_proactive_history_reset", "role": role,
+                                 "reason": "subject_or_race_order_changed"})
                 state = GapState(subject, token, sample, revision=self._revision)
                 self.states[role] = state
             state.sample = sample
+            observed_at = now - age_s
+            if not state.window or observed_at - state.window[-1][0] >= 0.999:
+                state.window.append((observed_at, number, sample[1]))
+
+    def evaluate(self, *, now):
+        if self.received_at is None or not 0 <= now - self.received_at + self.age_s < 3:
+            return []
+        notices = []
+        for role, state in self.states.items():
+            samples = [sample for sample in state.window if sample[0] >= state.window[-1][0] - 30.001]
+            if len(samples) < 20 or not 28.999 <= samples[-1][0] - samples[0][0] <= 30.001:
+                continue
+            middle = min(samples[1:-1], key=lambda sample: abs(sample[0] - (samples[0][0] + samples[-1][0]) / 2))
+            boundaries = (samples[0], middle, samples[-1])
+            changes = [boundaries[index][2] - boundaries[index - 1][2] for index in (1, 2)]
+            total = sum(changes)
+            trend = ("closing" if max(changes) <= -200 and total <= -600 else
+                     "opening" if min(changes) >= 200 and total >= 600 else None)
+            if trend is None:
+                state.window_neutral += 1
+                if state.window_neutral >= 2 and state.trend is not None and state.basis == "window":
+                    state.trend = None
+                    state.near = state.attention = False
+                    self._revision += 1
+                    state.revision = self._revision
+                continue
+            gap = samples[-1][2]
+            near = trend == "closing" and gap <= (2500 if state.near else 2000)
+            attention = gap <= (11_000 if state.attention else 10_000)
+            changed = trend != state.trend or near and not state.near or attention and not state.attention
+            state.trend, state.near, state.attention, state.window_neutral = trend, near, attention, 0
+            if changed:
+                state.basis = "window"
+                self._revision += 1
+                state.revision = self._revision
+                notices.append(GapNotice(role, state.subject, state.revision, trend, self.number,
+                                         gap, total, near,
+                                         tuple((sample[1], sample[2]) for sample in boundaries),
+                                         tuple(round((sample[0] - samples[0][0]) * 1000) for sample in boundaries)))
+        return sorted(notices, key=lambda notice: notice.rank, reverse=True)
 
     def complete(self, number):
         notices = []
@@ -151,6 +209,7 @@ class ProactiveGapTracker:
             changed = (trend != state.trend or near and not state.near
                        or attention and not state.attention)
             state.trend, state.near, state.neutral_boundaries = trend, near, 0
+            state.basis = "laps"
             state.attention = attention
             self._revision += 1
             state.revision = self._revision

@@ -177,6 +177,8 @@ def test_repeated_source_event_does_not_queue_another_automatic_call():
 def test_stable_boundaries_rearm_a_resolved_trend():
     controller, radio, events, value = automatic_live()
     assert closing(controller, radio, value)
+    radio.tick(now=13)
+    controller.proactive_policy.clear()
     for index, gap in enumerate((3200, 3200, 3200, 2800), start=3):
         assert not step(controller, radio, value, index, behind=gap)
     assert step(controller, radio, value, 7, behind=2400)

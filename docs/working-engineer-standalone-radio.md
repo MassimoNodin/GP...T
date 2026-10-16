@@ -286,10 +286,18 @@ the speech provider remains unchanged.
 Automatic observations require a scoped, available race/race-2/race-3 context,
 verified unique driver positions, active racing status, no pit status, known
 track length and physically consistent total distances less than one lap apart.
-Missing evidence is silent. Three consecutive comparable player lap boundaries
-are required: both gap changes must be at least 100 ms in the same direction,
+Missing evidence is silent. The lap-based detector requires three consecutive
+comparable player lap boundaries: both gap changes must be at least 100 ms in the same direction,
 with at least 300 ms total movement across the two intervals. This describes
 observed gap movement, not a clean-air pace prediction or a DRS eligibility claim.
+
+A separate rules clock evaluates roughly every 15 seconds using bounded,
+one-second gap samples. Roughly 30 seconds of continuous evidence, at least
+20 samples, two same-direction half-window changes of at least 200 ms, and at
+least 600 ms total movement can qualify a mid-lap notice. Spoken text and model
+selection evidence explicitly distinguish this time window from a lap comparison.
+The clock does not make unconditional model calls. See
+docs/proactive-radio-validation.md for thresholds and lifecycle diagnostics.
 
 The detector announces a newly closing/opening trend, not each unchanged sample.
 Two neutral boundaries re-arm a resolved trend. Small changes use hysteresis
@@ -304,8 +312,12 @@ rather than adding a second utterance.
 The initial speech limits are a 30-second global cooldown, 90 seconds per
 ahead/behind topic, and at most two automatic starts in a rolling 120 seconds.
 These limits apply to automatic gap notices, not requested answers or existing
-task reports. Calls outside ten seconds, while the radio is busy, quiet or
-listening, or after the budget is exhausted are discarded, not saved for later.
+task reports. Calls outside ten seconds or while quiet/listening are discarded.
+Busy speech, high driver workload and cooldowns defer an eligible development
+for at most 20 seconds. At most three topics are retained; a newer development
+replaces an older one on the same topic. Requested answers retain priority;
+automatic notices never interrupt active speech and replace unspoken default
+lap calls. Pace notices can combine the associated lap time and trend.
 Budget is charged when playback actually starts, not when a candidate is queued.
 These initial thresholds are policy defaults awaiting joint validation, not
 measured gameplay acceptance criteria.
@@ -313,7 +325,8 @@ measured gameplay acceptance criteria.
 Immediately before playback, the scheduler rechecks the candidate's driver,
 development revision, current observation freshness and speech budget. More
 than 500 ms of gap drift invalidates the queued wording. Dispatch must start
-within the original three-second evidence deadline. Session/player changes,
+with telemetry fresher than three seconds, even if detection happened earlier.
+The original notice must still match that live evidence. Session/player changes,
 pit entry, rival replacement, lap discontinuities and missing physical evidence
 invalidate observations. Quiet/resume never replays a suppressed development.
 Explicit repeat remains a historical replay and does not charge the automatic
@@ -329,9 +342,9 @@ This increment does not infer fuel, tyre or pit strategy, detect safety-car
 conditions, predict overtakes or identify a low-workload part of the circuit.
 It makes no tactical commands from these gap trends. Those capabilities need
 their own evidence and policy work before joining the automatic path.
-Scenario coverage is added in tests/test_radio_proactive.py, but is intentionally
-not executed yet: automated, replay and live validation are deferred until the
-conversion is complete and the user is ready to test together.
+Regression coverage includes tests/test_radio_proactive.py and
+tests/test_radio_proactive_clock.py, with hardware-free mid-lap and busy-radio
+scenarios. Automated checks do not establish live gameplay acceptance.
 
 ### Pace notices and controls
 
@@ -349,9 +362,9 @@ without disabling requested answers or scheduled reports. The console commands
 proactive off and proactive rules change this live; enabling it starts fresh
 evidence collection. Quiet/resume still controls all routine proactive speech.
 When fresh aligned brake/steering telemetry is available, automatic candidates
-are also rejected above 20 percent brake or 15 percent steering. Missing control
-telemetry does not claim a safe delivery window: the default remains a fresh
-lap-boundary notice, not circuit-aware timing.
+are also deferred above 20 percent brake or 15 percent steering. Missing control
+telemetry does not establish a safe straight; fresh evidence can still dispatch.
+Circuit-aware timing is not implemented.
 
 ### Optional background selection
 

@@ -1,17 +1,62 @@
 # Proactive radio: joint validation
 
-Implementation is split into gap detection, valid-lap pace/control policy,
-optional bounded model selection, and offline scenarios/operator integration.
-No automated test, scenario replay, live radio, microphone, wheel acquisition or
-model inference has been run as part of this conversion. The commands below are
-for the agreed joint validation session, not a record of passing results.
+Implementation includes lap-based and short-window gap detection, valid-lap
+pace/control policy, bounded notice retention, optional model selection, and
+offline scenarios. Commands below are the reproducible validation checklist;
+they are not evidence that a particular revision passed hardware acceptance.
+
+## Periodic evaluation and delivery
+
+The existing radio loop checks for a due evaluation every 15 seconds. It reads
+bounded, in-memory gap summaries; it does not open another telemetry stream or
+start a model request on each tick. Evaluation diagnostics record duration_ms
+and candidate counts so overhead can be measured during a live session.
+
+Short-window gaps require roughly 30 seconds of continuous, fresh evidence for
+the same adjacent driver, with at least 20 sampled observations. First, middle,
+and last samples must agree on direction: each half changes by at least 0.2
+seconds and the total by at least 0.6 seconds. Identity, position, pit/racing
+status, physical order, lapping, session, and freshness safeguards still apply.
+These are initial conservative thresholds, not a calibrated race strategy.
+Spoken text states the measured time window rather than calling it two laps.
+Pace notices still require three fully observed, valid, comparable laps.
+
+At most three developments are retained: ahead gap, behind gap, and own pace.
+Busy playback and driver workload defer delivery for up to 20 seconds from
+detection. Newer developments replace older ones on the same topic.
+Dispatch expiry is separate from the bounded playback timeout: a notice that
+starts just before its deadline is allowed to finish rather than being cut off.
+Before dispatch, the original evidence is revalidated against fresh telemetry; the
+three-second telemetry limit and 0.5-second gap-drift limit are not relaxed.
+Expiry, context changes, quiet/listening mode, and disabled proactive mode clear
+ineligible notices. Detection does not consume the announcement cooldown;
+playback start does. Quiet/listening still evaluates without retaining speech,
+so resume does not replay developments detected while muted.
+
+Driver answers can interrupt automatic speech. Automatic developments never
+interrupt an active lap time or answer; they retry through the existing radio
+loop after playback finishes, not after another 15-second evaluation. They
+replace unspoken default lap announcements, but requested task reports retain
+precedence. A pace notice detected at a lap boundary can combine its trend and
+that lap time into one call. Existing global/topic cooldowns and chatter budgets
+remain in force.
+
+Model mode submits only new eligible candidates, using the existing single-flight
+selector, timeout, foreground cancellation, and 15-second admission limit.
+Silence is terminal for that selection; it does not trigger another model call
+on every radio-loop iteration. Rolling candidates carry explicit sample_times_ms
+so the selector cannot confuse time windows with completed-lap comparisons.
+
+Inspect radio_proactive_evaluation, radio_proactive_history_reset,
+radio_proactive_detected, radio_proactive_deferred, radio_proactive_discarded,
+radio_proactive_candidate, and radio_proactive_started for the full lifecycle.
 
 ## 1. Automated checks when ready
 
 From the repository root, start with the new scenarios and protocol boundaries:
 
 ```powershell
-uv run --extra app --extra dev pytest tests/test_radio_proactive.py tests/test_radio_proactive_selection.py tests/test_radio_scenarios.py -q
+uv run --extra app --extra dev pytest tests/test_radio_proactive.py tests/test_radio_proactive_clock.py tests/test_radio_proactive_selection.py tests/test_radio_scenarios.py -q
 ```
 
 Then run the adjacent radio/provider regressions and finally the full suite:
@@ -36,10 +81,11 @@ RadioScheduler with a simulated monotonic clock. It never contacts the backend,
 opens wheel/microphone devices, produces audio or calls a model. It does not
 validate UDP parsing, game telemetry or hardware latency.
 
-Each radio_scenario_complete record should report success true. Closing and pace
-expect one automatic start each. Quiet and session-change expect zero. The
-command exits 2 if an expected automatic-start count differs. Run one scenario
-with --scenario closing, pace, quiet or session-change to inspect its logs.
+Each radio_scenario_complete record should report success true. Closing, pace,
+mid-lap and busy-radio expect one automatic start each. Quiet and session-change
+expect zero. The command exits 2 if an expected automatic-start count differs.
+Use --scenario mid-lap for periodic detection without a completed lap, or
+--scenario busy-radio for an answer blocking a notice until playback finishes.
 Quiet continues collecting evidence but must not replay the suppressed trend
 after resume. Session-change invalidates a queued call before dispatch.
 
@@ -87,8 +133,9 @@ Keep the radio connected throughout the observation window.
 - Gap: observe at least three comparable player lap boundaries with the same
   adjacent driver, known active racing status and no pit/lapping discontinuity.
   A consistent gain/loss of at least 0.1 seconds on each interval and 0.3 seconds
-  overall qualifies. Expect a new trend notice within ten seconds of gap range,
-  not a repeated commentary on each subsequent unchanged lap.
+  overall qualifies. Short-window detection can also qualify after roughly 30
+  seconds without a lap boundary, using the stricter thresholds above. Expect
+  a new development, not repeated commentary on each unchanged sample.
 - Pace: allow the startup partial lap to complete, then at least three complete
   valid laps on one known compound. Both lap-time changes must be at least
   0.2 seconds in the same direction and total at least 0.6 seconds. Expect a
@@ -98,6 +145,10 @@ Keep the radio connected throughout the observation window.
   obey a 30-second global cooldown, 90 seconds per topic and two starts per
   rolling 120 seconds. Existing requested reports and default lap calls are
   not charged to this additional-coaching budget.
+- Busy radio: ask for a comparison while a development qualifies. The answer
+  must finish without interruption; the development should follow if still
+  valid within its 20-second retention period. Repeat with a routine lap time
+  already playing. A pending, unspoken default lap should be replaced instead.
 - Controls: try status, proactive off, proactive rules, quiet, resume, cancel
   and repeat. Off disables only automatic gap/pace coaching; quiet suppresses
   routine speech including default lap calls. Explicit answers remain allowed.
@@ -107,9 +158,10 @@ Keep the radio connected throughout the observation window.
   evidence must be collected again. Never deliberately compromise wheel access
   to simulate a telemetry outage.
 
-Fresh aligned control telemetry suppresses automatic dispatch above 20 percent
-brake or 15 percent steering. Missing control telemetry is not treated as proof
-of low workload: ordinary delivery is still a fresh lap-boundary call.
+Fresh aligned control telemetry defers automatic dispatch above 20 percent
+brake or 15 percent steering. Missing control telemetry does not identify a safe
+straight; dispatch can still occur on fresh racing evidence. Circuit-aware
+delivery timing is not implemented.
 If the saved wheel reader affects game controls, stop the radio immediately;
 do not start discovery or automatic restarts while diagnosing it.
 
