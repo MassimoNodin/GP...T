@@ -24,7 +24,10 @@ uv run --extra app --extra radio f1-engineer radio
 access or audio playback. `--once` fetches and validates one snapshot without
 audio; it exits with 0 for available data and 2 for unavailable data. `--dry-run`
 runs the event/command loop and emits JSON diagnostics without playing audio.
-Normal mode speaks through a hidden persistent PowerShell/System.Speech helper.
+Normal mode uses the online Edge neural voice en-AU-WilliamNeural with local
+playback, falling back to a hidden PowerShell/System.Speech helper if unavailable.
+Install the radio extra for neural speech. Text spoken through Edge is sent to
+the online speech service; choose Windows speech for local-only synthesis.
 
 The default API address is `http://127.0.0.1:8765` and the default token file is
 `data/.f1-engineer-control-token`. For an already-established split-host tunnel:
@@ -39,10 +42,74 @@ create the tunnel, start or upgrade the backend, or deploy production services.
 Use the approved deployment workflow if the backend lacks the live endpoint.
 Never place tokens in command arguments or share token files in diagnostics.
 
-Optional settings: `--voice "Microsoft Hazel Desktop"`, `--rate 0`,
-`--volume 100`, and `--poll-interval 0.25`. Select a voice reported by
-`--list-voices`; rate is -10 to 10, volume 0 to 100, and polling 0.1 to 1 second.
-The helper does not change Windows default voice settings.
+Optional settings: `--voice en-AU-WilliamNeural`, `--rate 4`, `--volume 100`,
+and `--poll-interval 0.25`. The default rate is 4 (about 1.55x); rate is -10 to 10,
+volume 0 to 100, and polling 0.1 to 1 second. For installed local voices, use
+`--tts-engine windows --voice "Microsoft Hazel Desktop" --rate 0`; choose a
+Windows voice reported by `--list-voices`. The launcher also accepts
+`-TtsEngine windows -Voice "Microsoft Hazel Desktop"`. Neither engine changes
+Windows default voice settings.
+
+## Experimental evidence-backed answers
+
+After updating both the backend and Windows client, opt into conversational answers:
+
+```powershell
+uv run --extra app --extra radio f1-engineer radio --answer-mode grounded
+```
+
+For the split-host launcher, use:
+
+```powershell
+.\scripts\start-standalone-radio.ps1 -AnswerMode grounded -Voice en-AU-WilliamNeural
+```
+
+This mode passes the original question to a single model turn with server-owned,
+validated live facts. It does not constrain questions to the timing intent menu.
+Replies can combine supported facts and explain missing evidence. The model still
+returns an internal envelope with evidence references; this is not spoken. Commands
+continue through the existing intent and task-mutation checks. Stop/repeat controls
+still bypass inference. The default remains `--answer-mode intent`; grounded mode
+requires `--intent-mode luna` and the new `/api/v2/engineer/radio-answer` backend.
+An older backend fails closed rather than silently changing answering modes.
+
+Grounded answers can run with any proactive mode. A foreground question preempts
+background model selection using the shared AI admission gate; proactive tracking
+and retained developments continue after the answer. For a combined live test, use
+`-AnswerMode grounded -ProactiveMode model` on the launcher and check both the
+answer and proactive events in the radio log.
+
+The backend rechecks cited facts after generation. The client checks scope, response
+expiry and cited facts against its current snapshot before queueing playback.
+Expired queued answers are dropped, but an answer already speaking is not cut off
+just because its dispatch deadline passes. Logs include the spoken answer, cited
+facts and source frame metadata.
+
+This is an experimental snapshot-based increment, not unrestricted tool access or
+accepted free-form coaching. It does not add forecast, fuel/ERS or multi-lap trend
+evidence. Numeric-literal and reference checks reject some unsupported claims but
+cannot prove semantic entailment, correct units, causality, or retention of every
+qualification. Spoken-number paraphrases are not fully machine-checked. Live model
+answer quality, latency, and telemetry coexistence still need evaluation. Rapidly
+changing cited facts can invalidate a reply during generation; no stale reply is
+substituted when that happens. General evidence retrieval is a follow-up slice.
+
+For live acceptance, ask the same questions in both modes and review the logged
+answer alongside its cited facts, not just whether it sounds natural:
+
+- Ask a compound question about your last lap, a uniquely named driver's lap and
+  current weather. Supported parts should be combined without inventing a diagnosis.
+- Ask whether rain is coming, why you lost time, and whether your last five laps
+  show improvement. Missing forecast, causal and trend evidence must be disclosed.
+- Rephrase supported questions in your own words; no fixed question wording should
+  be required in grounded mode.
+- Create and cancel a tracking task, then try quiet and repeat. Existing task
+  validation and instant local controls must remain intact.
+- Change session or let telemetry go stale during a question. The old answer must
+  not be substituted into the new session.
+
+Record answer usefulness, unsupported claims, omitted qualifications, refusal
+quality and end-to-end latency before considering grounded mode as the default.
 
 ## Logged split-host test launcher
 
