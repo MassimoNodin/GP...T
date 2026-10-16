@@ -125,6 +125,34 @@ Optional wheel-button learning and live reassignment use `radio-input` with
 without a backend, uploaded audio or saved recordings. Capture starts only on
 an explicit button press or console `listen` command.
 
+### Using the dashboard with the radio
+
+The dashboard and the radio share one backend and can run together.
+
+- **Settings reach the running radio live.** Assistance topics, interruption,
+  verbosity and depth, and the Radio card in **Settings › Voice & Controls**
+  (proactive and answer mode, voice, rate, volume, microphone, cue output and
+  capture length) arrive on the radio's existing live poll, normally within a
+  few hundred milliseconds. Nothing restarts: the current sentence, capture or
+  request finishes, and each change applies at its next natural point. Until
+  something is saved the radio keeps its command-line values; once saved, the
+  dashboard values win. See [radio live settings](docs/radio-live-settings.md).
+- **Radio History includes the radio.** Questions asked on the radio and what
+  it actually spoke appear on **Drive** with the **Radio** filter. See
+  [radio activity history](docs/radio-activity-history.md).
+- **One voice at a time.** While a radio is connected, Drive's "Read calls
+  aloud" stays switched on but does not speak. A call already queued or
+  playing is cancelled. Speech starts again after the radio disconnects.
+- **Speech recognition is selectable** in **Settings › Voice & Controls**: local
+  whisper.cpp (`tiny.en` or `large-v3`, CPU or CUDA, for each variant installed
+  with the setup script below) or OpenAI transcription. Switching needs no
+  restart; a clip already being transcribed finishes on its original runtime.
+  OpenAI needs an API key, added under **Settings › Connections › API keys**.
+  The key file sits beside the database. On Ubuntu it is owner-only; on
+  Windows, access relies on the data folder's permissions. The key itself is
+  never returned, and Settings shows only its last four characters.
+  The `--speech-provider` flag only sets the starting choice.
+
 ## Validation and diagnostics
 
 The first working-engineer backend increment exposes authenticated live facts
@@ -277,7 +305,11 @@ For a CUDA host, install the matching CUDA toolkit and build tools, then pass
 capability. `--cuda-host-compiler` can select a supported host compiler. The
 full large-v3 model requires several gigabytes of storage and GPU memory; build
 and inference fit depends on the GPU and other active GPU workloads.
-The API rereads this pin, so installing speech does not require a service
+Each model and device is pinned separately
+(`.f1-engineer-whisper-pin.<model>.<device>.json`), so several variants can be
+installed and chosen in the dashboard; an existing
+`.f1-engineer-whisper-pin.json` is still used for the variant it declares.
+The API rereads these pins, so installing speech does not require a service
 restart. A changed pin is refused unless you explicitly review and accept it
 with `--accept-runtime-update`. Microphone clips remain bounded to 12 seconds;
 transcripts are editable drafts, not verified telemetry evidence.
