@@ -79,7 +79,7 @@ def test_store_schema_wal_and_monotonic_ids(store):
                           session_id=SESSION, lap=3, related_id=first)
     assert (first, second) == (1, 2)
     with sqlite3.connect(store.path) as database:
-        assert database.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert database.execute("PRAGMA user_version").fetchone()[0] == 2
         assert database.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         with pytest.raises(sqlite3.DatabaseError):
             database.execute("UPDATE engineer_activity SET text='x'")

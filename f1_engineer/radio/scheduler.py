@@ -24,6 +24,7 @@ class RadioMessage:
     observation_age_s: float | None = None
     dispatch_before: float | None = None
     owner: str | None = None
+    related_id: int | None = None
     dispatch_guard: Callable[[float], str | None] | None = field(default=None, compare=False, repr=False)
     on_started: Callable[[float], None] | None = field(default=None, compare=False, repr=False)
 
@@ -47,6 +48,7 @@ class RadioScheduler:
         self.queue_limit = queue_limit
         self.notify = notify or (lambda event: None)
         self.scope: str | None = None
+        self.related_question_id: int | None = None
         self.muted = False
         self.suspended = False
         self.pending: list[RadioMessage] = []
@@ -72,6 +74,8 @@ class RadioScheduler:
         return False
 
     def submit(self, message: RadioMessage, *, now: float) -> bool:
+        if message.kind == "answer" and message.related_id is None and self.related_question_id is not None:
+            message = replace(message, related_id=self.related_question_id)
         if (message.kind not in ("answer", "proactive") or not message.text.strip()
                 or len(message.text.encode("utf-8")) > 1024 or not message.key
                 or len(message.key) > 128 or not math.isfinite(message.expires_at)):
@@ -146,6 +150,7 @@ class RadioScheduler:
             if message.on_started is not None:
                 message.on_started(now)
             self.notify({"event": "radio_started", "key": message.key, "kind": message.kind,
+                         "scope": message.scope, "owner": message.owner, "related_id": message.related_id,
                          "text": message.text, "queue_wait_s": now - message.queued_at,
                          "observation_to_dispatch_s": (message.observation_age_s + now - message.queued_at
                                                        if message.observation_age_s is not None else None)})

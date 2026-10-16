@@ -19,6 +19,7 @@ from .region_captures import RadioRegionCaptures
 from .opponent_captures import RadioOpponentCaptures
 from .track_geometry import RadioTrackGeometry
 from .scheduler import RadioMessage, RadioScheduler
+from .activity_reporter import ActivityReporter
 from .proactive_selection import ProactiveSelector
 from .wheel_input import WheelButtonMonitor
 from .edge_speech import EdgeSpeech, EdgeSpeechUnavailable
@@ -118,6 +119,7 @@ def start_typed_request(text: str, client, controller: RadioController, glossary
             interpreter = client.answer if grounded else client.interpret
             result = asyncio.run(interpreter(text, context, request_id, threading.Event()))
             interpretation = ({"status": "available", "reason": None, "intent": result["intent"],
+                               **({"question_event_id": result["question_event_id"]} if "question_event_id" in result else {}),
                                **({"grounded": result["grounded"]} if "grounded" in result else {}),
                                "latency_s": time.monotonic() - started}
                               if result.get("status") == "available" else
@@ -200,6 +202,8 @@ def _run_radio(args) -> int:
             playback.close()
         return 0
     client = None if args.capture_test else RadioClient(args.api_url, Path(args.token_file))
+    report_activity = getattr(client, "report_activity", None)
+    activity_reporter = ActivityReporter(report_activity, notify=emit) if callable(report_activity) else None
     scheduler = None
     wheel = None
     voice = None
@@ -213,7 +217,13 @@ def _run_radio(args) -> int:
     geometry = RadioTrackGeometry(client) if client is not None else None
     try:
         playback = DryRunPlayback() if args.dry_run or args.once or args.capture_test else _speech(args)
-        scheduler = RadioScheduler(playback, notify=emit)
+        def scheduler_event(event):
+            emit(event)
+            if activity_reporter is not None:
+                lap = getattr(controller, "_last_lap", None)
+                activity_reporter.observe({**event, "lap": lap if type(lap) is int else None})
+
+        scheduler = RadioScheduler(playback, notify=scheduler_event)
         controller = RadioController(scheduler, notify=emit, backend_regions=client is not None,
                                      proactive_mode=getattr(args, "proactive_mode", "rules"), selector=selector)
         started = time.monotonic()
@@ -351,6 +361,8 @@ def _run_radio(args) -> int:
         return 0
     finally:
         stop.set()
+        if activity_reporter is not None:
+            activity_reporter.close()
         if selector is not None:
             selector.close()
         try:
@@ -390,6 +402,16 @@ def capture_intent_context(controller: RadioController, glossary: dict, *, groun
 
 
 def dispatch_submission(submission: dict, controller: RadioController, voice: VoiceInput, *, now: float) -> None:
+    interpretation = submission.get("interpretation")
+    related = interpretation.get("question_event_id") if isinstance(interpretation, dict) else None
+    controller.scheduler.related_question_id = related if type(related) is int and related > 0 else None
+    try:
+        _dispatch_submission(submission, controller, voice, now=now)
+    finally:
+        controller.scheduler.related_question_id = None
+
+
+def _dispatch_submission(submission: dict, controller: RadioController, voice: VoiceInput, *, now: float) -> None:
     """Act on a transcript, using the interpreted request when there is one and the raw words otherwise."""
     question = submission["question"]
     if " ".join(question.lower().split()).rstrip(".!?").rstrip() in LOCAL_CONTROLS:

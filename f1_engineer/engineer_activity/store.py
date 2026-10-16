@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MAX_ENTRIES = 5_000
 MAX_TEXT_CHARS = 2_000
 MAX_DETAIL_BYTES = 4_096
@@ -16,7 +16,7 @@ DEFAULT_PAGE_SIZE = 50
 BUSY_TIMEOUT_S = 2.0
 
 KINDS = ("proactive", "question", "response", "issue")
-SOURCES = ("v1_ask", "v2_ask", "live_rules", "system")
+SOURCES = ("v1_ask", "v2_ask", "live_rules", "system", "radio")
 TOPICS = ("gap", "tyres", "lap_time", "track_limits", "pit", "telemetry", "general")
 PRIORITIES = ("low", "normal", "high")
 
@@ -84,7 +84,7 @@ class EngineerActivityStore:
                 raise EngineerActivityUnavailable("engineer_activity_unavailable") from exception
             try:
                 version = database.execute("PRAGMA user_version").fetchone()[0]
-                if version not in (0, SCHEMA_VERSION):
+                if version not in (0, 1, SCHEMA_VERSION):
                     raise EngineerActivityUnavailable("unsupported_engineer_activity_schema")
                 if version == 0:
                     database.execute("PRAGMA journal_mode=WAL")
@@ -111,9 +111,33 @@ class EngineerActivityStore:
                         CREATE TRIGGER IF NOT EXISTS engineer_activity_append_only
                             BEFORE UPDATE ON engineer_activity
                             BEGIN SELECT RAISE(ABORT, 'append-only engineer activity'); END;
-                        PRAGMA user_version={SCHEMA_VERSION};
+                        PRAGMA user_version=1;
                     """)
                     database.commit()
+                with database:
+                    database.execute("BEGIN IMMEDIATE")
+                    if database.execute("PRAGMA user_version").fetchone()[0] == 1:
+                        schema = database.execute(
+                            "SELECT sql FROM sqlite_master WHERE type='table' AND name='engineer_activity'"
+                        ).fetchone()[0]
+                        objects = database.execute(
+                            "SELECT sql FROM sqlite_master WHERE tbl_name='engineer_activity' "
+                            "AND type IN ('index','trigger') AND sql IS NOT NULL"
+                        ).fetchall()
+                        sequence = database.execute(
+                            "SELECT seq FROM sqlite_sequence WHERE name='engineer_activity'"
+                        ).fetchone()
+                        database.execute(schema.replace("engineer_activity", "engineer_activity_new", 1)
+                                         .replace("'live_rules','system'", "'live_rules','system','radio'"))
+                        database.execute("INSERT INTO engineer_activity_new SELECT * FROM engineer_activity")
+                        database.execute("DROP TABLE engineer_activity")
+                        database.execute("ALTER TABLE engineer_activity_new RENAME TO engineer_activity")
+                        for row in objects:
+                            database.execute(row[0])
+                        if sequence is not None:
+                            database.execute("UPDATE sqlite_sequence SET seq=? WHERE name='engineer_activity'",
+                                             (sequence[0],))
+                        database.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             except EngineerActivityUnavailable:
                 raise
             except sqlite3.Error as exception:

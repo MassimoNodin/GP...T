@@ -83,6 +83,12 @@ class RadioClient:
             event_hooks={"request": [_trace_request], "response": [_trace_response]},
         )
 
+    def report_activity(self, events: list[dict]) -> bool:
+        with httpx.Client(base_url=self._base_url, headers=self._headers, timeout=1.0,
+                          follow_redirects=False, trust_env=False, transport=self._transport) as client:
+            with client.stream("POST", "/api/v2/engineer/radio/events", json={"events": events}) as response:
+                return response.status_code == 200
+
     def fetch(self) -> dict:
         started = time.monotonic()
         try:
@@ -293,9 +299,11 @@ class RadioClient:
                             raise ValueError
                         reply = parse_answer(reply, evidence={"facts": data["evidence"]})
                         return {"status": "available", "intent": reply["intent"],
+                                "question_event_id": data.get("question_event_id"),
                                 "grounded": {**data, "reply": reply, "dispatch_before": received_at + validity},
                                 "model_latency_ms": latency if type(latency) is int else None}
                     return {"status": "available", "intent": parse_intent(data.get("intent")),
+                            "question_event_id": data.get("question_event_id"),
                             "model_latency_ms": latency if type(latency) is int else None}
         except (httpx.RequestError, ValueError, TypeError, KeyError, RecursionError, RuntimeError, AttributeError) as exception:
             trace_event({"event": "radio_http_failure", "operation": "intent", "capture_id": request_id,

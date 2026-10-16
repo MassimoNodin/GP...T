@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from .request_trace import RequestTraceMiddleware
+from .radio_activity_routes import register_radio_activity_routes
 
 from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, select_reference
 from ..analysis.session_comparison import compare_session_laps
@@ -51,6 +52,7 @@ from ..analysis.proactive_advisor import ProactiveAdvisor
 from ..radio.intents import MAX_CONTEXT_BYTES, MAX_TRANSCRIPT_BYTES, parse_context
 from ..radio.proactive_selection import MAX_SELECTION_BYTES, parse_selection_context
 from ..radio.answers import build_evidence, evidence_unchanged, parse_answer
+from ..radio.activity_reporter import session_from_scope
 from ..analysis.engineer_runtime import EngineerRuntime, EngineerRuntimeUnavailable
 from ..analysis.race_diagnostics import build_session_race_diagnostics
 from ..analysis.observation_set import build_observation_set
@@ -1160,6 +1162,8 @@ def create_app(
         description="Local telemetry recording, historical analysis, and explicit capture imports.",
         lifespan=lifespan,
     )
+
+    register_radio_activity_routes(app, engineer_activity.store, control_token)
 
     if require_auth:
         @app.middleware("http")
@@ -3146,6 +3150,7 @@ def create_app(
             return _api_error(503, "proactive_unavailable")
 
     @app.post("/api/v2/engineer/radio-answer")
+    @engineer_activity.ask_log.record("radio")
     async def engineer_radio_answer(request: Request):
         if not _authorized(request.headers.get("authorization"), control_token):
             return _api_error(401, "radio_answer_unauthorized")
@@ -3154,8 +3159,6 @@ def create_app(
         if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
             return _api_error(415, "radio_answer_json_required")
         answer = getattr(selected_engineer_runtime, "answer_radio", None)
-        if answer is None:
-            return _api_error(503, "radio_answer_runtime_unsupported")
         gate_lease = None
 
         def evidence_now():
@@ -3174,6 +3177,10 @@ def create_app(
                     return _api_error(422, "radio_answer_request_invalid")
                 context = parse_context(document["context"])
                 original = evidence_now()
+                engineer_activity.ask_log.note_question(request, source="radio", question=transcript,
+                                                        session_id=session_from_scope(original.get("scope")))
+                if answer is None:
+                    return _api_error(503, "radio_answer_runtime_unsupported")
                 if original["scope"] is None or original["scope"] != document["scope"]:
                     return _api_error(409, "radio_answer_scope_unavailable")
                 await proactive_advisor.preempt()
@@ -3192,6 +3199,7 @@ def create_app(
                 references = set(reply["evidence_ids"])
                 return JSONResponse(content={"status": "ok", "data": {
                     "schema_version": 1, "reply": reply, "model": model, "scope": current["scope"],
+                    "question_event_id": engineer_activity.ask_log.question_id(request),
                     "valid_for_s": max(0.0, 3.0 - current["age_s"]), "source": current["source"],
                     "evidence": [fact for fact in current["facts"] if fact["id"] in references],
                 }}, headers={"Cache-Control": "no-store"})
@@ -3210,6 +3218,7 @@ def create_app(
                 gate_lease.close()
 
     @app.post("/api/v2/engineer/radio-intent")
+    @engineer_activity.ask_log.record("radio")
     async def engineer_radio_intent(
         request: Request,
         authorization: Annotated[str | None, Header(alias="Authorization")] = None,
@@ -3222,8 +3231,6 @@ def create_app(
         if content_type != "application/json":
             return _api_error(415, "radio_intent_json_required")
         interpret = getattr(selected_engineer_runtime, "interpret_radio", None)
-        if interpret is None:
-            return _api_error(503, "radio_intent_runtime_unsupported")
         gate_lease: AIGateLease | None = None
         try:
             async with asyncio.timeout(10.0):
@@ -3240,6 +3247,11 @@ def create_app(
                     return _api_error(413, "radio_intent_request_limit_exceeded")
                 except (ValueError, KeyError, TypeError, RecursionError, UnicodeError):
                     return _api_error(422, "radio_intent_request_invalid")
+                snapshot = live_runtime.engineer_snapshot() if live_runtime else {}
+                engineer_activity.ask_log.note_question(request, source="radio", question=transcript,
+                                                        session_id=snapshot.get("session_id"))
+                if interpret is None:
+                    return _api_error(503, "radio_intent_runtime_unsupported")
                 await proactive_advisor.preempt()
                 gate_lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
                 if gate_lease is None:
@@ -3249,7 +3261,8 @@ def create_app(
                 return JSONResponse(
                     status_code=200,
                     content={"api_version": "v1", "status": "ok", "reason": None,
-                             "data": {"schema_version": 1, "intent": intent, "model": model}},
+                             "data": {"schema_version": 1, "intent": intent, "model": model,
+                                      "question_event_id": engineer_activity.ask_log.question_id(request)}},
                     headers={"Cache-Control": "no-store"},
                 )
         except TimeoutError:

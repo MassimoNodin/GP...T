@@ -274,6 +274,7 @@ class VoiceInput:
                     **({"answer_mode": result["answer_mode"]} if isinstance(result, dict) and "answer_mode" in result else {}),
                     "latency_s": self._clock() - started}
         return {"status": "available", "reason": None, "intent": result["intent"],
+                **({"question_event_id": result["question_event_id"]} if "question_event_id" in result else {}),
                 **({"grounded": result["grounded"]} if "grounded" in result else {}),
                 "latency_s": self._clock() - started, "model_latency_ms": result.get("model_latency_ms")}
 
