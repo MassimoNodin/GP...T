@@ -119,7 +119,9 @@ class ProactiveSelector:
             try:
                 result = asyncio.run(self.select(context, cancelled))
                 if result.get("status") != "available":
-                    self.notify({"event": "radio_strategy_unavailable", "reason": "selector_unavailable"})
+                    reason = result.get("reason")
+                    self.notify({"event": "radio_strategy_unavailable", "reason": reason if isinstance(reason, str)
+                                 and re.fullmatch(r"[a-z0-9_]{1,96}", reason) else "selector_unavailable"})
                     return
                 selection = parse_selection(result.get("selection"), context)
                 if not cancelled.is_set():

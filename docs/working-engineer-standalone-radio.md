@@ -274,6 +274,9 @@ They do not measure acoustic cue onset or prove that output was audible.
 
 ## Automatic race-gap notices
 
+See the [joint proactive validation guide](proactive-radio-validation.md) for
+the offline scenario command, launcher modes and step-by-step acceptance plan.
+
 The radio now observes the adjacent cars without requiring a watch request.
 This first proactive increment separates deterministic observation, candidate
 selection, speech policy and dispatch. Rules mode requires no model. Optional

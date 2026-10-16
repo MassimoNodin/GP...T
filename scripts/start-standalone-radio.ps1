@@ -5,13 +5,16 @@ param(
   [ValidatePattern('^/[A-Za-z0-9._/-]+$')] [string]$RemoteRepository = '/home/massimo-nodin/GP...T',
   [ValidateRange(1, 65535)] [int]$TunnelPort = 18765,
   [string]$Voice = 'Microsoft Hazel Desktop',
+  [ValidateSet('off', 'rules', 'model')] [string]$ProactiveMode = 'rules',
   [ValidateRange(0, 1024)] [int]$Microphone,
   [ValidateRange(0, 1024)] [int]$CueOutput,
   [string]$LogDirectory,
-  [switch]$CheckOnly
+  [switch]$CheckOnly,
+  [switch]$DryRun
 )
 
 $ErrorActionPreference = 'Stop'
+if ($DryRun -and $ProactiveMode -eq 'model') { throw 'Use rules mode for dry-run; model selection requires normal radio mode.' }
 $repo = Split-Path -Parent $PSScriptRoot
 $data = Join-Path $repo 'data'
 $identity = (Resolve-Path -LiteralPath $IdentityFile).Path
@@ -78,7 +81,7 @@ try {
   }
   $revision = (@(& git rev-parse HEAD) -join '').Trim()
   $manifest = @{ started_utc = (Get-Date).ToUniversalTime().ToString('o'); revision = $revision;
-    api = $api; voice = $Voice; browser_required = $false;
+    api = $api; voice = $Voice; browser_required = $false; proactive_mode = $ProactiveMode; dry_run = [bool]$DryRun;
     microphone = $(if ($PSBoundParameters.ContainsKey('Microphone')) { $Microphone } else { 'system-default' });
     cue_output = $(if ($PSBoundParameters.ContainsKey('CueOutput')) { $CueOutput } else { 'system-default' }) }
   $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $LogDirectory 'manifest.json') -Encoding UTF8
@@ -86,7 +89,9 @@ try {
   $env:PYTHONUNBUFFERED = '1'
   Write-Output "Backend ready. No dashboard started. Logs: $LogDirectory"
   $radioArguments = @('run', '--extra', 'app', '--extra', 'radio', 'f1-engineer', 'radio',
-    '--api-url', $api, '--token-file', $tokenFile, '--voice', $Voice, '--log-file', (Join-Path $LogDirectory 'radio.jsonl'))
+    '--api-url', $api, '--token-file', $tokenFile, '--voice', $Voice,
+    '--proactive-mode', $ProactiveMode, '--log-file', (Join-Path $LogDirectory 'radio.jsonl'))
+  if ($DryRun) { $radioArguments += '--dry-run' }
   if ($PSBoundParameters.ContainsKey('Microphone')) { $radioArguments += @('--microphone', "$Microphone") }
   if ($PSBoundParameters.ContainsKey('CueOutput')) { $radioArguments += @('--cue-output', "$CueOutput") }
   if ($CheckOnly) { $radioArguments += '--once' }

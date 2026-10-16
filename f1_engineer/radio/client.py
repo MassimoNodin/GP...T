@@ -297,9 +297,11 @@ class RadioClient:
                             payload.extend(chunk)
                             if len(payload) > MAX_SELECTION_BYTES:
                                 raise ValueError("proactive_response_limit")
-                        if response.status_code != 200:
-                            return {"status": "unavailable", "reason": "proactive_backend_unavailable"}
                         document = json.loads(payload)
+                        if response.status_code != 200:
+                            reason = document.get("reason") if isinstance(document, dict) else None
+                            return {"status": "unavailable", "reason": reason if isinstance(reason, str)
+                                    and re.fullmatch(r"[a-z0-9_]{1,96}", reason) else "proactive_backend_unavailable"}
                         data = document.get("data") if isinstance(document, dict) else None
                         if (document.get("status") != "ok" or not isinstance(data, dict)
                                 or type(data.get("schema_version")) is not int or data["schema_version"] != 1

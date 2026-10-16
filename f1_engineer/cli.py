@@ -857,6 +857,14 @@ def _radio(args: argparse.Namespace) -> int:
     return run_radio(args)
 
 
+def _radio_scenario(args: argparse.Namespace) -> int:
+    try:
+        from .radio.scenarios import run_scenarios
+    except ImportError as exception:
+        raise ValueError("radio scenarios require app dependencies; install with uv sync --extra app") from exception
+    return run_scenarios(args)
+
+
 def _radio_input(args: argparse.Namespace) -> int:
     try:
         from .radio.input_command import run_input
@@ -900,6 +908,11 @@ def build_parser() -> argparse.ArgumentParser:
                        help="optional TOML with [terms] and [mishearings] tables merged into the interpreter glossary")
     radio.add_argument("--log-file", help="append timestamped JSONL diagnostics with bounded rotation; includes spoken text, not raw audio or credentials")
     radio.set_defaults(handler=_radio)
+
+    radio_scenario = commands.add_parser("radio-scenario", help="replay offline synthetic proactive radio scenarios without hardware or model access")
+    radio_scenario.add_argument("--scenario", choices=("all", "closing", "pace", "quiet", "session-change"), default="all")
+    radio_scenario.add_argument("--log-file", help="optional timestamped JSONL scenario log")
+    radio_scenario.set_defaults(handler=_radio_scenario)
 
     radio_input = commands.add_parser("radio-input", help="list, learn, change or test the listening button without audio")
     radio_input.add_argument("--input-settings", default="data/radio-input.json", help="local wheel binding file")
