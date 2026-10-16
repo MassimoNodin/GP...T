@@ -52,6 +52,7 @@ from ..analysis.proactive_advisor import ProactiveAdvisor
 from ..analysis.openai_speech import OpenAISpeechRuntime
 from ..radio.intents import MAX_CONTEXT_BYTES, MAX_TRANSCRIPT_BYTES, parse_context
 from ..radio.proactive_selection import MAX_SELECTION_BYTES, parse_selection_context
+from ..radio.answers import build_evidence, evidence_unchanged, parse_answer
 from ..analysis.engineer_runtime import EngineerRuntime, EngineerRuntimeUnavailable
 from ..analysis.race_diagnostics import build_session_race_diagnostics
 from ..analysis.observation_set import build_observation_set
@@ -3148,6 +3149,70 @@ def create_app(
             return _api_error(499, "proactive_client_disconnected")
         except (OSError, RuntimeError, ValueError):
             return _api_error(503, "proactive_unavailable")
+
+    @app.post("/api/v2/engineer/radio-answer")
+    async def engineer_radio_answer(request: Request):
+        if not _authorized(request.headers.get("authorization"), control_token):
+            return _api_error(401, "radio_answer_unauthorized")
+        if request.query_params:
+            return _api_error(400, "radio_answer_query_not_allowed")
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+            return _api_error(415, "radio_answer_json_required")
+        answer = getattr(selected_engineer_runtime, "answer_radio", None)
+        if answer is None:
+            return _api_error(503, "radio_answer_runtime_unsupported")
+        gate_lease = None
+
+        def evidence_now():
+            snapshot = live_runtime.engineer_snapshot() if live_runtime else LiveEngineerFacts().snapshot()
+            return build_evidence(snapshot, now=asyncio.get_running_loop().time())
+
+        try:
+            async with asyncio.timeout(10.0):
+                document = json.loads(await _read_limited_body(request, MAX_CONTEXT_BYTES + 6_144))
+                if not isinstance(document, dict) or set(document) != {"transcript", "context", "scope"}:
+                    return _api_error(422, "radio_answer_request_invalid")
+                transcript = document["transcript"]
+                if (not isinstance(transcript, str) or not transcript.strip()
+                        or len(transcript.encode("utf-8")) > MAX_TRANSCRIPT_BYTES
+                        or not isinstance(document["scope"], str) or len(document["scope"]) > 2048):
+                    return _api_error(422, "radio_answer_request_invalid")
+                context = parse_context(document["context"])
+                original = evidence_now()
+                if original["scope"] is None or original["scope"] != document["scope"]:
+                    return _api_error(409, "radio_answer_scope_unavailable")
+                await proactive_advisor.preempt()
+                gate_lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
+                if gate_lease is None:
+                    return _api_error(409, "radio_answer_busy")
+                reply, model = await _run_until_client_disconnect(
+                    answer(transcript.strip(), context, original), request, gate_lease=gate_lease)
+                try:
+                    reply = parse_answer(reply, context=context, evidence=original)
+                except (ValueError, KeyError, TypeError, RecursionError, UnicodeError):
+                    return _api_error(503, "radio_answer_invalid_model_output")
+                current = evidence_now()
+                if not evidence_unchanged(reply, original, current):
+                    return _api_error(409, "radio_answer_evidence_changed")
+                references = set(reply["evidence_ids"])
+                return JSONResponse(content={"status": "ok", "data": {
+                    "schema_version": 1, "reply": reply, "model": model, "scope": current["scope"],
+                    "valid_for_s": max(0.0, 3.0 - current["age_s"]), "source": current["source"],
+                    "evidence": [fact for fact in current["facts"] if fact["id"] in references],
+                }}, headers={"Cache-Control": "no-store"})
+        except _EngineerRequestBodyLimitExceeded:
+            return _api_error(413, "radio_answer_request_limit_exceeded")
+        except _EngineerClientDisconnected:
+            return _api_error(499, "radio_answer_client_disconnected")
+        except TimeoutError:
+            return _api_error(504, "radio_answer_deadline_exceeded")
+        except EngineerRuntimeUnavailable:
+            return _api_error(503, "radio_answer_unavailable")
+        except (ValueError, KeyError, TypeError, RecursionError, UnicodeError):
+            return _api_error(422, "radio_answer_invalid")
+        finally:
+            if gate_lease is not None:
+                gate_lease.close()
 
     @app.post("/api/v2/engineer/radio-intent")
     async def engineer_radio_intent(

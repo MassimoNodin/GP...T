@@ -12,6 +12,7 @@ from ..radio.intent_prompt import build_intent_messages
 from ..radio.intents import intent_schema, parse_intent
 from ..radio.proactive_selection import (SELECTION_INSTRUCTIONS, SELECTION_TIMEOUT_S,
                                          parse_selection, parse_selection_context, selection_schema)
+from ..radio.answers import answer_messages, answer_schema, parse_answer
 from .engineer_ask import build_router_messages, parse_router_output, route_schema
 from .engineer_runtime import EngineerRuntimeUnavailable
 
@@ -397,5 +398,33 @@ class CodexRuntime:
             except ValueError as exc:
                 raise EngineerRuntimeUnavailable(str(exc)) from exc
             return intent, self._model_report(started_at)
+        except TimeoutError as exc:
+            raise EngineerRuntimeUnavailable("codex_request_timeout") from exc
+
+    async def answer_radio(self, transcript, context, evidence):
+        started_at = time.monotonic()
+        messages = answer_messages(transcript, context, evidence)
+        try:
+            async with asyncio.timeout(RADIO_TIMEOUT_S) as deadline, self._radio_lock():
+                try:
+                    server = await self._radio_server()
+                    self._radio_uses += 1
+                    content = await self._turn(
+                        server, instructions=messages[0]["content"], prompt=messages[1]["content"],
+                        schema=answer_schema(context), effort=self._radio_effort)
+                except asyncio.CancelledError:
+                    if not deadline.expired():
+                        await self._close_radio_server()
+                    raise
+                except TimeoutError:
+                    raise
+                except BaseException:
+                    await self._close_radio_server()
+                    raise
+            try:
+                reply = parse_answer(content, context=context, evidence=evidence)
+            except (ValueError, TypeError) as exc:
+                raise EngineerRuntimeUnavailable("radio_answer_invalid") from exc
+            return reply, self._model_report(started_at)
         except TimeoutError as exc:
             raise EngineerRuntimeUnavailable("codex_request_timeout") from exc

@@ -837,6 +837,68 @@ class RadioController:
                 "tasks": tasks[:8], "recent": recent, "pending_region": pending,
                 "glossary": {"terms": {}, "mishearings": {}}}
 
+    def answer_evidence(self, *, now: float) -> dict:
+        self.check_freshness(now=now)
+        facts = []
+        evidence_age = self._age_s + now - self._received_at if self._player is not None else None
+        if self._player is not None:
+            for candidate in self._drivers:
+                if not isinstance(candidate, dict) or not _identity(candidate.get("identity")):
+                    continue
+                row = self._resolve_target("self", candidate["identity"])
+                if row is None:
+                    continue
+                car = row["identity"]["car_index"]
+                label = "You" if row["identity"] == self._player["identity"] else self._participant_name(row)
+                if label is None:
+                    continue
+                for metric in ("position", "last_lap", "last_sector1", "last_sector2", "last_sector3",
+                               "relative_gap", "lap_comparison", "tyre_age", "tyre_compound", "session_best"):
+                    previous_age = self._fact_age_s
+                    self._fact_age_s = None
+                    try:
+                        text = self._timing_fact(metric, row, now=now)
+                        source_age = self._fact_age_s
+                    finally:
+                        self._fact_age_s = previous_age
+                    if "unavailable" not in text.lower():
+                        evidence_age = max(evidence_age, source_age or 0)
+                        facts.append({"id": f"car_{car}_{metric}", "text": f"{label}: {text}.",
+                                      "driver": deepcopy(row["identity"])})
+            for metric in ("track_name", "weather"):
+                text = self._timing_fact(metric, self._player, now=now)
+                if "unavailable" not in text.lower():
+                    facts.append({"id": metric, "text": text + ".", "driver": None})
+        return {"scope": self.scheduler.scope, "facts": facts,
+                "source": deepcopy(self._observation_frame),
+                "limitations": ["No rain forecast, fuel or ERS evidence in this bundle.",
+                                "No multi-lap trend or causal diagnosis is established by this snapshot."],
+                "age_s": evidence_age}
+
+    def answer_grounded(self, question: str, result: dict, *, now: float) -> bool:
+        self.check_freshness(now=now)
+        if result.get("scope") != self.scheduler.scope or result.get("scope") is None:
+            self.notify({"event": "radio_answer_dropped", "reason": "scope_changed"})
+            return False
+        deadline = result.get("dispatch_before")
+        if type(deadline) not in (int, float) or not math.isfinite(deadline) or deadline <= now:
+            self.notify({"event": "radio_answer_dropped", "reason": "observations_stale"})
+            return False
+        current = self.answer_evidence(now=now)
+        latest = {fact["id"]: fact for fact in current["facts"]}
+        if any(latest.get(fact["id"]) != fact for fact in result.get("evidence", [])):
+            self.notify({"event": "radio_answer_dropped", "reason": "evidence_changed"})
+            return False
+        self._answer_id += 1
+        text = result["reply"]["answer"]
+        key = f"answer:{self._answer_id}"
+        queued = self.scheduler.submit(RadioMessage(key, self.scheduler.scope, text, "answer", now + 60,
+                                                   dispatch_before=deadline), now=now)
+        self.notify({"event": "radio_grounded_answer", "question": question, "text": text,
+                     "evidence": result.get("evidence", []), "source": result.get("source"), "queued": queued})
+        self.conversation.record("question", request=question, response=text, message_key=key, queued=queued)
+        return queued
+
     def check_freshness(self, *, now: float) -> None:
         if self._player is not None and self._age_s + now - self._received_at >= 3:
             self._unavailable("lap_observations_stale")

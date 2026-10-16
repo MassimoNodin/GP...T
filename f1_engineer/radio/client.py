@@ -216,10 +216,18 @@ class RadioClient:
             cancellation.cancel()
             await asyncio.gather(request, cancellation, return_exceptions=True)
 
-    async def interpret(self, transcript: str, context: dict, request_id: str, cancelled) -> dict:
+    async def answer(self, transcript: str, context: dict, request_id: str, cancelled) -> dict:
+        result = await self.interpret(transcript, context, request_id, cancelled, grounded=True)
+        return {**result, "answer_mode": "grounded"}
+
+    async def interpret(self, transcript: str, context: dict, request_id: str, cancelled, *, grounded=False) -> dict:
         """Ask the backend to interpret one transcript; failures are reported, never raised."""
         try:
-            body = json.dumps({"transcript": transcript, "context": parse_context(context)},
+            dialogue = {key: value for key, value in context.items() if key != "answer_scope"} if grounded else context
+            document = {"transcript": transcript, "context": parse_context(dialogue)}
+            if grounded:
+                document["scope"] = context.get("answer_scope")
+            body = json.dumps(document,
                               ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             if len(body) > MAX_CONTEXT_BYTES + 2048:
                 raise ValueError
@@ -232,7 +240,7 @@ class RadioClient:
             while not cancelled.is_set():
                 await asyncio.sleep(0.05)
 
-        request = asyncio.create_task(self._interpret(body, request_id))
+        request = asyncio.create_task(self._interpret(body, request_id, grounded=grounded))
         cancellation = asyncio.create_task(watch_cancel())
         try:
             done, _pending = await asyncio.wait((request, cancellation), timeout=INTENT_TIMEOUT_S,
@@ -245,14 +253,16 @@ class RadioClient:
             cancellation.cancel()
             await asyncio.gather(request, cancellation, return_exceptions=True)
 
-    async def _interpret(self, body: bytes, request_id: str) -> dict:
+    async def _interpret(self, body: bytes, request_id: str, *, grounded=False) -> dict:
         headers = {"Content-Type": "application/json", "X-Request-ID": request_id}
         try:
             async with httpx.AsyncClient(base_url=self._base_url, headers=self._headers,
                                          timeout=httpx.Timeout(INTENT_TIMEOUT_S, connect=2, write=5, pool=2),
                                          follow_redirects=False, trust_env=False, transport=self._transport,
                                          event_hooks={"request": [_trace_async_request], "response": [_trace_async_response]}) as client:
-                async with client.stream("POST", "/api/v2/engineer/radio-intent", headers=headers, content=body) as response:
+                endpoint = "/api/v2/engineer/radio-answer" if grounded else "/api/v2/engineer/radio-intent"
+                async with client.stream("POST", endpoint, headers=headers, content=body) as response:
+                    received_at = time.monotonic()
                     payload = bytearray()
                     async for chunk in response.aiter_bytes():
                         payload.extend(chunk)
@@ -271,9 +281,23 @@ class RadioClient:
                         raise ValueError
                     model = data.get("model") if isinstance(data.get("model"), dict) else {}
                     latency = model.get("latency_ms")
+                    if grounded:
+                        from .answers import parse_answer
+
+                        reply = parse_answer(data.get("reply"))
+                        validity = data.get("valid_for_s")
+                        if (type(validity) not in (int, float) or not 0 < validity <= 3
+                                or not isinstance(data.get("scope"), str)
+                                or data["scope"] != json.loads(body)["scope"]
+                                or not isinstance(data.get("evidence"), list)):
+                            raise ValueError
+                        reply = parse_answer(reply, evidence={"facts": data["evidence"]})
+                        return {"status": "available", "intent": reply["intent"],
+                                "grounded": {**data, "reply": reply, "dispatch_before": received_at + validity},
+                                "model_latency_ms": latency if type(latency) is int else None}
                     return {"status": "available", "intent": parse_intent(data.get("intent")),
                             "model_latency_ms": latency if type(latency) is int else None}
-        except (httpx.RequestError, ValueError, RecursionError, RuntimeError, AttributeError) as exception:
+        except (httpx.RequestError, ValueError, TypeError, KeyError, RecursionError, RuntimeError, AttributeError) as exception:
             trace_event({"event": "radio_http_failure", "operation": "intent", "capture_id": request_id,
                          "exception_chain": exception_trace(exception)})
             return {"status": "unavailable", "reason": "intent_response_invalid_or_unavailable"}

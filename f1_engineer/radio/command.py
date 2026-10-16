@@ -97,13 +97,13 @@ def _tail_commands(inbox: queue.Queue, path: Path, stop: threading.Event) -> Non
 
 
 def start_typed_request(text: str, client, controller: RadioController, glossary: dict, results: queue.Queue,
-                        *, interpret: bool) -> None:
+                        *, interpret: bool, grounded=False) -> None:
     """Treat typed text exactly like a finished voice transcript: same contexts, same interpreter, same dispatch."""
     request_id = str(uuid.uuid4())
     voice_like = SimpleNamespace(repeat_reference=controller.scheduler.capture_repeat_reference(),
                                  task_context=controller.capture_task_context(),
                                  question_context=controller.capture_question_context())
-    context = capture_intent_context(controller, glossary)
+    context = capture_intent_context(controller, glossary, grounded=grounded)
     emit({"event": "radio_typed_request", "capture_id": request_id, "text": text, "interpreter": interpret})
     control = " ".join(text.lower().split()).rstrip(".!?").rstrip()
     if control in LOCAL_CONTROLS:
@@ -115,11 +115,14 @@ def start_typed_request(text: str, client, controller: RadioController, glossary
         started = time.monotonic()
         interpretation = None
         if interpret:
-            result = asyncio.run(client.interpret(text, context, request_id, threading.Event()))
+            interpreter = client.answer if grounded else client.interpret
+            result = asyncio.run(interpreter(text, context, request_id, threading.Event()))
             interpretation = ({"status": "available", "reason": None, "intent": result["intent"],
+                               **({"grounded": result["grounded"]} if "grounded" in result else {}),
                                "latency_s": time.monotonic() - started}
                               if result.get("status") == "available" else
                               {"status": "unavailable", "reason": result.get("reason"), "intent": None,
+                               **({"answer_mode": result["answer_mode"]} if "answer_mode" in result else {}),
                                "latency_s": time.monotonic() - started})
             emit({"event": "radio_transcript", "capture_id": request_id, "transcript": text, "source": "typed",
                   "interpretation": interpretation})
@@ -175,6 +178,8 @@ def run_radio(args) -> int:
 
 
 def _run_radio(args) -> int:
+    if getattr(args, "answer_mode", "intent") == "grounded" and getattr(args, "intent_mode", "luna") != "luna":
+        raise ValueError("grounded answers require luna intent mode")
     if (not math.isfinite(args.poll_interval) or not 0.1 <= args.poll_interval <= 1
             or not -10 <= args.rate <= 10 or not 0 <= args.volume <= 100):
         raise ValueError("invalid radio settings")
@@ -217,7 +222,8 @@ def _run_radio(args) -> int:
         if args.once:
             return 0 if controller.status()["backend"] == "available" else 2
         wheel = WheelButtonMonitor(Path(getattr(args, "input_settings", DEFAULT_INPUT_SETTINGS)), notify=emit)
-        interpret = (client.interpret if client and not args.dry_run
+        grounded = getattr(args, "answer_mode", "intent") == "grounded"
+        interpret = ((client.answer if grounded else client.interpret) if client and not args.dry_run
                      and getattr(args, "intent_mode", "luna") == "luna" else None)
         voice = VoiceInput(transcribe=client.transcribe if client and not args.dry_run else None, notify=emit,
                            enabled=not args.dry_run, microphone=args.microphone, output=args.cue_output,
@@ -227,6 +233,7 @@ def _run_radio(args) -> int:
         if glossary_problem is not None:
             emit({"event": "radio_glossary_unavailable", "reason": glossary_problem})
         emit({"event": "radio_ready", "intent_mode": "luna" if interpret is not None else "parser",
+              "answer_mode": "grounded" if grounded else "intent",
               "glossary_terms": len(glossary["terms"]), "glossary_mishearings": len(glossary["mishearings"]), "dry_run": args.dry_run, "voice": getattr(playback, "voice", None),
               "rate": args.rate, "volume": args.volume,
               "capture_test": args.capture_test,
@@ -267,7 +274,7 @@ def _run_radio(args) -> int:
                                   connection=wheel.status().get("connection_instance"),
                                   task_context=controller.capture_task_context(),
                                   question_context=controller.capture_question_context(),
-                                  intent_context=capture_intent_context(controller, glossary))
+                                  intent_context=capture_intent_context(controller, glossary, grounded=grounded))
             try:
                 command = commands.get_nowait()
                 if selector is not None and command not in ("status", "resume"):
@@ -281,7 +288,7 @@ def _run_radio(args) -> int:
                     request_listening(scheduler, voice, source="console",
                                       task_context=controller.capture_task_context(),
                                       question_context=controller.capture_question_context(),
-                                      intent_context=capture_intent_context(controller, glossary))
+                                      intent_context=capture_intent_context(controller, glossary, grounded=grounded))
                 elif command == "finish":
                     voice.finish()
                 elif command == "tasks":
@@ -293,7 +300,7 @@ def _run_radio(args) -> int:
                         emit({"event": "radio_question_unavailable", "reason": "backend_unavailable"})
                     else:
                         start_typed_request(command[4:].strip(), client, controller, glossary, typed_results,
-                                            interpret=getattr(args, "intent_mode", "luna") == "luna")
+                                            interpret=getattr(args, "intent_mode", "luna") == "luna", grounded=grounded)
                 elif command == "submit" or command.startswith("ask "):
                     if args.capture_test:
                         emit({"event": "radio_question_unavailable", "reason": "capture_test"})
@@ -373,10 +380,12 @@ def request_listening(scheduler: RadioScheduler, voice: VoiceInput, *, source: s
                   intent_context=intent_context)
 
 
-def capture_intent_context(controller: RadioController, glossary: dict) -> dict:
+def capture_intent_context(controller: RadioController, glossary: dict, *, grounded=False) -> dict:
     """Snapshot of what the interpreter needs, taken when listening starts like the task and question contexts."""
     context = controller.intent_context()
     context["glossary"] = glossary
+    if grounded:
+        context["answer_scope"] = controller.scheduler.scope
     return context
 
 
@@ -387,6 +396,17 @@ def dispatch_submission(submission: dict, controller: RadioController, voice: Vo
         dispatch_voice_request(question, controller, voice, now=now)
         return
     interpretation = submission.get("interpretation")
+    grounded = interpretation.get("grounded") if isinstance(interpretation, dict) else None
+    if grounded is not None and (grounded.get("scope") != controller.scheduler.scope
+                                or grounded.get("dispatch_before", 0) <= now):
+        emit({"event": "radio_answer_dropped", "reason": "grounded_response_expired"})
+        controller.answer_radio_control("That answer expired. Please ask again.", now=now)
+        return
+    if grounded is not None and grounded["reply"]["kind"] != "command":
+        controller.scheduler.cancel()
+        if not controller.answer_grounded(question, grounded, now=now):
+            controller.answer_radio_control("I couldn't verify a fresh answer. Please try again.", now=now)
+        return
     intent = interpretation.get("intent") if isinstance(interpretation, dict) else None
     if intent is not None:
         try:
@@ -410,7 +430,9 @@ def dispatch_submission(submission: dict, controller: RadioController, voice: Vo
         emit({"event": "radio_intent_fallback", "capture_id": submission.get("capture_id"),
               "reason": interpretation.get("reason")})
         controller.scheduler.cancel()
-        controller.answer_radio_control("Say again.", now=now)
+        text = ("I couldn't verify a fresh answer. Please try again."
+                if interpretation.get("answer_mode") == "grounded" else "Say again.")
+        controller.answer_radio_control(text, now=now)
         return
     dispatch_voice_request(question, controller, voice, now=now)
 

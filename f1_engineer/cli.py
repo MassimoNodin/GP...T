@@ -902,6 +902,8 @@ def build_parser() -> argparse.ArgumentParser:
     radio.add_argument("--manual-submit", action="store_true", help="keep voice transcripts as drafts until the console submit command")
     radio.add_argument("--intent-mode", choices=("luna", "parser"), default="luna",
                        help="luna: gpt-6-luna interprets requests (says 'Say again' if unavailable); parser: fixed phrases only")
+    radio.add_argument("--answer-mode", choices=("intent", "grounded"), default="intent",
+                       help="grounded: experimental natural answers from verified live evidence; requires luna intent mode")
     radio.add_argument("--no-speech-hint", action="store_true",
                        help="do not send driver and corner names to the transcriber as a vocabulary hint")
     radio.add_argument("--command-file",
