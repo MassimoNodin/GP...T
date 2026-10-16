@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import traceback
 
 import httpx
 import pytest
@@ -81,3 +82,27 @@ def test_non_http_scope_passes_through(caplog):
         received.append(scope)
     asyncio.run(RequestTraceMiddleware(app)({"type": "lifespan"}, None, None))
     assert received == [{"type": "lifespan"}] and not logged(caplog)
+
+
+def test_secret_failures_never_include_request_body_or_exception_details(caplog):
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+    key = "sk-" + "private-key-contents" * 2
+
+    async def broken(scope, receive, send):
+        await receive()
+        raise ValueError(key)
+
+    async def receive():
+        return {"type": "http.request", "body": json.dumps({"key": key}).encode()}
+
+    async def send(message):
+        pytest.fail("unexpected output")
+
+    with pytest.raises(RuntimeError, match="secret_request_failed") as captured:
+        asyncio.run(RequestTraceMiddleware(broken)({
+            "type": "http", "path": "/api/v1/secrets/openai-api-key", "method": "PUT",
+        }, receive, send))
+    event, = logged(caplog)
+    assert event["exception_chain"] == [{"type": "ValueError"}]
+    assert key not in caplog.text
+    assert key not in "".join(traceback.format_exception(captured.value))

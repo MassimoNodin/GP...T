@@ -104,7 +104,7 @@ def test_app_selects_the_openai_runtime_only_when_asked(tmp_path):
 
     app = make(speech_provider="openai", openai_api_key_file=key_file(tmp_path))
     with TestClient(app) as client:
-        assert isinstance(app.state.local_speech_runtime, OpenAISpeechRuntime)
+        assert isinstance(app.state.local_speech_runtime.cloud, OpenAISpeechRuntime)
         assert client.get("/api/v1/engineer/transcribe").json()["data"]["status"] == "ready"
     default = make()
     with TestClient(default):

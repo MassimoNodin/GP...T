@@ -37,7 +37,12 @@ class RequestTraceMiddleware:
         try:
             return await self.app(scope, receive, traced_send)
         except BaseException as exception:
-            failure = exception_trace(exception)
+            secret_request = scope.get("path", "").startswith("/api/v1/secrets/")
+            failure = ([{"type": type(exception).__name__}]
+                       if secret_request
+                       else exception_trace(exception))
+            if secret_request and isinstance(exception, Exception):
+                raise RuntimeError("secret_request_failed") from None
             raise
         finally:
             logger.info(json.dumps({"event": "engineer_http_trace", "request_id": request_id,

@@ -176,7 +176,7 @@ def main() -> None:
     model_root.mkdir(exist_ok=True)
     model = model_root / f"ggml-{args.model}.bin"
     download_model(model, args.model)
-    pin = args.database.expanduser().absolute().parent / ".f1-engineer-whisper-pin.json"
+    pin = args.database.expanduser().absolute().parent / f".f1-engineer-whisper-pin.{args.model}.{args.device}.json"
     runtime_id = write_pin(pin, executable, model, args.accept_runtime_update, model_name=args.model, device=args.device)
     print(f"Pinned {args.device.upper()} speech runtime ({args.model}): {pin}\nRuntime ID: {runtime_id}")
 

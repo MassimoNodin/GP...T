@@ -515,7 +515,7 @@ def test_transcription_endpoint_forwards_a_valid_hint_and_rejects_an_unsafe_one(
                 "X-Audio-SHA256": hashlib.sha256(audio).hexdigest()}
 
     with TestClient(app) as client:
-        monkeypatch.setattr(app.state.local_speech_runtime, "transcribe", transcribe)
+        monkeypatch.setattr(app.state.local_speech_runtime.resolve(), "transcribe", transcribe)
         client.post("/api/v1/engineer/transcribe", headers=headers("Formula 1 race radio. Drivers: Max."), content=audio)
         bad = client.post("/api/v1/engineer/transcribe", headers=headers("-m evil"), content=audio)
     assert seen == ["Formula 1 race radio. Drivers: Max."]

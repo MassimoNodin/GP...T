@@ -75,7 +75,7 @@ export async function runSpeechTest(
     if (!response.ok) return { kind: "error", text: transcribeFailureText(response.status, reasonOf(body)) };
     const heard = (body as { data?: { transcript?: unknown } } | null)?.data?.transcript;
     if (typeof heard === "string" && heard.trim() === "") return { kind: "error", text: EMPTY_TRANSCRIPT_TEXT };
-    const draft = parseLocalTranscription(body, requestId, audioSha256, status.runtime_id);
+    const draft = parseLocalTranscription(body, requestId, audioSha256, status);
     if (!draft) return { kind: "error", text: TRANSCRIPT_UNVERIFIED_TEXT };
     return { kind: "heard", transcript: draft.transcript, ms };
   } catch {

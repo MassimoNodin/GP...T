@@ -59,7 +59,8 @@ def test_api_lifespan_warms_runtime_and_cleans_up_on_failure(monkeypatch, tmp_pa
         resource = Resource(name)
         monkeypatch.setattr(module, attribute, lambda *args, resource=resource, **kwargs: resource)
     speech = AsyncResource("speech")
-    monkeypatch.setattr(module, "LocalSpeechRuntime", lambda *args, **kwargs: speech)
+    monkeypatch.setattr(module, "SpeechRouter", lambda *args, **kwargs: speech)
+    monkeypatch.setattr(module, "register_speech_routes", lambda *args, **kwargs: None)
     engineer = AsyncResource("engineer")
     app = module.create_app(tmp_path / "archive.sqlite3", engineer_runtime=engineer)
 

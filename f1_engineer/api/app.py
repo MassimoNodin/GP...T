@@ -35,7 +35,6 @@ from ..processing.engineer_facts import LiveEngineerFacts
 from ..processing.detail_demand import DetailCommand, DetailDemandQueue
 from ..analysis.ai_admission import AIGateLease, PROCESS_ENGINEER_AI_GATE
 from ..analysis.local_speech import (
-    LocalSpeechRuntime,
     LocalSpeechUnavailable,
     SPEECH_MAX_AUDIO_BYTES,
     SPEECH_MAX_RESPONSE_BYTES,
@@ -49,7 +48,6 @@ from ..analysis.engineer_ask_service import answer_engineer_question
 from ..analysis.ollama_runtime import OllamaRuntime
 from ..analysis.codex_runtime import CodexRuntime
 from ..analysis.proactive_advisor import ProactiveAdvisor
-from ..analysis.openai_speech import OpenAISpeechRuntime
 from ..radio.intents import MAX_CONTEXT_BYTES, MAX_TRANSCRIPT_BYTES, parse_context
 from ..radio.proactive_selection import MAX_SELECTION_BYTES, parse_selection_context
 from ..radio.answers import build_evidence, evidence_unchanged, parse_answer
@@ -143,6 +141,8 @@ from ..engineer_activity import build_engineer_activity
 from .engineer_activity_routes import register_engineer_activity_routes
 from ..analysis.engineer_preferences import EngineerPreferencesStore, answer_style, enabled_topics
 from .engineer_preferences_routes import register_engineer_preferences_routes
+from .speech_routes import register_speech_routes
+from ..analysis.speech_router import SpeechRouter
 from .lap_enrichment_routes import register_lap_enrichment_routes
 from .session_summary_routes import register_session_summary_routes
 from .track_region_routes import register_track_region_routes
@@ -1102,13 +1102,8 @@ def create_app(
     )
     if speech_provider not in ("local", "openai"):
         raise ValueError("speech_provider_invalid")
-    local_speech_runtime = (
-        OpenAISpeechRuntime(openai_api_key_file or configured_database_path.parent / ".openai-api-key")
-        if speech_provider == "openai"
-        else LocalSpeechRuntime(
-            configured_database_path.parent / ".f1-engineer-whisper-pin.json",
-            configured_database_path.parent / ".f1-engineer-speech",
-        )
+    local_speech_runtime = SpeechRouter(
+        configured_database_path.parent, provider=speech_provider, key_file=openai_api_key_file,
     )
     engineer_ask_lock = asyncio.Lock()
     proactive_advisor = ProactiveAdvisor(selected_engineer_runtime)
@@ -3310,11 +3305,14 @@ def create_app(
                 if not hmac.compare_digest(actual_audio_sha256, expected_audio_sha256):
                     return _api_error(422, "engineer_speech_audio_digest_mismatch")
                 await proactive_advisor.preempt()
-                gate_lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
-                if gate_lease is None:
-                    return _api_error(409, "engineer_ask_busy")
+                speech_runtime = await run_in_threadpool(local_speech_runtime.resolve)
+                if speech_runtime is not local_speech_runtime.cloud:
+                    gate_lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
+                    if gate_lease is None:
+                        return _api_error(409, "engineer_ask_busy")
                 transcription = await _run_until_client_disconnect(
-                    local_speech_runtime.transcribe(wav, gate_lease=gate_lease, hint=speech_hint),
+                    local_speech_runtime.transcribe(wav, gate_lease=gate_lease, hint=speech_hint,
+                                                    runtime=speech_runtime),
                     request,
                     gate_lease=gate_lease,
                 )
@@ -3436,6 +3434,7 @@ def create_app(
             )
         return APIResponse[dict[str, Any]](data=_stringify_session_uids(result))
 
+    register_speech_routes(app, router=local_speech_runtime, control_token=control_token)
     register_engineer_preferences_routes(
         app, store=engineer_preferences_store, control_token=control_token
     )
@@ -3535,7 +3534,7 @@ async def _run_until_client_disconnect(
     awaitable: Any,
     request: Request,
     *,
-    gate_lease: AIGateLease,
+    gate_lease: AIGateLease | None,
 ) -> Any:
     task = asyncio.create_task(awaitable)
     drain_task: asyncio.Task[None] | None = None
@@ -3554,11 +3553,13 @@ async def _run_until_client_disconnect(
                 return await task
             if await request.is_disconnected():
                 drain = cancel_and_drain()
-                gate_lease.retain_until(drain)
+                if gate_lease is not None:
+                    gate_lease.retain_until(drain)
                 raise _EngineerClientDisconnected
     except asyncio.CancelledError:
         drain = cancel_and_drain()
-        gate_lease.retain_until(drain)
+        if gate_lease is not None:
+            gate_lease.retain_until(drain)
         raise
 
 

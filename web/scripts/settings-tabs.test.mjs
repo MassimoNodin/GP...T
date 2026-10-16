@@ -367,7 +367,7 @@ test("speech recognition card covers ready, not set up, unreachable and unrecogn
   const row = (view, label) => view.rows.find((item) => item.label === label)?.value;
   assert.equal(row(ready, "Runtime"), "whisper.cpp 1.9.3");
   assert.equal(row(ready, "Model"), "tiny.en");
-  assert.equal(row(ready, "Placement"), "CPU");
+  assert.equal(row(ready, "Placement"), "Local · CPU");
   assert.equal(row(ready, "Audio"), "Audio is not stored");
 
   const notSetUp = connections.describeSpeech(speechBody({ status: "unavailable", reason: "runtime_unavailable" }));

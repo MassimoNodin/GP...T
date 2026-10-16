@@ -11,9 +11,11 @@ const REQUEST_ID_PATTERN =
 export type LocalSpeechStatus =
   | {
       status: "ready";
-      runtime_version: "1.9.3";
-      model_name: "tiny.en";
-      model_sha256: string;
+      runtime: "whisper.cpp" | "OpenAI";
+      runtime_version: "1.9.3" | "v1" | null;
+      model_name: string;
+      model_sha256: string | null;
+      placement: "CPU" | "CUDA" | "cloud";
       runtime_id: string;
       maximum_clip_seconds: 12;
     }
@@ -74,7 +76,7 @@ export function parseLocalSpeechStatus(
     return null;
   const data = value.data;
   if (!isRecord(data)) return null;
-  if (data.status === "unavailable") {
+  if (data.status === "unavailable" || data.status === "not_configured") {
     return {
       status: "unavailable",
       reason:
@@ -85,26 +87,23 @@ export function parseLocalSpeechStatus(
   }
   if (
     data.status !== "ready" ||
-    data.runtime !== "whisper.cpp" ||
-    data.runtime_version !== "1.9.3" ||
-    data.model_name !== "tiny.en" ||
-    typeof data.model_sha256 !== "string" ||
-    !SHA256_PATTERN.test(data.model_sha256) ||
-    typeof data.runtime_id !== "string" ||
-    !SHA256_PATTERN.test(data.runtime_id) ||
+    !validRuntime(data.runtime, data.runtime_version, data.model_name,
+      data.model_sha256, data.runtime_id, data.placement) ||
     data.language !== "en" ||
-    data.placement !== "CPU" ||
-    data.maximum_clip_seconds !== LOCAL_SPEECH_MAX_SECONDS ||
+    (data.maximum_clip_seconds !== LOCAL_SPEECH_MAX_SECONDS &&
+      !(data.runtime === "OpenAI" && data.maximum_clip_seconds === null)) ||
     data.audio_persisted !== false
   ) {
     return null;
   }
   return {
     status: "ready",
-    runtime_version: "1.9.3",
-    model_name: "tiny.en",
-    model_sha256: data.model_sha256,
-    runtime_id: data.runtime_id,
+    runtime: data.runtime as "whisper.cpp" | "OpenAI",
+    runtime_version: data.runtime_version as "1.9.3" | "v1" | null,
+    model_name: data.model_name as string,
+    model_sha256: data.model_sha256 as string | null,
+    placement: data.placement as "CPU" | "CUDA" | "cloud",
+    runtime_id: data.runtime_id as string,
     maximum_clip_seconds: LOCAL_SPEECH_MAX_SECONDS,
   };
 }
@@ -113,12 +112,13 @@ export function parseLocalTranscription(
   value: unknown,
   expectedRequestId: string,
   expectedAudioSha256: string,
-  expectedRuntimeId: string,
+  expectedRuntime: string | Extract<LocalSpeechStatus, { status: "ready" }>,
 ): LocalTranscriptionDraft | null {
+  const expectedRuntimeId = typeof expectedRuntime === "string" ? expectedRuntime : expectedRuntime.runtime_id;
   if (
     !REQUEST_ID_PATTERN.test(expectedRequestId) ||
     !SHA256_PATTERN.test(expectedAudioSha256) ||
-    !SHA256_PATTERN.test(expectedRuntimeId) ||
+    !(SHA256_PATTERN.test(expectedRuntimeId) || expectedRuntimeId === "openai") ||
     !isRecord(value) ||
     value.api_version !== "v1" ||
     value.status !== "ok" ||
@@ -135,16 +135,20 @@ export function parseLocalTranscription(
     data.language !== "en" ||
     data.verified !== false ||
     !isRecord(data.runtime) ||
-    data.runtime.name !== "whisper.cpp" ||
-    data.runtime.version !== "1.9.3" ||
-    data.runtime.model_name !== "tiny.en" ||
     data.runtime.runtime_id !== expectedRuntimeId ||
-    data.runtime.placement !== "CPU" ||
-    typeof data.runtime.model_sha256 !== "string" ||
-    !SHA256_PATTERN.test(data.runtime.model_sha256)
+    !validRuntime(data.runtime.name, data.runtime.version, data.runtime.model_name,
+      data.runtime.model_sha256, data.runtime.runtime_id, data.runtime.placement)
   ) {
     return null;
   }
+  if (typeof expectedRuntime !== "string" && (
+    data.runtime.name !== expectedRuntime.runtime ||
+    data.runtime.model_name !== expectedRuntime.model_name ||
+    data.runtime.placement !== expectedRuntime.placement ||
+    (expectedRuntime.runtime !== "OpenAI" && (
+      data.runtime.version !== expectedRuntime.runtime_version ||
+      data.runtime.model_sha256 !== expectedRuntime.model_sha256))
+  )) return null;
   const transcriptBytes = new TextEncoder().encode(data.transcript).byteLength;
   if (
     transcriptBytes < 1 ||
@@ -159,6 +163,22 @@ export function parseLocalTranscription(
     transcript: data.transcript,
     runtime_id: expectedRuntimeId,
   };
+}
+
+function validRuntime(name: unknown, version: unknown, model: unknown,
+  sha256: unknown, runtimeId: unknown, placement: unknown): boolean {
+  if (name === "OpenAI") return placement === "cloud" && runtimeId === "openai" &&
+    (version === null || version === "v1") && (sha256 === null || sha256 === "not_applicable") &&
+    typeof model === "string" && /^[a-zA-Z0-9._-]{1,96}$/.test(model);
+  return name === "whisper.cpp" && version === "1.9.3" &&
+    (model === "tiny.en" || model === "large-v3") && (placement === "CPU" || placement === "CUDA") &&
+    typeof sha256 === "string" && SHA256_PATTERN.test(sha256) &&
+    typeof runtimeId === "string" && SHA256_PATTERN.test(runtimeId);
+}
+
+export function speechPlacementLabel(placement: string): string {
+  return placement === "cloud" ? "OpenAI · cloud" :
+    placement === "CUDA" ? "Local · GPU (CUDA)" : "Local · CPU";
 }
 
 function writeAscii(bytes: Uint8Array, offset: number, value: string) {

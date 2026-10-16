@@ -375,6 +375,27 @@ test("Segmented can be disabled with a reason", () => {
   assert.equal(markup.match(/disabled=""/g).length, 3);
 });
 
+test("Segmented disables individual providers and skips them during keyboard navigation", () => {
+  const items = [{ key: "local", label: "Local" }, { key: "openai", label: "OpenAI", disabled: true },
+    { key: "other", label: "Other" }];
+  const markup = render(createElement(segmentedMod.Segmented, {
+    items, value: "openai", label: "Provider", onChange() {},
+  }));
+  const radios = [...markup.matchAll(/<button[^>]*role="radio"[^>]*>/g)].map((match) => match[0]);
+  assert.match(radios[0], /tabindex="0"/);
+  assert.match(radios[1], /disabled=""/);
+  assert.match(radios[1], /tabindex="-1"/);
+  const chosen = [];
+  const enabled = [{ focus() {} }, { focus() {} }];
+  const element = segmentedMod.Segmented({ items, value: "local", label: "Provider", onChange: (key) => chosen.push(key) });
+  element.props.onKeyDown({ key: "ArrowRight", target: enabled[0], preventDefault() {},
+    currentTarget: { querySelectorAll: (selector) => {
+      assert.equal(selector, '[role="radio"]:not(:disabled)');
+      return enabled;
+    } } });
+  assert.deepEqual(chosen, ["other"]);
+});
+
 test("Segmented styling reuses the tab classes and styles aria-checked", async () => {
   const css = await readFile(new URL(`${dir}/primitives.module.css`, sourceRootUrl), "utf8");
   assert.match(css, /\.tab:is\(\[aria-selected="true"\], \[aria-checked="true"\]\) \{/);

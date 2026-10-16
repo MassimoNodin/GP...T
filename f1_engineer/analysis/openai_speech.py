@@ -22,6 +22,11 @@ OPENAI_KEEPALIVE_INTERVAL_S = 45.0
 _MAX_RESPONSE_BYTES = 64 * 1024
 
 
+def valid_openai_key(key: object) -> bool:
+    return (isinstance(key, str) and key.startswith("sk-") and 20 <= len(key) <= 512
+            and not any(character.isspace() for character in key))
+
+
 class OpenAISpeechRuntime:
     """Cloud transcription with OpenAI gpt-transcribe; the API key is read from an owner-only file."""
 
@@ -41,13 +46,17 @@ class OpenAISpeechRuntime:
         """Open a shared connection and keep it warm; new connections to the API can be slow to establish."""
         if self._client is None:
             self._client = self._new_client()
+        if self._keepalive is None:
             self._keepalive = asyncio.create_task(self._keep_warm())
 
-    async def close(self) -> None:
+    async def stop_keepalive(self) -> None:
         if self._keepalive is not None:
             self._keepalive.cancel()
             await asyncio.gather(self._keepalive, return_exceptions=True)
             self._keepalive = None
+
+    async def close(self) -> None:
+        await self.stop_keepalive()
         if self._client is not None:
             await self._client.aclose()
             self._client = None
@@ -82,13 +91,13 @@ class OpenAISpeechRuntime:
             raise LocalSpeechUnavailable("openai_key_file_missing") from exc
         except (OSError, UnicodeError) as exc:
             raise LocalSpeechUnavailable("openai_key_file_invalid") from exc
-        if not key.startswith("sk-") or not 20 <= len(key) <= 512 or any(c.isspace() for c in key):
+        if not valid_openai_key(key):
             raise LocalSpeechUnavailable("openai_key_file_invalid")
         return key
 
     def status(self) -> dict[str, object]:
         base = {"runtime": "OpenAI", "runtime_version": None, "model_name": self.model, "model_sha256": None,
-                "runtime_id": None, "language": "en", "placement": "cloud", "maximum_clip_seconds": None,
+                "runtime_id": "openai", "language": "en", "placement": "cloud", "maximum_clip_seconds": None,
                 "audio_persisted": False, "billing": "openai_api"}
         try:
             self._key()

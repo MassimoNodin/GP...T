@@ -1,4 +1,5 @@
 "use client";
+import { ApiKeysCard } from "./ApiKeysCard";
 
 import { useEffect, useRef, useState } from "react";
 import { InlineAlert } from "@/features/ui-foundation/states";
@@ -103,6 +104,7 @@ export function ConnectionsPanel({ model }: { model: SettingsModel }) {
         </p>
       </Card>
       <div className={styles.rightCol}>
+        <ApiKeysCard />
         <Card title="Engineer Runtime" labelledBy="engineer-runtime" aside={<RuntimeChip model={model} />}>
           <p className={styles.cardDesc}>The runtime that answers engineer questions.</p>
           <KeyValues rows={runtime.rows} />
@@ -116,7 +118,7 @@ export function ConnectionsPanel({ model }: { model: SettingsModel }) {
             </span>
           }
         >
-          <p className={styles.cardDesc}>Turns a spoken question into text on this computer.</p>
+          <p className={styles.cardDesc}>Turns a spoken question into text using the selected provider.</p>
           <KeyValues rows={speech.rows} />
           <p className={styles.footnote}>{speech.footnote}</p>
         </Card>

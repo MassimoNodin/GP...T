@@ -75,6 +75,8 @@ const routes = {
   regions: await route("track-models/[model_id]/regions/route.ts"),
   events: await route("engineer/events/route.ts"),
   preferences: await route("engineer/preferences/route.ts"),
+  speechSettings: await route("engineer/speech/route.ts"),
+  openaiKey: await route("secrets/openai-api-key/route.ts"),
   sources: await route("recording-sources/page/route.ts"),
   importCreate: await route("import-jobs/route.ts"),
   importCancel: await route("import-jobs/[job_id]/cancel/route.ts"),
@@ -127,6 +129,34 @@ const jsonHeaders = { "content-type": "application/json" };
 const params = (value) => ({ params: Promise.resolve(value) });
 const hasToken = (call) => call.headers.get("authorization") === `Bearer ${TOKEN}`;
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+test("speech settings and key proxies use bounded authenticated mutations and forward revisions", async () => {
+  engine(async () => JSON_ENVELOPE({ revision: 2 }, 200, { etag: '"2"' }));
+  const response = await routes.speechSettings.PUT(send("/api/engineer/speech", {
+    method: "PUT", body: JSON.stringify({ provider: "openai", local: { model: "large-v3", device: "cuda" } }),
+    headers: { ...jsonHeaders, "if-match": '"1"' },
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("etag"), '"2"');
+  assert.equal(upstream[0].headers.get("if-match"), '"1"');
+  assert.ok(hasToken(upstream[0]));
+  assert.match(upstream[0].url, /\/api\/v1\/engineer\/speech$/);
+  engine(async () => JSON_ENVELOPE({ configured: true, last4: "abcd", verified: null }));
+  await routes.openaiKey.PUT(send("/api/secrets/openai-api-key", {
+    method: "PUT", body: JSON.stringify({ key: "sk-" + "x".repeat(30), verify: false }), headers: jsonHeaders,
+  }));
+  assert.ok(hasToken(upstream[0]));
+  assert.equal(upstream[0].method, "PUT");
+  const removed = await routes.openaiKey.DELETE(send("/api/secrets/openai-api-key", { method: "DELETE" }));
+  assert.equal(removed.status, 200);
+  assert.equal(upstream[1].method, "DELETE");
+  assert.ok(hasToken(upstream[1]));
+  const denied = await routes.openaiKey.DELETE(send("/api/secrets/openai-api-key", { method: "DELETE", trusted: false }));
+  assert.equal(denied.status, 403);
+  const tooLarge = await routes.openaiKey.PUT(send("/api/secrets/openai-api-key", {
+    method: "PUT", body: JSON.stringify({ key: "x".repeat(2049), verify: false }), headers: jsonHeaders,
+  }));
+  assert.equal(tooLarge.status, 413);
+});
 async function until(condition) {
   for (let attempt = 0; attempt < 500 && !condition(); attempt += 1) await tick();
   assert.ok(condition(), "condition was not reached");

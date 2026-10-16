@@ -123,7 +123,8 @@ export function speechRow(state: SpeechState): StatusRow {
         label: ROW_SPEECH,
         status: "Ready",
         tone: "green",
-        detail: state.placement ? `Local · ${state.placement}` : "Local",
+        detail: state.placement === "cloud" ? "OpenAI · cloud" : state.placement === "CUDA"
+          ? "Local · GPU (CUDA)" : state.placement ? `Local · ${state.placement}` : "Local",
       };
     case "unavailable":
       return {
