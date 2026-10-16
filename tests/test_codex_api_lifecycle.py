@@ -15,6 +15,7 @@ def test_api_lifespan_warms_runtime_and_cleans_up_on_failure(monkeypatch, tmp_pa
     class Resource:
         def __init__(self, name):
             self.name = name
+            self.store = SimpleNamespace()
             self.ask_log = SimpleNamespace(record=lambda category: lambda handler: handler)
 
         def record(self, action):
