@@ -19,10 +19,12 @@ class PresenceReporter:
     def request_refresh(self):
         self._refresh.set()
 
-    def publish(self, *, revision, engine, speaking, listening, wheel_status):
+    def publish(self, *, revision, engine, speaking, listening, wheel_status, settings=None):
         with self._lock:
             self.state = {"applied_revision": revision, "tts_engine": engine, "speaking": speaking,
                           "listening": listening, "wheel_status": str(wheel_status)[:128]}
+            if settings is not None:
+                self.state["settings"] = dict(settings)
 
     def devices(self):
         try:

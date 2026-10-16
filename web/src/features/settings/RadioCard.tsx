@@ -2,13 +2,15 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Select } from "@/features/ui-foundation/primitives";
 import { Field } from "./shared";
-import { radioStatus, type RadioSettings } from "./radio-settings";
+import { initialRadioForm, radioStatus, type RadioSettings } from "./radio-settings";
 import { useRadioPresence } from "./useRadioPresence";
 import styles from "./Settings.module.css";
 
 export function RadioCard() {
   const presence = useRadioPresence();
   const [form, setForm] = useState<RadioSettings | null>(null);
+  const [stored, setStored] = useState<RadioSettings | null>(null);
+  const [dirty, setDirty] = useState(false);
   const [revision, setRevision] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
@@ -20,11 +22,16 @@ export function RadioCard() {
       const { data } = await response.json();
       const { revision: loadedRevision, schema_version: schema, ...settings } = data;
       if (schema !== 1 || !Number.isInteger(loadedRevision)) throw new Error("invalid");
-      setForm(settings); setRevision(loadedRevision); setConflict(false); setMessage("");
+      setStored(settings); setForm(settings); setRevision(loadedRevision); setDirty(false); setConflict(false); setMessage("");
     } catch { if (!signal?.aborted) setMessage("Radio settings could not be loaded. Try again."); }
   }
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, []);
+  useEffect(() => {
+    // Until the user edits, follow what the running radio reports (see initialRadioForm).
+    if (stored && revision !== null && !dirty) setForm(initialRadioForm(stored, revision, presence));
+  }, [stored, revision, dirty, presence]);
   function edit(key: keyof RadioSettings, value: string | number | null) {
+    setDirty(true);
     setForm((current) => current ? { ...current, [key]: value,
       ...(key === "answer_mode" && value === "grounded" ? { intent_mode: "luna" } : {}),
     } : current);
@@ -41,7 +48,8 @@ export function RadioCard() {
       if (response.status === 409) { setConflict(true); setMessage("Settings changed elsewhere. Load latest before saving."); return; }
       if (!response.ok) { setMessage(response.status === 403 ? "Saving is not authorized." : "Settings were rejected or the engine is unavailable."); return; }
       const { data } = await response.json();
-      setRevision(data.revision); setMessage("Saved. The running radio applies changes at its next natural boundary.");
+      const { revision: savedRevision, schema_version: _schema, ...saved } = data;
+      setStored(saved); setRevision(savedRevision); setDirty(false); setMessage("Saved. The running radio applies changes at its next natural boundary.");
     } catch { setMessage("The engine could not be reached. Your edits have been kept."); }
     finally { setSaving(false); }
   }

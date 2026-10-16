@@ -54,7 +54,7 @@ def test_store_revision_conflicts_cache_and_repair(tmp_path):
     cache = CachedDocument(store)
     first = cache.load()
     assert cache.load() is first
-    store.update(RadioSettings.from_dict({**DEFAULT_RADIO_SETTINGS, "rate": 4}))
+    store.update(RadioSettings.from_dict({**DEFAULT_RADIO_SETTINGS, "rate": 2}))
     assert cache.load().revision == 2
     store.path.write_text("broken")
     with pytest.raises(PreferencesUnreadable):

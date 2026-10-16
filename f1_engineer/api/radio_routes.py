@@ -19,11 +19,19 @@ class RadioPresence:
         self._entries = {}
 
     def update(self, body):
-        if not isinstance(body, dict) or set(body) != {
+        required = {
             "instance_id", "version", "applied_revision", "tts_engine", "voices", "devices",
             "wheel_status", "speaking", "listening",
-        }:
+        }
+        if not isinstance(body, dict) or set(body) not in (required, required | {"settings"}):
             raise ValueError("radio_presence_invalid")
+        if "settings" in body:
+            # The values the radio is running with, so an unsaved form starts from them. A bad
+            # report only loses this hint; it never marks a live radio as disconnected.
+            try:
+                body = {**body, "settings": RadioSettings.from_dict(body["settings"]).to_dict()}
+            except PreferencesInvalid:
+                body = {key: value for key, value in body.items() if key != "settings"}
         for key in ("instance_id", "version", "applied_revision", "wheel_status"):
             if not isinstance(body[key], str) or not 0 < len(body[key]) <= 128:
                 raise ValueError("radio_presence_invalid")

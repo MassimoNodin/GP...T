@@ -29,6 +29,7 @@ from .glossary import load_glossary
 from .intents import LOCAL_CONTROLS, render_intent
 from .live_settings import LivePlayback, RadioLiveSettings
 from .presence import PresenceReporter
+from .settings import DEFAULT_RADIO_SETTINGS
 
 
 class DryRunPlayback:
@@ -291,7 +292,8 @@ def _run_radio(args) -> int:
             if presence is not None:
                 presence.publish(revision=live_settings.revision, engine=args.tts_engine,
                                  speaking=scheduler.active is not None, listening=voice.blocks_playback,
-                                 wheel_status=wheel.status().get("status", "unknown"))
+                                 wheel_status=wheel.status().get("status", "unknown"),
+                                 settings={key: getattr(args, key) for key in DEFAULT_RADIO_SETTINGS})
             pressed = wheel.poll(now=now)
             voice.tick(scope=scheduler.scope, input_status=wheel.status())
             if pressed:

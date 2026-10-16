@@ -10,8 +10,8 @@ from ..analysis.engineer_preferences import EngineerPreferencesStore, Preference
 
 DEFAULT_RADIO_SETTINGS = {
     "proactive_mode": "rules", "answer_mode": "intent", "intent_mode": "luna",
-    "tts_engine": "edge", "voice": None, "rate": 0, "volume": 100,
-    "microphone": None, "cue_output": None, "cue_volume": 0.08, "capture_seconds": 8,
+    "tts_engine": "edge", "voice": None, "rate": 4, "volume": 75,
+    "microphone": None, "cue_output": None, "cue_volume": 0.08, "capture_seconds": 12,
 }
 
 
