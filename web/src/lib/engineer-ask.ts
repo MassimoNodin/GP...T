@@ -165,7 +165,7 @@ export function parseEngineerApiFailure(value: unknown): string | null {
   }
   const reasons: Record<string, string> = {
     engineer_ask_busy:
-      "GP...T is already answering a question. Try again in a moment.",
+      "The engineer is busy with another request, possibly on the radio. Try again in a moment.",
     engineer_ask_deadline_exceeded:
       "The local question timed out. Shorten it and try again.",
     engineer_ask_unavailable:

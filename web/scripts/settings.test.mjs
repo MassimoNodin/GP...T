@@ -34,6 +34,13 @@ async function loadUrl(root, name, replacements = {}) {
 }
 
 const display = await loadModule("display.ts");
+const audio = await loadModule("audio.ts");
+
+test("AI busy mic tests mention radio without assuming it owns the gate", () => {
+  assert.equal(audio.transcribeFailureText(409, "engineer_ask_busy"),
+    "The engineer is busy with another request, possibly on the radio. Try again in a moment.");
+  assert.equal(audio.transcribeFailureText(429, "speech_busy"), "Speech recognition is busy. Try again in a moment.");
+});
 const preferences = await loadModule("preferences.ts");
 const parseUtilsUrl = await loadUrl(featuresRoot, "review-data/parse-utils.ts");
 const docUrl = await loadUrl(featuresRoot, "review-data/preferences.ts", { "./parse-utils": parseUtilsUrl });
