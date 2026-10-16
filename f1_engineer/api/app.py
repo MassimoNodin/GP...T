@@ -3175,7 +3175,7 @@ def create_app(
                             or not transcript.strip()
                             or len(transcript.encode("utf-8", errors="strict")) > MAX_TRANSCRIPT_BYTES):
                         raise ValueError("radio_intent_request_invalid")
-                context = parse_context(document["context"])
+                    context = parse_context(document["context"])
                 except _EngineerRequestBodyLimitExceeded:
                     return _api_error(413, "radio_intent_request_limit_exceeded")
                 except (ValueError, KeyError, TypeError, RecursionError, UnicodeError):
