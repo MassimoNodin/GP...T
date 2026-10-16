@@ -4,7 +4,8 @@ param(
   [string]$IdentityFile = "$env:USERPROFILE\.ssh\id_ed25519_ubuntu",
   [ValidatePattern('^/[A-Za-z0-9._/-]+$')] [string]$RemoteRepository = '/home/massimo-nodin/GP...T',
   [ValidateRange(1, 65535)] [int]$TunnelPort = 18765,
-  [string]$Voice = 'Microsoft Hazel Desktop',
+  [string]$Voice = 'en-AU-WilliamNeural',
+  [ValidateSet('edge', 'windows')] [string]$TtsEngine = 'edge',
   [ValidateSet('off', 'rules', 'model')] [string]$ProactiveMode = 'rules',
   [ValidateRange(0, 1024)] [int]$Microphone,
   [ValidateRange(0, 1024)] [int]$CueOutput,
@@ -81,7 +82,7 @@ try {
   }
   $revision = (@(& git rev-parse HEAD) -join '').Trim()
   $manifest = @{ started_utc = (Get-Date).ToUniversalTime().ToString('o'); revision = $revision;
-    api = $api; voice = $Voice; browser_required = $false; proactive_mode = $ProactiveMode; dry_run = [bool]$DryRun;
+    api = $api; voice = $Voice; tts_engine = $TtsEngine; browser_required = $false; proactive_mode = $ProactiveMode; dry_run = [bool]$DryRun;
     microphone = $(if ($PSBoundParameters.ContainsKey('Microphone')) { $Microphone } else { 'system-default' });
     cue_output = $(if ($PSBoundParameters.ContainsKey('CueOutput')) { $CueOutput } else { 'system-default' }) }
   $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $LogDirectory 'manifest.json') -Encoding UTF8
@@ -89,7 +90,7 @@ try {
   $env:PYTHONUNBUFFERED = '1'
   Write-Output "Backend ready. No dashboard started. Logs: $LogDirectory"
   $radioArguments = @('run', '--extra', 'app', '--extra', 'radio', 'f1-engineer', 'radio',
-    '--api-url', $api, '--token-file', $tokenFile, '--voice', $Voice,
+    '--api-url', $api, '--token-file', $tokenFile, '--voice', $Voice, '--tts-engine', $TtsEngine,
     '--proactive-mode', $ProactiveMode, '--log-file', (Join-Path $LogDirectory 'radio.jsonl'))
   if ($DryRun) { $radioArguments += '--dry-run' }
   if ($PSBoundParameters.ContainsKey('Microphone')) { $radioArguments += @('--microphone', "$Microphone") }

@@ -21,6 +21,7 @@ from .track_geometry import RadioTrackGeometry
 from .scheduler import RadioMessage, RadioScheduler
 from .proactive_selection import ProactiveSelector
 from .wheel_input import WheelButtonMonitor
+from .edge_speech import EdgeSpeech, EdgeSpeechUnavailable
 from .windows_speech import WindowsSpeech
 from .diagnostics import emit, radio_event_log, trace_event
 from .glossary import load_glossary
@@ -39,6 +40,16 @@ class DryRunPlayback:
 
     def close(self) -> None:
         pass
+
+
+def _speech(args):
+    if args.tts_engine == "windows":
+        return WindowsSpeech(voice=args.voice, rate=args.rate, volume=args.volume)
+    fallback = WindowsSpeech(rate=args.rate, volume=args.volume)
+    try:
+        return EdgeSpeech(voice=args.voice, rate=args.rate, volume=args.volume, fallback=fallback)
+    except EdgeSpeechUnavailable:
+        return fallback
 
 
 def _commands(inbox: queue.Queue, stream) -> None:
@@ -196,8 +207,7 @@ def _run_radio(args) -> int:
     opponent_captures = RadioOpponentCaptures(client, notify=emit) if client is not None else None
     geometry = RadioTrackGeometry(client) if client is not None else None
     try:
-        playback = DryRunPlayback() if args.dry_run or args.once or args.capture_test else WindowsSpeech(
-            voice=args.voice, rate=args.rate, volume=args.volume)
+        playback = DryRunPlayback() if args.dry_run or args.once or args.capture_test else _speech(args)
         scheduler = RadioScheduler(playback, notify=emit)
         controller = RadioController(scheduler, notify=emit, backend_regions=client is not None,
                                      proactive_mode=getattr(args, "proactive_mode", "rules"), selector=selector)

@@ -23,6 +23,7 @@ app = [
     "uvicorn>=0.54,<1",
 ]
 radio = [
+    "edge-tts>=7,<8",
     "pygame-ce>=2.5,<3",
     "sounddevice>=0.5,<1",
 ]

@@ -881,8 +881,10 @@ def build_parser() -> argparse.ArgumentParser:
     radio = commands.add_parser("radio", help="run the standalone lap radio without a browser")
     radio.add_argument("--api-url", default=os.environ.get("F1_ENGINEER_API_URL") or "http://127.0.0.1:8765")
     radio.add_argument("--token-file", default=os.environ.get("F1_ENGINEER_CONTROL_TOKEN_FILE") or "data/.f1-engineer-control-token")
-    radio.add_argument("--voice", help="installed Windows voice name")
-    radio.add_argument("--rate", type=int, default=0, help="speech rate (-10 to 10)")
+    radio.add_argument("--tts-engine", choices=("edge", "windows"), default="edge",
+                       help="speech engine: Edge neural voices (falls back to Windows if unavailable) or Windows voices")
+    radio.add_argument("--voice", help="voice name: Edge neural (default en-AU-WilliamNeural) or installed Windows voice")
+    radio.add_argument("--rate", type=int, default=4, help="speech rate (-10 to 10); 4 is about 1.5x")
     radio.add_argument("--volume", type=int, default=75, help="speech volume (0 to 100)")
     radio.add_argument("--poll-interval", type=float, default=0.25, help="backend polling seconds (0.1 to 1)")
     radio.add_argument("--proactive-mode", choices=("off", "rules", "model"), default="rules",
