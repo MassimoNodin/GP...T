@@ -64,10 +64,11 @@ _LIVE_QUESTION_CONTEXT = object()
 
 class RadioController:
     def __init__(self, scheduler: RadioScheduler, *, notify=None, backend_regions=False,
-                 proactive_mode="rules") -> None:
-        if proactive_mode not in ("off", "rules"):
+                 proactive_mode="rules", selector=None) -> None:
+        if proactive_mode not in ("off", "rules", "model"):
             raise ValueError("invalid proactive mode")
         self.proactive_mode = proactive_mode
+        self.selector = selector
         self.scheduler = scheduler
         self.notify = notify or (lambda event: None)
         self._cursor: int | None = None
@@ -203,6 +204,8 @@ class RadioController:
         self.scheduler.set_scope(binding)
         if changed:
             self._pending_region = None
+            if self.selector is not None:
+                self.selector.cancel()
             self.proactive.clear()
             self.automatic_pace.clear()
             self.proactive_policy.clear()
@@ -440,13 +443,15 @@ class RadioController:
         self._flush_tracking_notice(now=now)
 
     def set_proactive_mode(self, mode):
-        if mode not in ("off", "rules"):
+        if mode not in ("off", "rules", "model"):
             raise ValueError("invalid proactive mode")
         if mode != self.proactive_mode:
             self.proactive_mode = mode
             self.proactive.clear()
             self.automatic_pace.clear()
             self.scheduler.cancel_owner("automatic_gaps")
+            if self.selector is not None:
+                self.selector.cancel()
         self.notify({"event": "radio_proactive_mode", "mode": mode})
 
     def _validate_proactive(self, notice, *, now):
@@ -465,8 +470,23 @@ class RadioController:
                 return "driver_workload"
         return None
 
-    def _report_proactive(self, notices, event, *, now, age, reported):
+    def poll_proactive(self, *, now):
+        if self.selector is None:
+            return
+        if (self.proactive_mode != "model" or self.scheduler.muted or self.scheduler.suspended
+                or self._player is None or self._paused):
+            self.selector.cancel()
+            return
+        result = self.selector.poll(scope=self.scheduler.scope, now=now)
+        if result is not None:
+            notice, event, deadline = result
+            age = self._age_s + now - self._received_at
+            self._report_proactive([notice], event, now=now, age=age, reported=False,
+                                   selected=True, deadline=deadline)
+
+    def _report_proactive(self, notices, event, *, now, age, reported, selected=False, deadline=None):
         queued = False
+        deferred = []
         for notice in notices:
             reason = ("explicit_report" if reported else "higher_ranked_development" if queued else
                       "quiet" if self.scheduler.muted else "listening" if self.scheduler.suspended else
@@ -478,6 +498,11 @@ class RadioController:
             if reason is not None:
                 self.notify({"event": "radio_proactive_suppressed", "reason": reason, **notice.evidence()})
                 continue
+            if self.proactive_mode == "model" and not notice.rank[0] and not selected:
+                deferred.append(notice)
+                continue
+            if self.selector is not None:
+                self.selector.cancel()
             self.scheduler.cancel_owner("automatic_gaps")
             key = f"automatic-{notice.kind}:{event['id']}:{notice.role}"
             def guard(dispatch_now, candidate=notice):
@@ -487,11 +512,16 @@ class RadioController:
                 self.proactive_policy.record_started(candidate, now=dispatch_now)
                 self.notify({"event": "radio_proactive_started", "key": message_key, **candidate.evidence()})
             queued = self.scheduler.submit(RadioMessage(
-                key, self.scheduler.scope, notice.text, "proactive", now + 10 - age,
+                key, self.scheduler.scope, notice.text, "proactive",
+                min(now + 10 - age, deadline) if deadline is not None else now + 10 - age,
                 observation_age_s=age, dispatch_before=now + 3 - age, owner="automatic_gaps",
                 dispatch_guard=guard, on_started=started), now=now)
             self.notify({"event": "radio_proactive_candidate", "key": key, "queued": queued,
                          "observation_age_s": age, **notice.evidence()})
+        if deferred and not queued:
+            if self.selector is not None:
+                return self.selector.submit(tuple(deferred), event, scope=self.scheduler.scope, now=now)
+            self.notify({"event": "radio_strategy_unavailable", "reason": "selector_not_configured"})
         return queued
 
     def region_capture_requests(self):
@@ -730,6 +760,8 @@ class RadioController:
                                                    if key != "action"} if self._pending_region is not None else None),
                 "watches": self.watches.views(),
                 "proactive_mode": self.proactive_mode,
+                "strategy_running": bool(self.selector is not None and self.selector.thread is not None
+                                         and self.selector.thread.is_alive()),
                 "automatic_pace": {"trend": self.automatic_pace.trend,
                                    "comparable_laps": len(self.automatic_pace.samples)},
                 "automatic_gaps": {role: {"trend": state.trend, "near": state.near,
@@ -888,6 +920,8 @@ class RadioController:
             self._tracking_notice = None
 
     def _reset_gaps(self) -> None:
+        if self.selector is not None:
+            self.selector.cancel()
         self.proactive.clear()
         self.automatic_pace.clear()
         self.scheduler.cancel_owner("automatic_gaps")

@@ -10,6 +10,8 @@ from pathlib import Path
 
 from ..radio.intent_prompt import build_intent_messages
 from ..radio.intents import intent_schema, parse_intent
+from ..radio.proactive_selection import (SELECTION_INSTRUCTIONS, SELECTION_TIMEOUT_S,
+                                         parse_selection, parse_selection_context, selection_schema)
 from .engineer_ask import build_router_messages, parse_router_output, route_schema
 from .engineer_runtime import EngineerRuntimeUnavailable
 
@@ -356,6 +358,18 @@ class CodexRuntime:
         if self._radio_guard is None:
             self._radio_guard = asyncio.Lock()
         return self._radio_guard
+
+    async def select_proactive(self, context):
+        context = parse_selection_context(context)
+        try:
+            async with asyncio.timeout(SELECTION_TIMEOUT_S), self._open() as server:
+                await self._preflight(server)
+                content = await self._turn(server, instructions=SELECTION_INSTRUCTIONS,
+                                           prompt=json.dumps(context, separators=(",", ":")),
+                                           schema=selection_schema(context), effort=RADIO_EFFORT)
+                return parse_selection(content, context)
+        except TimeoutError as exc:
+            raise EngineerRuntimeUnavailable("proactive_timeout") from exc
 
     async def interpret_radio(self, transcript, context):
         """Interpret one radio transcript into a validated intent using the persistent server."""

@@ -48,8 +48,10 @@ from ..analysis.engineer_query import query_engineer_evidence
 from ..analysis.engineer_ask_service import answer_engineer_question
 from ..analysis.ollama_runtime import OllamaRuntime
 from ..analysis.codex_runtime import CodexRuntime
+from ..analysis.proactive_advisor import ProactiveAdvisor
 from ..analysis.openai_speech import OpenAISpeechRuntime
 from ..radio.intents import MAX_CONTEXT_BYTES, MAX_TRANSCRIPT_BYTES, parse_context
+from ..radio.proactive_selection import MAX_SELECTION_BYTES, parse_selection_context
 from ..analysis.engineer_runtime import EngineerRuntime, EngineerRuntimeUnavailable
 from ..analysis.race_diagnostics import build_session_race_diagnostics
 from ..analysis.observation_set import build_observation_set
@@ -1108,6 +1110,7 @@ def create_app(
         )
     )
     engineer_ask_lock = asyncio.Lock()
+    proactive_advisor = ProactiveAdvisor(selected_engineer_runtime)
     engineer_activity = build_engineer_activity(configured_database_path, evidence_store, live_runtime)
     engineer_preferences_store = EngineerPreferencesStore.beside_database(configured_database_path)
     engineer_activity.set_topics(lambda: enabled_topics(engineer_preferences_store.current()))
@@ -1152,6 +1155,7 @@ def create_app(
             start_runtime = getattr(selected_engineer_runtime, "start", None)
             if start_runtime is not None:
                 await start_runtime()
+            cleanup.push_async_callback(proactive_advisor.preempt)
             yield
 
     app = FastAPI(
@@ -3053,6 +3057,7 @@ def create_app(
                 if engineer_ask_lock.locked():
                     return _api_error(409, "engineer_ask_busy")
 
+                await proactive_advisor.preempt()
                 gate_lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
                 if gate_lease is None:
                     return _api_error(409, "engineer_ask_busy")
@@ -3108,6 +3113,42 @@ def create_app(
             if lock_acquired:
                 engineer_ask_lock.release()
 
+    @app.post("/api/v2/engineer/proactive-selection")
+    async def engineer_proactive_selection(
+        request: Request,
+        authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+    ) -> JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(401, "proactive_unauthorized")
+        if request.query_params:
+            return _api_error(400, "proactive_query_not_allowed")
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+            return _api_error(415, "proactive_json_required")
+        try:
+            async with asyncio.timeout(8):
+                try:
+                    context = parse_selection_context(json.loads(await _read_limited_body(request, MAX_SELECTION_BYTES)))
+                except _EngineerRequestBodyLimitExceeded:
+                    return _api_error(413, "proactive_request_limit_exceeded")
+                except (ValueError, TypeError, KeyError, RecursionError, UnicodeError):
+                    return _api_error(422, "proactive_context_invalid")
+                selection = await proactive_advisor.select(context, request.is_disconnected)
+                return JSONResponse(
+                    status_code=200,
+                    content={"api_version": "v1", "status": "ok", "reason": None,
+                             "data": {"schema_version": 1, "scope": context["scope"], "selection": selection}},
+                    headers={"Cache-Control": "no-store"})
+        except EngineerRuntimeUnavailable as exc:
+            reason = exc.reason if re.fullmatch(r"[a-z_]{1,96}", exc.reason) else "proactive_unavailable"
+            status = 409 if reason in ("proactive_busy", "proactive_preempted") else 503
+            return _api_error(status, reason)
+        except TimeoutError:
+            return _api_error(504, "proactive_timeout")
+        except _EngineerClientDisconnected:
+            return _api_error(499, "proactive_client_disconnected")
+        except (OSError, RuntimeError, ValueError):
+            return _api_error(503, "proactive_unavailable")
+
     @app.post("/api/v2/engineer/radio-intent")
     async def engineer_radio_intent(
         request: Request,
@@ -3134,11 +3175,12 @@ def create_app(
                             or not transcript.strip()
                             or len(transcript.encode("utf-8", errors="strict")) > MAX_TRANSCRIPT_BYTES):
                         raise ValueError("radio_intent_request_invalid")
-                    context = parse_context(document["context"])
+                context = parse_context(document["context"])
                 except _EngineerRequestBodyLimitExceeded:
                     return _api_error(413, "radio_intent_request_limit_exceeded")
                 except (ValueError, KeyError, TypeError, RecursionError, UnicodeError):
                     return _api_error(422, "radio_intent_request_invalid")
+                await proactive_advisor.preempt()
                 gate_lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
                 if gate_lease is None:
                     return _api_error(409, "radio_intent_busy")
@@ -3202,6 +3244,7 @@ def create_app(
                 actual_audio_sha256 = hashlib.sha256(wav).hexdigest()
                 if not hmac.compare_digest(actual_audio_sha256, expected_audio_sha256):
                     return _api_error(422, "engineer_speech_audio_digest_mismatch")
+                await proactive_advisor.preempt()
                 gate_lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
                 if gate_lease is None:
                     return _api_error(409, "engineer_ask_busy")

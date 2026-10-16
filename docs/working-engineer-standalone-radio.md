@@ -276,8 +276,9 @@ They do not measure acoustic cue onset or prove that output was audible.
 
 The radio now observes the adjacent cars without requiring a watch request.
 This first proactive increment separates deterministic observation, candidate
-selection, speech policy and dispatch. It does not introduce periodic model
-requests, AI-generated strategy or a new speech provider.
+selection, speech policy and dispatch. Rules mode requires no model. Optional
+model selection, described below, cannot generate speech or tactical orders;
+the speech provider remains unchanged.
 
 Automatic observations require a scoped, available race/race-2/race-3 context,
 verified unique driver positions, active racing status, no pit status, known
@@ -348,6 +349,42 @@ When fresh aligned brake/steering telemetry is available, automatic candidates
 are also rejected above 20 percent brake or 15 percent steering. Missing control
 telemetry does not claim a safe delivery window: the default remains a fresh
 lap-boundary notice, not circuit-aware timing.
+
+### Optional background selection
+
+Use --proactive-mode model or the console command proactive model to enable
+the separate background reasoning clock. Only a new, eligible development can
+start work, at most once per 15 seconds, with one request in flight and no
+waiting backlog. The six-second model deadline does not block telemetry polling,
+speech dispatch, microphone capture or explicit questions. Near closing gap
+developments still use the fast deterministic path; ordinary developments are
+offered to the selector. Rules mode remains the default and does not invoke it.
+
+The authenticated POST /api/v2/engineer/proactive-selection endpoint accepts at
+most three strictly validated candidates in a 4 KiB JSON request. It uses the
+existing isolated subscription-only Codex runtime in a separate ephemeral
+tool-free turn. The only permitted output is one supplied candidate ID or null
+for silence. It cannot invent a number, choose an unknown subject, write voice
+text, issue a pit/fuel/tyre instruction or change the deterministic speech budget.
+An unsupported provider, unavailable login, timeout or invalid output is silent;
+there is no provider fallback and no backlog of retries.
+
+Foreground engineer questions, radio interpretation and transcription preempt
+background model work before requesting the shared AI admission slot. Client
+listening, cancellation, quiet, mode/session changes and shutdown also cancel
+pending selections. Generation and scope checks reject late results. A returned
+candidate must still be relevant, match current fresh observations and pass the
+same budget/workload checks as rules mode. It retains its original ten-second
+lifetime; a new request or response cannot extend it. In model mode the original
+event can be older than three seconds, but dispatch always requires a current
+observation younger than three seconds, an unchanged development and at most
+500 ms of live gap drift.
+
+Dry-run and once modes never start the background model worker. Use rules for
+a no-model dry run and normal audio mode for optional model acceptance. The
+radio_strategy_started/selected/suppressed/unavailable events distinguish model
+requests, silence, obsolescence and availability failures. No prerecorded
+acknowledgement hides a slow proactive result.
 
 ## Validation and remaining work
 

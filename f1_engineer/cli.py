@@ -877,8 +877,8 @@ def build_parser() -> argparse.ArgumentParser:
     radio.add_argument("--rate", type=int, default=0, help="speech rate (-10 to 10)")
     radio.add_argument("--volume", type=int, default=75, help="speech volume (0 to 100)")
     radio.add_argument("--poll-interval", type=float, default=0.25, help="backend polling seconds (0.1 to 1)")
-    radio.add_argument("--proactive-mode", choices=("off", "rules"), default="rules",
-                       help="automatic evidence-based gap/pace coaching; off leaves requested reports unchanged")
+    radio.add_argument("--proactive-mode", choices=("off", "rules", "model"), default="rules",
+                       help="automatic coaching: deterministic rules (default), bounded background model selection, or off")
     radio.add_argument("--list-voices", action="store_true", help="list installed voices without speaking or contacting the backend")
     radio.add_argument("--dry-run", action="store_true", help="log proposed speech without audio")
     radio.add_argument("--once", action="store_true", help="check backend status once without audio")
