@@ -22,6 +22,10 @@ class GapNotice:
     boundaries: tuple[tuple[int, int], ...] = ()
 
     @property
+    def kind(self):
+        return "gap"
+
+    @property
     def rank(self):
         return (self.near, self.role == "behind" and self.trend == "closing", self.trend == "closing")
 
@@ -36,7 +40,7 @@ class GapNotice:
                 "over two laps.")
 
     def evidence(self):
-        return {"role": self.role, "subject": self.subject, "trend": self.trend,
+        return {"kind": self.kind, "role": self.role, "subject": self.subject, "trend": self.trend,
                 "lap_number": self.lap_number, "gap_ms": self.gap_ms,
                 "change_ms": self.change_ms, "near": self.near,
                 "boundaries": self.boundaries}
@@ -177,7 +181,7 @@ class ProactiveSpeechPolicy:
         self.topics = {}
 
     def suppression(self, notice, *, now):
-        if notice.gap_ms > 10_000:
+        if isinstance(notice, GapNotice) and notice.gap_ms > 10_000:
             return "outside_attention_range"
         if self.started and now - self.started[-1] < 30:
             return "global_cooldown"
@@ -191,3 +195,96 @@ class ProactiveSpeechPolicy:
     def record_started(self, notice, *, now):
         self.started.append(now)
         self.topics[notice.role] = now
+
+
+@dataclass(frozen=True, slots=True)
+class PaceNotice:
+    revision: int
+    trend: str
+    compound: int
+    samples: tuple[tuple[int, int], ...]
+
+    @property
+    def kind(self):
+        return "pace"
+
+    @property
+    def role(self):
+        return "self"
+
+    @property
+    def rank(self):
+        return (False, False, False)
+
+    @property
+    def text(self):
+        delta = self.samples[-1][1] - self.samples[0][1]
+        return (f"Your last three valid laps are getting {self.trend}. "
+                f"{'Up' if delta > 0 else 'Down'} {abs(delta) / 1000:.1f} seconds across two laps; "
+                "conditions may differ.")
+
+    def evidence(self):
+        return {"kind": self.kind, "role": self.role, "trend": self.trend,
+                "actual_compound": self.compound, "samples": self.samples,
+                "change_ms": self.samples[-1][1] - self.samples[0][1]}
+
+
+class ProactivePaceTracker:
+    def __init__(self):
+        self.revision = 0
+        self.clear()
+
+    def clear(self):
+        self.revision += 1
+        self.trend = None
+        self.neutral_boundaries = 0
+        self.samples = ()
+        self.compound = None
+        self.received_at = None
+        self.age_s = 0.0
+
+    def observe(self, pace, *, eligible, now, age_s):
+        if (not eligible or not pace.eligible or self.compound not in (None, pace.compound)
+                or self.received_at is not None and not 0 <= now - self.received_at < 3):
+            self.clear()
+        if eligible and pace.eligible:
+            self.compound, self.received_at, self.age_s = pace.compound, now, age_s
+
+    def complete(self, records):
+        if self.received_at is None:
+            return []
+        samples = tuple((record.lap_number, record.elapsed_ms) for _, record in records)
+        if (len(samples) != 3 or any(record.compound != self.compound for _, record in records)
+                or any(samples[index][0] != samples[index - 1][0] + 1 for index in (1, 2))):
+            self.samples = ()
+            self.trend = None
+            self.neutral_boundaries = 0
+            self.revision += 1
+            return []
+        if samples == self.samples:
+            return []
+        self.samples = samples
+        self.revision += 1
+        changes = [samples[index][1] - samples[index - 1][1] for index in (1, 2)]
+        total = sum(changes)
+        trend = ("slower" if min(changes) >= 200 and total >= 600 else
+                 "quicker" if max(changes) <= -200 and total <= -600 else None)
+        if trend is None:
+            held = (self.trend == "slower" and total > 200 and min(changes) >= -100
+                    or self.trend == "quicker" and total < -200 and max(changes) <= 100)
+            self.neutral_boundaries = 0 if held else self.neutral_boundaries + 1
+            if self.neutral_boundaries >= 2:
+                self.trend = None
+            return []
+        changed = trend != self.trend
+        self.trend, self.neutral_boundaries = trend, 0
+        return [PaceNotice(self.revision, trend, self.compound, samples)] if changed else []
+
+    def validate(self, notice, *, now):
+        if (self.received_at is None or now < self.received_at
+                or now - self.received_at + self.age_s >= 3):
+            return "observations_stale"
+        if (notice.revision != self.revision or notice.samples != self.samples
+                or notice.compound != self.compound or notice.trend != self.trend):
+            return "development_superseded"
+        return None

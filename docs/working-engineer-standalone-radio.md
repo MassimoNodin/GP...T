@@ -329,6 +329,26 @@ Scenario coverage is added in tests/test_radio_proactive.py, but is intentionall
 not executed yet: automated, replay and live validation are deferred until the
 conversion is complete and the user is ready to test together.
 
+### Pace notices and controls
+
+The same automatic path also observes the existing fully observed valid-lap
+pace records. Three consecutive valid laps on one known tyre compound are
+required. Both lap-time changes must be at least 200 ms in the same direction,
+with at least 600 ms total change. New quicker/slower trends share the gap
+notice budget and rank below gap developments. Invalid/partial laps, compound
+changes and observation outages restart the evidence window. The wording
+explicitly says conditions may differ; it does not diagnose tyre degradation,
+fuel effects, traffic, weather or driving technique.
+
+Use --proactive-mode off at startup to disable automatic gap/pace coaching
+without disabling requested answers or scheduled reports. The console commands
+proactive off and proactive rules change this live; enabling it starts fresh
+evidence collection. Quiet/resume still controls all routine proactive speech.
+When fresh aligned brake/steering telemetry is available, automatic candidates
+are also rejected above 20 percent brake or 15 percent steering. Missing control
+telemetry does not claim a safe delivery window: the default remains a fresh
+lap-boundary notice, not circuit-aware timing.
+
 ## Validation and remaining work
 
 Automated tests cover scheduling, interruption, quiet/repeat/cancellation,

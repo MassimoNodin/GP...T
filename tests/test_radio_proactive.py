@@ -1,8 +1,10 @@
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
-from f1_engineer.radio.proactive import GapNotice, ProactiveSpeechPolicy
+from f1_engineer.radio.pace import PaceReference
+from f1_engineer.radio.proactive import GapNotice, ProactivePaceTracker, ProactiveSpeechPolicy
 from f1_engineer.radio.scheduler import RadioMessage
 from tests.test_radio_gap_changes import gap_live
 from tests.test_radio_tasks import finish_lap
@@ -213,3 +215,58 @@ def test_explicit_repeat_does_not_run_automatic_policy_hooks_again():
     assert radio.repeat(now=1)
     radio.tick(now=1)
     assert starts == [0] and radio.active.kind == "answer"
+
+
+def test_pace_changes_are_measured_not_diagnosed_and_share_the_speech_budget():
+    tracker = ProactivePaceTracker()
+    pace = SimpleNamespace(eligible=True, compound=16)
+    tracker.observe(pace, eligible=True, now=10, age_s=0.1)
+    records = [(number, PaceReference(number, elapsed, 16))
+               for number, elapsed in ((4, 100000), (5, 100300), (6, 100700))]
+    notices = tracker.complete(records)
+    assert len(notices) == 1
+    assert "getting slower" in notices[0].text and "conditions may differ" in notices[0].text
+    assert tracker.validate(notices[0], now=10.1) is None
+    assert not tracker.complete(records)
+    policy = ProactiveSpeechPolicy()
+    policy.record_started(notices[0], now=10)
+    gap = GapNotice("behind", "rival", 1, "closing", 6, 3200, -800, False)
+    assert policy.suppression(gap, now=11) == "global_cooldown"
+    pace.compound = 17
+    tracker.observe(pace, eligible=True, now=10.2, age_s=0.1)
+    assert tracker.validate(notices[0], now=10.3) == "development_superseded"
+
+
+def test_automatic_pace_uses_only_fully_observed_valid_laps():
+    from tests.test_radio_target_pace import finish, pace_live
+
+    controller, radio, events, value = pace_live()
+    value["context"] = {"status": "available", "value": {
+        "session_uid": value["scope"]["session_uid"], "packet_format": value["scope"]["packet_format"],
+        "session_type": "race", "track_length_m": 5000}}
+    for number, elapsed in ((4, 99000), (5, 100000), (6, 100300), (7, 100700)):
+        finish(controller, radio, value, number, elapsed)
+    assert radio.pending[-1].key.startswith("automatic-pace:")
+    assert "getting slower" in radio.pending[-1].text
+    assert controller.status()["automatic_pace"]["comparable_laps"] == 3
+
+
+def test_disabling_proactive_clears_candidates_but_keeps_explicit_answers():
+    controller, radio, events, value = automatic_live()
+    assert closing(controller, radio, value)
+    controller.set_proactive_mode("off")
+    assert not radio.pending and not controller.proactive.states
+    controller.answer_last_lap(now=13.1)
+    assert radio.pending[-1].kind == "answer"
+    assert not step(controller, radio, value, 3, behind=2800)
+    assert controller.status()["proactive_mode"] == "off"
+
+
+@pytest.mark.parametrize("brake,steering", [(0.3, 0.0), (0.0, -0.2)])
+def test_known_driver_workload_prevents_automatic_dispatch(brake, steering):
+    controller, radio, events, value = automatic_live()
+    assert closing(controller, radio, value)
+    controller._aligned_observation = lambda player, now: ({"value": {"brake": brake, "steering": steering}}, 0.1)
+    radio.tick(now=13.1)
+    assert radio.active is None
+    assert events[-1]["reason"] == "driver_workload"

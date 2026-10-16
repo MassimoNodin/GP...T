@@ -14,7 +14,7 @@ from .questions import QuestionPlan, SESSION_FACTS, UNAVAILABLE_FACTS, plan_ques
 from .scheduler import RadioMessage, RadioScheduler
 from .tasks import LapReportRegistry, TaskAction, parse_task_request
 from .watches import RaceWatchTracker
-from .proactive import ProactiveGapTracker, ProactiveSpeechPolicy
+from .proactive import PaceNotice, ProactiveGapTracker, ProactivePaceTracker, ProactiveSpeechPolicy
 from .pace import PaceReference, PaceTracker
 from .lap_history import FieldLapHistory
 from .conversation import ConversationMemory, QuestionContext, TaskContext
@@ -63,7 +63,11 @@ _LIVE_QUESTION_CONTEXT = object()
 
 
 class RadioController:
-    def __init__(self, scheduler: RadioScheduler, *, notify=None, backend_regions=False) -> None:
+    def __init__(self, scheduler: RadioScheduler, *, notify=None, backend_regions=False,
+                 proactive_mode="rules") -> None:
+        if proactive_mode not in ("off", "rules"):
+            raise ValueError("invalid proactive mode")
+        self.proactive_mode = proactive_mode
         self.scheduler = scheduler
         self.notify = notify or (lambda event: None)
         self._cursor: int | None = None
@@ -81,6 +85,7 @@ class RadioController:
         self.gaps = LapGapTracker()
         self.watches = RaceWatchTracker()
         self.proactive = ProactiveGapTracker()
+        self.automatic_pace = ProactivePaceTracker()
         self.proactive_policy = ProactiveSpeechPolicy()
         self.pace = PaceTracker()
         self.lap_history = FieldLapHistory()
@@ -199,6 +204,7 @@ class RadioController:
         if changed:
             self._pending_region = None
             self.proactive.clear()
+            self.automatic_pace.clear()
             self.proactive_policy.clear()
             self._history.clear()
             self.conversation.clear()
@@ -286,12 +292,14 @@ class RadioController:
                                 track_length_m=self._track_length_m):
             self.scheduler.cancel_owner("lap_reports")
         context_value = context.get("value") if isinstance(context, dict) else None
-        race_eligible = (isinstance(context_value, dict) and context.get("status") == "available"
+        race_eligible = (self.proactive_mode != "off" and isinstance(context_value, dict)
+                         and context.get("status") == "available"
                          and all(type(context_value.get(key)) is int and context_value[key] == scope[key]
                                  for key in ("session_uid", "packet_format"))
                          and context_value.get("session_type") in ("race", "race_2", "race_3"))
         self.proactive.observe(self._player, self._resolve_target, now=now, age_s=age,
                                track_length_m=self._track_length_m, eligible=race_eligible)
+        self.automatic_pace.observe(self.pace, eligible=race_eligible, now=now, age_s=age)
         for message in tuple(self.scheduler.pending):
             if message.owner == "automatic_gaps" and message.dispatch_guard is not None:
                 reason = message.dispatch_guard(now)
@@ -402,6 +410,8 @@ class RadioController:
                 self.gaps.complete(event["lap_number"])
                 notices = self.proactive.complete(event["lap_number"])
                 self.pace.complete(event)
+                notices.extend(self.automatic_pace.complete(self.pace.recent))
+                notices.sort(key=lambda notice: notice.rank, reverse=True)
                 self.notify({"event": "radio_pace_lap_observed", "lap_number": event["lap_number"],
                              "valid_reference": self.pace.last_completed.view() if self.pace.last_completed else None})
                 self.notify({"event": "radio_gap_change_observed", "lap_number": event["lap_number"],
@@ -429,12 +439,38 @@ class RadioController:
         self._report_opponent_regions(now=now)
         self._flush_tracking_notice(now=now)
 
+    def set_proactive_mode(self, mode):
+        if mode not in ("off", "rules"):
+            raise ValueError("invalid proactive mode")
+        if mode != self.proactive_mode:
+            self.proactive_mode = mode
+            self.proactive.clear()
+            self.automatic_pace.clear()
+            self.scheduler.cancel_owner("automatic_gaps")
+        self.notify({"event": "radio_proactive_mode", "mode": mode})
+
+    def _validate_proactive(self, notice, *, now):
+        if self.proactive_mode == "off":
+            return "disabled"
+        tracker = self.automatic_pace if isinstance(notice, PaceNotice) else self.proactive
+        reason = tracker.validate(notice, now=now)
+        if reason is not None:
+            return reason
+        aligned = self._aligned_observation(self._player, now=now) if self._player is not None else None
+        if aligned is not None:
+            values = aligned[0]["value"]
+            brake, steering = values.get("brake"), values.get("steering")
+            if (type(brake) in (int, float) and math.isfinite(brake) and brake > 0.2
+                    or type(steering) in (int, float) and math.isfinite(steering) and abs(steering) > 0.15):
+                return "driver_workload"
+        return None
+
     def _report_proactive(self, notices, event, *, now, age, reported):
         queued = False
         for notice in notices:
             reason = ("explicit_report" if reported else "higher_ranked_development" if queued else
                       "quiet" if self.scheduler.muted else "listening" if self.scheduler.suspended else
-                      self.proactive.validate(notice, now=now) or
+                      self._validate_proactive(notice, now=now) or
                       self.proactive_policy.suppression(notice, now=now))
             if reason is None and (self.scheduler.active is not None
                                    or any(message.owner != "automatic_gaps" for message in self.scheduler.pending)):
@@ -443,9 +479,9 @@ class RadioController:
                 self.notify({"event": "radio_proactive_suppressed", "reason": reason, **notice.evidence()})
                 continue
             self.scheduler.cancel_owner("automatic_gaps")
-            key = f"automatic-gap:{event['id']}:{notice.role}"
+            key = f"automatic-{notice.kind}:{event['id']}:{notice.role}"
             def guard(dispatch_now, candidate=notice):
-                return (self.proactive.validate(candidate, now=dispatch_now)
+                return (self._validate_proactive(candidate, now=dispatch_now)
                         or self.proactive_policy.suppression(candidate, now=dispatch_now))
             def started(dispatch_now, candidate=notice, message_key=key):
                 self.proactive_policy.record_started(candidate, now=dispatch_now)
@@ -693,6 +729,9 @@ class RadioController:
                 "pending_region_clarification": ({key: deepcopy(value) for key, value in self._pending_region.items()
                                                    if key != "action"} if self._pending_region is not None else None),
                 "watches": self.watches.views(),
+                "proactive_mode": self.proactive_mode,
+                "automatic_pace": {"trend": self.automatic_pace.trend,
+                                   "comparable_laps": len(self.automatic_pace.samples)},
                 "automatic_gaps": {role: {"trend": state.trend, "near": state.near,
                                            "comparable_boundaries": len(state.history)}
                                    for role, state in self.proactive.states.items()},
@@ -850,6 +889,7 @@ class RadioController:
 
     def _reset_gaps(self) -> None:
         self.proactive.clear()
+        self.automatic_pace.clear()
         self.scheduler.cancel_owner("automatic_gaps")
         self.gaps.clear()
         self.watches.reset_intervals()

@@ -195,7 +195,8 @@ def _run_radio(args) -> int:
         playback = DryRunPlayback() if args.dry_run or args.once or args.capture_test else WindowsSpeech(
             voice=args.voice, rate=args.rate, volume=args.volume)
         scheduler = RadioScheduler(playback, notify=emit)
-        controller = RadioController(scheduler, notify=emit, backend_regions=client is not None)
+        controller = RadioController(scheduler, notify=emit, backend_regions=client is not None,
+                                     proactive_mode=getattr(args, "proactive_mode", "rules"))
         started = time.monotonic()
         snapshot = client.fetch() if client else {"status": "unavailable", "reason": "capture_test"}
         controller.feed(snapshot, now=time.monotonic(), transport_age_s=time.monotonic() - started)
@@ -220,7 +221,7 @@ def _run_radio(args) -> int:
               "voice_submission": ("disabled" if args.capture_test else
                                    "manual" if getattr(args, "manual_submit", False) else "automatic"),
               "commands": ["lap", "listen", "finish", "ask <question>", "say <words>", "submit", "tasks", "forget",
-                           "quiet", "resume", "cancel", "repeat", "status", "quit"]})
+                           "quiet", "resume", "proactive off", "proactive rules", "cancel", "repeat", "status", "quit"]})
         snapshots: queue.Queue = queue.Queue(maxsize=1)
         commands: queue.Queue = queue.Queue(maxsize=16)
         if client is not None:
@@ -288,6 +289,8 @@ def _run_radio(args) -> int:
                     scheduler.quiet()
                 elif command == "resume":
                     scheduler.muted = False
+                elif command in ("proactive off", "proactive rules"):
+                    controller.set_proactive_mode(command.split()[1])
                 elif command == "cancel":
                     voice.cancel()
                     scheduler.cancel()
