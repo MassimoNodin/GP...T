@@ -27,6 +27,8 @@ from .windows_speech import WindowsSpeech
 from .diagnostics import emit, radio_event_log, trace_event
 from .glossary import load_glossary
 from .intents import LOCAL_CONTROLS, render_intent
+from .live_settings import LivePlayback, RadioLiveSettings
+from .presence import PresenceReporter
 
 
 class DryRunPlayback:
@@ -105,6 +107,7 @@ def start_typed_request(text: str, client, controller: RadioController, glossary
                                  task_context=controller.capture_task_context(),
                                  question_context=controller.capture_question_context())
     context = capture_intent_context(controller, glossary, grounded=grounded)
+    interpreter = (getattr(controller, "answer_interpreter", None) or client.answer) if grounded else client.interpret
     emit({"event": "radio_typed_request", "capture_id": request_id, "text": text, "interpreter": interpret})
     control = " ".join(text.lower().split()).rstrip(".!?").rstrip()
     if control in LOCAL_CONTROLS:
@@ -116,7 +119,6 @@ def start_typed_request(text: str, client, controller: RadioController, glossary
         started = time.monotonic()
         interpretation = None
         if interpret:
-            interpreter = client.answer if grounded else client.interpret
             result = asyncio.run(interpreter(text, context, request_id, threading.Event()))
             interpretation = ({"status": "available", "reason": None, "intent": result["intent"],
                                **({"question_event_id": result["question_event_id"]} if "question_event_id" in result else {}),
@@ -223,7 +225,9 @@ def _run_radio(args) -> int:
                 lap = getattr(controller, "_last_lap", None)
                 activity_reporter.observe({**event, "lap": lap if type(lap) is int else None})
 
-        scheduler = RadioScheduler(playback, notify=scheduler_event)
+        live_playback = LivePlayback(playback, lambda settings: DryRunPlayback() if args.dry_run else _speech(settings),
+                                     {}, emit)
+        scheduler = RadioScheduler(live_playback, notify=scheduler_event)
         controller = RadioController(scheduler, notify=emit, backend_regions=client is not None,
                                      proactive_mode=getattr(args, "proactive_mode", "rules"), selector=selector)
         started = time.monotonic()
@@ -240,6 +244,12 @@ def _run_radio(args) -> int:
                            cue_volume=args.cue_volume, maximum_seconds=args.capture_seconds,
                            interpret=interpret, speech_hints=not getattr(args, "no_speech_hint", False))
         glossary, glossary_problem = load_glossary(getattr(args, "glossary_file", None))
+        live_settings = RadioLiveSettings(args, scheduler, controller, voice, client, emit)
+        live_settings.apply(snapshot.get("settings"), received_at=started)
+        presence = PresenceReporter(client, stop) if client is not None else None
+        if presence is not None:
+            live_settings.refresh_devices = presence.request_refresh
+            threading.Thread(target=presence.run, name="radio-presence", daemon=True).start()
         if glossary_problem is not None:
             emit({"event": "radio_glossary_unavailable", "reason": glossary_problem})
         emit({"event": "radio_ready", "intent_mode": "luna" if interpret is not None else "parser",
@@ -271,10 +281,17 @@ def _run_radio(args) -> int:
             try:
                 snapshot, started, results = snapshots.get_nowait()
                 now = time.monotonic()
+                live_settings.apply(snapshot.get("settings"), received_at=started)
                 controller.feed(snapshot, now=now, transport_age_s=now - started, region_captures=results)
             except queue.Empty:
                 pass
             controller.check_freshness(now=now)
+            live_settings.tick()
+            grounded = getattr(args, "answer_mode", "intent") == "grounded"
+            if presence is not None:
+                presence.publish(revision=live_settings.revision, engine=args.tts_engine,
+                                 speaking=scheduler.active is not None, listening=voice.blocks_playback,
+                                 wheel_status=wheel.status().get("status", "unknown"))
             pressed = wheel.poll(now=now)
             voice.tick(scope=scheduler.scope, input_status=wheel.status())
             if pressed:

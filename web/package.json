@@ -48,7 +48,8 @@
     "test:library-import": "node --test scripts/library-import.test.mjs",
     "test:drive-radio": "node --test scripts/drive-radio.test.mjs",
     "test:settings-tabs": "node --test scripts/settings-tabs.test.mjs",
-    "test:speech-settings": "node --test scripts/speech-settings.test.mjs"
+    "test:speech-settings": "node --test scripts/speech-settings.test.mjs",
+    "test:radio-settings": "node --test scripts/radio-settings.test.mjs"
   },
   "dependencies": {
     "next": "16.3.8",

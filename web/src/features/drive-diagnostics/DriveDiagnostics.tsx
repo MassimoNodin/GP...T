@@ -187,7 +187,7 @@ export function DriveDiagnostics({ model }: { model: DriveModel }) {
     .join(" ");
 
   const readAloudNote =
-    readAloud.audio.kind === "no_voice"
+    readAloud.radioConnected ? "The radio is speaking engineer calls" : readAloud.audio.kind === "no_voice"
       ? "No local voice is installed, so calls cannot be read aloud. Install a system voice."
       : readAloud.audio.kind === "unsupported"
         ? "This browser cannot read calls aloud."

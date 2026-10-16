@@ -89,6 +89,14 @@ class RadioClient:
             with client.stream("POST", "/api/v2/engineer/radio/events", json={"events": events}) as response:
                 return response.status_code == 200
 
+    def report_presence(self, body):
+        try:
+            with httpx.Client(base_url=self._base_url, headers=self._headers, timeout=2,
+                              follow_redirects=False, trust_env=False, transport=self._transport) as client:
+                client.put("/api/v2/engineer/radio/presence", json=body)
+        except (httpx.RequestError, RuntimeError):
+            pass
+
     def fetch(self) -> dict:
         started = time.monotonic()
         try:

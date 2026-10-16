@@ -84,6 +84,10 @@ class VoiceInput:
         self.task_context = None
         self.question_context = None
         self.intent_context = None
+        self._pending_settings = None
+
+    def configure(self, **settings):
+        self._pending_settings = settings
 
     @property
     def blocks_playback(self) -> bool:
@@ -108,6 +112,11 @@ class VoiceInput:
             else:
                 self._notify({"event": "radio_listen_unavailable", "reason": "capture_busy"})
             return
+        if self._pending_settings is not None:
+            settings, self._pending_settings = self._pending_settings, None
+            self._audio_settings = {key: settings[key] for key in ("microphone", "output", "cue_volume")}
+            self._maximum_seconds = settings["maximum_seconds"]
+            self._interpret = settings["interpret"]
         self._capture_id = str(uuid.uuid4())
         self._scope, self._binding, self._source = scope, binding, source
         self._connection = connection

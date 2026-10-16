@@ -45,6 +45,7 @@ import { Field } from "./shared";
 import { runSpeechTest, type SpeechTestOutcome } from "./speech-test";
 import { UnitsCard } from "./UnitsCard";
 import { SpeechRecognitionCard } from "./SpeechRecognitionCard";
+import { RadioCard } from "./RadioCard";
 import styles from "./Settings.module.css";
 import tabStyles from "./SettingsTabs.module.css";
 
@@ -108,6 +109,7 @@ export function VoicePanel({ audio, requestAccess, micDeviceId, onMicDevice, spe
       <EngineerVoiceCard audio={audio} onShowAssistance={onShowAssistance} />
       <UnitsCard />
       <SpeechRecognitionCard />
+      <RadioCard />
     </div>
   );
 }

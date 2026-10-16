@@ -145,6 +145,7 @@ from ..analysis.engineer_preferences import EngineerPreferencesStore, answer_sty
 from .engineer_preferences_routes import register_engineer_preferences_routes
 from .speech_routes import register_speech_routes
 from ..analysis.speech_router import SpeechRouter
+from .radio_routes import register_radio_routes
 from .lap_enrichment_routes import register_lap_enrichment_routes
 from .session_summary_routes import register_session_summary_routes
 from .track_region_routes import register_track_region_routes
@@ -1188,6 +1189,7 @@ def create_app(
             snapshot["reason"] = "live_runtime_disabled"
         else:
             snapshot = live_runtime.engineer_snapshot()
+        snapshot["settings"] = app.state.radio_settings_block()
         return {"data": snapshot}
 
     def region_owner_available(binding, opponent, owner_id):
@@ -3448,6 +3450,7 @@ def create_app(
         return APIResponse[dict[str, Any]](data=_stringify_session_uids(result))
 
     register_speech_routes(app, router=local_speech_runtime, control_token=control_token)
+    register_radio_routes(app, database_path=configured_database_path, preferences_store=engineer_preferences_store, control_token=control_token)
     register_engineer_preferences_routes(
         app, store=engineer_preferences_store, control_token=control_token
     )

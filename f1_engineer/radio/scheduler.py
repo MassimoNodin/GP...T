@@ -51,6 +51,8 @@ class RadioScheduler:
         self.related_question_id: int | None = None
         self.muted = False
         self.suspended = False
+        self.proactive_topics = None
+        self.interruption = "allow"
         self.pending: list[RadioMessage] = []
         self.active: RadioMessage | None = None
         self.last_completed: RadioMessage | None = None
@@ -76,6 +78,13 @@ class RadioScheduler:
     def submit(self, message: RadioMessage, *, now: float) -> bool:
         if message.kind == "answer" and message.related_id is None and self.related_question_id is not None:
             message = replace(message, related_id=self.related_question_id)
+        if message.kind == "proactive":
+            from .live_settings import OWNER_TOPICS
+            topic = OWNER_TOPICS.get(message.owner, "general_information")
+            if self.proactive_topics is not None and not self.proactive_topics.get(topic, True):
+                return self._drop(message, "topic_disabled")
+            if self.interruption == "never" and (self.active is not None or self.suspended):
+                return self._drop(message, "interruption_never")
         if (message.kind not in ("answer", "proactive") or not message.text.strip()
                 or len(message.text.encode("utf-8")) > 1024 or not message.key
                 or len(message.key) > 128 or not math.isfinite(message.expires_at)):
@@ -93,7 +102,7 @@ class RadioScheduler:
             return self._drop(message, "observations_stale")
         if self.muted and message.kind == "proactive":
             return self._drop(message, "quiet")
-        if self.suspended and message.kind == "proactive":
+        if self.suspended and message.kind == "proactive" and self.interruption != "queue":
             return self._drop(message, "listening")
         if message.key in self._seen:
             return self._drop(message, "duplicate")

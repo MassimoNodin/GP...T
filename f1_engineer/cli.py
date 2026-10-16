@@ -878,7 +878,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"f1-engineer {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    radio = commands.add_parser("radio", help="run the standalone lap radio without a browser")
+    radio = commands.add_parser("radio", help="run the standalone lap radio without a browser",
+                                description="Run the standalone radio. Saved dashboard radio settings override CLI defaults live; CLI values apply only until the first dashboard save.")
     radio.add_argument("--api-url", default=os.environ.get("F1_ENGINEER_API_URL") or "http://127.0.0.1:8765")
     radio.add_argument("--token-file", default=os.environ.get("F1_ENGINEER_CONTROL_TOKEN_FILE") or "data/.f1-engineer-control-token")
     radio.add_argument("--tts-engine", choices=("edge", "windows"), default="edge",
