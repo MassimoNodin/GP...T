@@ -101,6 +101,8 @@ and telemetry workflows do not require the optional speech/model runtimes.
 
 An initial browser-independent radio client speaks fresh player lap completions
 and answers the fixed console command `lap` using the authenticated live backend.
+In verified race sessions it also notices new adjacent-car gap trends after
+three comparable lap boundaries, with freshness checks and bounded chatter.
 Optional wheel-triggered microphone capture and listening cues now produce an
 unverified transcript draft; the full conversational engineer remains pending.
 

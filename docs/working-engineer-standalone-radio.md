@@ -272,6 +272,63 @@ Capture adds application-observed `request_to_listening_s`, `capture_elapsed_s`,
 end cue and backend transport/transcription, not reasoning or answer playback.
 They do not measure acoustic cue onset or prove that output was audible.
 
+## Automatic race-gap notices
+
+The radio now observes the adjacent cars without requiring a watch request.
+This first proactive increment separates deterministic observation, candidate
+selection, speech policy and dispatch. It does not introduce periodic model
+requests, AI-generated strategy or a new speech provider.
+
+Automatic observations require a scoped, available race/race-2/race-3 context,
+verified unique driver positions, active racing status, no pit status, known
+track length and physically consistent total distances less than one lap apart.
+Missing evidence is silent. Three consecutive comparable player lap boundaries
+are required: both gap changes must be at least 100 ms in the same direction,
+with at least 300 ms total movement across the two intervals. This describes
+observed gap movement, not a clean-air pace prediction or a DRS eligibility claim.
+
+The detector announces a newly closing/opening trend, not each unchanged sample.
+Two neutral boundaries re-arm a resolved trend. Small changes use hysteresis
+instead of repeatedly toggling the state. Entering the ten-second attention
+range can make an existing trend eligible; closing within two seconds is a new
+development, with a 2.5-second release threshold. At most one automatic notice
+is selected per lap boundary. Near closing developments rank first, then a
+closing car behind, then other closing trends. Explicit due task reports take
+precedence. An accepted automatic notice replaces the default lap-time call
+rather than adding a second utterance.
+
+The initial speech limits are a 30-second global cooldown, 90 seconds per
+ahead/behind topic, and at most two automatic starts in a rolling 120 seconds.
+These limits apply to automatic gap notices, not requested answers or existing
+task reports. Calls outside ten seconds, while the radio is busy, quiet or
+listening, or after the budget is exhausted are discarded, not saved for later.
+Budget is charged when playback actually starts, not when a candidate is queued.
+These initial thresholds are policy defaults awaiting joint validation, not
+measured gameplay acceptance criteria.
+
+Immediately before playback, the scheduler rechecks the candidate's driver,
+development revision, current observation freshness and speech budget. More
+than 500 ms of gap drift invalidates the queued wording. Dispatch must start
+within the original three-second evidence deadline. Session/player changes,
+pit entry, rival replacement, lap discontinuities and missing physical evidence
+invalidate observations. Quiet/resume never replays a suppressed development.
+Explicit repeat remains a historical replay and does not charge the automatic
+budget again.
+
+Diagnostics include automatic-gap status in the radio status payload and
+JSON events named radio_proactive_candidate, radio_proactive_suppressed and
+radio_proactive_started, alongside scheduler drops. Candidate/start records
+include subject identity, role, trend, gap, total movement and the three lap
+boundaries; suppression events include the policy reason.
+
+This increment does not infer fuel, tyre or pit strategy, detect safety-car
+conditions, predict overtakes or identify a low-workload part of the circuit.
+It makes no tactical commands from these gap trends. Those capabilities need
+their own evidence and policy work before joining the automatic path.
+Scenario coverage is added in tests/test_radio_proactive.py, but is intentionally
+not executed yet: automated, replay and live validation are deferred until the
+conversion is complete and the user is ready to test together.
+
 ## Validation and remaining work
 
 Automated tests cover scheduling, interruption, quiet/repeat/cancellation,

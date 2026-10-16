@@ -63,9 +63,9 @@ class RaceWatchTracker:
         for key, task in active.items():
             state = self.states.setdefault(key, WatchState())
             row = resolve(task.plan.targets[0], json.loads(task.fixed_bindings[0]))
-            sample, token, reason = self._sample(player, row, resolve,
-                                                 allow_non_adjacent=task.plan.targets[0].startswith("name:"),
-                                                 track_length_m=track_length_m)
+            sample, token, reason = self.sample(player, row, resolve,
+                                                allow_non_adjacent=task.plan.targets[0].startswith("name:"),
+                                                track_length_m=track_length_m)
             previous = state.sample
             if (sample is None or token != state.token
                     or previous is not None and sample[2] - previous[2] not in (0, 1)):
@@ -76,7 +76,8 @@ class RaceWatchTracker:
             state.sample, state.token, state.reason = sample, token, reason
         return invalidated
 
-    def _sample(self, player, row, resolve, *, allow_non_adjacent=False, track_length_m=None):
+    @staticmethod
+    def sample(player, row, resolve, *, allow_non_adjacent=False, track_length_m=None):
         if row is None:
             return None, None, "fixed driver unavailable or replaced"
         position, rival_position = player["lap"].get("car_position"), row["lap"].get("car_position")

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from collections import OrderedDict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Callable, Literal, Protocol
 
 
@@ -24,6 +24,8 @@ class RadioMessage:
     observation_age_s: float | None = None
     dispatch_before: float | None = None
     owner: str | None = None
+    dispatch_guard: Callable[[float], str | None] | None = field(default=None, compare=False, repr=False)
+    on_started: Callable[[float], None] | None = field(default=None, compare=False, repr=False)
 
     @property
     def priority(self) -> int:
@@ -133,9 +135,16 @@ class RadioScheduler:
         if self.pending:
             message = max(self.pending, key=lambda item: item.priority)
             self.pending.remove(message)
+            if message.dispatch_guard is not None:
+                reason = message.dispatch_guard(now)
+                if reason is not None:
+                    self._drop(message, reason)
+                    return
             self.playback.start(message.text)
             self.active = message
             self._started_at = now
+            if message.on_started is not None:
+                message.on_started(now)
             self.notify({"event": "radio_started", "key": message.key, "kind": message.kind,
                          "text": message.text, "queue_wait_s": now - message.queued_at,
                          "observation_to_dispatch_s": (message.observation_age_s + now - message.queued_at
@@ -182,7 +191,8 @@ class RadioScheduler:
         self.cancel()
         self._repeat_id += 1
         return self.submit(replace(source, key=f"repeat:{self._repeat_id}", kind="answer",
-                                   expires_at=now + 15, observation_age_s=None, dispatch_before=None), now=now)
+                                   expires_at=now + 15, observation_age_s=None, dispatch_before=None,
+                                   dispatch_guard=None, on_started=None), now=now)
 
     def close(self) -> None:
         try:
