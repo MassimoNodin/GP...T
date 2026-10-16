@@ -101,6 +101,12 @@ and telemetry workflows do not require the optional speech/model runtimes.
 
 An initial browser-independent radio client speaks fresh player lap completions
 and answers the fixed console command `lap` using the authenticated live backend.
+In verified race sessions it also notices new adjacent-car gap and valid-lap
+pace trends, with freshness checks and bounded chatter. Rules mode needs no
+model; optional model mode can select an evidenced notice or silence, never
+invent speech or tactical orders. See the
+[proactive radio validation guide](docs/proactive-radio-validation.md) for modes,
+offline scenarios and the deferred joint test sequence.
 Optional wheel-triggered microphone capture and listening cues now produce an
 unverified transcript draft; the full conversational engineer remains pending.
 

@@ -272,6 +272,136 @@ Capture adds application-observed `request_to_listening_s`, `capture_elapsed_s`,
 end cue and backend transport/transcription, not reasoning or answer playback.
 They do not measure acoustic cue onset or prove that output was audible.
 
+## Automatic race-gap notices
+
+See the [joint proactive validation guide](proactive-radio-validation.md) for
+the offline scenario command, launcher modes and step-by-step acceptance plan.
+
+The radio now observes the adjacent cars without requiring a watch request.
+This first proactive increment separates deterministic observation, candidate
+selection, speech policy and dispatch. Rules mode requires no model. Optional
+model selection, described below, cannot generate speech or tactical orders;
+the speech provider remains unchanged.
+
+Automatic observations require a scoped, available race/race-2/race-3 context,
+verified unique driver positions, active racing status, no pit status, known
+track length and physically consistent total distances less than one lap apart.
+Missing evidence is silent. The lap-based detector requires three consecutive
+comparable player lap boundaries: both gap changes must be at least 100 ms in the same direction,
+with at least 300 ms total movement across the two intervals. This describes
+observed gap movement, not a clean-air pace prediction or a DRS eligibility claim.
+
+A separate rules clock evaluates roughly every 15 seconds using bounded,
+one-second gap samples. Roughly 30 seconds of continuous evidence, at least
+20 samples, two same-direction half-window changes of at least 200 ms, and at
+least 600 ms total movement can qualify a mid-lap notice. Spoken text and model
+selection evidence explicitly distinguish this time window from a lap comparison.
+The clock does not make unconditional model calls. See
+docs/proactive-radio-validation.md for thresholds and lifecycle diagnostics.
+
+The detector announces a newly closing/opening trend, not each unchanged sample.
+Two neutral boundaries re-arm a resolved trend. Small changes use hysteresis
+instead of repeatedly toggling the state. Entering the ten-second attention
+range can make an existing trend eligible; closing within two seconds is a new
+development, with a 2.5-second release threshold. At most one automatic notice
+is selected per lap boundary. Near closing developments rank first, then a
+closing car behind, then other closing trends. Explicit due task reports take
+precedence. An accepted automatic notice replaces the default lap-time call
+rather than adding a second utterance.
+
+The initial speech limits are a 30-second global cooldown, 90 seconds per
+ahead/behind topic, and at most two automatic starts in a rolling 120 seconds.
+These limits apply to automatic gap notices, not requested answers or existing
+task reports. Calls outside ten seconds or while quiet/listening are discarded.
+Busy speech, high driver workload and cooldowns defer an eligible development
+for at most 20 seconds. At most three topics are retained; a newer development
+replaces an older one on the same topic. Requested answers retain priority;
+automatic notices never interrupt active speech and replace unspoken default
+lap calls. Pace notices can combine the associated lap time and trend.
+Budget is charged when playback actually starts, not when a candidate is queued.
+These initial thresholds are policy defaults awaiting joint validation, not
+measured gameplay acceptance criteria.
+
+Immediately before playback, the scheduler rechecks the candidate's driver,
+development revision, current observation freshness and speech budget. More
+than 500 ms of gap drift invalidates the queued wording. Dispatch must start
+with telemetry fresher than three seconds, even if detection happened earlier.
+The original notice must still match that live evidence. Session/player changes,
+pit entry, rival replacement, lap discontinuities and missing physical evidence
+invalidate observations. Quiet/resume never replays a suppressed development.
+Explicit repeat remains a historical replay and does not charge the automatic
+budget again.
+
+Diagnostics include automatic-gap status in the radio status payload and
+JSON events named radio_proactive_candidate, radio_proactive_suppressed and
+radio_proactive_started, alongside scheduler drops. Candidate/start records
+include subject identity, role, trend, gap, total movement and the three lap
+boundaries; suppression events include the policy reason.
+
+This increment does not infer fuel, tyre or pit strategy, detect safety-car
+conditions, predict overtakes or identify a low-workload part of the circuit.
+It makes no tactical commands from these gap trends. Those capabilities need
+their own evidence and policy work before joining the automatic path.
+Regression coverage includes tests/test_radio_proactive.py and
+tests/test_radio_proactive_clock.py, with hardware-free mid-lap and busy-radio
+scenarios. Automated checks do not establish live gameplay acceptance.
+
+### Pace notices and controls
+
+The same automatic path also observes the existing fully observed valid-lap
+pace records. Three consecutive valid laps on one known tyre compound are
+required. Both lap-time changes must be at least 200 ms in the same direction,
+with at least 600 ms total change. New quicker/slower trends share the gap
+notice budget and rank below gap developments. Invalid/partial laps, compound
+changes and observation outages restart the evidence window. The wording
+explicitly says conditions may differ; it does not diagnose tyre degradation,
+fuel effects, traffic, weather or driving technique.
+
+Use --proactive-mode off at startup to disable automatic gap/pace coaching
+without disabling requested answers or scheduled reports. The console commands
+proactive off and proactive rules change this live; enabling it starts fresh
+evidence collection. Quiet/resume still controls all routine proactive speech.
+When fresh aligned brake/steering telemetry is available, automatic candidates
+are also deferred above 20 percent brake or 15 percent steering. Missing control
+telemetry does not establish a safe straight; fresh evidence can still dispatch.
+Circuit-aware timing is not implemented.
+
+### Optional background selection
+
+Use --proactive-mode model or the console command proactive model to enable
+the separate background reasoning clock. Only a new, eligible development can
+start work, at most once per 15 seconds, with one request in flight and no
+waiting backlog. The six-second model deadline does not block telemetry polling,
+speech dispatch, microphone capture or explicit questions. Near closing gap
+developments still use the fast deterministic path; ordinary developments are
+offered to the selector. Rules mode remains the default and does not invoke it.
+
+The authenticated POST /api/v2/engineer/proactive-selection endpoint accepts at
+most three strictly validated candidates in a 4 KiB JSON request. It uses the
+existing isolated subscription-only Codex runtime in a separate ephemeral
+tool-free turn. The only permitted output is one supplied candidate ID or null
+for silence. It cannot invent a number, choose an unknown subject, write voice
+text, issue a pit/fuel/tyre instruction or change the deterministic speech budget.
+An unsupported provider, unavailable login, timeout or invalid output is silent;
+there is no provider fallback and no backlog of retries.
+
+Foreground engineer questions, radio interpretation and transcription preempt
+background model work before requesting the shared AI admission slot. Client
+listening, cancellation, quiet, mode/session changes and shutdown also cancel
+pending selections. Generation and scope checks reject late results. A returned
+candidate must still be relevant, match current fresh observations and pass the
+same budget/workload checks as rules mode. It retains its original ten-second
+lifetime; a new request or response cannot extend it. In model mode the original
+event can be older than three seconds, but dispatch always requires a current
+observation younger than three seconds, an unchanged development and at most
+500 ms of live gap drift.
+
+Dry-run and once modes never start the background model worker. Use rules for
+a no-model dry run and normal audio mode for optional model acceptance. The
+radio_strategy_started/selected/suppressed/unavailable events distinguish model
+requests, silence, obsolescence and availability failures. No prerecorded
+acknowledgement hides a slow proactive result.
+
 ## Validation and remaining work
 
 Automated tests cover scheduling, interruption, quiet/repeat/cancellation,

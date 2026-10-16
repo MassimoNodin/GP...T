@@ -15,6 +15,7 @@ from ..analysis.local_speech import (SPEECH_MAX_RESPONSE_BYTES, SPEECH_MAX_TRANS
                                     LocalSpeechUnavailable, valid_speech_hint, validate_canonical_wav)
 from .diagnostics import exception_trace, trace_enabled, trace_event
 from .intents import MAX_CONTEXT_BYTES, parse_context, parse_intent
+from .proactive_selection import MAX_SELECTION_BYTES, parse_selection, parse_selection_context
 
 INTENT_TIMEOUT_S = 10
 INTENT_MAX_RESPONSE_BYTES = 32 * 1024
@@ -276,6 +277,50 @@ class RadioClient:
             trace_event({"event": "radio_http_failure", "operation": "intent", "capture_id": request_id,
                          "exception_chain": exception_trace(exception)})
             return {"status": "unavailable", "reason": "intent_response_invalid_or_unavailable"}
+
+    async def select_proactive(self, context, cancelled):
+        try:
+            context = parse_selection_context(context)
+            body = json.dumps(context, separators=(",", ":")).encode()
+            if cancelled.is_set() or len(body) > MAX_SELECTION_BYTES:
+                return {"status": "unavailable", "reason": "proactive_cancelled"}
+            async def request_selection():
+                async with httpx.AsyncClient(
+                    base_url=self._base_url, headers=self._headers, timeout=httpx.Timeout(8, connect=2),
+                    follow_redirects=False, trust_env=False, transport=self._transport,
+                    event_hooks={"request": [_trace_async_request], "response": [_trace_async_response]},
+                ) as client:
+                    async with client.stream("POST", "/api/v2/engineer/proactive-selection",
+                                             headers={"Content-Type": "application/json"}, content=body) as response:
+                        payload = bytearray()
+                        async for chunk in response.aiter_bytes():
+                            payload.extend(chunk)
+                            if len(payload) > MAX_SELECTION_BYTES:
+                                raise ValueError("proactive_response_limit")
+                        document = json.loads(payload)
+                        if response.status_code != 200:
+                            reason = document.get("reason") if isinstance(document, dict) else None
+                            return {"status": "unavailable", "reason": reason if isinstance(reason, str)
+                                    and re.fullmatch(r"[a-z0-9_]{1,96}", reason) else "proactive_backend_unavailable"}
+                        data = document.get("data") if isinstance(document, dict) else None
+                        if (document.get("status") != "ok" or not isinstance(data, dict)
+                                or type(data.get("schema_version")) is not int or data["schema_version"] != 1
+                                or data.get("scope") != context["scope"]):
+                            raise ValueError("proactive_response_invalid")
+                        return {"status": "available", "selection": parse_selection(data.get("selection"), context)}
+            task = asyncio.create_task(request_selection())
+            try:
+                async with asyncio.timeout(8):
+                    while not cancelled.is_set():
+                        done, _pending = await asyncio.wait({task}, timeout=0.05)
+                        if done:
+                            return task.result()
+                return {"status": "unavailable", "reason": "proactive_cancelled"}
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        except (httpx.RequestError, TimeoutError, ValueError, TypeError, RecursionError, RuntimeError, AttributeError):
+            return {"status": "unavailable", "reason": "proactive_response_unavailable"}
 
     async def _transcribe(self, wav: bytes, request_id: str, hint: str | None = None) -> dict:
         digest = hashlib.sha256(wav).hexdigest()

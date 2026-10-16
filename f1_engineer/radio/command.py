@@ -19,6 +19,7 @@ from .region_captures import RadioRegionCaptures
 from .opponent_captures import RadioOpponentCaptures
 from .track_geometry import RadioTrackGeometry
 from .scheduler import RadioMessage, RadioScheduler
+from .proactive_selection import ProactiveSelector
 from .wheel_input import WheelButtonMonitor
 from .windows_speech import WindowsSpeech
 from .diagnostics import emit, radio_event_log, trace_event
@@ -188,6 +189,9 @@ def _run_radio(args) -> int:
     voice = None
     stop = threading.Event()
     worker = None
+    select_proactive = getattr(client, "select_proactive", None)
+    selector = (ProactiveSelector(select_proactive, notify=emit)
+                if callable(select_proactive) and not args.dry_run and not args.once else None)
     captures = RadioRegionCaptures(client, notify=emit) if client is not None else None
     opponent_captures = RadioOpponentCaptures(client, notify=emit) if client is not None else None
     geometry = RadioTrackGeometry(client) if client is not None else None
@@ -195,7 +199,8 @@ def _run_radio(args) -> int:
         playback = DryRunPlayback() if args.dry_run or args.once or args.capture_test else WindowsSpeech(
             voice=args.voice, rate=args.rate, volume=args.volume)
         scheduler = RadioScheduler(playback, notify=emit)
-        controller = RadioController(scheduler, notify=emit, backend_regions=client is not None)
+        controller = RadioController(scheduler, notify=emit, backend_regions=client is not None,
+                                     proactive_mode=getattr(args, "proactive_mode", "rules"), selector=selector)
         started = time.monotonic()
         snapshot = client.fetch() if client else {"status": "unavailable", "reason": "capture_test"}
         controller.feed(snapshot, now=time.monotonic(), transport_age_s=time.monotonic() - started)
@@ -220,7 +225,8 @@ def _run_radio(args) -> int:
               "voice_submission": ("disabled" if args.capture_test else
                                    "manual" if getattr(args, "manual_submit", False) else "automatic"),
               "commands": ["lap", "listen", "finish", "ask <question>", "say <words>", "submit", "tasks", "forget",
-                           "quiet", "resume", "cancel", "repeat", "status", "quit"]})
+                           "quiet", "resume", "proactive off", "proactive rules", "proactive model",
+                           "cancel", "repeat", "status", "quit"]})
         snapshots: queue.Queue = queue.Queue(maxsize=1)
         commands: queue.Queue = queue.Queue(maxsize=16)
         if client is not None:
@@ -245,6 +251,8 @@ def _run_radio(args) -> int:
             pressed = wheel.poll(now=now)
             voice.tick(scope=scheduler.scope, input_status=wheel.status())
             if pressed:
+                if selector is not None:
+                    selector.cancel()
                 request_listening(scheduler, voice, source="wheel", binding=wheel.status()["binding"],
                                   connection=wheel.status().get("connection_instance"),
                                   task_context=controller.capture_task_context(),
@@ -252,6 +260,8 @@ def _run_radio(args) -> int:
                                   intent_context=capture_intent_context(controller, glossary))
             try:
                 command = commands.get_nowait()
+                if selector is not None and command not in ("status", "resume"):
+                    selector.cancel()
                 if command == "quit":
                     stop.set()
                 elif command == "lap":
@@ -288,6 +298,8 @@ def _run_radio(args) -> int:
                     scheduler.quiet()
                 elif command == "resume":
                     scheduler.muted = False
+                elif command in ("proactive off", "proactive rules", "proactive model"):
+                    controller.set_proactive_mode(command.split()[1])
                 elif command == "cancel":
                     voice.cancel()
                     scheduler.cancel()
@@ -316,11 +328,14 @@ def _run_radio(args) -> int:
                 if opponent_captures is not None:
                     opponent_captures.replace(controller.opponent_capture_requests())
                 scheduler.suspended = voice.blocks_playback
+                controller.poll_proactive(now=now)
                 scheduler.tick(now=now)
             stop.wait(0.05)
         return 0
     finally:
         stop.set()
+        if selector is not None:
+            selector.close()
         try:
             try:
                 try:

@@ -857,6 +857,14 @@ def _radio(args: argparse.Namespace) -> int:
     return run_radio(args)
 
 
+def _radio_scenario(args: argparse.Namespace) -> int:
+    try:
+        from .radio.scenarios import run_scenarios
+    except ImportError as exception:
+        raise ValueError("radio scenarios require app dependencies; install with uv sync --extra app") from exception
+    return run_scenarios(args)
+
+
 def _radio_input(args: argparse.Namespace) -> int:
     try:
         from .radio.input_command import run_input
@@ -877,6 +885,8 @@ def build_parser() -> argparse.ArgumentParser:
     radio.add_argument("--rate", type=int, default=0, help="speech rate (-10 to 10)")
     radio.add_argument("--volume", type=int, default=75, help="speech volume (0 to 100)")
     radio.add_argument("--poll-interval", type=float, default=0.25, help="backend polling seconds (0.1 to 1)")
+    radio.add_argument("--proactive-mode", choices=("off", "rules", "model"), default="rules",
+                       help="automatic coaching: deterministic rules (default), bounded background model selection, or off")
     radio.add_argument("--list-voices", action="store_true", help="list installed voices without speaking or contacting the backend")
     radio.add_argument("--dry-run", action="store_true", help="log proposed speech without audio")
     radio.add_argument("--once", action="store_true", help="check backend status once without audio")
@@ -898,6 +908,11 @@ def build_parser() -> argparse.ArgumentParser:
                        help="optional TOML with [terms] and [mishearings] tables merged into the interpreter glossary")
     radio.add_argument("--log-file", help="append timestamped JSONL diagnostics with bounded rotation; includes spoken text, not raw audio or credentials")
     radio.set_defaults(handler=_radio)
+
+    radio_scenario = commands.add_parser("radio-scenario", help="replay offline synthetic proactive radio scenarios without hardware or model access")
+    radio_scenario.add_argument("--scenario", choices=("all", "closing", "pace", "quiet", "session-change", "mid-lap", "busy-radio"), default="all")
+    radio_scenario.add_argument("--log-file", help="optional timestamped JSONL scenario log")
+    radio_scenario.set_defaults(handler=_radio_scenario)
 
     radio_input = commands.add_parser("radio-input", help="list, learn, change or test the listening button without audio")
     radio_input.add_argument("--input-settings", default="data/radio-input.json", help="local wheel binding file")
