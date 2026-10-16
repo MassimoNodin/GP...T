@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { forwardLocalRequest, isTrustedLocalMutation } from "@/lib/local-proxy";
 import {
+  acceptsJson,
+  proxyError,
+  proxyImportJob,
+  readBoundedBytes,
+} from "@/lib/proxy-json";
+import {
   appScreenFrom,
   appScreenPath,
   sanitizeAppStateQuery,
@@ -28,13 +34,61 @@ function redirectWith(
   return NextResponse.redirect(destination, 303);
 }
 
-export async function POST(request: Request) {
-  if (!isTrustedLocalMutation(request)) {
-    return NextResponse.json(
-      { error: "same_origin_request_required" },
-      { status: 403 },
-    );
+const MAX_JSON_REQUEST_BYTES = 4 * 1024;
+
+// JSON branch (`Accept: application/json`): accepts a JSON or form body and
+// answers with a JSON envelope instead of a redirect.
+async function queueImportJson(request: Request) {
+  let captureId: unknown;
+  let queueIfBusy = false;
+  try {
+    const contentType = request.headers
+      .get("content-type")
+      ?.split(";", 1)[0]
+      ?.trim()
+      .toLowerCase();
+    if (contentType === "application/json") {
+      const read = await readBoundedBytes(
+        request.body,
+        MAX_JSON_REQUEST_BYTES,
+        request.signal,
+      );
+      if (!read.ok) return proxyError(413, "request_body_limit_exceeded");
+      const parsed: unknown = JSON.parse(new TextDecoder().decode(read.bytes));
+      const record =
+        parsed !== null && typeof parsed === "object"
+          ? (parsed as Record<string, unknown>)
+          : {};
+      captureId = record.capture_id;
+      queueIfBusy = record.queue_if_busy === true || record.queue_if_busy === "true";
+    } else {
+      const form = await request.formData();
+      captureId = form.get("capture_id");
+      queueIfBusy = form.get("queue_if_busy") === "true";
+    }
+  } catch {
+    return proxyError(400, "request_body_invalid");
   }
+  if (typeof captureId !== "string" || !/^[a-f0-9]{32}$/.test(captureId)) {
+    return proxyError(422, "capture_unavailable");
+  }
+  return proxyImportJob("create", "/api/v1/import-jobs", {
+    capture_id: captureId,
+    queue_if_busy: queueIfBusy,
+  });
+}
+
+export async function POST(request: Request) {
+  const wantsJson = acceptsJson(request);
+  if (!isTrustedLocalMutation(request)) {
+    return wantsJson
+      ? proxyError(403, "same_origin_request_required")
+      : NextResponse.json(
+          { error: "same_origin_request_required" },
+          { status: 403 },
+        );
+  }
+  if (wantsJson) return queueImportJson(request);
   const form = await request.formData();
   const returnTo = appScreenFrom(form.get("return_to"));
   const preservedQuery = sanitizeAppStateQuery(

@@ -64,9 +64,9 @@ export function telemetryStatus(status: AcquisitionStatus | null): ShellStatus {
       return { tone: "green", label: "Telemetry live" };
     case "starting":
     case "listening":
-      return { tone: "amber", label: "Waiting for game" };
     case "stale":
-      return { tone: "amber", label: "Telemetry stale" };
+      // "stale" is also the receiver's state while the game is not running.
+      return { tone: "grey", label: "Waiting for game" };
     case "disabled":
       return { tone: "grey", label: "Telemetry disabled" };
     default:
@@ -74,7 +74,11 @@ export function telemetryStatus(status: AcquisitionStatus | null): ShellStatus {
   }
 }
 
-export function telemetryDetail(status: AcquisitionStatus | null): string {
+/**
+ * `recentlyLive`: the browser saw packets arriving in the last few minutes, so
+ * a "stale" receiver means the session went quiet rather than no game running.
+ */
+export function telemetryDetail(status: AcquisitionStatus | null, recentlyLive = false): string {
   if (!status) return "Not reachable";
   switch (status.state) {
     case "receiving":
@@ -83,7 +87,7 @@ export function telemetryDetail(status: AcquisitionStatus | null): string {
     case "starting":
       return "Listening on UDP 20777";
     case "stale":
-      return "No recent packets";
+      return recentlyLive ? "Packets stopped arriving" : "Listening on UDP 20777";
     default:
       return "Not receiving";
   }
@@ -94,6 +98,13 @@ export function telemetryFooter(status: AcquisitionStatus | null, firstLine: str
   const pill = telemetryStatus(status);
   return { tone: pill.tone, label: pill.label, lines: [firstLine, telemetryDetail(status)] };
 }
+
+/** Sidebar footer for every screen while the local engine cannot be reached. */
+export const ENGINE_OFFLINE_FOOTER: ShellFooter = {
+  tone: "red",
+  label: "Engine offline",
+  lines: ["Start the local engine", ""],
+};
 
 export function telemetryShell(
   status: AcquisitionStatus | null,
@@ -122,6 +133,81 @@ export function engineerShell(
   return { status: engineerStatus(runtime), footer: engineerFooter(runtime, lines) };
 }
 
+/* ------------------------------------------------- shell: combined status */
+
+type Part = { tone: ShellTone; label: string; detail: string };
+
+const TONE_RANK: Record<ShellTone, number> = { green: 0, grey: 1, amber: 2, red: 3 };
+
+/** The game-connection half of the header pill. */
+export function telemetryPart(status: AcquisitionStatus | null, recentlyLive = false): Part {
+  if (!status) return { tone: "red", label: "Telemetry unknown", detail: "Receiver status unavailable" };
+  switch (status.state) {
+    case "receiving":
+      return { tone: "green", label: "Telemetry live", detail: "Receiving game data" };
+    case "starting":
+    case "listening":
+      return { tone: "grey", label: "Waiting for game", detail: "Listening on UDP 20777" };
+    case "stale":
+      return recentlyLive
+        ? { tone: "amber", label: "Telemetry stale", detail: "Packets stopped arriving" }
+        : { tone: "grey", label: "Waiting for game", detail: "Listening on UDP 20777" };
+    case "disabled":
+      return { tone: "grey", label: "Telemetry off", detail: "Acquisition is disabled" };
+    default:
+      return { tone: "red", label: "Telemetry offline", detail: "Receiver is not running" };
+  }
+}
+
+/** The engineer half of the header pill. */
+export function engineerPart(runtime: RuntimeInfo | null): Part {
+  if (!runtime) return { tone: "red", label: "Engineer offline", detail: "Runtime status unavailable" };
+  if (runtime.status === "ready") {
+    return { tone: "green", label: "Engineer ready", detail: runtime.model_name || runtime.runtime };
+  }
+  if (runtime.status === "not_configured") {
+    return { tone: "amber", label: "Engineer not set up", detail: humanReason(runtime.reason) };
+  }
+  return { tone: "red", label: "Engineer unavailable", detail: humanReason(runtime.reason) };
+}
+
+/**
+ * One header pill for every screen: game connection and engineer together, in
+ * the tone of whichever is worse, with both halves listed in its details.
+ */
+export function combinedStatus(
+  acquisition: AcquisitionStatus | null,
+  runtime: RuntimeInfo | null,
+  recentlyLive = false,
+): ShellStatus {
+  const telemetry = telemetryPart(acquisition, recentlyLive);
+  const engineer = engineerPart(runtime);
+  const details = [
+    { label: "Telemetry", value: `${telemetry.label.replace(/^Telemetry /, "")} · ${telemetry.detail}`, tone: telemetry.tone },
+    { label: "Engineer", value: `${engineer.label.replace(/^Engineer /, "")} · ${engineer.detail}`, tone: engineer.tone },
+  ];
+  if (!acquisition && !runtime) {
+    return { tone: "red", label: "Engine offline", details: [{ label: "Local engine", value: "Not reachable. Start the local engine.", tone: "red" }] };
+  }
+  const tone = TONE_RANK[telemetry.tone] >= TONE_RANK[engineer.tone] ? telemetry.tone : engineer.tone;
+  return { tone, label: `${telemetry.label} · ${engineer.label}`, details };
+}
+
+/**
+ * Sidebar footer shared by every live screen: the game connection on the head
+ * line and the page's session lines below.
+ */
+export function sessionFooter(
+  acquisition: AcquisitionStatus | null,
+  runtime: RuntimeInfo | null,
+  lines: string[],
+  recentlyLive = false,
+): ShellFooter {
+  if (!acquisition && !runtime) return ENGINE_OFFLINE_FOOTER;
+  const telemetry = telemetryPart(acquisition, recentlyLive);
+  return { tone: telemetry.tone, label: telemetry.label, lines };
+}
+
 /* ------------------------------------------------------ drive: status rows */
 
 export function isReachable(
@@ -143,18 +229,20 @@ function humanReason(reason: string | null): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-export function telemetryRow(acquisition: AcquisitionStatus | null): StatusRow {
+export function telemetryRow(acquisition: AcquisitionStatus | null, recentlyLive = false): StatusRow {
   if (!acquisition) return unavailableRow(ROW_TELEMETRY, "No receiver status");
   const delayMs = Math.round((acquisition.last_publication_delay_s ?? 0) * 1000);
   switch (acquisition.state) {
     case "receiving":
       return { label: ROW_TELEMETRY, status: "Receiving", tone: "green", detail: `${delayMs} ms` };
     case "listening":
-      return { label: ROW_TELEMETRY, status: "Listening", tone: "amber", detail: "UDP 20777" };
+      return { label: ROW_TELEMETRY, status: "Waiting", tone: "grey", detail: "Listening on UDP 20777" };
     case "starting":
-      return { label: ROW_TELEMETRY, status: "Starting", tone: "amber", detail: "UDP 20777" };
+      return { label: ROW_TELEMETRY, status: "Starting", tone: "grey", detail: "UDP 20777" };
     case "stale":
-      return { label: ROW_TELEMETRY, status: "Stale", tone: "amber", detail: "No recent packets" };
+      return recentlyLive
+        ? { label: ROW_TELEMETRY, status: "Stale", tone: "amber", detail: "Packets stopped arriving" }
+        : { label: ROW_TELEMETRY, status: "Waiting", tone: "grey", detail: "Listening on UDP 20777" };
     case "stopped":
       return { label: ROW_TELEMETRY, status: "Stopped", tone: "red", detail: "Receiver stopped" };
     case "failed":

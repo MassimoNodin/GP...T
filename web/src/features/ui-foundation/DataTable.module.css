@@ -1,0 +1,150 @@
+.wrap {
+  min-width: 0;
+}
+
+.scroll {
+  overflow-x: auto;
+}
+
+.scroll[data-sticky="true"] {
+  overflow-y: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.th {
+  height: 34px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--divider);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.scroll[data-sticky="true"] .th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.th[data-align="end"],
+.td[data-align="end"] {
+  text-align: right;
+}
+
+.th[data-align="center"],
+.td[data-align="center"] {
+  text-align: center;
+}
+
+.sortButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.sortButton:hover {
+  color: var(--text-2);
+}
+
+.sortIcon {
+  display: inline-flex;
+  color: var(--faint);
+}
+
+.sortIcon[data-active="true"] {
+  color: var(--text);
+}
+
+.sortIcon[data-dir="asc"] {
+  transform: rotate(180deg);
+}
+
+.th[aria-sort="ascending"],
+.th[aria-sort="descending"] {
+  color: var(--text);
+}
+
+.td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--divider);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.table[data-density="regular"] .td {
+  height: 40px;
+}
+
+.table[data-density="compact"] .td {
+  height: 34px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.td[data-numeric="true"] {
+  font-variant-numeric: tabular-nums;
+}
+
+.tr:hover {
+  background: var(--surface-hover);
+}
+
+.tr[data-selected="true"] {
+  background: var(--selected-bg);
+}
+
+.tr[data-tone="muted"] .td {
+  color: var(--muted);
+}
+
+.tr[data-tone="warning"] .td {
+  background: var(--amber-soft);
+}
+
+.rowButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 6px;
+  margin: -3px -6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: inherit;
+  text-align: left;
+}
+
+.rowButton[aria-pressed="true"] {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.emptyCell {
+  padding: 8px 0;
+}
+
+.footnote {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11.5px;
+}

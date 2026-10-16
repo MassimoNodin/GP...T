@@ -1,216 +1,258 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useAcquisitionFeed, useRuntimeFeed } from "@/features/live-status/hooks";
-import { buildSystemRows, currentActivity, liveDataPill } from "@/features/live-status/map";
-import type { RadioEvent, RadioKind } from "@/features/review-data/fixtures";
-import { InfoIcon, StatusGlyph, WaveformIcon } from "@/features/ui-foundation/icons";
-import { Card, PageHeader, StatusBadge } from "@/features/ui-foundation/primitives";
-import { TrackMap } from "@/features/ui-foundation/TrackMap";
-import { TrackPhoto } from "@/features/ui-foundation/TrackPhoto";
+import { useRecentlyLive } from "@/features/live-status/recent-live";
+import { isReachable, liveDataPill } from "@/features/live-status/map";
+import { Drawer } from "@/features/ui-foundation/Drawer";
+import { Card, PageHeader } from "@/features/ui-foundation/primitives";
+import { InlineAlert } from "@/features/ui-foundation/states";
+import { EventDetails } from "./EventDetails";
+import { RadioHistory } from "./RadioHistory";
+import { checklistSteps } from "./connect-steps";
+import { SessionContext } from "./SessionContext";
+import { SystemStatus } from "./SystemStatus";
 import type { DriveModel } from "./load";
+import {
+  buildRadioRows,
+  fixtureRadioRows,
+  followSelection,
+  newestId,
+  pendingQuestion,
+  radioCounts,
+  type RadioFilter,
+  type RadioRow,
+} from "./radio";
+import { initialFeedState } from "./radio-feed";
+import { buildDriveRows, driveActivity } from "./system-rows";
+import { useRadioFeed } from "./useRadioFeed";
+import { useReadAloud } from "./useReadAloud";
+import { useMicrophone, useSpeechStatus } from "./useSystemSources";
 import styles from "./DriveDiagnostics.module.css";
 
-type Filter = "all" | RadioKind;
+const NARROW_QUERY = "(max-width: 1023px)";
+const PENDING_TICK_MS = 5000;
 
-const FILTERS: Array<{ key: Filter; label: string }> = [
-  { key: "all", label: "All" },
-  { key: "question", label: "Questions" },
-  { key: "response", label: "Responses" },
-  { key: "proactive", label: "Proactive" },
-  { key: "issue", label: "Issues" },
-];
+const noopSubscribe = () => () => {};
 
-const KIND: Record<RadioKind, { label: string; title: string }> = {
-  proactive: { label: "Proactive", title: "Proactive Message" },
-  question: { label: "You", title: "Driver Question" },
-  response: { label: "Engineer", title: "Engineer Response" },
-  issue: { label: "Issue", title: "Issue" },
-};
-
-function glyphFor(tone: "green" | "amber" | "red" | "grey") {
-  return tone === "green" ? "check" : tone === "grey" ? "dot" : "alert";
+function subscribeNarrow(listener: () => void) {
+  const query = window.matchMedia(NARROW_QUERY);
+  query.addEventListener("change", listener);
+  return () => query.removeEventListener("change", listener);
 }
 
-function KindIcon({ kind }: { kind: RadioKind }) {
-  if (kind === "proactive") return <StatusGlyph tone="green" glyph="square" size={13} />;
-  if (kind === "question") return <StatusGlyph tone="blue" glyph="user" size={13} />;
-  if (kind === "response") return <StatusGlyph tone="dark" glyph="flag" size={13} />;
-  return <StatusGlyph tone="red" glyph="alert" size={13} />;
+/** Below 1024px the details open in a Drawer from the row. Server render assumes wide. */
+function useNarrow(): boolean {
+  return useSyncExternalStore(
+    subscribeNarrow,
+    () => window.matchMedia(NARROW_QUERY).matches,
+    () => false,
+  );
+}
+
+const eventRowId = (seq: number) => `event-${seq}`;
+
+function seqOf(rowId: string | null): number | null {
+  if (!rowId?.startsWith("event-")) return null;
+  const value = Number(rowId.slice("event-".length));
+  return Number.isSafeInteger(value) ? value : null;
 }
 
 export function DriveDiagnostics({ model }: { model: DriveModel }) {
-  const [filter, setFilter] = useState<Filter>("all");
-  const [selectedId, setSelectedId] = useState(model.radio[0]?.id ?? "");
+  const router = useRouter();
+  const narrow = useNarrow();
+
   // Start from the server-read state (identical SSR output), then follow the
   // backend while the tab is visible. null = the backend did not answer.
   const acquisition = useAcquisitionFeed(model.initial.acquisition) ?? null;
+  const recentlyLive = useRecentlyLive(acquisition);
   const runtime = useRuntimeFeed(model.initial.runtime) ?? null;
-  const system = useMemo(
-    () => buildSystemRows(model.referenceSystem, acquisition, runtime),
-    [model.referenceSystem, acquisition, runtime],
-  );
-  const activity = currentActivity(model.activity, acquisition, runtime);
+  const speech = useSpeechStatus(model.speech);
+  const microphone = useMicrophone();
+  const readAloud = useReadAloud(model.interruption);
   const liveData = liveDataPill(acquisition);
 
-  const counts = useMemo(() => {
-    const result: Record<Filter, number> = { all: model.radio.length, question: 0, response: 0, proactive: 0, issue: 0 };
-    for (const event of model.radio) result[event.kind] += 1;
-    return result;
-  }, [model.radio]);
+  /* ------------------------------------------------------------ radio feed */
 
-  const visible = filter === "all" ? model.radio : model.radio.filter((event) => event.kind === filter);
-  const selected = model.radio.find((event) => event.id === selectedId) ?? visible[0] ?? null;
+  const [initialFeed] = useState(() =>
+    initialFeedState({
+      status: model.radio.state,
+      reason: model.radio.reason,
+      events: model.radio.events,
+      nextAfter: model.radio.nextAfter,
+    }),
+  );
+  // The reference path has no feed to poll; it re-reads the page once the engine answers.
+  const feed = useRadioFeed(initialFeed, !model.reference);
+
+  const timeZone = useSyncExternalStore(
+    noopSubscribe,
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+    () => model.timeZone,
+  );
+  const [now, setNow] = useState(model.generatedAt);
+  const answering = pendingQuestion(feed.events, now) !== null;
+  useEffect(() => {
+    if (!answering) return;
+    const timer = window.setInterval(() => setNow(Date.now()), PENDING_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, [answering]);
+
+  const handledArrival = useRef(feed.arrivalSeq);
+  const { offer } = readAloud;
+  useEffect(() => {
+    if (handledArrival.current === feed.arrivalSeq) return;
+    handledArrival.current = feed.arrivalSeq;
+    setNow(Date.now());
+    offer(feed.arrived);
+  }, [feed.arrivalSeq, feed.arrived, offer]);
+
+  const rows = useMemo<RadioRow[]>(
+    () =>
+      model.reference
+        ? fixtureRadioRows(model.radio.fixture)
+        : buildRadioRows(feed.events, { now, timeZone, playback: readAloud.playback }),
+    [model.reference, model.radio.fixture, feed.events, now, timeZone, readAloud.playback],
+  );
+  const counts = useMemo(() => radioCounts(rows), [rows]);
+
+  /* ------------------------------------- selection, follow mode and unread */
+
+  const newest = newestId(feed.events);
+  const [filter, setFilter] = useState<RadioFilter>("all");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [markedThrough, setMarkedThrough] = useState(() => newestId(model.radio.events));
+  const [readSeqs, setReadSeqs] = useState<ReadonlySet<number>>(() => new Set());
+  const [track, setTrack] = useState<{ newest: number; selected: string | null }>(() => ({
+    newest,
+    selected: model.reference ? (model.radio.fixture[0]?.id ?? null) : newest > 0 ? eventRowId(newest) : null,
+  }));
+
+  // Follow mode: when the newest row was selected and newer events arrive, the
+  // selection moves with it; otherwise the selection stays where the user put it.
+  if (track.newest !== newest) {
+    const moved = followSelection(seqOf(track.selected), track.newest || null, newest || null);
+    const selected = moved === null ? track.selected : eventRowId(moved);
+    setTrack({ newest, selected });
+    if (moved !== null && !readSeqs.has(moved)) setReadSeqs(new Set(readSeqs).add(moved));
+  }
+
+  const selectedRow = rows.find((row) => row.id === track.selected) ?? rows[0] ?? null;
+
+  const unreadSeqs = useMemo(() => {
+    const unread = new Set<number>();
+    for (const event of feed.events) {
+      if (event.id > markedThrough && !readSeqs.has(event.id) && eventRowId(event.id) !== selectedRow?.id) {
+        unread.add(event.id);
+      }
+    }
+    return unread;
+  }, [feed.events, markedThrough, readSeqs, selectedRow?.id]);
+  const unreadIds = useMemo(() => new Set([...unreadSeqs].map(eventRowId)), [unreadSeqs]);
+  const freshIds = useMemo(() => new Set(feed.arrived.map((event) => eventRowId(event.id))), [feed.arrived]);
+
+  function select(row: RadioRow) {
+    setTrack({ newest: track.newest, selected: row.id });
+    if (row.seq !== null && !readSeqs.has(row.seq)) setReadSeqs(new Set(readSeqs).add(row.seq));
+    if (narrow) setDrawerOpen(true);
+  }
+
+  /* ------------------------------------------------------ system and context */
+
+  const reachable = isReachable(acquisition, runtime);
+  const systemRows = useMemo(
+    () =>
+      buildDriveRows({
+        acquisition,
+        recentlyLive,
+        runtime,
+        microphone,
+        speech,
+        audio: readAloud.audio,
+        proactive: model.proactive,
+      }),
+    [acquisition, recentlyLive, runtime, microphone, speech, readAloud.audio, model.proactive],
+  );
+  const activity = driveActivity({ acquisition, recentlyLive, runtime, speaking: readAloud.speaking, answering });
+
+  // On the reference path, re-read the page as soon as the engine answers.
+  useEffect(() => {
+    if (model.reference && reachable) router.refresh();
+  }, [model.reference, reachable, router]);
+
+  const announcement = feed.arrived
+    .filter((event) => event.priority === "high")
+    .map((event) => event.text)
+    .join(" ");
+
+  const readAloudNote =
+    readAloud.audio.kind === "no_voice"
+      ? "No local voice is installed, so calls cannot be read aloud. Install a system voice."
+      : readAloud.audio.kind === "unsupported"
+        ? "This browser cannot read calls aloud."
+        : null;
 
   return (
     <>
+      {model.reference && (
+        <div className={styles.banner}>
+          <InlineAlert tone="info" title="Reference data">
+            The local engine is not reachable, so example sessions from the reference design are shown. Start the
+            engine to see your own data.
+          </InlineAlert>
+        </div>
+      )}
       <PageHeader title="Drive Diagnostics" subtitle="Monitor voice, telemetry and assistant systems in real time." />
       <div className={styles.topGrid}>
-        <Card title="System Status" labelledBy="system-status" className={styles.systemCard}>
-          <ul className={styles.systemList}>
-            {system.map((row) => (
-              <li key={row.label} className={styles.systemRow}>
-                <StatusGlyph tone={row.tone} glyph={glyphFor(row.tone)} size={14} />
-                <span className={styles.systemLabel}>{row.label}</span>
-                <span className={styles.systemStatus} data-tone={row.tone}>
-                  {row.status}
-                </span>
-                <span className={styles.systemDetail}>{row.detail}</span>
-              </li>
-            ))}
-            <li className={styles.systemRow}>
-              <StatusGlyph tone={activity.tone} glyph={glyphFor(activity.tone)} size={14} />
-              <span className={styles.systemLabel}>Current Activity</span>
-              <span className={styles.activity}>
-                <span>{activity.text}</span>
-                {activity.tone === "green" && <WaveformIcon size={40} />}
-              </span>
-            </li>
-          </ul>
-        </Card>
-
-        <Card title="Session Context" labelledBy="session-context" className={styles.contextCard}>
-          <div className={styles.contextHead}>
-            <div>
-              <div className={styles.contextTitle}>{model.context.title}</div>
-              <div className={styles.contextSub}>
-                {model.context.subtitle.map((part, index) => (
-                  <span key={part}>
-                    {index > 0 && <span className={styles.dot}>•</span>}
-                    {part}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <TrackMap track={model.context.track} className={styles.contextMap} strokeWidth={2.4} />
-          </div>
-          <div className={styles.contextBody}>
-            <TrackPhoto src={model.photo} alt={`${model.context.title} circuit`} className={styles.contextPhoto} />
-            <dl className={styles.facts}>
-              {model.context.facts.map(([label, value]) => (
-                <div key={label} className={styles.fact}>
-                  <dt>{label}:</dt>
-                  <dd>{value}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-          <div className={styles.liveWrap}>
-            <span className={styles.livePill} data-live={liveData.live}>
-              <StatusGlyph tone={liveData.live ? "red" : "grey"} glyph="dot" size={14} />
-              {liveData.label}
-            </span>
-          </div>
-        </Card>
+        <SystemStatus rows={systemRows} activity={activity} />
+        <SessionContext
+          context={model.context}
+          photo={model.photo}
+          live={liveData.live}
+          checklist={
+            model.reference || liveData.live
+              ? null
+              : checklistSteps({ reachable, acquisitionState: acquisition?.state ?? null, receiver: model.receiver })
+          }
+        />
       </div>
 
       <div className={styles.bottomGrid}>
-        <Card title="Radio History" labelledBy="radio-history" className={styles.radioCard}>
-          <div className={styles.filters} role="group" aria-label="Filter radio history">
-            {FILTERS.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                aria-pressed={filter === item.key}
-                className={styles.filter}
-                onClick={() => setFilter(item.key)}
-              >
-                {item.label} ({counts[item.key]})
-              </button>
-            ))}
-          </div>
-          <ul className={styles.radioList} aria-label="Radio events">
-            {visible.map((event) => (
-              <li key={event.id}>
-                <button
-                  type="button"
-                  className={styles.radioRow}
-                  aria-pressed={selected?.id === event.id}
-                  onClick={() => setSelectedId(event.id)}
-                >
-                  <span className={styles.radioTime}>{event.time}</span>
-                  <span className={styles.radioKind} data-kind={event.kind}>
-                    <KindIcon kind={event.kind} />
-                    {KIND[event.kind].label}
-                  </span>
-                  <span className={styles.radioText}>{event.text}</span>
-                  <span className={styles.radioOutcome}>{event.outcome}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </Card>
+        <RadioHistory
+          rows={rows}
+          counts={counts}
+          filter={filter}
+          onFilter={setFilter}
+          selectedId={selectedRow?.id ?? null}
+          onSelect={select}
+          unread={unreadIds}
+          fresh={freshIds}
+          onMarkAllRead={() => setMarkedThrough(newest)}
+          feed={{ status: feed.status, reference: model.reference }}
+          readAloud={{ enabled: readAloud.enabled, onChange: readAloud.setEnabled, note: readAloudNote }}
+        />
 
-        <Card title="Event Details" labelledBy="event-details" className={styles.detailCard}>
-          {selected ? <EventDetails event={selected} /> : <p className={styles.muted}>Select a radio event.</p>}
-        </Card>
+        {!narrow && (
+          <Card title="Event Details" labelledBy="event-details" className={styles.detailCard}>
+            {selectedRow ? (
+              <EventDetails row={selectedRow} />
+            ) : (
+              <p className={styles.muted}>{rows.length === 0 ? "No radio events yet." : "Select a radio event."}</p>
+            )}
+          </Card>
+        )}
+      </div>
+
+      {narrow && selectedRow && (
+        <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} title={selectedRow.title}>
+          <EventDetails row={selectedRow} />
+        </Drawer>
+      )}
+
+      <div className="sr-only" role="status" aria-live="polite">
+        {announcement}
       </div>
     </>
-  );
-}
-
-function EventDetails({ event }: { event: RadioEvent }) {
-  const sections: Array<[string, string | string[]]> = [
-    ["Message", event.text],
-    ["Trigger", event.trigger],
-    ["Evidence / Context", event.evidence],
-    ["Output", event.output],
-    ["Timings", event.timings],
-  ];
-  return (
-    <div aria-live="polite">
-      <div className={styles.detailHead}>
-        <StatusGlyph tone={event.kind === "issue" ? "red" : event.kind === "question" ? "blue" : "green"} glyph="check" size={14} />
-        <div>
-          <div className={styles.detailTitle}>{KIND[event.kind].title}</div>
-          <div className={styles.detailTime}>{event.timestamp}</div>
-        </div>
-        <span className={styles.outcomeBadge} data-tone={event.outcomeTone}>
-          {event.outcome}
-        </span>
-      </div>
-      {sections.map(([label, body]) => (
-        <div key={label} className={styles.detailSection}>
-          <div className={styles.detailLabel}>{label}</div>
-          {Array.isArray(body) ? (
-            <ul className={styles.bullets}>
-              {body.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          ) : (
-            <p className={styles.detailBody}>{body}</p>
-          )}
-        </div>
-      ))}
-      {event.limitations && (
-        <div className={styles.detailSection}>
-          <div className={styles.detailLabel}>
-            Evidence Limitations <InfoIcon size={13} />
-          </div>
-          <p className={styles.detailBody}>{event.limitations}</p>
-        </div>
-      )}
-    </div>
   );
 }

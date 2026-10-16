@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { AppShell, HeaderContext, type NavKey } from "@/features/ui-foundation/AppShell";
 import { SkeletonBody, type SkeletonVariant } from "./Skeleton";
 import styles from "./route-states.module.css";
@@ -6,7 +7,16 @@ import styles from "./route-states.module.css";
  * Route-level loading fallback: the real shell with neutral status props and a
  * skeleton body, so navigation keeps the header, sidebar and main surface.
  */
-export function RouteLoading({ active, variant }: { active: NavKey; variant: SkeletonVariant }) {
+export function RouteLoading({
+  active,
+  variant,
+  body,
+}: {
+  active: NavKey;
+  variant: SkeletonVariant;
+  /** Replaces the `variant` skeleton, e.g. one chosen from the query string. */
+  body?: ReactNode;
+}) {
   return (
     <AppShell
       active={active}
@@ -18,7 +28,7 @@ export function RouteLoading({ active, variant }: { active: NavKey; variant: Ske
         <p className="sr-only" role="status">
           Loading
         </p>
-        <SkeletonBody variant={variant} />
+        {body ?? <SkeletonBody variant={variant} />}
       </div>
     </AppShell>
   );

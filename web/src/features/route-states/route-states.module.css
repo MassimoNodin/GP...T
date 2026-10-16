@@ -4,7 +4,7 @@
   display: block;
   overflow: hidden;
   border-radius: 6px;
-  background: #eef1f4;
+  background: var(--divider);
 }
 
 .skeleton[data-round="true"] {
@@ -17,7 +17,7 @@
     position: absolute;
     inset: 0;
     transform: translateX(-100%);
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+    background: linear-gradient(90deg, transparent, var(--shimmer), transparent);
     animation: shimmer 1.5s ease-in-out infinite;
   }
 }
@@ -102,6 +102,50 @@
   gap: 12px;
 }
 
+/* Overview tabs use the real 545fr/323fr columns. */
+.gridOverview {
+  display: grid;
+  grid-template-columns: minmax(0, 545fr) minmax(0, 323fr);
+  gap: 16px;
+}
+
+/* Lap Analysis: main column beside the questions column. */
+.lapsLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 388px);
+  gap: 16px;
+  align-items: start;
+}
+
+.tableRow {
+  display: grid;
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+}
+
+.tileRow {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 1280px) {
+  .lapsLayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1024px) {
+  .gridOverview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tileRow {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 860px) {
   .grid,
   .gridWide {
@@ -109,6 +153,10 @@
   }
 
   .statRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tileRow {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -155,7 +203,7 @@
 }
 
 .stateText {
-  color: #7b828c;
+  color: var(--muted);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -197,10 +245,10 @@
 .linkButton[data-variant="primary"] {
   border-color: var(--red);
   background: var(--red);
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 600;
 }
 
 .linkButton[data-variant="primary"]:hover {
-  background: #cc1018;
+  background: var(--red-strong);
 }

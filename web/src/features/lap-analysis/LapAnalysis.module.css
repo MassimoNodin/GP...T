@@ -39,7 +39,7 @@
   padding: 0 6px 0 0;
   border: 1px solid var(--border);
   border-radius: 9px;
-  background: #fff;
+  background: var(--surface);
   box-shadow: var(--shadow-card);
 }
 
@@ -50,14 +50,14 @@
   height: 100%;
   padding: 0 14px;
   border-right: 1px solid var(--divider);
-  color: #2b3037;
+  color: var(--ink);
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
 
 .pickerLabel svg {
-  color: #8d949d;
+  color: var(--chart-axis);
 }
 
 .labelDot {
@@ -94,7 +94,7 @@
 }
 
 .pickerDelta {
-  color: #9aa1aa;
+  color: var(--faint-2);
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
@@ -134,7 +134,7 @@
   display: flex;
   align-items: center;
   gap: 14px;
-  color: #2b3037;
+  color: var(--ink);
   font-size: 12px;
   font-weight: 600;
 }
@@ -183,7 +183,7 @@
 
 .trackSub {
   margin-top: 6px;
-  color: #848b94;
+  color: var(--muted-2);
   font-size: 12px;
 }
 
@@ -198,7 +198,7 @@
   max-width: 190px;
   height: auto;
   margin: 4px auto 18px;
-  color: #1f2329;
+  color: var(--ink-strong);
 }
 
 .content[data-view="map"] .trackMap {
@@ -216,7 +216,7 @@
   margin: 0 0 8px;
   font-size: 12.5px;
   font-weight: 600;
-  color: #2b3037;
+  color: var(--ink);
 }
 
 .fullSelect {
@@ -230,7 +230,7 @@
 
 .fieldValue {
   margin: -2px 0 12px;
-  color: #848b94;
+  color: var(--muted-2);
   font-size: 12px;
 }
 
@@ -252,13 +252,13 @@
   padding: 0 10px;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
-  background: #fafbfc;
-  color: #4a5059;
+  background: var(--surface-main);
+  color: var(--ink-3);
   font-size: 11.5px;
 }
 
 .jump:hover {
-  background: #fff;
+  background: var(--surface);
 }
 
 /* Telemetry */
@@ -276,7 +276,7 @@
 .chartEmpty {
   margin: 0;
   padding: 56px 24px;
-  color: #7d848d;
+  color: var(--muted-2);
   font-size: 12.5px;
   line-height: 1.65;
   text-align: center;
@@ -288,20 +288,20 @@
 
 .chartNote {
   margin: 4px 0 6px;
-  color: #7d848d;
+  color: var(--muted-2);
   font-size: 12px;
   text-align: center;
 }
 
 .unavailable {
   margin: 8px 0 0;
-  color: #7d848d;
+  color: var(--muted-2);
   font-size: 12.5px;
   line-height: 1.65;
 }
 
 .rowLabel {
-  fill: #2b3037;
+  fill: var(--ink);
   font-size: 12.5px;
   font-weight: 600;
   font-family: inherit;
@@ -309,13 +309,13 @@
 
 .rowUnit,
 .tick {
-  fill: #8d949d;
+  fill: var(--chart-axis);
   font-size: 10.5px;
   font-family: inherit;
 }
 
 .axisTitle {
-  fill: #6f7680;
+  fill: var(--muted-strong);
   font-size: 11px;
   font-family: inherit;
 }
@@ -348,7 +348,7 @@
   border-top: 1px solid var(--divider);
   text-align: left;
   font-weight: 400;
-  color: #3d424a;
+  color: var(--text-2);
 }
 
 .sectorTable tr:first-child th,
@@ -386,7 +386,7 @@
   flex-direction: column;
   gap: 10px;
   font-size: 12.5px;
-  color: #6e757f;
+  color: var(--muted-strong);
 }
 
 .diffList li,
@@ -433,14 +433,14 @@
   margin-left: 40px;
   padding: 10px 16px;
   border-radius: 8px;
-  background: #e8f0fd;
-  color: #2b3037;
+  background: var(--blue-soft);
+  color: var(--ink);
   font-size: 12.5px;
 }
 
 .askedAt {
   margin: 6px 2px 4px;
-  color: #9aa1aa;
+  color: var(--faint-2);
   font-size: 11px;
   text-align: right;
 }
@@ -460,17 +460,17 @@
   height: 26px;
   border-radius: 50%;
   background: var(--green);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .answerName {
-  color: #6e757f;
+  color: var(--muted-strong);
   font-size: 12px;
 }
 
 .answerText {
   margin-top: 4px;
-  color: #2b3037;
+  color: var(--ink);
   font-size: 12.5px;
   line-height: 1.6;
 }
@@ -482,12 +482,12 @@
 .answerLabel {
   font-size: 12.5px;
   font-weight: 500;
-  color: #2b3037;
+  color: var(--ink);
 }
 
 .answerLine {
   margin-top: 3px;
-  color: #848b94;
+  color: var(--muted-2);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -529,21 +529,21 @@
   padding: 0 16px 0 12px;
   border-radius: 9px;
   background: var(--green-soft);
-  color: #1b8b52;
+  color: var(--green-strong);
   font-size: 12px;
   font-weight: 500;
 }
 
 .answered[data-status="unavailable"] {
   background: var(--amber-soft);
-  color: #9a6a06;
+  color: var(--amber-strong);
 }
 
 .helpful {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  color: #6e757f;
+  color: var(--muted-strong);
   font-size: 11.5px;
 }
 
@@ -553,7 +553,7 @@
 }
 
 .thumb[aria-pressed="true"] {
-  border-color: #9ccbb0;
+  border-color: var(--green-line);
   background: var(--green-soft);
   color: var(--green-text);
 }
@@ -563,7 +563,7 @@
 }
 
 .thumbDown[aria-pressed="true"] {
-  border-color: #f2b5b8;
+  border-color: var(--red-line);
   background: var(--red-soft);
   color: var(--red);
 }
@@ -605,4 +605,43 @@
     max-width: 100%;
     overflow-x: auto;
   }
+}
+
+/* Answer footer pills beyond the reference's Answered / Unavailable */
+.answered[data-tone="grey"] {
+  background: var(--grey-soft);
+  color: var(--muted);
+}
+
+.answered[data-tone="amber"] {
+  background: var(--amber-soft);
+  color: var(--amber-text);
+}
+
+.answered[data-tone="red"] {
+  background: var(--red-soft);
+  color: var(--red-text);
+}
+
+.telemetry[data-interactive="true"] {
+  cursor: crosshair;
+  touch-action: pan-y;
+}
+
+.telemetry:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+
+/* Real sessions: tabs with their own card layouts use the full width. */
+.content[data-real="true"][data-view="map"],
+.content[data-real="true"][data-view="sectors"],
+.content[data-real="true"][data-view="quality"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.content[tabindex]:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 4px;
 }

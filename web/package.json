@@ -38,7 +38,16 @@
     "test:review-data-v2": "node --test scripts/review-data-v2.test.mjs",
     "test:settings": "node --test scripts/settings.test.mjs",
     "test:ui-routes": "node --test scripts/ui-routes.test.mjs",
-    "test:lap-analysis": "node --test scripts/lap-analysis.test.mjs"
+    "test:lap-analysis": "node --test scripts/lap-analysis.test.mjs",
+    "test:ui-primitives": "node --test scripts/ui-primitives.test.mjs",
+    "test:review-data-backend-ui": "node --test scripts/review-data-backend-ui.test.mjs",
+    "test:ui-proxy-routes": "node --test scripts/ui-proxy-routes.test.mjs",
+    "test:session-overview": "node --test scripts/session-overview.test.mjs",
+    "test:lap-analysis-views": "node --test scripts/lap-analysis-views.test.mjs",
+    "test:engineer-answer": "node --test scripts/engineer-answer.test.mjs",
+    "test:library-import": "node --test scripts/library-import.test.mjs",
+    "test:drive-radio": "node --test scripts/drive-radio.test.mjs",
+    "test:settings-tabs": "node --test scripts/settings-tabs.test.mjs"
   },
   "dependencies": {
     "next": "16.3.8",

@@ -1,8 +1,11 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { ExportLapsButton } from "@/features/lap-analysis/ExportLapsButton";
+import { ExternalToolMenu } from "@/features/lap-analysis/ExternalToolMenu";
 import { LapAnalysis } from "@/features/lap-analysis/LapAnalysis";
 import { loadLapAnalysis } from "@/features/lap-analysis/load";
+import { extendLapAnalysis } from "@/features/lap-analysis/load-extras";
+import { parseInitialState } from "@/features/lap-analysis/url-state";
+import { liveShellProps, loadShellState } from "@/features/live-status/shell-state";
 import { AppShell, HeaderContext } from "@/features/ui-foundation/AppShell";
 
 export const metadata: Metadata = { title: "Lap Analysis · Race Engineer" };
@@ -14,8 +17,13 @@ function first(value: string | string[] | undefined) {
 export default async function LapAnalysisPage({ params, searchParams }: PageProps<"/review/[session]/laps">) {
   const { session } = await params;
   const query = await searchParams;
-  const model = await loadLapAnalysis(decodeURIComponent(session), first(query.target), first(query.reference));
-  if (!model) notFound();
+  const [base, state] = await Promise.all([
+    loadLapAnalysis(decodeURIComponent(session), first(query.target), first(query.reference)),
+    loadShellState(),
+  ]);
+  if (!base) notFound();
+  const model = await extendLapAnalysis(base);
+  const shell = model.live ? liveShellProps(state, "telemetry", model.footer) : { status: model.status, footer: model.footer };
   const target = model.laps.find((lap) => lap.id === model.targetId);
   const reference = model.laps.find((lap) => lap.id === model.referenceId);
   const compared = target
@@ -27,16 +35,16 @@ export default async function LapAnalysisPage({ params, searchParams }: PageProp
     <AppShell
       active="review"
       live={model.live ? "telemetry" : undefined}
-      status={model.status}
+      status={shell.status}
       context={
         <HeaderContext
           items={[...model.header, compared]}
-          action={<ExportLapsButton laps={model.laps} fileName={`${model.track.toLowerCase().replace(/\W+/g, "-")}-laps`} />}
+          action={<ExternalToolMenu laps={model.laps} fileName={model.track} />}
         />
       }
-      footer={model.footer}
+      footer={shell.footer}
     >
-      <LapAnalysis model={model} />
+      <LapAnalysis model={model} initial={parseInitialState(query)} />
     </AppShell>
   );
 }

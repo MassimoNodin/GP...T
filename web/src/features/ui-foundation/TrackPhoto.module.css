@@ -2,12 +2,12 @@
   display: block;
   object-fit: cover;
   border-radius: var(--radius-sm);
-  background: #d9dee3;
+  background: var(--border-strong);
   flex: none;
 }
 
 .placeholder {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0) 52%, rgba(40, 44, 52, 0.18) 100%),
-    linear-gradient(170deg, #b9d3ea 0%, #d5e2ec 38%, #c6ccd2 56%, #8f979f 100%);
+    linear-gradient(170deg, var(--blue-line) 0%, var(--border-strong) 38%, var(--line-strong) 56%, var(--chart-axis) 100%);
 }

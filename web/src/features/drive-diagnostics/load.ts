@@ -1,48 +1,97 @@
-import { driveFixture, shellFixture, type RadioEvent } from "@/features/review-data/fixtures";
+import { driveFixture, type RadioEvent } from "@/features/review-data/fixtures";
+import { fetchEngineerEvents, fetchEvidenceAttempts, fetchPreferences } from "@/features/review-data/backend";
+import { formatDuration, formatLapTime } from "@/features/review-data/format";
+import { bestEvidenceLap, evidenceLaps, timeDrivenMs } from "@/features/review-data/session-evidence";
+import type { EngineerEvent } from "@/features/review-data/engineer-events";
 import {
-  buildSystemRows,
-  currentActivity,
+  ENGINE_OFFLINE_FOOTER,
   engineerShell,
+  isReachable,
   parseRuntimeInfo,
   type RuntimeInfo,
-  type StatusRow,
 } from "@/features/live-status/map";
 import { parseAcquisitionStatus, type AcquisitionStatus } from "@/lib/acquisition-status";
 import { forwardLocalRequest } from "@/lib/local-proxy";
 import type { ShellFooter, ShellStatus } from "@/features/ui-foundation/AppShell";
 import { trackKeyFromName } from "@/features/ui-foundation/TrackMap";
 import { trackPhotoUrl } from "@/features/ui-foundation/track-photo-url";
+import type { Interruption } from "./radio";
+import type { FeedStatus } from "./radio-feed";
 import {
+  contextSubtitle,
   pickCurrentSession,
   sessionContextModel,
   type EvidenceSession,
   type SessionContextModel,
 } from "./session";
+import { parseSpeechStatus, proactiveState, type ProactiveState, type SpeechState } from "./system-rows";
+
+export type DriveContext =
+  | {
+      kind: "session";
+      title: string;
+      subtitle: string[];
+      track: string;
+      facts: Array<[string, string]>;
+      sessionId: string;
+      /** True when the session is the one the receiver is serving now. */
+      current: boolean;
+      /** Quick stats for a past session; null when its laps could not be read. */
+      stats: SessionStats | null;
+    }
+  | {
+      /** Reference design content, shown only while the local engine is unreachable. */
+      kind: "reference";
+      title: string;
+      subtitle: string[];
+      track: string;
+      facts: Array<[string, string]>;
+    }
+  | { kind: "empty" };
+
+export type SessionStats = {
+  laps: number;
+  best: { lap: number; time: string } | null;
+  timeDriven: string | null;
+  invalid: number;
+  /** Lap Analysis link for the best lap, when there is one. */
+  analysisHref: string | null;
+};
+
+/** Where the game should send telemetry, from the receiver status. */
+export type ReceiverAddress = { host: string | null; port: number | null };
 
 export type DriveModel = {
+  receiver: ReceiverAddress;
+  /** True when the local engine did not answer at all: reference content and a banner. */
+  reference: boolean;
   header: { items: string[]; trailing?: string };
   status: ShellStatus;
   footer: ShellFooter;
-  /** System rows as rendered on the server (live rows already applied). */
-  system: StatusRow[];
-  /** Reference rows the client re-applies live state to; rows without a backend source keep these values. */
-  referenceSystem: StatusRow[];
-  activity: string;
-  context: {
-    title: string;
-    subtitle: string[];
-    track: string;
-    facts: Array<[string, string]>;
-    /** "session" when read from a v2 session, "reference" for the fixture. */
-    origin: "session" | "reference";
-  };
+  context: DriveContext;
   photo: string | null;
-  radio: RadioEvent[];
+  radio: {
+    state: FeedStatus;
+    reason: string | null;
+    /** Oldest first. Empty on the reference path. */
+    events: EngineerEvent[];
+    nextAfter: number | null;
+    /** Reference rows; only filled on the reference path. */
+    fixture: RadioEvent[];
+  };
+  /** Backend interruption preference; read-aloud follows it. */
+  interruption: Interruption;
+  proactive: ProactiveState;
+  speech: SpeechState;
   /** Server-read state the client starts from; null = the backend did not answer. */
   initial: { acquisition: AcquisitionStatus | null; runtime: RuntimeInfo | null };
+  /** Epoch ms and zone the server rendered with, so the first client render matches. */
+  generatedAt: number;
+  timeZone: string;
 };
 
 const TIMEOUT_MS = 2500;
+const RADIO_PAGE = 50;
 
 async function readJson(path: string): Promise<unknown> {
   try {
@@ -72,6 +121,32 @@ function evidenceSessions(body: unknown): EvidenceSession[] {
   });
 }
 
+function receiverAddress(body: unknown): ReceiverAddress {
+  const status = (body ?? {}) as { host?: unknown; port?: unknown };
+  return {
+    host: typeof status.host === "string" && status.host.length <= 64 ? status.host : null,
+    port: typeof status.port === "number" && Number.isInteger(status.port) ? status.port : null,
+  };
+}
+
+/** Laps, best lap and time driven for a past session, from its attempts. */
+async function sessionStats(sessionId: string): Promise<SessionStats | null> {
+  const result = await fetchEvidenceAttempts(sessionId);
+  if (!result) return null;
+  const laps = evidenceLaps(result.attempts);
+  const best = bestEvidenceLap(laps);
+  const driven = timeDrivenMs(laps);
+  return {
+    laps: laps.length,
+    best: best ? { lap: best.lap, time: formatLapTime(best.ms) } : null,
+    timeDriven: driven === null ? null : formatDuration(driven),
+    invalid: laps.filter((lap) => !lap.valid).length,
+    analysisHref: best
+      ? `/review/${encodeURIComponent(sessionId)}/laps?target=${encodeURIComponent(best.id)}`
+      : null,
+  };
+}
+
 function statusSessionId(body: unknown): string | null {
   const detail = (body as { detail_processing?: { session_id?: unknown } } | null)?.detail_processing;
   return typeof detail?.session_id === "string" ? detail.session_id : null;
@@ -79,8 +154,17 @@ function statusSessionId(body: unknown): string | null {
 
 /** Drive session context for the current or most recent v2 session, from raw API bodies. */
 export function currentSessionContext(statusBody: unknown, sessionsBody: unknown): SessionContextModel | null {
-  const picked = pickCurrentSession(evidenceSessions(sessionsBody), statusSessionId(statusBody));
-  return picked ? sessionContextModel(picked, trackKeyFromName) : null;
+  const sessions = evidenceSessions(sessionsBody);
+  const picked = pickCurrentSession(sessions, statusSessionId(statusBody));
+  const model = picked ? sessionContextModel(picked, trackKeyFromName) : null;
+  if (model || !picked || picked.current) return model;
+  // A past session without context (no circuit) says nothing useful; fall back
+  // to the latest session that has one.
+  for (const session of [...sessions].reverse()) {
+    const fallback = sessionContextModel({ session, current: false }, trackKeyFromName);
+    if (fallback) return fallback;
+  }
+  return null;
 }
 
 /** Reads the current or most recent v2 session for screens other than Drive. */
@@ -89,48 +173,95 @@ export async function loadCurrentSession(statusBody: unknown): Promise<SessionCo
 }
 
 export async function loadDrive(): Promise<DriveModel> {
-  const [statusBody, runtimeBody, sessionsBody] = await Promise.all([
+  const [statusBody, runtimeBody, sessionsBody, speechBody, events, preferences] = await Promise.all([
     readJson("/api/v2/session-evidence/status"),
     readJson("/api/v1/engineer/runtime"),
     readJson("/api/v2/session-evidence/sessions?limit=100"),
+    readJson("/api/v1/engineer/transcribe"),
+    fetchEngineerEvents({ limit: RADIO_PAGE }),
+    fetchPreferences(),
   ]);
   const acquisition = parseAcquisitionStatus(statusBody);
   const runtime = parseRuntimeInfo(runtimeBody);
 
-  const real = currentSessionContext(statusBody, sessionsBody);
+  // Reference content only when nothing at all answered.
+  const engineReachable =
+    isReachable(acquisition, runtime) ||
+    sessionsBody !== null ||
+    speechBody !== null ||
+    events.state !== "unreachable" ||
+    preferences.state !== "unreachable";
+  const reference = !engineReachable;
 
-  const system = buildSystemRows(driveFixture.system, acquisition, runtime);
-  const activity = currentActivity(driveFixture.activity, acquisition, runtime).text;
+  const real = reference ? null : currentSessionContext(statusBody, sessionsBody);
 
-  const context = real
-    ? {
-        title: real.title,
-        subtitle: real.subtitle,
-        track: real.track,
-        facts: real.facts,
-        origin: "session" as const,
-      }
-    : {
-        title: driveFixture.context.title,
-        subtitle: driveFixture.context.subtitle,
-        track: driveFixture.context.track,
-        facts: driveFixture.context.facts,
-        origin: "reference" as const,
-      };
+  let context: DriveContext;
+  let header: DriveModel["header"];
+  let footerLines: string[];
+  let track: string | null;
+  if (reference) {
+    context = {
+      kind: "reference",
+      title: driveFixture.context.title,
+      subtitle: driveFixture.context.subtitle,
+      track: driveFixture.context.track,
+      facts: driveFixture.context.facts,
+    };
+    header = driveFixture.header;
+    footerLines = ["Start the local engine", ""];
+    track = driveFixture.context.track;
+  } else if (real) {
+    // A past session gets quick stats; the live one changes too fast to cache.
+    const stats = real.current ? null : await sessionStats(real.id);
+    context = {
+      kind: "session",
+      title: real.title,
+      subtitle: contextSubtitle(real),
+      track: real.track,
+      facts: real.facts,
+      sessionId: real.id,
+      current: real.current,
+      stats,
+    };
+    header = { items: real.headerItems };
+    footerLines = real.footerLines;
+    track = real.track;
+  } else {
+    context = { kind: "empty" };
+    header = { items: [] };
+    footerLines = ["No session yet", "Waiting for the game"];
+    track = null;
+  }
 
-  const footerLines = real ? real.footerLines : shellFixture.sessionFooter.lines;
   const shell = engineerShell(runtime, footerLines);
+  const radio: DriveModel["radio"] =
+    events.state === "ok"
+      ? { state: "ok", reason: null, events: events.page.events, nextAfter: events.page.nextAfter, fixture: [] }
+      : {
+          state: events.state,
+          reason: events.state === "unavailable" ? events.reason : null,
+          events: [],
+          nextAfter: null,
+          fixture: reference ? driveFixture.radio : [],
+        };
+
+  const speechParsed = parseSpeechStatus(speechBody);
+  const speech: SpeechState = speechParsed ?? (reference ? { kind: "unreachable" } : { kind: "checking" });
 
   return {
-    header: real ? { items: real.headerItems } : driveFixture.header,
+    reference,
+    receiver: receiverAddress(statusBody),
+    header,
     status: shell.status,
-    footer: shell.footer,
-    system,
-    referenceSystem: driveFixture.system,
-    activity,
+    footer: reference ? ENGINE_OFFLINE_FOOTER : shell.footer,
     context,
-    photo: trackPhotoUrl(context.track),
-    radio: driveFixture.radio,
+    photo: track ? trackPhotoUrl(track) : null,
+    radio,
+    interruption: preferences.state === "ok" ? preferences.stored.doc.interruption : "allow",
+    proactive: proactiveState(preferences.state === "ok" ? preferences.stored.doc.topics : null),
+    speech,
     initial: { acquisition, runtime },
+    generatedAt: Date.now(),
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   };
 }

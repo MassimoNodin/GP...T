@@ -9,6 +9,10 @@ export type EvidenceSession = {
 };
 
 export type SessionContextModel = {
+  /** v2 session id (for the "Open in Review" link). */
+  id: string;
+  /** Session type label, e.g. "Practice 1". */
+  typeLabel: string;
   title: string;
   subtitle: string[];
   track: string;
@@ -124,6 +128,8 @@ export function sessionContextModel(
   if (length !== null && length > 0) facts.push(["Length", `${(length / 1000).toFixed(3)} km`]);
 
   return {
+    id: picked.session.id,
+    typeLabel,
     title: trackName,
     subtitle: [typeLabel, lifecycle],
     track: trackKeyFromName(trackName),
@@ -132,4 +138,13 @@ export function sessionContextModel(
     headerItems: [trackName, typeLabel],
     current: picked.current,
   };
+}
+
+/**
+ * Drive Session Context subtitle: `{Type} • Live` for the session the receiver
+ * serves now, `{Type} • Last session` for a past one. (`subtitle` on the model
+ * keeps the lifecycle wording used by the sidebar footer.)
+ */
+export function contextSubtitle(real: Pick<SessionContextModel, "typeLabel" | "current">): string[] {
+  return [real.typeLabel, real.current ? "Live" : "Last session"];
 }

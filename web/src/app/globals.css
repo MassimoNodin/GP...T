@@ -31,6 +31,26 @@
   --purple-soft: #f3e7fd;
   --grey-soft: #eef0f3;
 
+  /* Grey ramp and strong accents used by the screen styles (dark mode overrides them). */
+  --line-strong: #c8cdd3;
+  --line-mid: #b9c2cc;
+  --faint-2: #9aa1aa;
+  --muted-2: #848b94;
+  --muted-strong: #6b727c;
+  --muted-deep: #5d646e;
+  --ink-3: #4a5059;
+  --ink: #2b3037;
+  --ink-strong: #1f2329;
+  --red-strong: #cc1018;
+  --red-line: #f2b5b8;
+  --green-strong: #1b8b52;
+  --green-line: #9ccbb0;
+  --amber-strong: #9a6a06;
+  --amber-ink: #4a3a12;
+  --blue-bright: #3b82f6;
+  --blue-mid: #8db3f6;
+  --blue-line: #b9d3ea;
+
   --stint-soft: #ef5d64;
   --stint-medium: #f7cd3f;
   --stint-hard: #a4acb4;
@@ -43,6 +63,161 @@
 
   --header-h: 60px;
   --sidebar-w: 156px;
+
+  /* Semantic colours shared by charts, tables and new areas (design plan 2.1). */
+  --target: #3f63ee;
+  --reference: #b14cf0;
+  --gain: var(--green-text);
+  --loss: var(--red-text);
+  --selected-bg: #ecf3fe;
+  --chart-grid: #eef1f4;
+  --chart-axis: #8d949d;
+  --stint-inter: #3fae5a;
+  --stint-wet: #2f7fe0;
+  --on-accent: #ffffff;
+  --shadow-overlay: 0 8px 24px rgba(16, 24, 40, 0.12);
+  --shimmer: rgba(255, 255, 255, 0.7);
+
+  /* Stacking order. */
+  --z-menu: 4;
+  --z-header: 5;
+  --z-drawer: 20;
+  --z-toast: 30;
+
+  /* Motion. */
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 240ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Dark theme: chosen in Settings, or following the system when set to System. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e1014;
+  --surface: #161a20;
+  --surface-main: #13161b;
+  --surface-muted: #1b1f26;
+  --surface-hover: #1d2128;
+  --border: #272c34;
+  --border-strong: #323840;
+  --divider: #21252c;
+  --line-strong: #3d434c;
+  --line-mid: #464d57;
+
+  --text: #e9ecef;
+  --ink-strong: #e1e4e8;
+  --ink: #d6dade;
+  --text-2: #c9ced5;
+  --ink-3: #b3b9c1;
+  --muted-deep: #a4abb4;
+  --muted-strong: #99a1ab;
+  --muted: #8d959f;
+  --muted-2: #808892;
+  --chart-axis: #79818b;
+  --faint-2: #6d747d;
+  --faint: #646b74;
+
+  --red: #f0363d;
+  --red-text: #ff6b70;
+  --red-strong: #ff8589;
+  --red-soft: #3a1b1d;
+  --red-line: #6b2a2e;
+  --green: #2fbf78;
+  --green-text: #42d08a;
+  --green-strong: #5ad89a;
+  --green-soft: #15301f;
+  --green-line: #2b5a40;
+  --amber: #f0b53a;
+  --amber-text: #f3c160;
+  --amber-strong: #f6cd7a;
+  --amber-ink: #f6d58e;
+  --amber-soft: #352a12;
+  --blue: #4f8bff;
+  --blue-text: #79a6ff;
+  --blue-bright: #6b9dff;
+  --blue-mid: #3a5f9e;
+  --blue-soft: #18243a;
+  --blue-line: #2f4b75;
+  --selected-bg: #1b2840;
+  --purple: #b26cf6;
+  --purple-text: #c592f8;
+  --purple-soft: #2b1c3c;
+  --grey-soft: #232830;
+
+  --target: #6f8cff;
+  --reference: #c47af5;
+  --chart-grid: #232830;
+  --on-accent: #ffffff;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-raised: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.55);
+  --shimmer: rgba(255, 255, 255, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] {
+  color-scheme: dark;
+  --bg: #0e1014;
+  --surface: #161a20;
+  --surface-main: #13161b;
+  --surface-muted: #1b1f26;
+  --surface-hover: #1d2128;
+  --border: #272c34;
+  --border-strong: #323840;
+  --divider: #21252c;
+  --line-strong: #3d434c;
+  --line-mid: #464d57;
+
+  --text: #e9ecef;
+  --ink-strong: #e1e4e8;
+  --ink: #d6dade;
+  --text-2: #c9ced5;
+  --ink-3: #b3b9c1;
+  --muted-deep: #a4abb4;
+  --muted-strong: #99a1ab;
+  --muted: #8d959f;
+  --muted-2: #808892;
+  --chart-axis: #79818b;
+  --faint-2: #6d747d;
+  --faint: #646b74;
+
+  --red: #f0363d;
+  --red-text: #ff6b70;
+  --red-strong: #ff8589;
+  --red-soft: #3a1b1d;
+  --red-line: #6b2a2e;
+  --green: #2fbf78;
+  --green-text: #42d08a;
+  --green-strong: #5ad89a;
+  --green-soft: #15301f;
+  --green-line: #2b5a40;
+  --amber: #f0b53a;
+  --amber-text: #f3c160;
+  --amber-strong: #f6cd7a;
+  --amber-ink: #f6d58e;
+  --amber-soft: #352a12;
+  --blue: #4f8bff;
+  --blue-text: #79a6ff;
+  --blue-bright: #6b9dff;
+  --blue-mid: #3a5f9e;
+  --blue-soft: #18243a;
+  --blue-line: #2f4b75;
+  --selected-bg: #1b2840;
+  --purple: #b26cf6;
+  --purple-text: #c592f8;
+  --purple-soft: #2b1c3c;
+  --grey-soft: #232830;
+
+  --target: #6f8cff;
+  --reference: #c47af5;
+  --chart-grid: #232830;
+  --on-accent: #ffffff;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-raised: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.55);
+  --shimmer: rgba(255, 255, 255, 0.06);
+  }
 }
 
 *,
@@ -118,4 +293,22 @@ ul {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* Waveform bars (WaveformIcon mode="animated") pulse only when motion is allowed. */
+@media (prefers-reduced-motion: no-preference) {
+  .wave-bar {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: wave-pulse 900ms var(--ease-out) infinite alternate;
+  }
+}
+
+@keyframes wave-pulse {
+  from {
+    transform: scaleY(0.45);
+  }
+  to {
+    transform: scaleY(1.15);
+  }
 }

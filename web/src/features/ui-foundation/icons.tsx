@@ -242,8 +242,8 @@ export function StatusGlyph({
     amber: "var(--amber)",
     red: "var(--red)",
     blue: "var(--blue)",
-    grey: "#c3c8ce",
-    dark: "#3a3f47",
+    grey: "var(--line-strong)",
+    dark: "var(--text-2)",
     purple: "var(--purple)",
   }[tone];
   if (glyph === "ring") {
@@ -298,15 +298,61 @@ export function StatusGlyph({
   );
 }
 
-/** Small audio waveform shown beside the current activity row. */
-export function WaveformIcon({ size = 36 }: { size?: number }) {
-  const bars = [3, 6, 4, 9, 12, 7, 10, 5, 3];
+export type WaveformTone = "red" | "green" | "amber" | "blue" | "grey";
+
+const WAVE_BARS = [3, 6, 4, 9, 12, 7, 10, 5, 3];
+
+/**
+ * Small audio waveform shown beside the current activity row. `mode` picks
+ * the drawing: "static" bars (default, the original look), "animated" bars that
+ * pulse only under no-preference motion (globals.css `.wave-bar`), or a "flat"
+ * line. `dim` draws static bars at 40% opacity. Decorative.
+ */
+export function WaveformIcon({
+  size = 36,
+  mode = "static",
+  tone = "red",
+  dim,
+}: {
+  size?: number;
+  mode?: "animated" | "static" | "flat";
+  tone?: WaveformTone;
+  dim?: boolean;
+}) {
+  const color = `var(--${tone === "grey" ? "faint" : tone})`;
   return (
-    <svg width={size} height={size / 3} viewBox="0 0 36 12" aria-hidden="true" focusable="false">
-      {bars.map((h, i) => (
-        <rect key={i} x={1 + i * 4} y={6 - h / 2} width="1.6" height={h} rx="0.8" fill="var(--red)" />
-      ))}
-      <rect x="0" y="5.4" width="36" height="1.2" rx="0.6" fill="var(--red)" opacity="0.35" />
+    <svg
+      width={size}
+      height={size / 3}
+      viewBox="0 0 36 12"
+      aria-hidden="true"
+      focusable="false"
+      data-mode={mode}
+    >
+      {mode !== "flat" &&
+        WAVE_BARS.map((h, i) => (
+          <rect
+            key={i}
+            className={mode === "animated" ? "wave-bar" : undefined}
+            style={mode === "animated" ? { animationDelay: `${(i % 5) * 90}ms` } : undefined}
+            x={1 + i * 4}
+            y={6 - h / 2}
+            width="1.6"
+            height={h}
+            rx="0.8"
+            fill={color}
+            opacity={dim && mode === "static" ? 0.4 : undefined}
+          />
+        ))}
+      <rect
+        x="0"
+        y="5.4"
+        width="36"
+        height="1.2"
+        rx="0.6"
+        fill={color}
+        opacity={mode === "flat" ? 0.8 : 0.35}
+      />
     </svg>
   );
 }
@@ -327,6 +373,241 @@ export function FileMissingIcon(props: IconProps) {
       <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
       <path d="M14 3v5h5" />
       <path d="M9.6 12.6l4.8 4.8M14.4 12.6l-4.8 4.8" />
+    </Svg>
+  );
+}
+
+export function SwapIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M7.5 4L3.5 8l4 4M3.5 8H18" />
+      <path d="M16.5 20l4-4-4-4M20.5 16H6" />
+    </Svg>
+  );
+}
+
+export function UploadIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 15.5V4M7.5 8.5L12 4l4.5 4.5" />
+      <path d="M4.5 15v3.5A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5V15" />
+    </Svg>
+  );
+}
+
+export function DownloadIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 4v11.5M7.5 11L12 15.5 16.5 11" />
+      <path d="M4.5 15v3.5A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5V15" />
+    </Svg>
+  );
+}
+
+export function CloseIcon(props: IconProps) {
+  return (
+    <Svg strokeWidth={2} {...props}>
+      <path d="M6 6l12 12M18 6L6 18" />
+    </Svg>
+  );
+}
+
+export function RefreshIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M20.5 12a8.5 8.5 0 1 1-2.5-6" />
+      <path d="M20.5 4v5h-5" />
+    </Svg>
+  );
+}
+
+export function PlayIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M8 5.5v13l10.5-6.5z" />
+    </Svg>
+  );
+}
+
+export function PauseIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="6.5" y="5" width="3.8" height="14" rx="1" />
+      <rect x="13.7" y="5" width="3.8" height="14" rx="1" />
+    </Svg>
+  );
+}
+
+export function StopIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+    </Svg>
+  );
+}
+
+export function CopyIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15V6a2 2 0 0 1 2-2h9" />
+    </Svg>
+  );
+}
+
+/** Clock with a counter-clockwise arrow. */
+export function HistoryIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3.5 12A8.5 8.5 0 1 0 6 6" />
+      <path d="M3.5 4v4.5H8" />
+      <path d="M12 7.5V12l3 2" />
+    </Svg>
+  );
+}
+
+export function SendIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M21 3L10.5 13.5" />
+      <path d="M21 3l-6.5 18-4-7.5L3 9.5z" />
+    </Svg>
+  );
+}
+
+/** Wrench, used for pit stops. */
+export function PitIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+    </Svg>
+  );
+}
+
+/** Chequered flag outline. */
+export function FlagIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M5 21V3.5" />
+      <path d="M5 4h14v10H5M12 4v10M5 9h14" />
+      <path d="M5 4h7v5H5zM12 9h7v5h-7z" fill="currentColor" stroke="none" opacity="0.85" />
+    </Svg>
+  );
+}
+
+/** Car seen from above, for overtakes and collisions. */
+export function CarIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="7.5" y="3" width="9" height="18" rx="3.5" />
+      <path d="M9.3 8h5.4M9.3 16h5.4" />
+      <path d="M5.2 7v3M18.8 7v3M5.2 15v3M18.8 15v3" strokeWidth={2.2} />
+    </Svg>
+  );
+}
+
+export type WeatherKind =
+  | "clear"
+  | "light_cloud"
+  | "overcast"
+  | "light_rain"
+  | "heavy_rain"
+  | "storm";
+
+const CLOUD = "M7.5 17.5a4 4 0 0 1-.4-7.98 5.5 5.5 0 0 1 10.6 1.3A3.4 3.4 0 0 1 17 17.5z";
+const SUN_RAYS =
+  "M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4";
+
+export function WeatherIcon({ kind, ...props }: IconProps & { kind: WeatherKind }) {
+  return (
+    <Svg {...props}>
+      {kind === "clear" && (
+        <>
+          <circle cx="12" cy="12" r="4" />
+          <path d={SUN_RAYS} />
+        </>
+      )}
+      {kind === "light_cloud" && (
+        <>
+          <circle cx="8" cy="8" r="2.8" />
+          <path d="M8 2.5v1.2M2.5 8h1.2M4.1 4.1l.9.9M11.9 4.1L11 5" />
+          <path d={CLOUD} transform="translate(2 2.5)" />
+        </>
+      )}
+      {kind === "overcast" && <path d={CLOUD} transform="translate(0 1.5)" />}
+      {kind === "light_rain" && (
+        <>
+          <path d={CLOUD} transform="translate(0 -1.5)" />
+          <path d="M9 18.5l-.8 2.2M14.5 18.5l-.8 2.2" />
+        </>
+      )}
+      {kind === "heavy_rain" && (
+        <>
+          <path d={CLOUD} transform="translate(0 -1.5)" />
+          <path d="M8 18l-1 2.8M12 18l-1 2.8M16 18l-1 2.8" />
+        </>
+      )}
+      {kind === "storm" && (
+        <>
+          <path d={CLOUD} transform="translate(0 -1.5)" />
+          <path d="M12.8 14.5l-2.6 3.6h3.4l-2.2 3.4" />
+        </>
+      )}
+    </Svg>
+  );
+}
+
+export type TyreCompound =
+  | "soft"
+  | "medium"
+  | "hard"
+  | "inter"
+  | "wet"
+  | "super_soft"
+  | "dry"
+  | "unknown";
+
+const TYRE_COLOR: Record<TyreCompound, string> = {
+  soft: "var(--stint-soft)",
+  super_soft: "var(--stint-soft)",
+  medium: "var(--stint-medium)",
+  hard: "var(--stint-hard)",
+  dry: "var(--stint-hard)",
+  inter: "var(--stint-inter)",
+  wet: "var(--stint-wet)",
+  unknown: "var(--grey-soft)",
+};
+
+/**
+ * Tyre seen face-on: outer ring in the compound colour, white inner ring. The
+ * compound letter is never drawn; the label is always visible text beside it.
+ */
+export function TyreIcon({ compound, ...props }: IconProps & { compound: TyreCompound }) {
+  const color = TYRE_COLOR[compound] ?? TYRE_COLOR.unknown;
+  return (
+    <Svg {...props} strokeWidth={1}>
+      <circle cx="12" cy="12" r="10" fill={color} stroke="var(--border-strong)" />
+      <circle cx="12" cy="12" r="7" fill="none" stroke="var(--surface)" strokeWidth={1.4} />
+      <circle cx="12" cy="12" r="4.2" fill="var(--surface)" stroke="none" />
+    </Svg>
+  );
+}
+
+/** Document with a waveform, for capture files. */
+export function CaptureFileIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5" />
+      <path d="M8.5 15v2M11 12.5v6M13.5 14v3" />
+    </Svg>
+  );
+}
+
+export function ExpandIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
     </Svg>
   );
 }

@@ -1,23 +1,14 @@
-// Browser-local Settings preferences. Pure helpers so restore and change
-// detection can be tested without a browser.
+// Reader for the retired browser-local Assistance preferences
+// (`race-engineer.settings.v1`). Engineer behaviour settings now live in the
+// engine; this module only supports the one-time migration banner and the
+// key-order independent form comparison. Pure so it can be tested without a browser.
+
+import type { AssistanceForm } from "@/features/review-data/preferences";
 
 export const PREFERENCES_KEY = "race-engineer.settings.v1";
 
-export type Preferences = {
-  topics: Record<string, boolean>;
-  focusAreas: Record<string, boolean>;
-  verbosity: string;
-  interruption: string;
-  depth: string;
-  interpretations: boolean;
-  activation: string;
-  voice: string;
-  speechRate: string;
-};
-
-export const ACTIVATION_OPTIONS = ["Push to talk", "Voice activation"];
-export const VOICE_OPTIONS = ["Engineer (default)", "Calm", "Energetic"];
-export const SPEECH_RATE_OPTIONS = ["Slow", "Normal", "Fast"];
+/** The label-keyed form the Assistance tab edits (same shape the engine mapping uses). */
+export type Preferences = AssistanceForm;
 
 export type PreferenceSource = {
   topics: Array<[string, boolean]>;
@@ -35,9 +26,6 @@ export function defaultPreferences(source: PreferenceSource): Preferences {
     interruption: "Allow interruptions",
     depth: "Standard",
     interpretations: true,
-    activation: ACTIVATION_OPTIONS[0],
-    voice: VOICE_OPTIONS[0],
-    speechRate: "Normal",
   };
 }
 
@@ -57,20 +45,26 @@ function choice(fallback: string, stored: unknown, options: string[]): string {
 }
 
 /**
- * Merge stored JSON over the defaults, ignoring unknown keys, retired keys and
- * values that are no longer valid options. Unreadable input yields the defaults.
+ * Merge stored JSON over the defaults, ignoring unknown keys, retired keys
+ * (activation, voice, speech rate, retention) and values that are no longer
+ * valid options. Unreadable input yields the defaults.
  */
 export function restorePreferences(source: PreferenceSource, raw: string | null): Preferences {
-  const base = defaultPreferences(source);
-  if (!raw) return base;
+  return parseLegacyPreferences(source, raw) ?? defaultPreferences(source);
+}
+
+/** Like `restorePreferences`, but null when the stored text is not a JSON object. */
+export function parseLegacyPreferences(source: PreferenceSource, raw: string | null): Preferences | null {
+  if (!raw) return null;
   let stored: Record<string, unknown>;
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return base;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     stored = parsed as Record<string, unknown>;
   } catch {
-    return base;
+    return null;
   }
+  const base = defaultPreferences(source);
   return {
     topics: flags(base.topics, stored.topics),
     focusAreas: flags(base.focusAreas, stored.focusAreas),
@@ -78,9 +72,6 @@ export function restorePreferences(source: PreferenceSource, raw: string | null)
     interruption: choice(base.interruption, stored.interruption, source.interruption),
     depth: choice(base.depth, stored.depth, source.depth),
     interpretations: typeof stored.interpretations === "boolean" ? stored.interpretations : base.interpretations,
-    activation: choice(base.activation, stored.activation, ACTIVATION_OPTIONS),
-    voice: choice(base.voice, stored.voice, VOICE_OPTIONS),
-    speechRate: choice(base.speechRate, stored.speechRate, SPEECH_RATE_OPTIONS),
   };
 }
 

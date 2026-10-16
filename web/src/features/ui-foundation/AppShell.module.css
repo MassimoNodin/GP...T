@@ -17,7 +17,7 @@
   padding: 8px 12px;
   border-radius: var(--radius-sm);
   background: var(--text);
-  color: #fff;
+  color: var(--surface);
 }
 
 .skip:focus {
@@ -34,7 +34,7 @@
   align-items: center;
   gap: 22px;
   padding: 0 22px 0 26px;
-  background: #f8fafb;
+  background: var(--surface-hover);
 }
 
 .brand {
@@ -71,12 +71,12 @@
 
 .pill[data-tone="green"] {
   background: var(--green-soft);
-  color: #17804a;
+  color: var(--green-strong);
 }
 
 .pill[data-tone="amber"] {
   background: var(--amber-soft);
-  color: #4a3a12;
+  color: var(--amber-ink);
 }
 
 .pill[data-tone="red"] {
@@ -89,9 +89,71 @@
   color: var(--muted);
 }
 
+.navBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--red);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.pillWrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.pillWrap .pill:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.pillDetails {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: var(--z-menu);
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 300px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.pillWrap:hover .pillDetails,
+.pillWrap:focus-within .pillDetails {
+  display: flex;
+}
+
+.pillDetail {
+  display: grid;
+  grid-template-columns: auto 76px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.pillDetailLabel {
+  color: var(--muted);
+}
+
 .pillChevron {
   margin-left: 2px;
-  color: #5b4a1c;
+  color: var(--amber-ink);
 }
 
 .context {
@@ -100,7 +162,7 @@
   align-items: center;
   gap: 14px;
   min-width: 0;
-  color: #6d747e;
+  color: var(--muted-strong);
   font-size: 12.5px;
   white-space: nowrap;
 }
@@ -121,7 +183,7 @@
 .contextDot {
   margin: 0 9px;
   font-size: 9px;
-  color: #a7adb5;
+  color: var(--faint);
 }
 
 .contextDivider {
@@ -140,7 +202,7 @@
   flex-direction: column;
   justify-content: space-between;
   padding: 18px 0 28px;
-  background: #f6f8fa;
+  background: var(--surface-hover);
 }
 
 .nav {
@@ -157,22 +219,22 @@
   margin-right: 8px;
   padding-left: 25px;
   border-radius: 0 8px 8px 0;
-  color: #3b4048;
+  color: var(--text-2);
   font-size: 13.5px;
   font-weight: 500;
 }
 
 .navItem:hover {
-  background: #eff2f5;
+  background: var(--divider);
 }
 
 .navIcon {
-  color: #4b5059;
+  color: var(--ink-3);
   flex: none;
 }
 
 .navItem[aria-current="page"] {
-  background: #eef1f4;
+  background: var(--divider);
   color: var(--text);
   font-weight: 600;
 }
@@ -206,7 +268,7 @@
 }
 
 .footerLine {
-  color: #8b929b;
+  color: var(--chart-axis);
   line-height: 1.6;
   white-space: nowrap;
   overflow: hidden;
@@ -219,10 +281,15 @@
   min-width: 0;
   margin: 0 8px 8px 0;
   padding: 22px 20px 24px;
-  border: 1px solid #edf0f3;
+  border: 1px solid var(--grey-soft);
   border-radius: 14px;
   background: var(--surface-main);
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.02);
+}
+
+/* Focus lands here from the skip link; the page needs no ring around it. */
+.main:focus {
+  outline: none;
 }
 
 @media (max-width: 860px) {

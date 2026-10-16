@@ -1,0 +1,424 @@
+/* Lap Analysis views beyond the reference's overview. Tokens only. */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.legendDot {
+  flex: none;
+  vertical-align: middle;
+}
+
+.textButton {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--blue-text);
+  font-size: 12px;
+}
+
+.textButton:hover {
+  text-decoration: underline;
+}
+
+/* Chart states */
+.chartLoading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.chartLoading p {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.processError {
+  margin-top: 10px;
+  text-align: left;
+}
+
+/* Track card */
+.cardMap {
+  display: block;
+  width: 100%;
+  max-width: 190px;
+  height: auto;
+  margin: 4px auto 18px;
+  color: var(--text-2);
+}
+
+.regionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.regionHead label {
+  margin: 0;
+}
+
+.regionNote {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+/* Telemetry tab */
+.telemetryBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.rangeInfo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.rangeHint {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.readout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.readoutItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.strip {
+  display: block;
+  width: 100%;
+  height: 40px;
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-main);
+  cursor: ew-resize;
+  touch-action: pan-y;
+}
+
+/* Tables */
+.tableCard {
+  padding: 12px 14px 12px;
+}
+
+.bestValue {
+  color: var(--purple-text);
+  font-weight: 600;
+}
+
+.childRow {
+  padding-left: 14px;
+}
+
+.rowActions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.cornersTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Track map tab */
+.mapLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.mapCard {
+  padding: 16px;
+}
+
+.mapHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.mapTitle {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.mapSub {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mapSvg {
+  color: var(--text-2);
+}
+
+.bigMap {
+  display: block;
+  width: 100%;
+  max-height: 520px;
+  height: auto;
+  margin: 8px auto;
+}
+
+.mapSegment {
+  cursor: pointer;
+}
+
+.mapNote {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.regionsCard {
+  padding: 14px 16px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.regionList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 460px;
+  overflow-y: auto;
+}
+
+.regionRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.regionRow:hover {
+  background: var(--surface-hover);
+}
+
+.regionRow[aria-pressed="true"] {
+  background: var(--selected-bg);
+}
+
+.regionName {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.regionDelta {
+  min-width: 60px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.regionDelta[data-heat="gain"] {
+  color: var(--gain);
+}
+
+.regionDelta[data-heat="loss"] {
+  color: var(--loss);
+}
+
+/* Inputs tab */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 14px;
+}
+
+.legendLine {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Data quality tab */
+.twoColumns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.qualityCard {
+  padding: 14px 16px;
+}
+
+.qualityTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.facts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.facts li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.factLine {
+  margin: 0 0 10px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.subHeading {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.coverage {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.coverage li {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) 96px;
+  gap: 10px;
+  align-items: center;
+  font-size: 12.5px;
+}
+
+.coverageName {
+  color: var(--text-2);
+}
+
+.coverageValue {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sourceLine {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.kv {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+.kv > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+  border-top: 1px solid var(--divider);
+  font-size: 12.5px;
+}
+
+.kv > div:first-child {
+  border-top: 0;
+}
+
+.kv dt {
+  color: var(--muted);
+}
+
+.kv dd {
+  margin: 0;
+  color: var(--text-2);
+  text-align: right;
+}
+
+@media (max-width: 1024px) {
+  .mapLayout,
+  .twoColumns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .telemetryBar {
+    align-items: flex-start;
+  }
+}
+
+/* Chart cursor position on the circuit */
+.mapCursor {
+  fill: var(--blue);
+  stroke: var(--surface);
+  stroke-width: 0.8;
+  pointer-events: none;
+}

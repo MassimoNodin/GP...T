@@ -1,0 +1,495 @@
+/* Tab panels and shared layout */
+.panel:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.stackFlush {
+  margin-top: 0;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 545fr) minmax(0, 323fr);
+  gap: 16px;
+}
+
+.splitCol {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.boneStack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.textButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--blue-text);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.textButton:hover {
+  text-decoration: underline;
+}
+
+.note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.alertGap {
+  margin-bottom: 12px;
+}
+
+/* Hero unavailable values */
+.heroValue {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Chart legend ring for the compare reference lap */
+.keyRing {
+  box-sizing: border-box;
+  border: 2px solid var(--reference);
+  border-radius: 50%;
+  background: transparent;
+}
+
+/* Laps tab */
+.tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin: -2px 0 12px;
+}
+
+.toolsRight {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.metricSelect select {
+  height: 30px;
+  padding-left: 10px;
+  padding-right: 28px;
+  font-size: 12px;
+}
+
+.bestText {
+  color: var(--purple-text);
+  font-weight: 600;
+}
+
+.sectorBest {
+  color: var(--purple-text);
+  font-weight: 600;
+}
+
+.tyreCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.flags {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.rowAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-2);
+}
+
+.rowAction:hover {
+  background: var(--surface-hover);
+}
+
+.rowTextButton {
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.rowTextButton:hover {
+  background: var(--surface-hover);
+}
+
+.rowTextButton:disabled {
+  color: var(--faint);
+  background: var(--surface-muted);
+}
+
+/* Stints tab */
+.pitMarkers {
+  position: absolute;
+  top: -16px;
+  right: 0;
+  left: 0;
+  height: 12px;
+}
+
+.pitMarker {
+  position: absolute;
+  display: inline-flex;
+  color: var(--muted);
+  transform: translateX(-50%);
+}
+
+.degradation[data-tone="red"] {
+  color: var(--loss);
+}
+
+.degradation[data-tone="green"] {
+  color: var(--gain);
+}
+
+.stintIndex {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.paceLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 10px;
+}
+
+/* Events tab */
+.eventIcon {
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.viewLap {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.viewLap:hover {
+  background: var(--surface-hover);
+}
+
+.eventsFooter {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+/* Setup and conditions tab */
+.conditionNow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-bottom: 10px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.conditionLabel {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.facts {
+  margin: 0;
+}
+
+.facts > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+  border-top: 1px solid var(--divider);
+  font-size: 12.5px;
+}
+
+.facts > div:first-child {
+  border-top: 0;
+}
+
+.facts dt {
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.setupGroups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 24px;
+}
+
+.setupGroup h3 {
+  margin: 0 0 2px;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* Lap selection, compare mode */
+.compareRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.swapButton {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius);
+}
+
+.compareLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.compareLink:hover {
+  background: var(--surface-hover);
+}
+
+.bestWarning {
+  display: block;
+  margin-top: 3px;
+  color: var(--amber-text);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1024px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .setupGroups {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Lap chart: the outlier switch sits at the end of the legend row. */
+.outlierToggle {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.chartHint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+/* Laps tab: best lap, theoretical best and best sectors above the table */
+.paceStrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.consistencyRating {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* Overview: ask the engineer about the session */
+.askCard {
+  margin-top: 0;
+}
+
+.askChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.askChip {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.askChip:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--grey-soft);
+}
+
+.askChip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.askForm {
+  display: flex;
+  gap: 8px;
+}
+
+.askForm input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.askForm input:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+.askScope {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.askTurn {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.askQuestion {
+  margin-left: auto;
+  width: fit-content;
+  max-width: 85%;
+  padding: 7px 11px;
+  border-radius: 10px;
+  background: var(--blue-soft);
+  color: var(--text);
+}
+
+.askAnswer {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--text);
+}
+
+.askAvatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--green-soft);
+  color: var(--green-text);
+}
+
+.askFailed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.askLimits {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.askMore {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--blue-text);
+  font-size: 12px;
+  font-weight: 500;
+}

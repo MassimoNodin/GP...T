@@ -188,9 +188,10 @@ export function describeRuntime(info: RuntimeInfo | null): RuntimeView {
 
 const RECEIVER_STATE: Record<string, { label: string; tone: DisplayTone; detail: string }> = {
   receiving: { label: "Receiving", tone: "green", detail: "Telemetry packets are arriving" },
-  listening: { label: "Listening", tone: "amber", detail: "Waiting for the game to send telemetry" },
-  starting: { label: "Starting", tone: "amber", detail: "The receiver is starting" },
-  stale: { label: "Stale", tone: "amber", detail: "No recent packets" },
+  listening: { label: "Listening", tone: "grey", detail: "Waiting for the game to send telemetry" },
+  starting: { label: "Starting", tone: "grey", detail: "The receiver is starting" },
+  // The receiver also reads "stale" whenever the game is not running.
+  stale: { label: "Waiting", tone: "grey", detail: "No packets in the last few seconds; start a session in the game" },
   stopped: { label: "Stopped", tone: "red", detail: "The receiver is stopped" },
   failed: { label: "Failed", tone: "red", detail: "The receiver reported a failure" },
   disabled: { label: "Disabled", tone: "grey", detail: "Automatic acquisition is disabled" },

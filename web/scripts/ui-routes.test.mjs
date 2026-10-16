@@ -41,7 +41,7 @@ const reactShim = await emit(
   "react.mjs",
   `import React from ${JSON.stringify(reactUrl)};
 export default React;
-export const { useEffect, useId, useRef, useState } = React;
+export const { createContext, useContext, useEffect, useId, useRef, useState } = React;
 `,
 );
 const cssStub = await emit(
@@ -61,7 +61,9 @@ async function emitSource(path, replacements = {}) {
 }
 
 const iconsUrl = await emitSource("features/ui-foundation/icons.tsx");
+const unitsUrl = await emitSource("features/ui-foundation/units.tsx");
 const primitivesUrl = await emitSource("features/ui-foundation/primitives.tsx", {
+  "./units": unitsUrl,
   "./icons": iconsUrl,
   "./primitives.module.css": cssStub,
 });
@@ -230,7 +232,7 @@ test("skeleton shimmer only animates when reduced motion is not requested", asyn
   assert.ok(guard >= 0);
   assert.doesNotMatch(css.slice(0, guard), /animation:/);
   assert.match(css.slice(guard), /animation: shimmer/);
-  assert.match(css, /#eef1f4/);
+  assert.match(css, /var\(--divider\)/);
 });
 
 test("TrackMap returns distinct closed single-path outlines", () => {

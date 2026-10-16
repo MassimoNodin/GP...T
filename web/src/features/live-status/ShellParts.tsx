@@ -15,13 +15,40 @@ export function ToneDot({ tone }: { tone: ShellTone }) {
   );
 }
 
+const DETAILS_ID = "shell-status-details";
+
 export function StatusPill({ status }: { status: ShellStatus }) {
+  const pill = <PillBody status={status} details={Boolean(status.details?.length)} />;
+  if (!status.details?.length) return pill;
   return (
-    <span className={styles.pill} data-tone={status.tone} role="status">
+    <span className={styles.pillWrap}>
+      {pill}
+      <span id={DETAILS_ID} role="tooltip" className={styles.pillDetails}>
+        {status.details.map((row) => (
+          <span key={row.label} className={styles.pillDetail}>
+            <ToneDot tone={row.tone} />
+            <span className={styles.pillDetailLabel}>{row.label}</span>
+            <span>{row.value}</span>
+          </span>
+        ))}
+      </span>
+    </span>
+  );
+}
+
+function PillBody({ status, details }: { status: ShellStatus; details: boolean }) {
+  return (
+    <span
+      className={styles.pill}
+      data-tone={status.tone}
+      role="status"
+      tabIndex={details ? 0 : undefined}
+      aria-describedby={details ? DETAILS_ID : undefined}
+    >
       {status.tone === "amber" ? (
         <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
           <circle cx="8" cy="8" r="7.5" fill="var(--amber)" />
-          <path d="M6.3 5.2v5.6L10.8 8z" fill="#fff" />
+          <path d="M6.3 5.2v5.6L10.8 8z" fill="var(--on-accent)" />
         </svg>
       ) : (
         <ToneDot tone={status.tone} />
@@ -34,7 +61,7 @@ export function StatusPill({ status }: { status: ShellStatus }) {
 
 export function ShellFooterBlock({ footer }: { footer: ShellFooter }) {
   return (
-    <div className={styles.footer} role="status">
+    <div className={styles.footer}>
       <div className={styles.footerHead}>
         <ToneDot tone={footer.tone} />
         {footer.label}

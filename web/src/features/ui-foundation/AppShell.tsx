@@ -1,9 +1,14 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { LiveShellFooter, LiveShellProvider, LiveStatusPill } from "@/features/live-status/LiveShell";
+import { ReviewBadge } from "@/features/live-status/ReviewBadge";
+import { SessionWatcher } from "@/features/live-status/SessionWatcher";
 import { ShellFooterBlock, StatusPill } from "@/features/live-status/ShellParts";
 import { F1Logo } from "./F1Logo";
 import { DriveIcon, ReviewIcon, SettingsIcon } from "./icons";
+import { ToastProvider } from "./Toast";
+import { ThemeSync } from "./theme";
+import { UnitsProvider } from "./units";
 import styles from "./AppShell.module.css";
 
 export type ShellTone = "green" | "amber" | "red" | "grey";
@@ -12,6 +17,8 @@ export type ShellStatus = {
   tone: ShellTone;
   label: string;
   menu?: boolean;
+  /** Rows for the hover and focus popover under the pill. */
+  details?: Array<{ label: string; value: string; tone: ShellTone }>;
 };
 
 export type ShellFooter = {
@@ -76,6 +83,7 @@ export function AppShell({
                 >
                   <Icon size={17} className={styles.navIcon} />
                   {label}
+                  {key === "review" && <ReviewBadge />}
                 </Link>
               </li>
             ))}
@@ -83,8 +91,12 @@ export function AppShell({
         </nav>
         {live ? <LiveShellFooter fallback={footer} /> : <ShellFooterBlock footer={footer} />}
       </aside>
-      <main id="main" className={styles.main}>
-        {children}
+      <main id="main" className={styles.main} tabIndex={-1}>
+        <ToastProvider>
+          <UnitsProvider>{children}</UnitsProvider>
+          <SessionWatcher />
+        </ToastProvider>
+        <ThemeSync />
       </main>
     </div>
   );

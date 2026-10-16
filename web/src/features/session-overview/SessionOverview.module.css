@@ -1,7 +1,7 @@
 .dot {
   margin: 0 8px;
   font-size: 8px;
-  color: #a7adb5;
+  color: var(--faint);
 }
 
 /* Toolbar */
@@ -26,7 +26,7 @@
   padding: 0 18px 0 16px;
   border: 1px solid var(--border-strong);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface);
   color: var(--text-2);
   font-size: 12.5px;
   font-weight: 500;
@@ -90,7 +90,7 @@
 }
 
 .heroLine {
-  color: #858c95;
+  color: var(--muted-2);
   font-size: 12px;
   line-height: 1.75;
   white-space: nowrap;
@@ -102,7 +102,7 @@
   top: 30px;
   width: 112px;
   height: 80px;
-  color: #22262c;
+  color: var(--ink-strong);
 }
 
 .heroStatsWrap {
@@ -146,7 +146,7 @@
 }
 
 .heroStats dt {
-  color: #8d949d;
+  color: var(--chart-axis);
   font-size: 12px;
 }
 
@@ -167,7 +167,7 @@
 }
 
 .heroDetails dt {
-  color: #9aa1aa;
+  color: var(--faint-2);
   font-size: 12px;
 }
 
@@ -203,7 +203,7 @@
   gap: 6px 16px;
   margin: -4px 0 10px;
   font-size: 12px;
-  color: #848b94;
+  color: var(--muted-2);
 }
 
 .showLabel {
@@ -222,7 +222,7 @@
   align-items: center;
   gap: 7px;
   font-size: 12px;
-  color: #848b94;
+  color: var(--muted-2);
   white-space: nowrap;
 }
 
@@ -237,6 +237,40 @@
   position: relative;
 }
 
+.pointHit {
+  fill: transparent;
+  cursor: pointer;
+}
+
+.pointHit:hover {
+  fill: var(--blue);
+  fill-opacity: 0.12;
+}
+
+.lapMarker rect {
+  fill: var(--grey-soft);
+  stroke: var(--border-strong);
+  stroke-width: 0.6;
+}
+
+.lapMarker text {
+  fill: var(--muted);
+  font-size: 7.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.lapMarker[data-kind="sc"] rect,
+.lapMarker[data-kind="vsc"] rect {
+  fill: var(--amber-soft);
+  stroke: var(--amber);
+}
+
+.lapMarker[data-kind="sc"] text,
+.lapMarker[data-kind="vsc"] text {
+  fill: var(--amber-text);
+}
+
 .chart {
   display: block;
   width: 100%;
@@ -245,7 +279,7 @@
 }
 
 .axis {
-  fill: #8d949d;
+  fill: var(--chart-axis);
   font-size: 9.5px;
   font-family: inherit;
 }
@@ -256,7 +290,7 @@
   padding: 9px 12px 8px;
   border: 1px solid var(--border);
   border-radius: 7px;
-  background: #fff;
+  background: var(--surface);
   box-shadow: 0 4px 14px rgba(16, 24, 40, 0.1);
   transform: translateX(-4px);
   pointer-events: none;
@@ -298,7 +332,7 @@
 
 .summaryText {
   margin-top: -2px;
-  color: #7d848d;
+  color: var(--muted-2);
   font-size: 12.5px;
   line-height: 1.65;
 }
@@ -314,21 +348,21 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  color: #6e757f;
+  color: var(--muted-strong);
   font-size: 12.5px;
 }
 
 /* Sections a real session cannot supply */
 .unavailable {
   margin: 4px 0 0;
-  color: #7d848d;
+  color: var(--muted-2);
   font-size: 12.5px;
   line-height: 1.65;
 }
 
 .dataNote {
   margin: 10px 0 0;
-  color: #9a6a12;
+  color: var(--amber-strong);
   font-size: 11.5px;
   line-height: 1.5;
 }
@@ -359,12 +393,12 @@
 }
 
 .eventLap {
-  color: #5d646e;
+  color: var(--muted-deep);
   font-size: 12.5px;
 }
 
 .eventText {
-  color: #7d848d;
+  color: var(--muted-2);
 }
 
 .eventText[data-highlight] {
@@ -392,7 +426,7 @@
   top: -8px;
   height: 46px;
   width: 1px;
-  background: #eff2f5;
+  background: var(--divider);
 }
 
 .stintBar {
@@ -415,7 +449,7 @@
 .stintAxis span {
   position: absolute;
   transform: translateX(-50%);
-  color: #8d949d;
+  color: var(--chart-axis);
   font-size: 10.5px;
 }
 
@@ -453,7 +487,7 @@
 }
 
 .lapsTable tr[aria-selected="true"] {
-  background: #ecf3fe;
+  background: var(--selected-bg);
 }
 
 .lapsTable button {
@@ -518,7 +552,7 @@
   padding: 0 14px;
   border: 1px solid var(--border-strong);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .stepLap {
@@ -560,7 +594,7 @@
   max-width: 330px;
   padding: 14px 18px 14px 14px;
   border-radius: 8px;
-  background: #eaf2fd;
+  background: var(--blue-soft);
 }
 
 .bestNote svg {
@@ -570,14 +604,21 @@
 .bestTitle {
   font-size: 12px;
   font-weight: 500;
-  color: #2b3037;
+  color: var(--ink);
 }
 
 .bestBody {
   margin-top: 3px;
-  color: #7d848d;
+  color: var(--muted-2);
   font-size: 11.5px;
   line-height: 1.5;
+}
+
+/* 1024: the overview columns stack (plan 3.0.5). */
+@media (max-width: 1024px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 980px) {
@@ -609,10 +650,6 @@
 
   .toolbar > div:first-child::-webkit-scrollbar {
     display: none;
-  }
-
-  .grid {
-    grid-template-columns: minmax(0, 1fr);
   }
 
   .heroDetails {
