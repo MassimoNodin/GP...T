@@ -19,6 +19,7 @@ import {
   lapMarkers,
   outlierLapIds,
   scopeEvents,
+  pitMarkers,
   totalLapsOf,
   type ChartMetric,
 } from "./overview-data";
@@ -204,7 +205,7 @@ function StintCard({ data }: { data: ViewData }) {
           <InlineAlert tone="warning">Tyre data is missing for laps {formatLapRanges(missing)}.</InlineAlert>
         </div>
       )}
-      <StintBar stints={enrichment.stints} total={totalLapsOf(laps, enrichment.stints)} />
+      <StintBar stints={enrichment.stints} total={totalLapsOf(laps, enrichment.stints)} pits={pitMarkers(enrichment.stints, laps)} />
     </>,
   );
 }

@@ -170,21 +170,6 @@
 }
 
 /* Stints tab */
-.pitMarkers {
-  position: absolute;
-  top: -16px;
-  right: 0;
-  left: 0;
-  height: 12px;
-}
-
-.pitMarker {
-  position: absolute;
-  display: inline-flex;
-  color: var(--muted);
-  transform: translateX(-50%);
-}
-
 .degradation[data-tone="red"] {
   color: var(--loss);
 }

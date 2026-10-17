@@ -293,19 +293,30 @@ export function totalLapsOf(laps: OverviewLap[], stints: OverviewStint[]): numbe
   return Math.max(0, ...laps.map((lap) => lap.lap), ...stints.map((stint) => stint.endLap));
 }
 
-/** Bar segments over laps 1..total; laps no stint covers become grey gaps. */
-export function stintSegments(stints: OverviewStint[], total: number): StintSegment[] {
+/**
+ * Bar segments over lap positions 1..total; `laps` is the width in lap units, matching the axis ticks.
+ * Laps between two stints are absorbed: the stints meet at the pit stop, or halfway across the gap when
+ * no pit lap is known. Only laps before the first stint or after the last one stay grey gaps.
+ */
+export function stintSegments(stints: OverviewStint[], total: number, pits: PitMarker[] = []): StintSegment[] {
+  const ordered = stints.filter((stint) => stint.endLap >= 1 && stint.startLap <= total).sort((a, b) => a.startLap - b.startLap);
   const segments: StintSegment[] = [];
   let cursor = 1;
-  for (const stint of [...stints].sort((a, b) => a.startLap - b.startLap)) {
-    const start = Math.max(stint.startLap, cursor);
-    const end = Math.min(stint.endLap, total);
-    if (end < start) continue;
-    if (start > cursor) segments.push({ kind: "gap", from: cursor, to: start - 1, laps: start - cursor });
-    segments.push({ kind: "stint", stint, laps: end - start + 1 });
-    cursor = end + 1;
-  }
-  if (cursor <= total) segments.push({ kind: "gap", from: cursor, to: total, laps: total - cursor + 1 });
+  ordered.forEach((stint, i) => {
+    if (i === 0 && stint.startLap > 1) {
+      segments.push({ kind: "gap", from: 1, to: stint.startLap - 1, laps: stint.startLap - 1 });
+      cursor = stint.startLap;
+    }
+    const next = ordered[i + 1];
+    let end = Math.min(stint.endLap, total);
+    if (next) {
+      const pit = pits.find((marker) => marker.lap >= stint.endLap && marker.lap <= next.startLap);
+      end = pit ? pit.lap : (stint.endLap + next.startLap) / 2;
+    }
+    segments.push({ kind: "stint", stint, laps: Math.max(end - cursor, 0) });
+    cursor = end;
+  });
+  if (cursor < total) segments.push({ kind: "gap", from: Math.ceil(cursor), to: total, laps: total - cursor });
   return segments;
 }
 

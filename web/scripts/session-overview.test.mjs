@@ -275,8 +275,14 @@ test("lap ranges, uncovered laps and stint bar gaps", () => {
   const segments = data.stintSegments(stints, 22);
   assert.deepEqual(
     segments.map((segment) => [segment.kind, segment.laps]),
-    [["stint", 10], ["gap", 4], ["stint", 6], ["gap", 2]],
+    [["stint", 11.5], ["stint", 7.5], ["gap", 2]],
   );
+  const pitted = data.stintSegments([stint(1, "medium", 1, 6), stint(2, "hard", 8, 13)], 13, [{ lap: 6 }]);
+  assert.deepEqual(
+    pitted.map((segment) => [segment.kind, segment.laps]),
+    [["stint", 5], ["stint", 7]],
+  );
+  assert.deepEqual(data.stintSegments([stint(1, "soft", 1, 5)], 5).map((segment) => [segment.kind, segment.laps]), [["stint", 4]]);
   assert.equal(data.totalLapsOf(laps, stints), 20);
   assert.deepEqual(data.stintTicks(78).slice(0, 3), [1, 10, 20]);
   assert.equal(data.stintTicks(78).at(-1), 78);
@@ -998,7 +1004,7 @@ test("fixture session keeps its reference content on every tab", async () => {
 
   const stints = renderOverview(model, at("stints"));
   assert.match(stints, /Stint Pace/);
-  assert.match(stints, /Pit stop, lap 12/);
+  assert.match(stints, /Pit stop after lap 12/);
   assert.match(stints, /aria-label="Lap times by stint"/);
 
   const events = renderOverview(model, at("events"));

@@ -54,7 +54,7 @@ export function EventGlyph({ icon }: { icon: EventIcon }) {
   }
 }
 
-/** Legend, grid, stint bar and lap axis. Laps no stint covers are grey gaps; pit markers sit above the bar. */
+/** Legend, grid, stint bar and lap axis. Stints meet at each pit stop, marked by a dotted line. */
 export function StintBar({
   stints,
   total,
@@ -65,8 +65,17 @@ export function StintBar({
   pits?: PitMarker[];
 }) {
   const ticks = stintTicks(total);
-  const position = (lap: number) => (total > 1 ? ((lap - 1) / (total - 1)) * 100 : 0);
-  const segments = stintSegments(stints, total);
+  const span = Math.max(total - 1, 1);
+  const position = (lap: number) => (total > 1 ? ((lap - 1) / span) * 100 : 0);
+  const segments = stintSegments(stints, total, pits ?? []);
+  const boundaries: { at: number; after: number }[] = [];
+  let edge = 1;
+  let previous: OverviewStint | null = null;
+  for (const segment of segments) {
+    if (segment.kind === "stint" && previous) boundaries.push({ at: edge, after: previous.endLap });
+    if (segment.kind === "stint") previous = segment.stint;
+    edge += segment.laps;
+  }
   return (
     <>
       <div className={styles.stintLegend}>
@@ -83,36 +92,32 @@ export function StintBar({
             <span key={tick} style={{ left: `${position(tick)}%` }} />
           ))}
         </div>
-        {pits && pits.length > 0 && (
-          <div className={viewStyles.pitMarkers} aria-hidden="true">
-            {pits.map((pit) => (
-              <span
-                key={pit.lap}
-                className={viewStyles.pitMarker}
-                style={{ left: `${position(pit.lap)}%` }}
-                title={`Pit stop, lap ${pit.lap}`}
-              >
-                <PitIcon size={10} />
-              </span>
-            ))}
-          </div>
-        )}
         <div className={styles.stintBar} role="img" aria-label={stintBarLabel(stints, pits ?? [])}>
           {segments.map((segment) =>
             segment.kind === "stint" ? (
               <span
                 key={`stint-${segment.stint.index}`}
-                style={{ flexGrow: segment.laps, background: compoundColor(segment.stint.compound) }}
+                style={{ flexGrow: segment.laps || 0.0001, background: compoundColor(segment.stint.compound) }}
               />
             ) : (
               <span
                 key={`gap-${segment.from}`}
                 data-gap="true"
-                style={{ flexGrow: segment.laps, background: "var(--grey-soft)" }}
+                style={{ flexGrow: segment.laps || 0.0001, background: "var(--grey-soft)" }}
               />
             ),
           )}
         </div>
+        {boundaries.map((boundary) => (
+          <span
+            key={boundary.after}
+            className={styles.stintPit}
+            style={{ left: `${position(boundary.at)}%` }}
+            role="img"
+            aria-label={`Pit stop after lap ${boundary.after}`}
+            title={`Pit stop after lap ${boundary.after}`}
+          />
+        ))}
         <div className={styles.stintAxis} aria-hidden="true">
           {ticks.map((tick) => (
             <span key={tick} style={{ left: `${position(tick)}%` }}>
