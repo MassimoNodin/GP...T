@@ -1,6 +1,7 @@
 import type { ProgressionPoint } from "@/features/review-data/fixtures";
 import { formatDelta, formatLapTime } from "@/features/review-data/format";
 import { chartHeight, useElementWidth } from "@/features/ui-foundation/chart-frame";
+import { LapGrid, lapScale } from "@/features/ui-foundation/lap-grid";
 import { displayDelta, useUnits } from "@/features/ui-foundation/units";
 import {
   COMPOUND_TINT,
@@ -74,16 +75,15 @@ export function LapTimeChart({
   const H = chartHeight(W);
   const plotW = W - PAD.left - PAD.right;
   const plotH = H - PAD.top - PAD.bottom;
-  const xDomain = Math.max(xMax, 1);
-  const x = (lap: number) => PAD.left + (lap / xDomain) * plotW;
+  const firstLap = 1;
+  const lastLap = Math.max(xMax, 1);
+  const scale = lapScale(firstLap, lastLap, PAD.left, plotW);
+  const x = scale.x;
   const y = (value: number) =>
     PAD.top + (1 - (Math.min(Math.max(value, yMin), yMax) - yMin) / (yMax - yMin)) * plotH;
 
   const yTicks: number[] = [];
   for (let value = yMin; value <= yMax + 1; value += yStep) yTicks.push(value);
-  const xTickStep = xMax > 40 ? 10 : 5;
-  const xTicks: number[] = [];
-  for (let value = 0; value <= xMax; value += xTickStep) xTicks.push(value);
 
   // Selected marker: the plotted point for the lap, or the curve position.
   const own = selectedValue ?? selected.ms;
@@ -121,7 +121,7 @@ export function LapTimeChart({
             key={`${band.from}-${band.compound}`}
             x={x(band.from)}
             y={PAD.top}
-            width={Math.max(x(band.to) - x(band.from), 0)}
+            width={Math.max(x(band.to >= lastLap ? scale.hi : band.to) - x(band.from), 0)}
             height={plotH}
             fill={compoundColor(band.compound)}
             fillOpacity={COMPOUND_TINT}
@@ -136,14 +136,7 @@ export function LapTimeChart({
             </text>
           </g>
         ))}
-        {xTicks.map((tick) => (
-          <g key={tick}>
-            <line x1={x(tick)} x2={x(tick)} y1={PAD.top} y2={H - PAD.bottom} stroke="var(--divider)" />
-            <text x={x(tick)} y={H - 10} textAnchor="middle" className={styles.axis}>
-              {tick}
-            </text>
-          </g>
-        ))}
+        <LapGrid scale={scale} firstLap={firstLap} lastLap={lastLap} top={PAD.top} bottom={H - PAD.bottom} labelY={H - 10} labelClassName={styles.axis} />
         <line x1={mx} x2={mx} y1={PAD.top} y2={H - PAD.bottom} stroke="var(--blue-mid)" strokeWidth="1.2" />
         {points.slice(1).map((point, index) => {
           const previous = points[index];

@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { Bone } from "@/features/route-states/Skeleton";
 import { formatAxisLapTime, formatLapTime } from "@/features/review-data/format";
 import { chartHeight, useElementWidth } from "@/features/ui-foundation/chart-frame";
+import { LapGrid, lapScale } from "@/features/ui-foundation/lap-grid";
 import { TyreIcon } from "@/features/ui-foundation/icons";
 import { DataTable, type Column } from "@/features/ui-foundation/DataTable";
 import { Card } from "@/features/ui-foundation/primitives";
@@ -214,12 +215,11 @@ function StintPaceChart({ stints, laps }: { stints: OverviewStint[]; laps: Overv
   const xMax = Math.max(5, ...series.map((entry) => entry.stint.lapCount));
   const plotW = W - PAD.left - PAD.right;
   const plotH = H - PAD.top - PAD.bottom;
-  const x = (lap: number) => PAD.left + ((lap - 1) / Math.max(xMax - 1, 1)) * plotW;
+  const scale = lapScale(1, xMax, PAD.left, plotW);
+  const x = scale.x;
   const y = (ms: number) => PAD.top + (1 - (Math.min(Math.max(ms, yMin), yMax) - yMin) / (yMax - yMin)) * plotH;
   const yTicks: number[] = [];
   for (let value = yMin; value <= yMax + 1; value += yStep) yTicks.push(value);
-  const xStep = xMax > 40 ? 10 : 5;
-  const xTicks = [1, ...Array.from({ length: Math.floor(xMax / xStep) }, (_, i) => (i + 1) * xStep)].filter((tick) => tick <= xMax);
   return (
     <div ref={frame} className={styles.chartWrap}>
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className={styles.chart} role="img" aria-label="Lap times by stint">
@@ -231,11 +231,7 @@ function StintPaceChart({ stints, laps }: { stints: OverviewStint[]; laps: Overv
             </text>
           </g>
         ))}
-        {xTicks.map((tick) => (
-          <text key={tick} x={x(tick)} y={H - 10} textAnchor="middle" className={styles.axis}>
-            {tick}
-          </text>
-        ))}
+        <LapGrid scale={scale} firstLap={1} lastLap={xMax} top={PAD.top} bottom={H - PAD.bottom} labelY={H - 10} labelClassName={styles.axis} />
         {series.map(({ stint, points }) => {
           const drawn = points.filter((point) => point.ms <= median + 6000);
           return (

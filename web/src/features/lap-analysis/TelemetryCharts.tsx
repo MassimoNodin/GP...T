@@ -5,6 +5,7 @@ import { deltaExtent, isDelta, signedAreas, type DeltaSeries } from "./delta";
 import { valueAt, type ChannelKey, type ChannelRuns, type DistanceRange } from "./lap-telemetry";
 import { referenceTraces, type Trace } from "./traces";
 import { useElementWidth } from "@/features/ui-foundation/chart-frame";
+import { GRID_MINOR } from "@/features/ui-foundation/lap-grid";
 import { MPH_PER_KMH, useUnits, type Units } from "@/features/ui-foundation/units";
 import styles from "./LapAnalysis.module.css";
 
@@ -270,7 +271,7 @@ export function TelemetryCharts({
               </g>
             ))}
             {ticks.map((tick) => (
-              <line key={tick} x1={x(tick)} x2={x(tick)} y1={row.y0} y2={row.y0 + row.height} stroke="var(--divider)" />
+              <line key={tick} x1={x(tick)} x2={x(tick)} y1={row.y0} y2={row.y0 + row.height} stroke={GRID_MINOR} />
             ))}
             {missing && (
               <text x={plotLeft + plotW / 2} y={row.y0 + row.height / 2 + 4} textAnchor="middle" className={styles.tick}>
