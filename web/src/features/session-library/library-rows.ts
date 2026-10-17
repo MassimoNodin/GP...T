@@ -23,6 +23,8 @@ export type LibraryRow = LibrarySession & {
   highlights: string[];
   /** False when the date is the "Date not recorded" placeholder. */
   dateKnown: boolean;
+  /** Capture start (ISO, UTC) behind `date`, so views can show it in the viewer's time zone. */
+  startedAtUtc: string | null;
   /** Attempts were read, so laps and highlights are real. */
   detailed: boolean;
   /** Lap Analysis pair for `Compare best laps`: reference = fastest, target = second fastest. */
@@ -58,13 +60,16 @@ export function comparePair(laps: EvidenceLap[]): { target: string; reference: s
   return { target: valid[1].id, reference: valid[0].id };
 }
 
-/** Row date: the cached `/summary` start time when known, else the placeholder with the short id. */
-export function sessionDate(sessionId: string, startedAtUtc: string | null): { text: string; known: boolean } {
+/** Row date: the `/summary` start time when known, else the placeholder with the short id. */
+export function sessionDate(
+  sessionId: string,
+  startedAtUtc: string | null,
+): { text: string; known: boolean; startedAtUtc: string | null } {
   if (startedAtUtc) {
     const text = formatDayTime(startedAtUtc);
-    if (text !== "—") return { text, known: true };
+    if (text !== "—") return { text, known: true, startedAtUtc };
   }
-  return { text: evidenceDateLabel(sessionId), known: false };
+  return { text: evidenceDateLabel(sessionId), known: false, startedAtUtc: null };
 }
 
 /**

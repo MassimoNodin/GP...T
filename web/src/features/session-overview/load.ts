@@ -7,6 +7,7 @@ import {
   fetchLapEnrichment,
   fetchLaps,
   fetchSession,
+  cachedSummaryDate,
   fetchSummary,
   sessionBestLap,
   telemetryFooter,
@@ -421,7 +422,8 @@ export function evidenceModel(
     enrichment = enrichmentRead;
   }
   const summaryData = extras.summary ? sectionFromRead(extras.summary) : ({ state: "deferred" } as const);
-  const startedAt = summaryData.state === "loaded" ? summaryData.value.startedAtUtc : null;
+  const startedAt =
+    (summaryData.state === "loaded" ? summaryData.value.startedAtUtc : null) ?? cachedSummaryDate(session.id);
 
   const best = bestEvidenceLap(evidence);
   const bestId = best?.id ?? null;

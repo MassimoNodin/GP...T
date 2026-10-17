@@ -1,3 +1,5 @@
+import { formatDayTime } from "@/features/review-data/format";
+import { useLocalTime } from "@/features/review-data/use-local-time";
 import { NotAvailable } from "@/features/ui-foundation/states";
 import { Card, StatusBadge } from "@/features/ui-foundation/primitives";
 import { TrackMap } from "@/features/ui-foundation/TrackMap";
@@ -15,6 +17,10 @@ function partText(part: HeroPart): string {
   return typeof part === "string" ? part : part.text;
 }
 
+function localPartText(part: HeroPart, local: boolean): string {
+  return local && typeof part !== "string" && part.iso ? formatDayTime(part.iso, true) : partText(part);
+}
+
 export function Hero({
   hero,
   photo,
@@ -25,6 +31,7 @@ export function Hero({
   /** The status badge shows a chevron only where a menu exists (the fixture). */
   chevron: boolean;
 }) {
+  const local = useLocalTime();
   return (
     <Card className={styles.hero}>
       <div className={styles.heroTop}>
@@ -37,7 +44,7 @@ export function Hero({
                 {line.map((part, index) => (
                   <span key={`${partText(part)}-${index}`} title={typeof part === "string" ? undefined : part.title}>
                     {index > 0 && <span className={styles.dot}>•</span>}
-                    <UnitText>{partText(part)}</UnitText>
+                    <UnitText>{localPartText(part, local)}</UnitText>
                   </span>
                 ))}
               </div>

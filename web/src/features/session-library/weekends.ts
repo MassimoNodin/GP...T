@@ -1,4 +1,4 @@
-import { formatLapTime } from "@/features/review-data/format";
+import { formatDay, formatLapTime } from "@/features/review-data/format";
 import type { LibraryRow } from "./library-rows";
 
 // Groups library rows into race weekends. The game links a weekend's sessions
@@ -141,8 +141,10 @@ export function weekendBestLine(weekend: Weekend): string | null {
 }
 
 /** Dates of a weekend's sessions when known: one day, or "first – last". */
-export function weekendDateLabel(weekend: Weekend): string {
-  const known = weekend.rows.filter((row) => row.dateKnown).map((row) => row.date.split(",")[0]);
+export function weekendDateLabel(weekend: Weekend, local = false): string {
+  const known = weekend.rows
+    .filter((row) => row.dateKnown)
+    .map((row) => (row.startedAtUtc ? formatDay(row.startedAtUtc, local) : row.date.split(",")[0]));
   const days = [...new Set(known)];
   if (days.length === 0) return "Dates not recorded";
   return days.length === 1 ? days[0] : `${days[0]} – ${days[days.length - 1]}`;

@@ -1,10 +1,11 @@
 import type { RecordingCatalogSourceRecord, SessionRecord } from "@/lib/api";
 import {
-  cachedSummaryDates,
+  cachedSummaryDate,
   fetchAcquisition,
   fetchEvidenceAttempts,
   fetchEvidenceSessions,
   fetchRecordingSources,
+  fetchSummary,
   fetchSessions,
   telemetryFooter,
   telemetryStatus,
@@ -121,10 +122,35 @@ function toRow(record: SessionRecord, captures: CaptureLinks): LibraryRow {
     groupKey: `v1|${trackName ?? ""}|${record.packet_format}|${record.started_at_utc.slice(0, 10)}`,
     highlights: record.lap_attempts === 0 ? ["No timed laps"] : [],
     dateKnown: true,
+    startedAtUtc: record.started_at_utc,
     detailed: true,
     compare: null,
     download: captures.get(record.run_id) ?? null,
   };
+}
+
+const DATE_READ_TIMEOUT_MS = 4_000;
+
+/**
+ * Capture start time of each session. The sessions list carries none, so it
+ * comes from `/summary` (a small document), read once per session with a few
+ * requests in flight and remembered in memory; later loads cost nothing.
+ * Sessions beyond `ATTEMPT_READ_CAP` or whose summary cannot be read keep the
+ * "Date not recorded" placeholder.
+ */
+async function captureDates(sessions: EvidenceSession[]): Promise<Map<string, string>> {
+  const dates = new Map<string, string>();
+  const missing: EvidenceSession[] = [];
+  for (const session of sessions.slice(0, ATTEMPT_READ_CAP)) {
+    const known = cachedSummaryDate(session.id);
+    if (known) dates.set(session.id, known);
+    else missing.push(session);
+  }
+  await mapLimit(missing, ATTEMPT_READ_CONCURRENCY, async (session) => {
+    const read = await fetchSummary(session.id, { timeoutMs: DATE_READ_TIMEOUT_MS });
+    if (read.state === "ok" && read.value.startedAtUtc) dates.set(session.id, read.value.startedAtUtc);
+  });
+  return dates;
 }
 
 /**
@@ -136,7 +162,8 @@ function toRow(record: SessionRecord, captures: CaptureLinks): LibraryRow {
  * the cap are listed after the read ones, without laps or highlights, and
  * stay openable.
  */
-async function evidenceRows(sessions: EvidenceSession[], dates: ReadonlyMap<string, string>): Promise<LibraryRow[]> {
+async function evidenceRows(sessions: EvidenceSession[]): Promise<LibraryRow[]> {
+  const dates = await captureDates(sessions);
   const toRead = sessions.slice(0, ATTEMPT_READ_CAP);
   const results = await mapLimit(toRead, ATTEMPT_READ_CONCURRENCY, (session) => fetchEvidenceAttempts(session.id));
   const read = toRead.map((session, index) => {
@@ -158,6 +185,7 @@ async function evidenceRows(sessions: EvidenceSession[], dates: ReadonlyMap<stri
       notes: highlightLines(laps).join(" "),
       highlights: highlightLines(laps),
       dateKnown: date.known,
+      startedAtUtc: date.startedAtUtc,
       detailed: true,
       compare: comparePair(laps),
       download: null,
@@ -180,6 +208,7 @@ async function evidenceRows(sessions: EvidenceSession[], dates: ReadonlyMap<stri
       notes: "",
       highlights: [UNREAD_NOTE],
       dateKnown: date.known,
+      startedAtUtc: date.startedAtUtc,
       detailed: false,
       compare: null,
       download: null,
@@ -208,6 +237,7 @@ function referenceRows(): LibraryRow[] {
     kind: "reference",
     highlights: [],
     dateKnown: true,
+    startedAtUtc: null,
     detailed: true,
     compare: null,
     download: null,
@@ -282,8 +312,8 @@ export async function loadLibrary(now: number = Date.now()): Promise<LibraryMode
   const { imports, captures } = await readImports(now);
   // The v2 API records no wall-clock time, so acquired sessions (ordered by
   // journal position) come first and dated imports follow, newest first.
-  // Dates come from `/summary` reads made earlier (Overview visits).
-  const rows = [...(await evidenceRows(acquired, cachedSummaryDates())), ...imported.map((record) => toRow(record, captures))];
+  // Dates come from each session's `/summary` (see `captureDates`).
+  const rows = [...(await evidenceRows(acquired)), ...imported.map((record) => toRow(record, captures))];
   // The footer names the game of the newest session instead of the reference platform.
   const game = rows[0]?.meta[0] ?? "F1";
   return {

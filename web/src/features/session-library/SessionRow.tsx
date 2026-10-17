@@ -1,4 +1,8 @@
+"use client";
+
 import Link from "next/link";
+import { formatDayTime } from "@/features/review-data/format";
+import { useLocalTime } from "@/features/review-data/use-local-time";
 import { Badge, StatusBadge } from "@/features/ui-foundation/primitives";
 import { NotAvailable } from "@/features/ui-foundation/states";
 import { TrackPhoto } from "@/features/ui-foundation/TrackPhoto";
@@ -8,6 +12,8 @@ import { SessionRowMenu } from "./SessionRowMenu";
 import styles from "./SessionLibrary.module.css";
 
 export function SessionRow({ row, nested = false }: { row: LibraryRow; nested?: boolean }) {
+  const local = useLocalTime();
+  const date = local && row.startedAtUtc ? formatDayTime(row.startedAtUtc, true) : row.date;
   const title = row.href ? (
     <Link href={row.href} className={styles.titleLink}>
       {row.title}
@@ -24,7 +30,7 @@ export function SessionRow({ row, nested = false }: { row: LibraryRow; nested?: 
           <Badge tone={row.type.tone}>{row.type.label}</Badge>
           <Badge tone={row.source.tone}>{row.source.label}</Badge>
         </div>
-        <div className={row.dateKnown ? styles.date : `${styles.date} ${styles.dateUnknown}`}>{row.date}</div>
+        <div className={row.dateKnown ? styles.date : `${styles.date} ${styles.dateUnknown}`}>{date}</div>
         <div className={styles.meta}>
           {row.meta.map((part, index) => (
             <span key={`${part}-${index}`}>

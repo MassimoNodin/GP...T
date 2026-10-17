@@ -372,8 +372,16 @@ test("compare pair is the two fastest valid laps", () => {
 });
 
 test("v2 dates use the cached summary date, else the placeholder with the short id", () => {
-  assert.deepEqual(rows.sessionDate("3f2a9c1b00112233", "2024-06-04T15:00:00Z"), { text: "4 Jun 2024, 15:00", known: true });
-  assert.deepEqual(rows.sessionDate("3f2a9c1b00112233", null), { text: "Date not recorded • #3f2a9c1b", known: false });
+  assert.deepEqual(rows.sessionDate("3f2a9c1b00112233", "2024-06-04T15:00:00Z"), {
+    text: "4 Jun 2024, 15:00",
+    known: true,
+    startedAtUtc: "2024-06-04T15:00:00Z",
+  });
+  assert.deepEqual(rows.sessionDate("3f2a9c1b00112233", null), {
+    text: "Date not recorded • #3f2a9c1b",
+    known: false,
+    startedAtUtc: null,
+  });
   assert.equal(rows.sessionDate("3f2a9c1b00112233", "not a date").known, false);
 });
 
@@ -446,7 +454,11 @@ const backendStub = toDataUrl(`
   export const fetchSessions = async () => config().sessions;
   export const fetchEvidenceSessions = async () => config().evidence;
   export const fetchAcquisition = async () => config().acquisition;
-  export const cachedSummaryDates = () => config().dates ?? new Map();
+  export const cachedSummaryDate = (id) => (config().dates ?? new Map()).get(id) ?? null;
+  export const fetchSummary = async (id) => {
+    const started = (config().summaries ?? new Map()).get(id);
+    return started ? { state: "ok", value: { startedAtUtc: started } } : { state: "timeout" };
+  };
   export const fetchEvidenceAttempts = async (id) => {
     const c = config();
     c.calls.push(id);

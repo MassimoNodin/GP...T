@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useId, useState } from "react";
 import { formatLapTime } from "@/features/review-data/format";
+import { useLocalTime } from "@/features/review-data/use-local-time";
 import { ChevronDownIcon } from "@/features/ui-foundation/icons";
 import { Badge } from "@/features/ui-foundation/primitives";
 import { TrackPhoto } from "@/features/ui-foundation/TrackPhoto";
@@ -15,6 +16,7 @@ export function WeekendCard({ weekend }: { weekend: Weekend }) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const best = weekendBestLine(weekend);
+  const local = useLocalTime();
   return (
     <li className={styles.weekend} data-open={open || undefined}>
       <div className={styles.weekendHead}>
@@ -25,7 +27,7 @@ export function WeekendCard({ weekend }: { weekend: Weekend }) {
             <Badge tone="grey">Weekend</Badge>
             <Badge tone="blue">{weekend.rows.length} sessions</Badge>
           </div>
-          <div className={styles.date}>{weekendDateLabel(weekend)}</div>
+          <div className={styles.date}>{weekendDateLabel(weekend, local)}</div>
           <ul className={styles.sessionChips} aria-label={`${weekend.title} sessions`}>
             {weekend.rows.map((row) => {
               const label = shortSessionLabel(row.type.label);

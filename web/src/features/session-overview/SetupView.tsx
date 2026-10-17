@@ -7,7 +7,8 @@ import { WeatherIcon } from "@/features/ui-foundation/icons";
 import { Card } from "@/features/ui-foundation/primitives";
 import { EmptyState, InlineAlert, NotAvailable } from "@/features/ui-foundation/states";
 import { Timeline, type TimelineItem } from "@/features/ui-foundation/Timeline";
-import { formatWeather } from "@/features/review-data/format";
+import { formatDayTime, formatWeather } from "@/features/review-data/format";
+import { useLocalTime } from "@/features/review-data/use-local-time";
 import { UnitText } from "@/features/ui-foundation/units";
 import {
   formatClock,
@@ -52,9 +53,11 @@ export function SetupView({ data }: { data: ViewData }) {
 }
 
 function FactValue({ row, loading }: { row: FactRow; loading: boolean }) {
+  const local = useLocalTime();
   if (row.needsSummary && loading) return <Bone width={90} height={12} />;
   if (row.value === null) return <NotAvailable reason={row.reason ?? "Not reported"} />;
-  return typeof row.value === "string" ? <UnitText>{row.value}</UnitText> : <>{row.value}</>;
+  const value = local && row.iso ? formatDayTime(row.iso, true) : row.value;
+  return typeof value === "string" ? <UnitText>{value}</UnitText> : <>{value}</>;
 }
 
 function ConditionsCard({ data }: { data: ViewData }) {

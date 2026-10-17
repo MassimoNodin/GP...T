@@ -33,20 +33,26 @@ export function formatDuration(ms: number | null | undefined): string {
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** ISO timestamp -> "4 Jun 2024" (UTC, deterministic across server/client). */
-export function formatDay(iso: string | null | undefined): string {
+/**
+ * ISO timestamp -> "4 Jun 2024". UTC by default so server and first client
+ * render agree; pass `local` (after hydration, see `useLocalTime`) for the
+ * viewer's time zone.
+ */
+export function formatDay(iso: string | null | undefined, local = false): string {
   const date = iso ? new Date(iso) : null;
   if (!date || Number.isNaN(date.getTime())) return "—";
-  return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+  return local
+    ? `${date.getDate()} ${MONTHS[date.getMonth()]} ${date.getFullYear()}`
+    : `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
 }
 
-/** ISO timestamp -> "4 Jun 2024, 15:00" */
-export function formatDayTime(iso: string | null | undefined): string {
+/** ISO timestamp -> "4 Jun 2024, 15:00" (UTC unless `local`). */
+export function formatDayTime(iso: string | null | undefined, local = false): string {
   const date = iso ? new Date(iso) : null;
   if (!date || Number.isNaN(date.getTime())) return "—";
-  const hh = String(date.getUTCHours()).padStart(2, "0");
-  const mm = String(date.getUTCMinutes()).padStart(2, "0");
-  return `${formatDay(iso)}, ${hh}:${mm}`;
+  const hh = String(local ? date.getHours() : date.getUTCHours()).padStart(2, "0");
+  const mm = String(local ? date.getMinutes() : date.getUTCMinutes()).padStart(2, "0");
+  return `${formatDay(iso, local)}, ${hh}:${mm}`;
 }
 
 export function formatGame(packetFormat: number | null | undefined): string {

@@ -38,7 +38,7 @@ const reactShim = await emit(
   "react.mjs",
   `import React from ${JSON.stringify(reactUrl)};
 export default React;
-export const { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } = React;
+export const { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } = React;
 `,
 );
 const cssStub = await emit("css.mjs", "export default new Proxy({}, { get: (_, key) => String(key) });\n");
@@ -547,7 +547,7 @@ test("the observed date line and summary-filled hero fields", () => {
   assert.deepEqual(data.heroDateLine("Race", null, "3f2a9c1b"), ["Race", "Date not recorded", "#3f2a9c1b"]);
   assert.deepEqual(data.heroDateLine("Race", "2024-06-04T15:00:00Z", "3f2a9c1b"), [
     "Race",
-    { text: "4 Jun 2024, 15:00", title: "Time the engine first observed this session" },
+    { text: "4 Jun 2024, 15:00", title: "Time the engine first observed this session", iso: "2024-06-04T15:00:00Z" },
   ]);
   const fields = data.realHeroFields({
     source: "v2", lapCount: 3, bestMs: 1, conditions: null, trackTemperatureC: null, packetFormat: 2024,
@@ -860,7 +860,8 @@ test("compare mode warns about invalid laps and disables the swap without a pair
 const graph = new Map();
 const backendStub = await emit(
   "backend-stub.mjs",
-  `export const completedLaps = () => [];
+  `export const cachedSummaryDate = () => null;
+export const completedLaps = () => [];
 export const fetchAcquisition = async () => null;
 export const fetchEvidenceAttempts = async () => null;
 export const fetchEvidenceSession = async () => null;

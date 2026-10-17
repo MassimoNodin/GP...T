@@ -88,7 +88,7 @@ export type HeroField = {
   reason?: string;
 };
 
-export type HeroPart = string | { text: string; title: string };
+export type HeroPart = string | { text: string; title: string; /** ISO instant behind `text`, shown in the viewer's time zone. */ iso?: string };
 
 export type SetupRow = { label: string; value: string | null };
 export type SetupGroup = { title: string; rows: SetupRow[] };

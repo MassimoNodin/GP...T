@@ -1059,7 +1059,7 @@ export const OBSERVED_TITLE = "Time the engine first observed this session";
 /** First hero line: type, then the observed date when known, else a placeholder and the short id. */
 export function heroDateLine(typeLabel: string, startedAtUtc: string | null, shortId: string): HeroPart[] {
   return startedAtUtc
-    ? [typeLabel, { text: formatDayTime(startedAtUtc), title: OBSERVED_TITLE }]
+    ? [typeLabel, { text: formatDayTime(startedAtUtc), title: OBSERVED_TITLE, iso: startedAtUtc }]
     : [typeLabel, "Date not recorded", `#${shortId}`];
 }
 
@@ -1244,6 +1244,8 @@ export type FactRow = {
   reason?: string;
   /** True when the value comes from `/summary` and shows a placeholder while that loads. */
   needsSummary?: boolean;
+  /** ISO instant behind `value`, shown in the viewer's time zone. */
+  iso?: string;
 };
 
 /** Rows of the Session card on the Setup & Conditions tab. */
@@ -1271,10 +1273,10 @@ export function sessionFacts(context: OverviewContext, summary: SessionSummary |
         }
       : { label: "Duration", value: null, reason: "Session duration was not reported", needsSummary: true },
     started
-      ? { label: "Started", value: formatDayTime(started), needsSummary: true }
+      ? { label: "Started", value: formatDayTime(started), needsSummary: true, iso: started }
       : { label: "Started", value: null, reason: timeReason, needsSummary: true },
     ended
-      ? { label: "Ended", value: formatDayTime(ended), needsSummary: true }
+      ? { label: "Ended", value: formatDayTime(ended), needsSummary: true, iso: ended }
       : { label: "Ended", value: null, reason: timeReason, needsSummary: true },
     context.trackName
       ? { label: "Track", value: length ? `${context.trackName} · ${length}` : context.trackName }
