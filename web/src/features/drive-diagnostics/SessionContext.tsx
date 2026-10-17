@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Card } from "@/features/ui-foundation/primitives";
 import { StatusGlyph } from "@/features/ui-foundation/icons";
 import { EmptyState } from "@/features/ui-foundation/states";
+import { MeasuredTrackMap } from "@/features/ui-foundation/MeasuredTrackMap";
 import { TrackMap } from "@/features/ui-foundation/TrackMap";
 import { TrackPhoto } from "@/features/ui-foundation/TrackPhoto";
 import { UnitText } from "@/features/ui-foundation/units";
@@ -63,7 +64,12 @@ export function SessionContext({
             ))}
           </div>
         </div>
-        <TrackMap track={context.track} className={styles.contextMap} strokeWidth={2.4} />
+        <MeasuredTrackMap
+          sessionId={context.kind === "session" ? context.sessionId : null}
+          track={context.track}
+          className={styles.contextMap}
+          strokeWidth={2.4}
+        />
       </div>
       <div className={styles.contextBody}>
         <TrackPhoto src={photo} alt={`${context.title} circuit`} className={styles.contextPhoto} />

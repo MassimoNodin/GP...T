@@ -184,7 +184,7 @@ export function SessionOverview({
         tabIndex={0}
         className={viewStyles.panel}
       >
-        {showHero && <Hero hero={hero} photo={model.photo} chevron={model.source === "fixture"} />}
+        {showHero && <Hero hero={hero} photo={model.photo} sessionId={model.evidenceId} chevron={model.source === "fixture"} />}
         {view === "overview" && (
           <OverviewView
             data={data}

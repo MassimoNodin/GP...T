@@ -2,7 +2,7 @@ import { formatDayTime } from "@/features/review-data/format";
 import { useLocalTime } from "@/features/review-data/use-local-time";
 import { NotAvailable } from "@/features/ui-foundation/states";
 import { Card, StatusBadge } from "@/features/ui-foundation/primitives";
-import { TrackMap } from "@/features/ui-foundation/TrackMap";
+import { MeasuredTrackMap } from "@/features/ui-foundation/MeasuredTrackMap";
 import { TrackPhoto } from "@/features/ui-foundation/TrackPhoto";
 import { UnitText } from "@/features/ui-foundation/units";
 import type { HeroField, HeroPart, OverviewModel } from "./types";
@@ -24,10 +24,13 @@ function localPartText(part: HeroPart, local: boolean): string {
 export function Hero({
   hero,
   photo,
+  sessionId,
   chevron,
 }: {
   hero: OverviewModel["hero"];
   photo: string | null;
+  /** v2 session id for the measured track map; null keeps the schematic. */
+  sessionId: string | null;
   /** The status badge shows a chevron only where a menu exists (the fixture). */
   chevron: boolean;
 }) {
@@ -50,7 +53,7 @@ export function Hero({
               </div>
             ))}
           </div>
-          <TrackMap track={hero.track} className={styles.heroMap} strokeWidth={2.2} />
+          <MeasuredTrackMap sessionId={sessionId} track={hero.track} className={styles.heroMap} strokeWidth={2.2} />
         </div>
         <div className={styles.heroStatsWrap}>
           <div className={styles.heroStatus}>
