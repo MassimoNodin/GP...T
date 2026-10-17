@@ -17,7 +17,6 @@ export function MeasuredCharts({
   band = null,
   interactive = false,
   hover = false,
-  width,
   rowHeights,
 }: {
   /** Rows to draw, top to bottom; delta and gear are dropped when there is no data for them. */
@@ -29,7 +28,6 @@ export function MeasuredCharts({
   interactive?: boolean;
   /** Hover moves the shared cursor (and the track map dot) without brushing a range. */
   hover?: boolean;
-  width?: number;
   rowHeights?: Partial<Record<RowKey, number>>;
 }) {
   const { target, reference, targetTrace, referenceTrace, compare, delta, cursor, onCursor, setBrush } = useAnalysis();
@@ -56,7 +54,6 @@ export function MeasuredCharts({
         channels={channels}
         measured={{ target: targetTrace.channels, reference: referenceReady?.channels ?? null }}
         delta={wantsDelta ? (referenceReady ? delta : { unavailable: "Delta needs complete speed traces for both laps." }) : null}
-        width={width}
         rowHeights={rowHeights}
         cursor={interactive || hover ? cursor : null}
         onCursor={interactive || hover ? onCursor : undefined}

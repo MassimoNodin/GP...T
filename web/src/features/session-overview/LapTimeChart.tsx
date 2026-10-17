@@ -1,14 +1,14 @@
 import type { ProgressionPoint } from "@/features/review-data/fixtures";
 import { formatDelta, formatLapTime } from "@/features/review-data/format";
+import { chartHeight, useElementWidth } from "@/features/ui-foundation/chart-frame";
 import { displayDelta, useUnits } from "@/features/ui-foundation/units";
 import { formatAxisValue, formatMetricValue, type ChartMetric, type LapMarker } from "./overview-data";
 import styles from "./SessionOverview.module.css";
 
 const MARKER_LABELS: Record<LapMarker["kind"], string> = { pit: "PIT", sc: "SC", vsc: "VSC" };
 
-const W = 470;
-const H = 232;
-const PAD = { left: 34, right: 10, top: 8, bottom: 30 };
+const FALLBACK_WIDTH = 470;
+const PAD = { left: 40, right: 10, top: 8, bottom: 30 };
 
 const TONES: Record<ProgressionPoint["tone"], string> = {
   blue: "#3b8fe0",
@@ -54,6 +54,9 @@ export function LapTimeChart({
   onPick?: (lap: number, compare: boolean) => void;
 }) {
   const units = useUnits();
+  const [frame, frameWidth] = useElementWidth<HTMLDivElement>(FALLBACK_WIDTH);
+  const W = Math.max(frameWidth, 240);
+  const H = chartHeight(W);
   const plotW = W - PAD.left - PAD.right;
   const plotH = H - PAD.top - PAD.bottom;
   const xDomain = Math.max(xMax, 1);
@@ -89,8 +92,10 @@ export function LapTimeChart({
   const metricName = metric === "lap" ? "Lap time" : metric === "delta" ? "Delta to best" : `Sector ${metric.slice(1)} time`;
 
   return (
-    <div className={styles.chartWrap}>
+    <div ref={frame} className={styles.chartWrap}>
       <svg
+        width={W}
+        height={H}
         viewBox={`0 0 ${W} ${H}`}
         className={styles.chart}
         role="img"

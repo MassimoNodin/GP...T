@@ -3,6 +3,7 @@ import { formatDelta, formatLapTime } from "@/features/review-data/format";
 import { Badge, Card, DeltaPill, PageHeader } from "@/features/ui-foundation/primitives";
 import { EmptyState } from "@/features/ui-foundation/states";
 import { TrackMap } from "@/features/ui-foundation/TrackMap";
+import { TrendChart } from "./TrendChart";
 import type { LibraryRow } from "./library-rows";
 import { personalBests, runningBest, trendPoints, type TrackBests } from "./personal-bests";
 import styles from "./PersonalBests.module.css";
@@ -113,9 +114,6 @@ function TrackCard({ track }: { track: TrackBests }) {
   );
 }
 
-const W = 260;
-const H = 90;
-const PAD = 10;
 
 /**
  * Personal best progression, oldest session on the left; lower is faster.
@@ -128,9 +126,14 @@ function Trend({ track }: { track: TrackBests }) {
     return <p className={styles.trendEmpty}>Progress appears after a second session with timed laps.</p>;
   }
   const running = runningBest(track.trend);
-  const toXY = ([x, y]: [number, number]) => [PAD + x * (W - 2 * PAD), PAD + y * (H - 2 * PAD)] as const;
-  const dots = trendPoints(times).map(toXY);
-  const line = trendPoints(running, times).map(toXY);
+  const line = trendPoints(running, times);
+  const dots = trendPoints(times).map(([x, y], index) => ({
+    key: track.trend[index].row.key,
+    title: `${track.trend[index].row.type.label}: ${formatLapTime(track.trend[index].ms)}`,
+    x,
+    y,
+    best: track.trend[index].ms === track.best.ms,
+  }));
   const first = track.trend[0];
   const change = running[running.length - 1] - first.ms;
   return (
@@ -139,22 +142,11 @@ function Trend({ track }: { track: TrackBests }) {
         Personal best since the first session
         <DeltaPill ms={change}>{formatDelta(change)}</DeltaPill>
       </figcaption>
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        className={styles.trendChart}
-        role="img"
-        aria-label={`Personal best over ${track.trend.length} sessions, from ${formatLapTime(first.ms)} to ${formatLapTime(track.best.ms)}.`}
-      >
-        <polyline points={line.map(([x, y]) => `${x},${y}`).join(" ")} className={styles.trendLine} />
-        {dots.map(([x, y], index) => {
-          const ref = track.trend[index];
-          return (
-            <circle key={ref.row.key} cx={x} cy={y} r={3} className={styles.trendPoint} data-best={ref.ms === track.best.ms || undefined}>
-              <title>{`${ref.row.type.label}: ${formatLapTime(ref.ms)}`}</title>
-            </circle>
-          );
-        })}
-      </svg>
+      <TrendChart
+        label={`Personal best over ${track.trend.length} sessions, from ${formatLapTime(first.ms)} to ${formatLapTime(track.best.ms)}.`}
+        line={line}
+        dots={dots}
+      />
     </figure>
   );
 }

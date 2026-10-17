@@ -273,14 +273,12 @@
 
 .chart {
   display: block;
-  width: 100%;
-  height: auto;
   overflow: visible;
 }
 
 .axis {
   fill: var(--chart-axis);
-  font-size: 9.5px;
+  font-size: 11px;
   font-family: inherit;
 }
 

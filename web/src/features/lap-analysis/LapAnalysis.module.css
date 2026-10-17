@@ -266,10 +266,13 @@
   padding: 12px 14px 8px;
 }
 
+.telemetryFrame {
+  width: 100%;
+  min-width: 0;
+}
+
 .telemetry {
   display: block;
-  width: 100%;
-  height: auto;
 }
 
 /* Real sessions without measured traces */

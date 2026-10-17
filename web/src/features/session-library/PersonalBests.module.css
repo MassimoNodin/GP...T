@@ -145,11 +145,13 @@
   font-size: 11.5px;
 }
 
+.trendFrame {
+  width: 100%;
+  margin-top: 6px;
+}
+
 .trendChart {
   display: block;
-  width: 100%;
-  height: auto;
-  margin-top: 6px;
 }
 
 .trendLine {

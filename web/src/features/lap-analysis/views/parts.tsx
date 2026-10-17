@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
 import { Bone } from "@/features/route-states/Skeleton";
 import { EmptyState, InlineAlert } from "@/features/ui-foundation/states";
 import { Button } from "@/features/ui-foundation/primitives";
@@ -25,22 +24,6 @@ export function Swatch({ color }: { color: string }) {
       <rect width="10" height="10" rx="2" fill={color} />
     </svg>
   );
-}
-
-/** Width in px of an element, tracked with a ResizeObserver; `fallback` until measured. */
-export function useElementWidth<T extends HTMLElement>(fallback = 720): [RefObject<T | null>, number] {
-  const ref = useRef<T>(null);
-  const [width, setWidth] = useState(fallback);
-  useEffect(() => {
-    const element = ref.current;
-    if (!element || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry) setWidth(Math.round(entry.contentRect.width));
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-  return [ref, width];
 }
 
 export const PROCESS_BODY = "Processing reads this lap from the recorded journal. It takes a few seconds and does not change the recording.";

@@ -10,7 +10,7 @@ import { valueAt, type ChannelKey, type DistanceRange, type LapTrace } from "../
 import { MeasuredCharts } from "../MeasuredCharts";
 import { formatRange } from "../regions";
 import type { RowKey } from "../TelemetryCharts";
-import { LegendDot, useElementWidth } from "./parts";
+import { LegendDot } from "./parts";
 import chartStyles from "../LapAnalysis.module.css";
 import styles from "../Views.module.css";
 
@@ -111,7 +111,6 @@ export function TelemetryView() {
   const { target, reference, targetTrace, referenceTrace, compare, delta, cursor, pinned, axis, brush, setBrush, range, selection, setSelection } =
     useAnalysis();
   const [hidden, setHidden] = useState<RowKey[]>([]);
-  const [frame, width] = useElementWidth<HTMLDivElement>(720);
 
   const hasGear =
     (targetTrace?.state === "available" && !!targetTrace.channels.gear) ||
@@ -180,8 +179,8 @@ export function TelemetryView() {
           )}
         </output>
       )}
-      <div ref={frame}>
-        <MeasuredCharts rows={shown} zoom={clamped} band={null} interactive width={Math.min(1400, Math.max(560, width))} rowHeights={ROW_HEIGHTS} />
+      <div>
+        <MeasuredCharts rows={shown} zoom={clamped} band={null} interactive rowHeights={ROW_HEIGHTS} />
       </div>
       {axis && targetTrace?.state === "available" && <RangeStrip length={axis.to} brush={clamped} onBrush={(next) => setBrush(next)} />}
     </Card>

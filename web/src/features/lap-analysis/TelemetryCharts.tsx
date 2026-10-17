@@ -4,10 +4,11 @@ import { useId, useRef, useState, type KeyboardEvent, type PointerEvent } from "
 import { deltaExtent, isDelta, signedAreas, type DeltaSeries } from "./delta";
 import { valueAt, type ChannelKey, type ChannelRuns, type DistanceRange } from "./lap-telemetry";
 import { referenceTraces, type Trace } from "./traces";
+import { useElementWidth } from "@/features/ui-foundation/chart-frame";
 import { MPH_PER_KMH, useUnits, type Units } from "@/features/ui-foundation/units";
 import styles from "./LapAnalysis.module.css";
 
-const DEFAULT_WIDTH = 720;
+const FALLBACK_WIDTH = 720;
 const LABEL_W = 92;
 const AXIS_W = 30;
 const RIGHT = 8;
@@ -84,7 +85,6 @@ export function TelemetryCharts({
   channels,
   measured,
   delta,
-  width = DEFAULT_WIDTH,
   rowHeights,
   cursor,
   onCursor,
@@ -100,8 +100,6 @@ export function TelemetryCharts({
   measured?: MeasuredSeries;
   /** Time delta drawn in the "delta" row when that row is listed in `channels`. */
   delta?: DeltaSeries | null;
-  /** Drawing width in px (the SVG still scales to its container); default 720. */
-  width?: number;
   rowHeights?: Partial<Record<RowKey, number>>;
   /** Lap distance of the cursor line in metres, or null. */
   cursor?: number | null;
@@ -115,6 +113,8 @@ export function TelemetryCharts({
   const clipId = useId();
   const units = useUnits();
   const svgRef = useRef<SVGSVGElement>(null);
+  const [frame, frameWidth] = useElementWidth<HTMLDivElement>(FALLBACK_WIDTH);
+  const width = Math.max(frameWidth, 320);
   const [drag, setDrag] = useState<{ start: number; now: number } | null>(null);
   const plotLeft = LABEL_W + AXIS_W;
   const plotW = width - plotLeft - RIGHT;
@@ -215,8 +215,11 @@ export function TelemetryCharts({
     label ?? `Telemetry comparison from ${Math.round(from)} to ${Math.round(to)} metres: ${names}. Target lap in blue${compared}`;
 
   return (
+    <div ref={frame} className={styles.telemetryFrame}>
     <svg
       ref={svgRef}
+      width={width}
+      height={H}
       viewBox={`0 0 ${width} ${H}`}
       className={styles.telemetry}
       role="img"
@@ -357,5 +360,6 @@ export function TelemetryCharts({
         {channels.includes("delta") && isDelta(delta) ? "Distance (m) · Delta (s), derived from speed" : "Distance (m)"}
       </text>
     </svg>
+    </div>
   );
 }

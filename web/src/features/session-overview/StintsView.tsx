@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { Bone } from "@/features/route-states/Skeleton";
 import { formatAxisLapTime, formatLapTime } from "@/features/review-data/format";
+import { chartHeight, useElementWidth } from "@/features/ui-foundation/chart-frame";
 import { TyreIcon } from "@/features/ui-foundation/icons";
 import { DataTable, type Column } from "@/features/ui-foundation/DataTable";
 import { Card } from "@/features/ui-foundation/primitives";
@@ -188,12 +189,14 @@ function StintTable({ stints, laps }: { stints: OverviewStint[]; laps: OverviewL
   );
 }
 
-const W = 470;
-const H = 232;
-const PAD = { left: 38, right: 10, top: 8, bottom: 30 };
+const FALLBACK_WIDTH = 470;
+const PAD = { left: 42, right: 10, top: 8, bottom: 30 };
 
 /** Lap time against lap in stint, one line per stint in its compound colour (clean laps only). */
 function StintPaceChart({ stints, laps }: { stints: OverviewStint[]; laps: OverviewLap[] }) {
+  const [frame, frameWidth] = useElementWidth<HTMLDivElement>(FALLBACK_WIDTH);
+  const W = Math.max(frameWidth, 240);
+  const H = chartHeight(W);
   const series = stints.map((stint) => ({
     stint,
     points: lapsInStint(stint, laps)
@@ -218,8 +221,8 @@ function StintPaceChart({ stints, laps }: { stints: OverviewStint[]; laps: Overv
   const xStep = xMax > 40 ? 10 : 5;
   const xTicks = [1, ...Array.from({ length: Math.floor(xMax / xStep) }, (_, i) => (i + 1) * xStep)].filter((tick) => tick <= xMax);
   return (
-    <div className={styles.chartWrap}>
-      <svg viewBox={`0 0 ${W} ${H}`} className={styles.chart} role="img" aria-label="Lap times by stint">
+    <div ref={frame} className={styles.chartWrap}>
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className={styles.chart} role="img" aria-label="Lap times by stint">
         {yTicks.map((tick) => (
           <g key={tick}>
             <line x1={PAD.left} x2={W - PAD.right} y1={y(tick)} y2={y(tick)} stroke="var(--chart-grid)" />
