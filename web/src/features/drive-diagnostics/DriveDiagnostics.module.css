@@ -32,7 +32,7 @@
 
 .systemRow {
   display: grid;
-  grid-template-columns: 14px minmax(0, 1.55fr) minmax(0, 1fr) auto;
+  grid-template-columns: 14px minmax(0, 12rem) minmax(5.5rem, 7rem) minmax(0, 1fr);
   align-items: center;
   gap: 0 14px;
   min-height: 43px;
@@ -60,6 +60,11 @@
 
 .systemDetail {
   justify-self: end;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
   color: var(--chart-axis);
   font-size: 11.5px;
   white-space: nowrap;
@@ -67,6 +72,7 @@
 
 .activity {
   grid-column: 3 / 5;
+  justify-self: end;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -622,4 +628,29 @@
   color: var(--muted);
   font-size: 11.5px;
   line-height: 1.5;
+}
+
+/* Narrow screens: label and status share a line, detail wraps beneath. */
+@media (max-width: 560px) {
+  .systemRow {
+    grid-template-columns: 14px minmax(0, 1fr) auto;
+    padding: 8px 0;
+    row-gap: 2px;
+  }
+
+  .systemStatus {
+    text-align: right;
+  }
+
+  .systemDetail {
+    grid-column: 2 / 4;
+    justify-self: start;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .activity {
+    grid-column: 2 / 4;
+    justify-self: start;
+  }
 }
