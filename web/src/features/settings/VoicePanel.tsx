@@ -44,6 +44,8 @@ import { openMic, type MicSession } from "./mic-capture";
 import { Field } from "./shared";
 import { runSpeechTest, type SpeechTestOutcome } from "./speech-test";
 import { UnitsCard } from "./UnitsCard";
+import { SpeechRecognitionCard } from "./SpeechRecognitionCard";
+import { RadioCard } from "./RadioCard";
 import styles from "./Settings.module.css";
 import tabStyles from "./SettingsTabs.module.css";
 
@@ -106,6 +108,8 @@ export function VoicePanel({ audio, requestAccess, micDeviceId, onMicDevice, spe
       />
       <EngineerVoiceCard audio={audio} onShowAssistance={onShowAssistance} />
       <UnitsCard />
+      <SpeechRecognitionCard />
+      <RadioCard />
     </div>
   );
 }
@@ -217,7 +221,7 @@ function MicrophoneCard({
 
   const speechLine =
     speech.state === "ready"
-      ? "Speech recognition: Ready · Local CPU"
+      ? `Speech recognition: Ready · ${speech.rows.find((row) => row.label === "Placement")?.value ?? "Unknown placement"}`
       : speech.state === "unavailable"
         ? "Speech recognition: Not set up on the engine"
         : speech.state === "unreachable"

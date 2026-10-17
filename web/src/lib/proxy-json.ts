@@ -279,7 +279,7 @@ export async function proxyGet(
 }
 
 export type ProxyMutationOptions = {
-  method?: "POST" | "PUT";
+  method?: "POST" | "PUT" | "DELETE";
   /** `json`: forward the bounded JSON request body. `none`: send no body. */
   body?: "json" | "none";
   /** A fixed deadline, or a function of the request body (e.g. longer for future-lap questions). */

@@ -6,6 +6,15 @@ not active development instructions. See README for setup commands.
 
 ## Accepted UI direction (not yet implemented)
 
+The `feat/working-engineer-v1` branch has an agreed
+[engineer acceptance contract](working-engineer-v1-acceptance.md) for proactive
+speech, conversational tracking, post-pit comparisons and standalone wheel/voice
+operation. These are pending requirements, not verified capabilities. Latency
+is reported for user assessment rather than governed by fixed numerical gates.
+
+The [capability mapping and implementation slices](working-engineer-v1-mapping.md)
+identify reusable foundations, missing runtime work and focused baseline checks.
+
 The standalone engineer must work without the website; Drive is radio diagnostics
 and Review is visual-first retained session/lap analysis. The supplied mock replaces
 the old UI as visual reference. See [approved corrections](ui-mock-differences.md)

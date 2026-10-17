@@ -18,6 +18,7 @@ from .pipeline import PipelineResult, TelemetryPipeline
 from .recording.capture import CaptureReader
 from .recording.service import record_udp_capture
 from .recording.udp_replay import replay_udp_capture
+from .recording.journal_export import export_journal_session, list_journal_sessions
 from .sessions.context import SessionContext
 from .analysis.resampling import ResamplingConfig
 from .analysis.comparison_window import optional_distance_window
@@ -251,6 +252,18 @@ async def _replay_udp(args: argparse.Namespace) -> int:
         confirm_idle=args.confirm_idle, dry_run=args.dry_run,
     )
     _json_line(result)
+    return 0
+
+
+def _export_journal(args: argparse.Namespace) -> int:
+    if args.list:
+        for session in list_journal_sessions(args.database):
+            _json_line(session)
+        return 0
+    if args.session_uid is None or args.output is None:
+        raise ValueError("--session-uid and --output are required unless --list is given")
+    _json_line(export_journal_session(args.database, args.session_uid, args.output,
+                                      max_gap_s=args.max_gap, overwrite=args.overwrite))
     return 0
 
 
@@ -584,6 +597,8 @@ def _api(args: argparse.Namespace) -> int:
             engineer_ai_provider=args.engineer_ai_provider,
             codex_executable=args.codex_executable,
             codex_home=args.codex_home,
+            speech_provider=args.speech_provider,
+            openai_api_key_file=args.openai_api_key_file,
         ),
         host="127.0.0.1",
         port=args.port,
@@ -834,10 +849,85 @@ def _geometry_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _radio(args: argparse.Namespace) -> int:
+    try:
+        from .radio.command import run_radio
+    except ImportError as exception:
+        raise ValueError("radio requires app dependencies; install with uv sync --extra app") from exception
+    return run_radio(args)
+
+
+def _radio_scenario(args: argparse.Namespace) -> int:
+    try:
+        from .radio.scenarios import run_scenarios
+    except ImportError as exception:
+        raise ValueError("radio scenarios require app dependencies; install with uv sync --extra app") from exception
+    return run_scenarios(args)
+
+
+def _radio_input(args: argparse.Namespace) -> int:
+    try:
+        from .radio.input_command import run_input
+    except ImportError as exception:
+        raise ValueError("radio input requires app dependencies; install with uv sync --extra app --extra radio") from exception
+    return run_input(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="f1-engineer", description="F1 telemetry capture and replay")
     parser.add_argument("--version", action="version", version=f"f1-engineer {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
+
+    radio = commands.add_parser("radio", help="run the standalone lap radio without a browser",
+                                description="Run the standalone radio. Saved dashboard radio settings override CLI defaults live; CLI values apply only until the first dashboard save.")
+    radio.add_argument("--api-url", default=os.environ.get("F1_ENGINEER_API_URL") or "http://127.0.0.1:8765")
+    radio.add_argument("--token-file", default=os.environ.get("F1_ENGINEER_CONTROL_TOKEN_FILE") or "data/.f1-engineer-control-token")
+    radio.add_argument("--tts-engine", choices=("edge", "windows"), default="edge",
+                       help="speech engine: Edge neural voices (falls back to Windows if unavailable) or Windows voices")
+    radio.add_argument("--voice", help="voice name: Edge neural (default en-AU-WilliamNeural) or installed Windows voice")
+    radio.add_argument("--rate", type=int, default=4, help="speech rate (-10 to 10); 4 is about 1.5x")
+    radio.add_argument("--volume", type=int, default=75, help="speech volume (0 to 100)")
+    radio.add_argument("--poll-interval", type=float, default=0.25, help="backend polling seconds (0.1 to 1)")
+    radio.add_argument("--proactive-mode", choices=("off", "rules", "model"), default="rules",
+                       help="automatic coaching: deterministic rules (default), bounded background model selection, or off")
+    radio.add_argument("--list-voices", action="store_true", help="list installed voices without speaking or contacting the backend")
+    radio.add_argument("--dry-run", action="store_true", help="log proposed speech without audio")
+    radio.add_argument("--once", action="store_true", help="check backend status once without audio")
+    radio.add_argument("--input-settings", default="data/radio-input.json", help="saved wheel button binding; live changes are reloaded")
+    radio.add_argument("--list-audio-devices", action="store_true", help="list microphone/output devices without recording or playing audio")
+    radio.add_argument("--microphone", type=int, help="audio input device index; defaults to the system default")
+    radio.add_argument("--cue-output", type=int, help="listening cue output device index; defaults to the system default")
+    radio.add_argument("--cue-volume", type=float, default=0.08, help="listening cue amplitude (greater than 0, up to 0.3)")
+    radio.add_argument("--capture-seconds", type=float, default=12, help="maximum capture duration (1 to 12 seconds)")
+    radio.add_argument("--capture-test", action="store_true", help="test wheel/console capture and cues without backend access or saving/uploading audio")
+    radio.add_argument("--manual-submit", action="store_true", help="keep voice transcripts as drafts until the console submit command")
+    radio.add_argument("--intent-mode", choices=("luna", "parser"), default="luna",
+                       help="luna: gpt-6-luna interprets requests (says 'Say again' if unavailable); parser: fixed phrases only")
+    radio.add_argument("--answer-mode", choices=("intent", "grounded"), default="intent",
+                       help="grounded: experimental natural answers from verified live evidence; requires luna intent mode")
+    radio.add_argument("--no-speech-hint", action="store_true",
+                       help="do not send driver and corner names to the transcriber as a vocabulary hint")
+    radio.add_argument("--command-file",
+                       help="also read commands appended to this file, e.g. 'say what is my gap' for typed requests through the interpreter")
+    radio.add_argument("--glossary-file", default="data/radio-glossary.toml",
+                       help="optional TOML with [terms] and [mishearings] tables merged into the interpreter glossary")
+    radio.add_argument("--log-file", help="append timestamped JSONL diagnostics with bounded rotation; includes spoken text, not raw audio or credentials")
+    radio.set_defaults(handler=_radio)
+
+    radio_scenario = commands.add_parser("radio-scenario", help="replay offline synthetic proactive radio scenarios without hardware or model access")
+    radio_scenario.add_argument("--scenario", choices=("all", "closing", "pace", "quiet", "session-change", "mid-lap", "busy-radio"), default="all")
+    radio_scenario.add_argument("--log-file", help="optional timestamped JSONL scenario log")
+    radio_scenario.set_defaults(handler=_radio_scenario)
+
+    radio_input = commands.add_parser("radio-input", help="list, learn, change or test the listening button without audio")
+    radio_input.add_argument("--input-settings", default="data/radio-input.json", help="local wheel binding file")
+    input_actions = radio_input.add_subparsers(dest="input_action", required=True)
+    for action in ("list", "show", "clear", "test"):
+        input_actions.add_parser(action).set_defaults(handler=_radio_input)
+    input_bind = input_actions.add_parser("bind", help="press a button on the selected device to save its assignment")
+    input_bind.add_argument("--device-index", type=int, required=True, help="current device index from radio-input list")
+    input_bind.add_argument("--timeout", type=float, default=30, help="button learning timeout in seconds (1 to 120)")
+    input_bind.set_defaults(handler=_radio_input)
 
     record = commands.add_parser("record", help="capture raw F1 UDP telemetry")
     record.add_argument("--output", required=True, help="destination .f1ecap file")
@@ -872,6 +962,17 @@ def build_parser() -> argparse.ArgumentParser:
     replay_udp.add_argument("--confirm-idle", action="store_true", help="confirm F1 is off and no other sender is using this receiver")
     replay_udp.add_argument("--dry-run", action="store_true", help="validate and summarize without sending packets")
     replay_udp.set_defaults(handler=_replay_udp)
+
+    export = commands.add_parser(
+        "export-journal", help="export a live session from the evidence journal as a replayable capture")
+    export.add_argument("--database", required=True, help="evidence database (*-evidence.sqlite3), opened read-only")
+    export.add_argument("--list", action="store_true", help="list journaled sessions, longest first")
+    export.add_argument("--session-uid", help="game session UID to export (see --list)")
+    export.add_argument("--output", help="new .f1ecap file to write")
+    export.add_argument("--max-gap", type=float, default=None,
+                        help="shorten idle gaps longer than this many seconds (packet bytes and order unchanged)")
+    export.add_argument("--overwrite", action="store_true", help="replace an existing output file")
+    export.set_defaults(handler=_export_journal)
 
     import_command = commands.add_parser("import", help="import a capture into SQLite and Parquet")
     import_command.add_argument("capture", help="source .f1ecap capture")
@@ -1048,6 +1149,10 @@ def build_parser() -> argparse.ArgumentParser:
     api.add_argument("--codex-executable", default="codex", help="Codex CLI executable path")
     api.add_argument("--codex-home", default=None,
                      help="isolated subscription login profile; defaults beside the database")
+    api.add_argument("--speech-provider", choices=("local", "openai"), default="local",
+                     help="radio transcription: local whisper.cpp, or OpenAI gpt-transcribe (separately billed API key)")
+    api.add_argument("--openai-api-key-file", default=None,
+                     help="owner-only file holding the OpenAI API key; defaults to .openai-api-key beside the database")
     api.add_argument("--detail-profile", choices=("full", "demand_v1"), default="full",
                      help="opt in to demand-driven live opponent detail")
     api.add_argument("--recordings-root", default="recordings", help="folder containing local .f1ecap files")

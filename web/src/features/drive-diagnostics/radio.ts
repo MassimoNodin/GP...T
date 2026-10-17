@@ -35,6 +35,7 @@ export type RadioRow = {
   /** Backend event id; null for reference (fixture) rows. */
   seq: number | null;
   kind: RadioKind;
+  source?: EngineerEvent["source"];
   title: string;
   /** `HH:MM` in the display time zone. */
   time: string;
@@ -204,6 +205,10 @@ export const LAP_RULE_LIMITATION =
   "Lap results come from published lap attempts; pit messages describe the completed lap, not the moment of pit entry.";
 
 function triggerFor(event: EngineerEvent, pairing: Pairing): string {
+  if (event.source === "radio") {
+    if (event.kind === "question") return "Asked on the radio";
+    if (event.kind !== "issue") return "Spoken on the radio";
+  }
   const rule = detailString(event, "rule");
   if (event.source === "live_rules") {
     if (rule && Object.hasOwn(RULE_TRIGGER, rule)) return RULE_TRIGGER[rule];
@@ -261,6 +266,10 @@ function evidenceFor(event: EngineerEvent): string[] {
 }
 
 function outputFor(event: EngineerEvent, playback: PlaybackOutcome | undefined): string {
+  if (event.source === "radio") {
+    if (event.kind === "question") return "Asked on the radio";
+    if (event.kind !== "issue") return "Spoken on the radio";
+  }
   if (event.kind === "question") return "Sent to the engineer";
   if (event.kind === "issue") return "Logged for review";
   return playback === "played" ? "Spoken on this computer" : "Shown in Radio History";
@@ -296,6 +305,7 @@ function toRadioRow(event: EngineerEvent, pairing: Pairing, context: RadioContex
   return {
     id: `event-${event.id}`,
     seq: event.id,
+    source: event.source,
     kind: event.kind,
     title: KIND_TITLE[event.kind],
     time: formatClock(event.createdAtUtc, { timeZone: context.timeZone }),
@@ -345,26 +355,31 @@ export function fixtureRadioRows(fixture: readonly RadioEvent[]): RadioRow[] {
 
 /* ------------------------------------------------------- filters and counts */
 
-export type RadioFilter = "all" | RadioKind;
+export type RadioFilter = "all" | "radio" | RadioKind;
 
 export const FILTER_ITEMS: ReadonlyArray<{ key: RadioFilter; label: string }> = [
   { key: "all", label: "All" },
+  { key: "radio", label: "Radio" },
   { key: "question", label: "Questions" },
   { key: "response", label: "Responses" },
   { key: "proactive", label: "Proactive" },
   { key: "issue", label: "Issues" },
 ];
 
-export const FILTER_EMPTY: Record<RadioKind, string> = {
+export const FILTER_EMPTY: Record<RadioKind | "radio", string> = {
+  radio: "No radio exchanges yet.",
   question: "No questions yet.",
   response: "No responses yet.",
   proactive: "No proactive messages yet.",
   issue: "No issues yet.",
 };
 
-export function radioCounts(rows: ReadonlyArray<{ kind: RadioKind }>): Record<RadioFilter, number> {
-  const counts: Record<RadioFilter, number> = { all: rows.length, question: 0, response: 0, proactive: 0, issue: 0 };
-  for (const row of rows) counts[row.kind] += 1;
+export function radioCounts(rows: ReadonlyArray<{ kind: RadioKind; source?: EngineerEvent["source"] }>): Record<RadioFilter, number> {
+  const counts: Record<RadioFilter, number> = { all: rows.length, radio: 0, question: 0, response: 0, proactive: 0, issue: 0 };
+  for (const row of rows) {
+    counts[row.kind] += 1;
+    if (row.source === "radio") counts.radio += 1;
+  }
   return counts;
 }
 

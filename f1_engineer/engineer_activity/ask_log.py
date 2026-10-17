@@ -95,6 +95,10 @@ class AskActivityLog:
 
         return decorate
 
+    def question_id(self, request: Any) -> int | None:
+        ticket = self._ticket(request)
+        return ticket.question_id if ticket is not None else None
+
     def _lap(self, session_id: str | None, target: str | None) -> int | None:
         if self.evidence_store is None or session_id is None or target is None:
             return None
@@ -134,6 +138,8 @@ class AskActivityLog:
         try:
             status_code, body = _outcome(result)
             if status_code == 200 and isinstance(body, dict) and isinstance(body.get("data"), dict):
+                if ticket.source == "radio":
+                    return
                 data = body["data"]
                 message = data.get("message")
                 detail = {key: data[key] for key in ("status", "reason", "route", "focus")

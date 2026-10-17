@@ -56,7 +56,7 @@ export function RadioHistory({
   feed,
   readAloud,
 }: RadioHistoryProps) {
-  const visible = filter === "all" ? rows : rows.filter((row) => row.kind === filter);
+  const visible = filter === "all" ? rows : rows.filter((row) => filter === "radio" ? row.source === "radio" : row.kind === filter);
   const empty = rows.length === 0;
   const items = FILTER_ITEMS.map((item) => ({ ...item, count: counts[item.key] }));
 
@@ -139,7 +139,7 @@ export function RadioHistory({
                     </span>
                     <span className={styles.radioKind} data-kind={row.kind}>
                       <KindIcon kind={row.kind} />
-                      {KIND_LABEL[row.kind]}
+                      {row.source === "radio" ? "Radio" : KIND_LABEL[row.kind]}
                     </span>
                     <span className={styles.radioText}>{row.text}</span>
                     <span className={styles.radioOutcome}>{row.outcome}</span>

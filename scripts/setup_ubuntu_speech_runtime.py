@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -11,13 +12,13 @@ import sys
 import tempfile
 import urllib.request
 
-from f1_engineer.analysis.local_speech import LocalSpeechRuntime, _runtime_identity
+from f1_engineer.analysis.local_speech import LocalSpeechRuntime, SPEECH_MODELS, _runtime_identity
 
 RUNTIME_VERSION = "1.9.3"
 SOURCE_COMMIT = "371b5a7561823ab2bb32142d2751e35e7534727b"
 MODEL_SHA1 = "c78c86eb1a8faa21b369bcd33207cc90d64ae9df"
 MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"
-MAX_MODEL_BYTES = 128 * 1024 * 1024
+LARGE_V3_SHA1 = "ad82bf6a9043ceed055076d0fd39f5f186ff8062"
 
 
 def file_digest(path: Path, algorithm: str = "sha256") -> str:
@@ -28,46 +29,51 @@ def file_digest(path: Path, algorithm: str = "sha256") -> str:
     return digest.hexdigest()
 
 
-def download_model(model: Path) -> None:
+def download_model(model: Path, model_name: str = "tiny.en") -> None:
+    checksum = MODEL_SHA1 if model_name == "tiny.en" else LARGE_V3_SHA1
+    url = MODEL_URL if model_name == "tiny.en" else "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin"
+    maximum_bytes = SPEECH_MODELS[model_name]
     if model.exists():
-        if model.is_symlink() or file_digest(model, "sha1") != MODEL_SHA1:
-            raise RuntimeError("Existing tiny.en model does not match the pinned checksum")
+        if model.is_symlink() or file_digest(model, "sha1") != checksum:
+            raise RuntimeError(f"Existing {model_name} model does not match the pinned checksum")
         return
     with tempfile.NamedTemporaryFile(dir=model.parent, delete=False) as stream:
         temporary = Path(stream.name)
         try:
-            with urllib.request.urlopen(MODEL_URL, timeout=60) as response:
+            with urllib.request.urlopen(url, timeout=60) as response:
                 total = 0
                 while chunk := response.read(1024 * 1024):
                     total += len(chunk)
-                    if total > MAX_MODEL_BYTES:
+                    if total > maximum_bytes:
                         raise RuntimeError("Model download exceeds the runtime size limit")
                     stream.write(chunk)
             stream.close()
-            if file_digest(temporary, "sha1") != MODEL_SHA1:
-                raise RuntimeError("Downloaded tiny.en model does not match the pinned checksum")
+            if file_digest(temporary, "sha1") != checksum:
+                raise RuntimeError(f"Downloaded {model_name} model does not match the pinned checksum")
             temporary.replace(model)
         finally:
             stream.close()
             temporary.unlink(missing_ok=True)
 
 
-def write_pin(pin: Path, executable: Path, model: Path, accept_update: bool) -> str:
+def write_pin(pin: Path, executable: Path, model: Path, accept_update: bool, *, model_name: str = "tiny.en", device: str = "cpu") -> str:
     executable_digest = file_digest(executable)
     model_digest = file_digest(model)
-    runtime_id = _runtime_identity(RUNTIME_VERSION, executable_digest, model_digest, ())
+    runtime_id = _runtime_identity(RUNTIME_VERSION, executable_digest, model_digest, (), model_name=model_name, device=device)
     manifest = {
         "schema_version": 1,
         "runtime": "whisper.cpp",
         "runtime_version": RUNTIME_VERSION,
         "executable_path": str(executable.resolve()),
         "executable_sha256": executable_digest,
-        "model_name": "tiny.en",
+        "model_name": model_name,
         "model_path": str(model.resolve()),
         "model_sha256": model_digest,
         "dependencies": [],
         "runtime_id": runtime_id,
     }
+    if device != "cpu":
+        manifest["device"] = device
     if pin.is_symlink():
         raise RuntimeError("Refusing to replace a symlinked runtime pin")
     if pin.exists() and not accept_update:
@@ -103,24 +109,38 @@ def restore_generated_version(path: Path, original: bytes) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build and pin the Ubuntu CPU speech runtime without sudo")
+    parser = argparse.ArgumentParser(description="Build and pin the Ubuntu CPU or CUDA speech runtime")
     parser.add_argument("--database", type=Path, default=Path("data/f1-engineer.sqlite3"))
     parser.add_argument("--install-root", type=Path, default=Path.home() / ".local/share/GP...T/speech-runtime/v1.9.3")
     parser.add_argument("--cmake", default="cmake")
     parser.add_argument("--jobs", type=int, choices=range(1, 9), default=2)
     parser.add_argument("--accept-runtime-update", action="store_true")
+    parser.add_argument("--model", choices=tuple(SPEECH_MODELS), default="tiny.en")
+    parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
+    parser.add_argument("--cuda-architectures", default="61")
+    parser.add_argument("--cuda-host-compiler")
     args = parser.parse_args()
     if not sys.platform.startswith("linux"):
         parser.error("Use setup_local_speech_runtime.ps1 on Windows")
     for command in ("git", "g++", args.cmake):
         if not shutil.which(command):
             parser.error(f"Missing build tool: {command}")
+    if args.device == "cuda":
+        if not shutil.which("nvcc"):
+            parser.error("Missing CUDA toolkit: nvcc")
+        if not re.fullmatch(r"[0-9]+(?:;[0-9]+)*", args.cuda_architectures):
+            parser.error("Invalid CUDA architectures")
+        if args.cuda_host_compiler and not shutil.which(args.cuda_host_compiler):
+            parser.error("Missing CUDA host compiler")
     root = args.install_root.expanduser().absolute()
     if root.is_symlink():
         parser.error("Refusing a symlinked install root")
     root.mkdir(parents=True, exist_ok=True)
     source = root / f"source-{SOURCE_COMMIT[:12]}"
     build = root / f"build-{SOURCE_COMMIT[:12]}"
+    if args.device == "cuda":
+        architecture_tag = args.cuda_architectures.replace(";", "-")
+        build = root / f"build-{SOURCE_COMMIT[:12]}-cuda-{architecture_tag}"
     model_root = root / "models"
     for directory in (source, build, model_root):
         if directory.is_symlink():
@@ -136,23 +156,29 @@ def main() -> None:
         raise RuntimeError("Speech source must be the exact pinned commit with a clean checkout")
     generated_package = source / "bindings/javascript/package.json"
     original_package = generated_package.read_bytes()
+    cuda_options = []
+    if args.device == "cuda":
+        cuda_options = [f"-DCMAKE_CUDA_ARCHITECTURES={args.cuda_architectures}", "-DGGML_CUDA_FA=OFF"]
+        if args.cuda_host_compiler:
+            cuda_options.append(f"-DCMAKE_CUDA_HOST_COMPILER={args.cuda_host_compiler}")
     try:
         subprocess.run([
             args.cmake, "-S", str(source), "-B", str(build),
             "-DWHISPER_BUILD_TESTS=OFF", "-DWHISPER_BUILD_EXAMPLES=ON", "-DWHISPER_FFMPEG=OFF",
-            "-DGGML_NATIVE=OFF", "-DGGML_CUDA=OFF", "-DGGML_OPENCL=OFF", "-DGGML_VULKAN=OFF",
+            "-DGGML_NATIVE=OFF", f"-DGGML_CUDA={'ON' if args.device == 'cuda' else 'OFF'}", "-DGGML_OPENCL=OFF", "-DGGML_VULKAN=OFF",
             "-DGGML_OPENMP=OFF", "-DBUILD_SHARED_LIBS=OFF", "-DCMAKE_BUILD_TYPE=Release",
+            *cuda_options,
         ], check=True)
     finally:
         restore_generated_version(generated_package, original_package)
     subprocess.run([args.cmake, "--build", str(build), "--target", "whisper-cli", "--parallel", str(args.jobs)], check=True)
     executable = build / "bin/whisper-cli"
     model_root.mkdir(exist_ok=True)
-    model = model_root / "ggml-tiny.en.bin"
-    download_model(model)
-    pin = args.database.expanduser().absolute().parent / ".f1-engineer-whisper-pin.json"
-    runtime_id = write_pin(pin, executable, model, args.accept_runtime_update)
-    print(f"Pinned CPU speech runtime: {pin}\nRuntime ID: {runtime_id}")
+    model = model_root / f"ggml-{args.model}.bin"
+    download_model(model, args.model)
+    pin = args.database.expanduser().absolute().parent / f".f1-engineer-whisper-pin.{args.model}.{args.device}.json"
+    runtime_id = write_pin(pin, executable, model, args.accept_runtime_update, model_name=args.model, device=args.device)
+    print(f"Pinned {args.device.upper()} speech runtime ({args.model}): {pin}\nRuntime ID: {runtime_id}")
 
 
 if __name__ == "__main__":

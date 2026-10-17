@@ -13,6 +13,8 @@ from ..udp.isolated import IsolatedUDPSource
 from .coordinator import PUBLICATION_BATCH_ROWS, PUBLICATION_INTERVAL_S, SessionCoordinator
 from .evidence import EvidenceStore
 from .detail_demand import DetailCommand, DetailDemandQueue
+from .engineer_facts import LiveEngineerFacts, qualify_snapshot
+from .region_capture import RegionCaptureStore
 
 
 class LiveSessionRuntime:
@@ -32,7 +34,9 @@ class LiveSessionRuntime:
             raise ValueError("invalid detail profile")
         self.detail_profile = detail_profile
         self.detail_tasks = DetailDemandQueue()
+        self.region_captures = RegionCaptureStore()
         self._detail_status_lock = threading.Lock()
+        self._engineer_snapshot_cache = LiveEngineerFacts().snapshot()
         self._detail_status_cache: dict[str, Any] = {
             "profile": detail_profile,
             "policy_version": "demand-v1" if detail_profile == "demand_v1" else None,
@@ -66,6 +70,9 @@ class LiveSessionRuntime:
         if self._thread is not None and self._thread.is_alive():
             raise RuntimeError("runtime already started")
         self._stop.clear()
+        self.region_captures.invalidate("region_listener_started")
+        with self._detail_status_lock:
+            self._engineer_snapshot_cache = LiveEngineerFacts().snapshot()
         self._ready.clear()
         self.error = None
         self.processed = 0
@@ -88,6 +95,12 @@ class LiveSessionRuntime:
             self._thread.join(timeout=15)
             if self._thread.is_alive():
                 raise RuntimeError("live persistence owner did not stop")
+        self.region_captures.invalidate("region_listener_stopped")
+
+    def engineer_snapshot(self) -> dict[str, Any]:
+        with self._detail_status_lock:
+            return qualify_snapshot(self._engineer_snapshot_cache, now_ns=time.perf_counter_ns(),
+                                    stale_after_s=self.stale_after_s, runtime_state=self.state)
 
     def status(self) -> dict[str, Any]:
         source = self.source
@@ -149,14 +162,17 @@ class LiveSessionRuntime:
                 executor, lambda: SessionCoordinator(
                     self.store, f"udp:{self.host}:{self.port}",
                     detail_profile=self.detail_profile, detail_demand_queue=self.detail_tasks,
+                    region_captures=self.region_captures,
                 )
             )
             async def persist(function, *arguments):
                 return await loop.run_in_executor(executor, function, *arguments)
             async def update_detail_status():
                 snapshot = await persist(coordinator.detail_status)
+                engineer_snapshot = await persist(coordinator.engineer_snapshot)
                 with self._detail_status_lock:
                     self._detail_status_cache = snapshot
+                    self._engineer_snapshot_cache = engineer_snapshot
             first_pending_ns = None
             pending_since = None
 

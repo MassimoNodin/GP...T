@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import json
 import os
 import re
 import sqlite3
 import threading
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Generic, Literal, TypeVar
@@ -17,6 +18,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
+
+from .request_trace import RequestTraceMiddleware
+from .radio_activity_routes import register_radio_activity_routes
 
 from ..analysis.reference_selection import ReferenceKind, ReferenceRequest, select_reference
 from ..analysis.session_comparison import compare_session_laps
@@ -28,13 +32,14 @@ from ..processing.evidence import EvidenceStore, EvidenceUnavailable
 from ..processing.materialization import HistoricalMaterializer, MaterializedEvidenceProvider
 from ..processing.legacy import archived_session_page
 from ..processing.runtime import LiveSessionRuntime
+from ..processing.engineer_facts import LiveEngineerFacts
 from ..processing.detail_demand import DetailCommand, DetailDemandQueue
 from ..analysis.ai_admission import AIGateLease, PROCESS_ENGINEER_AI_GATE
 from ..analysis.local_speech import (
-    LocalSpeechRuntime,
     LocalSpeechUnavailable,
     SPEECH_MAX_AUDIO_BYTES,
     SPEECH_MAX_RESPONSE_BYTES,
+    valid_speech_hint,
     validate_canonical_wav,
 )
 from ..analysis.session_best import assess_session_best
@@ -43,6 +48,11 @@ from ..analysis.engineer_query import query_engineer_evidence
 from ..analysis.engineer_ask_service import answer_engineer_question
 from ..analysis.ollama_runtime import OllamaRuntime
 from ..analysis.codex_runtime import CodexRuntime
+from ..analysis.proactive_advisor import ProactiveAdvisor
+from ..radio.intents import MAX_CONTEXT_BYTES, MAX_TRANSCRIPT_BYTES, parse_context
+from ..radio.proactive_selection import MAX_SELECTION_BYTES, parse_selection_context
+from ..radio.answers import build_evidence, evidence_unchanged, parse_answer
+from ..radio.activity_reporter import session_from_scope
 from ..analysis.engineer_runtime import EngineerRuntime, EngineerRuntimeUnavailable
 from ..analysis.race_diagnostics import build_session_race_diagnostics
 from ..analysis.observation_set import build_observation_set
@@ -133,6 +143,9 @@ from ..engineer_activity import build_engineer_activity
 from .engineer_activity_routes import register_engineer_activity_routes
 from ..analysis.engineer_preferences import EngineerPreferencesStore, answer_style, enabled_topics
 from .engineer_preferences_routes import register_engineer_preferences_routes
+from .speech_routes import register_speech_routes
+from ..analysis.speech_router import SpeechRouter
+from .radio_routes import register_radio_routes
 from .lap_enrichment_routes import register_lap_enrichment_routes
 from .session_summary_routes import register_session_summary_routes
 from .track_region_routes import register_track_region_routes
@@ -1021,6 +1034,8 @@ def create_app(
     engineer_ai_provider: Literal["codex", "ollama"] = "codex",
     codex_executable: str = "codex",
     codex_home: str | Path | None = None,
+    speech_provider: Literal["local", "openai"] = "local",
+    openai_api_key_file: str | Path | None = None,
     automatic_acquisition: bool = True,
     evidence_database_path: str | Path | None = None,
     detail_profile: str = "full",
@@ -1088,46 +1103,59 @@ def create_app(
         if engineer_ai_provider == "codex"
         else OllamaRuntime(configured_database_path.parent / ".f1-engineer-ollama-model.json")
     )
-    local_speech_runtime = LocalSpeechRuntime(
-        configured_database_path.parent / ".f1-engineer-whisper-pin.json",
-        configured_database_path.parent / ".f1-engineer-speech",
+    if speech_provider not in ("local", "openai"):
+        raise ValueError("speech_provider_invalid")
+    local_speech_runtime = SpeechRouter(
+        configured_database_path.parent, provider=speech_provider, key_file=openai_api_key_file,
     )
     engineer_ask_lock = asyncio.Lock()
+    proactive_advisor = ProactiveAdvisor(selected_engineer_runtime)
     engineer_activity = build_engineer_activity(configured_database_path, evidence_store, live_runtime)
     engineer_preferences_store = EngineerPreferencesStore.beside_database(configured_database_path)
     engineer_activity.set_topics(lambda: enabled_topics(engineer_preferences_store.current()))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        import_controller.start()
-        recording_upload_service.start()
-        recording_controller.start()
-        replay_controller.start()
-        if live_runtime:
-            await run_in_threadpool(live_runtime.start)
-            engineer_activity.start()
-        import_controller.enable_dispatch()
-        await run_in_threadpool(local_speech_runtime.cleanup_stale_temporary_files)
-        app.state.import_controller = import_controller
-        app.state.recording_controller = recording_controller
-        app.state.replay_controller = replay_controller
-        app.state.recording_upload_service = recording_upload_service
-        app.state.engineer_runtime = selected_engineer_runtime
-        app.state.ollama_runtime = selected_engineer_runtime
-        app.state.local_speech_runtime = local_speech_runtime
-        app.state.live_session_runtime = live_runtime
-        app.state.evidence_store = evidence_store
-        try:
-            yield
-        finally:
+        async with AsyncExitStack() as cleanup:
+            cleanup.callback(import_controller.close)
+            import_controller.start()
+            cleanup.push_async_callback(run_in_threadpool, recording_upload_service.close)
+            recording_upload_service.start()
+            cleanup.callback(recording_controller.close)
+            recording_controller.start()
+            cleanup.callback(replay_controller.close)
+            replay_controller.start()
             if live_runtime:
-                await run_in_threadpool(engineer_activity.stop)
-                await run_in_threadpool(live_runtime.close)
-            import_controller.stop_dispatch()
-            await run_in_threadpool(recording_upload_service.close)
-            replay_controller.close()
-            recording_controller.close()
-            import_controller.close()
+                cleanup.push_async_callback(run_in_threadpool, live_runtime.close)
+                await run_in_threadpool(live_runtime.start)
+                cleanup.push_async_callback(run_in_threadpool, engineer_activity.stop)
+                engineer_activity.start()
+            cleanup.callback(import_controller.stop_dispatch)
+            import_controller.enable_dispatch()
+            close_speech = getattr(local_speech_runtime, "close", None)
+            if close_speech is not None:
+                cleanup.push_async_callback(close_speech)
+            await run_in_threadpool(local_speech_runtime.cleanup_stale_temporary_files)
+            start_speech = getattr(local_speech_runtime, "start", None)
+            if start_speech is not None:
+                await start_speech()
+            app.state.import_controller = import_controller
+            app.state.recording_controller = recording_controller
+            app.state.replay_controller = replay_controller
+            app.state.recording_upload_service = recording_upload_service
+            app.state.engineer_runtime = selected_engineer_runtime
+            app.state.ollama_runtime = selected_engineer_runtime
+            app.state.local_speech_runtime = local_speech_runtime
+            app.state.live_session_runtime = live_runtime
+            app.state.evidence_store = evidence_store
+            close_runtime = getattr(selected_engineer_runtime, "close", None)
+            if close_runtime is not None:
+                cleanup.push_async_callback(close_runtime)
+            start_runtime = getattr(selected_engineer_runtime, "start", None)
+            if start_runtime is not None:
+                await start_runtime()
+            cleanup.push_async_callback(proactive_advisor.preempt)
+            yield
 
     app = FastAPI(
         title="F1 Race Engineer API",
@@ -1136,6 +1164,8 @@ def create_app(
         lifespan=lifespan,
     )
 
+    register_radio_activity_routes(app, engineer_activity.store, control_token)
+
     if require_auth:
         @app.middleware("http")
         async def authenticate_request(request: Request, call_next):
@@ -1143,9 +1173,89 @@ def create_app(
                 return _api_error(403, "api_not_authorized")
             return await call_next(request)
 
+    if os.environ.get("F1_ENGINEER_TRACE_REQUESTS") == "1":
+        app.add_middleware(RequestTraceMiddleware)
+
     @app.get("/api/v2/session-evidence/status")
     def session_evidence_status():
         return live_runtime.status() if live_runtime else {"state": "disabled", "detail_processing": {"profile": "disabled"}}
+
+    @app.get("/api/v2/engineer/live")
+    def engineer_live_facts(request: Request):
+        if not _authorized(request.headers.get("authorization"), control_token):
+            return _api_error(403, "engineer_control_not_authorized")
+        if live_runtime is None:
+            snapshot = LiveEngineerFacts().snapshot()
+            snapshot["reason"] = "live_runtime_disabled"
+        else:
+            snapshot = live_runtime.engineer_snapshot()
+        snapshot["settings"] = app.state.radio_settings_block()
+        return {"data": snapshot}
+
+    def region_owner_available(binding, opponent, owner_id):
+        if (live_runtime is None or live_runtime.detail_profile != "demand_v1"
+                or not isinstance(binding, dict) or not isinstance(binding.get("scope"), dict)
+                or not isinstance(opponent, dict) or not isinstance(owner_id, str)
+                or not isinstance(binding.get("session_id"), str)):
+            return False
+        owner = live_runtime.detail_task(owner_id)
+        if (owner is None or owner.state != "active" or owner.task_id != owner_id
+                or owner.session_id != binding["session_id"]):
+            return False
+        targets = live_runtime.detail_targets(binding["session_id"])
+        matches = [target for target in (targets or ()) if target.get("binding_id") == owner.binding_id]
+        return (len(matches) == 1 and matches[0].get("is_player") is False
+                and type(matches[0].get("car_index")) is int
+                and matches[0]["car_index"] == opponent.get("car_index")
+                and type(matches[0].get("tenure_ordinal")) is int
+                and matches[0]["tenure_ordinal"] == opponent.get("tenure_ordinal")
+                and matches[0].get("participant_identity_fingerprint") == opponent.get("participant_identity_fingerprint")
+                and matches[0].get("epoch") == binding["scope"].get("epoch")
+                and matches[0].get("packet_format") == binding["scope"].get("packet_format"))
+
+    @app.post("/api/v2/engineer/region-captures/{lease_id}")
+    async def arm_region_capture(lease_id: str, request: Request):
+        if not _authorized(request.headers.get("authorization"), control_token):
+            return _api_error(403, "engineer_control_not_authorized")
+        if live_runtime is None:
+            return _api_error(409, "region_runtime_disabled")
+        try:
+            body = json.loads(await _read_limited_body(request, 4096))
+        except (_EngineerRequestBodyLimitExceeded, ValueError, UnicodeError, RecursionError):
+            return _api_error(422, "region_capture_request_invalid")
+        snapshot = await run_in_threadpool(live_runtime.engineer_snapshot)
+        if isinstance(body, dict) and "opponent" in body and not region_owner_available(
+                body, body["opponent"], body.get("detail_task_id")):
+            return _api_error(409, "region_opponent_owner_unavailable")
+        code, result = await run_in_threadpool(live_runtime.region_captures.arm, lease_id, body, snapshot)
+        if code != 202:
+            return _api_error(code, result["reason"])
+        return JSONResponse(status_code=202, content={"data": result}, headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/v2/engineer/region-captures/{lease_id}")
+    def read_region_capture(lease_id: str, request: Request):
+        if not _authorized(request.headers.get("authorization"), control_token):
+            return _api_error(403, "engineer_control_not_authorized")
+        if live_runtime is None:
+            return _api_error(409, "region_runtime_disabled")
+        result = live_runtime.region_captures.get(lease_id, live_runtime.engineer_snapshot())
+        if result is None:
+            return _api_error(404, "region_capture_not_found")
+        if "opponent" in result and not region_owner_available(
+                result["binding"], result["opponent"], result["detail_task_id"]):
+            result = live_runtime.region_captures.revoke(lease_id, "region_opponent_owner_unavailable")
+        return JSONResponse(content={"data": result}, headers={"Cache-Control": "no-store"})
+
+    @app.delete("/api/v2/engineer/region-captures/{lease_id}")
+    def release_region_capture(lease_id: str, request: Request):
+        if not _authorized(request.headers.get("authorization"), control_token):
+            return _api_error(403, "engineer_control_not_authorized")
+        if live_runtime is None:
+            return _api_error(409, "region_runtime_disabled")
+        result = live_runtime.region_captures.release(lease_id)
+        if result is None:
+            return _api_error(404, "region_capture_not_found")
+        return JSONResponse(content={"data": result}, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/v2/session-evidence/detail-targets")
     def detail_targets(session_id: str = Query(min_length=32, max_length=32)):
@@ -2949,6 +3059,7 @@ def create_app(
                 if engineer_ask_lock.locked():
                     return _api_error(409, "engineer_ask_busy")
 
+                await proactive_advisor.preempt()
                 gate_lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
                 if gate_lease is None:
                     return _api_error(409, "engineer_ask_busy")
@@ -3004,15 +3115,182 @@ def create_app(
             if lock_acquired:
                 engineer_ask_lock.release()
 
+    @app.post("/api/v2/engineer/proactive-selection")
+    async def engineer_proactive_selection(
+        request: Request,
+        authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+    ) -> JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(401, "proactive_unauthorized")
+        if request.query_params:
+            return _api_error(400, "proactive_query_not_allowed")
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+            return _api_error(415, "proactive_json_required")
+        try:
+            async with asyncio.timeout(8):
+                try:
+                    context = parse_selection_context(json.loads(await _read_limited_body(request, MAX_SELECTION_BYTES)))
+                except _EngineerRequestBodyLimitExceeded:
+                    return _api_error(413, "proactive_request_limit_exceeded")
+                except (ValueError, TypeError, KeyError, RecursionError, UnicodeError):
+                    return _api_error(422, "proactive_context_invalid")
+                selection = await proactive_advisor.select(context, request.is_disconnected)
+                return JSONResponse(
+                    status_code=200,
+                    content={"api_version": "v1", "status": "ok", "reason": None,
+                             "data": {"schema_version": 1, "scope": context["scope"], "selection": selection}},
+                    headers={"Cache-Control": "no-store"})
+        except EngineerRuntimeUnavailable as exc:
+            reason = exc.reason if re.fullmatch(r"[a-z_]{1,96}", exc.reason) else "proactive_unavailable"
+            status = 409 if reason in ("proactive_busy", "proactive_preempted") else 503
+            return _api_error(status, reason)
+        except TimeoutError:
+            return _api_error(504, "proactive_timeout")
+        except _EngineerClientDisconnected:
+            return _api_error(499, "proactive_client_disconnected")
+        except (OSError, RuntimeError, ValueError):
+            return _api_error(503, "proactive_unavailable")
+
+    @app.post("/api/v2/engineer/radio-answer")
+    @engineer_activity.ask_log.record("radio")
+    async def engineer_radio_answer(request: Request):
+        if not _authorized(request.headers.get("authorization"), control_token):
+            return _api_error(401, "radio_answer_unauthorized")
+        if request.query_params:
+            return _api_error(400, "radio_answer_query_not_allowed")
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+            return _api_error(415, "radio_answer_json_required")
+        answer = getattr(selected_engineer_runtime, "answer_radio", None)
+        gate_lease = None
+
+        def evidence_now():
+            snapshot = live_runtime.engineer_snapshot() if live_runtime else LiveEngineerFacts().snapshot()
+            return build_evidence(snapshot, now=asyncio.get_running_loop().time())
+
+        try:
+            async with asyncio.timeout(10.0):
+                document = json.loads(await _read_limited_body(request, MAX_CONTEXT_BYTES + 6_144))
+                if not isinstance(document, dict) or set(document) != {"transcript", "context", "scope"}:
+                    return _api_error(422, "radio_answer_request_invalid")
+                transcript = document["transcript"]
+                if (not isinstance(transcript, str) or not transcript.strip()
+                        or len(transcript.encode("utf-8")) > MAX_TRANSCRIPT_BYTES
+                        or not isinstance(document["scope"], str) or len(document["scope"]) > 2048):
+                    return _api_error(422, "radio_answer_request_invalid")
+                context = parse_context(document["context"])
+                original = evidence_now()
+                engineer_activity.ask_log.note_question(request, source="radio", question=transcript,
+                                                        session_id=session_from_scope(original.get("scope")))
+                if answer is None:
+                    return _api_error(503, "radio_answer_runtime_unsupported")
+                if original["scope"] is None or original["scope"] != document["scope"]:
+                    return _api_error(409, "radio_answer_scope_unavailable")
+                await proactive_advisor.preempt()
+                gate_lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
+                if gate_lease is None:
+                    return _api_error(409, "radio_answer_busy")
+                reply, model = await _run_until_client_disconnect(
+                    answer(transcript.strip(), context, original), request, gate_lease=gate_lease)
+                try:
+                    reply = parse_answer(reply, context=context, evidence=original)
+                except (ValueError, KeyError, TypeError, RecursionError, UnicodeError):
+                    return _api_error(503, "radio_answer_invalid_model_output")
+                current = evidence_now()
+                if not evidence_unchanged(reply, original, current):
+                    return _api_error(409, "radio_answer_evidence_changed")
+                references = set(reply["evidence_ids"])
+                return JSONResponse(content={"status": "ok", "data": {
+                    "schema_version": 1, "reply": reply, "model": model, "scope": current["scope"],
+                    "question_event_id": engineer_activity.ask_log.question_id(request),
+                    "valid_for_s": max(0.0, 3.0 - current["age_s"]), "source": current["source"],
+                    "evidence": [fact for fact in current["facts"] if fact["id"] in references],
+                }}, headers={"Cache-Control": "no-store"})
+        except _EngineerRequestBodyLimitExceeded:
+            return _api_error(413, "radio_answer_request_limit_exceeded")
+        except _EngineerClientDisconnected:
+            return _api_error(499, "radio_answer_client_disconnected")
+        except TimeoutError:
+            return _api_error(504, "radio_answer_deadline_exceeded")
+        except EngineerRuntimeUnavailable:
+            return _api_error(503, "radio_answer_unavailable")
+        except (ValueError, KeyError, TypeError, RecursionError, UnicodeError):
+            return _api_error(422, "radio_answer_invalid")
+        finally:
+            if gate_lease is not None:
+                gate_lease.close()
+
+    @app.post("/api/v2/engineer/radio-intent")
+    @engineer_activity.ask_log.record("radio")
+    async def engineer_radio_intent(
+        request: Request,
+        authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+    ) -> JSONResponse:
+        if not _authorized(authorization, control_token):
+            return _api_error(401, "radio_intent_unauthorized")
+        if request.query_params:
+            return _api_error(400, "radio_intent_query_not_allowed")
+        content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            return _api_error(415, "radio_intent_json_required")
+        interpret = getattr(selected_engineer_runtime, "interpret_radio", None)
+        gate_lease: AIGateLease | None = None
+        try:
+            async with asyncio.timeout(10.0):
+                try:
+                    raw_body = await _read_limited_body(request, MAX_CONTEXT_BYTES + 4_096)
+                    document = json.loads(raw_body)
+                    transcript = document["transcript"] if isinstance(document, dict) else None
+                    if (set(document) != {"transcript", "context"} or not isinstance(transcript, str)
+                            or not transcript.strip()
+                            or len(transcript.encode("utf-8", errors="strict")) > MAX_TRANSCRIPT_BYTES):
+                        raise ValueError("radio_intent_request_invalid")
+                    context = parse_context(document["context"])
+                except _EngineerRequestBodyLimitExceeded:
+                    return _api_error(413, "radio_intent_request_limit_exceeded")
+                except (ValueError, KeyError, TypeError, RecursionError, UnicodeError):
+                    return _api_error(422, "radio_intent_request_invalid")
+                snapshot = live_runtime.engineer_snapshot() if live_runtime else {}
+                engineer_activity.ask_log.note_question(request, source="radio", question=transcript,
+                                                        session_id=snapshot.get("session_id"))
+                if interpret is None:
+                    return _api_error(503, "radio_intent_runtime_unsupported")
+                await proactive_advisor.preempt()
+                gate_lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
+                if gate_lease is None:
+                    return _api_error(409, "radio_intent_busy")
+                intent, model = await _run_until_client_disconnect(
+                    interpret(transcript.strip(), context), request, gate_lease=gate_lease)
+                return JSONResponse(
+                    status_code=200,
+                    content={"api_version": "v1", "status": "ok", "reason": None,
+                             "data": {"schema_version": 1, "intent": intent, "model": model,
+                                      "question_event_id": engineer_activity.ask_log.question_id(request)}},
+                    headers={"Cache-Control": "no-store"},
+                )
+        except TimeoutError:
+            return _api_error(504, "radio_intent_deadline_exceeded")
+        except _EngineerClientDisconnected:
+            return _api_error(499, "radio_intent_client_disconnected")
+        except EngineerRuntimeUnavailable as exc:
+            return _api_error(503, exc.reason[:96] if re.fullmatch(r"[a-z_]{1,96}", exc.reason) else "radio_intent_unavailable")
+        except (OSError, RuntimeError, ValueError):
+            return _api_error(503, "radio_intent_unavailable")
+        finally:
+            if gate_lease is not None:
+                gate_lease.close()
+
     @app.post("/api/v1/engineer/transcribe")
     async def engineer_speech_transcription(
         request: Request,
         authorization: Annotated[str | None, Header(alias="Authorization")] = None,
         request_id: Annotated[str | None, Header(alias="X-Request-ID")] = None,
         expected_audio_sha256: Annotated[str | None, Header(alias="X-Audio-SHA256")] = None,
+        speech_hint: Annotated[str | None, Header(alias="X-Speech-Hint")] = None,
     ) -> JSONResponse:
         if not _authorized(authorization, control_token):
             return _api_error(401, "engineer_speech_unauthorized")
+        if speech_hint is not None and not valid_speech_hint(speech_hint):
+            return _api_error(422, "engineer_speech_hint_invalid")
         if request.query_params:
             return _api_error(400, "engineer_speech_query_not_allowed")
         content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
@@ -3041,11 +3319,15 @@ def create_app(
                 actual_audio_sha256 = hashlib.sha256(wav).hexdigest()
                 if not hmac.compare_digest(actual_audio_sha256, expected_audio_sha256):
                     return _api_error(422, "engineer_speech_audio_digest_mismatch")
-                gate_lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
-                if gate_lease is None:
-                    return _api_error(409, "engineer_ask_busy")
+                await proactive_advisor.preempt()
+                speech_runtime = await run_in_threadpool(local_speech_runtime.resolve)
+                if speech_runtime is not local_speech_runtime.cloud:
+                    gate_lease = PROCESS_ENGINEER_AI_GATE.try_acquire()
+                    if gate_lease is None:
+                        return _api_error(409, "engineer_ask_busy")
                 transcription = await _run_until_client_disconnect(
-                    local_speech_runtime.transcribe(wav, gate_lease=gate_lease),
+                    local_speech_runtime.transcribe(wav, gate_lease=gate_lease, hint=speech_hint,
+                                                    runtime=speech_runtime),
                     request,
                     gate_lease=gate_lease,
                 )
@@ -3062,12 +3344,12 @@ def create_app(
                             "language": "en",
                             "verified": False,
                             "runtime": {
-                                "name": "whisper.cpp",
+                                "name": "OpenAI" if transcription.placement == "cloud" else "whisper.cpp",
                                 "version": transcription.runtime_version,
                                 "model_name": transcription.model_name,
                                 "model_sha256": transcription.model_sha256,
                                 "runtime_id": transcription.runtime_id,
-                                "placement": "CPU",
+                                "placement": transcription.placement,
                             },
                         },
                         "reason": None,
@@ -3167,6 +3449,8 @@ def create_app(
             )
         return APIResponse[dict[str, Any]](data=_stringify_session_uids(result))
 
+    register_speech_routes(app, router=local_speech_runtime, control_token=control_token)
+    register_radio_routes(app, database_path=configured_database_path, preferences_store=engineer_preferences_store, control_token=control_token)
     register_engineer_preferences_routes(
         app, store=engineer_preferences_store, control_token=control_token
     )
@@ -3266,7 +3550,7 @@ async def _run_until_client_disconnect(
     awaitable: Any,
     request: Request,
     *,
-    gate_lease: AIGateLease,
+    gate_lease: AIGateLease | None,
 ) -> Any:
     task = asyncio.create_task(awaitable)
     drain_task: asyncio.Task[None] | None = None
@@ -3285,11 +3569,13 @@ async def _run_until_client_disconnect(
                 return await task
             if await request.is_disconnected():
                 drain = cancel_and_drain()
-                gate_lease.retain_until(drain)
+                if gate_lease is not None:
+                    gate_lease.retain_until(drain)
                 raise _EngineerClientDisconnected
     except asyncio.CancelledError:
         drain = cancel_and_drain()
-        gate_lease.retain_until(drain)
+        if gate_lease is not None:
+            gate_lease.retain_until(drain)
         raise
 
 

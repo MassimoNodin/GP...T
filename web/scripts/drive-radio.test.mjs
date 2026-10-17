@@ -321,6 +321,7 @@ test("filter counts cover the loaded events", () => {
   ];
   assert.deepEqual(radio.radioCounts(radio.buildRadioRows(list, context)), {
     all: 5,
+    radio: 0,
     question: 1,
     response: 1,
     proactive: 2,
@@ -328,9 +329,26 @@ test("filter counts cover the loaded events", () => {
   });
   assert.deepEqual(
     radio.FILTER_ITEMS.map((item) => item.label),
-    ["All", "Questions", "Responses", "Proactive", "Issues"],
+    ["All", "Radio", "Questions", "Responses", "Proactive", "Issues"],
   );
   assert.equal(radio.FILTER_EMPTY.proactive, "No proactive messages yet.");
+});
+
+test("radio questions and spoken answers retain provenance and pairing", () => {
+  const list = [event(1, "question", 0, { source: "radio" }),
+    event(2, "response", 1, { source: "radio", relatedId: 1, detail: { spoken: true } }),
+    event(3, "proactive", 2, { source: "radio", detail: { spoken: true } })];
+  const mapped = radio.buildRadioRows(list, context);
+  assert.equal(mapped[2].output, "Asked on the radio");
+  assert.equal(mapped[2].outcome, "Responded");
+  assert.equal(mapped[1].output, "Spoken on the radio");
+  assert.equal(mapped[0].trigger, "Spoken on the radio");
+  assert.equal(radio.radioCounts(mapped).radio, 3);
+  const parsed = events.parseEngineerEventPage({ status: "ok", data: { events: [{
+    id: 1, kind: "response", source: "radio", text: "Gap two seconds", created_at_utc: iso(0),
+    session_id: null, lap: null, related_id: null, priority: "normal", detail: null,
+  }], next_after: 1 } });
+  assert.equal(parsed.events[0].source, "radio");
 });
 
 test("unread covers events newer than the last seen id until read", () => {

@@ -37,11 +37,15 @@ GET `/api/v1/engineer/runtime` performs a metadata-only readiness check:
 subscription authentication must report `chatgpt`, and the model catalog
 must contain the exact requested model. Readiness is not proof that an actual
 inference will succeed: account limits, model entitlement, network access and
-service availability can still reject a turn. No background inference runs.
+service availability can still reject a turn. Default rules-mode proactive
+coaching runs no background inference. Explicit radio model mode enables the
+bounded candidate-selection path described below.
 
 ## Request and safety behavior
 
-Only explicit AI requests use the shared process-wide engineer admission gate.
+Explicit AI requests and opt-in proactive selection use the shared process-wide
+engineer admission gate. Foreground engineer questions, radio interpretation
+and transcription cancel background selection before seeking admission.
 Each request uses the documented Codex app-server stdio JSON-RPC protocol,
 a new ephemeral thread, a temporary non-project working directory, a read-only
 sandbox without tool network access, constrained JSON output, and disabled
@@ -56,11 +60,86 @@ protocol output is capped at 2 MiB and lines at 256 KiB. Cancellation/timeout
 terminates and reaps the request's process. Raw stderr, account email, auth
 tokens and protocol errors are not exposed in API responses.
 
-Only the current question and routing capabilities are sent to Codex. Recorded
+Only the current question and routing capabilities are sent to Codex by the ask router (the radio sends more; see below). Recorded
 telemetry remains local; answers are rendered from admitted evidence, not
 model-authored measurements. V2 braking questions now use supported numeric
 brake-onset regions and uncertainty brackets. Unsupported focused measurements
 abstain rather than returning an unrelated lap delta as an answer.
+
+## Optional proactive selection
+
+Radio rules mode computes and renders gap/pace notices locally. Model mode is
+an explicit opt-in: the radio sends at most three measured candidates, containing
+their kind/role/trend, gap or compound, numeric change and three lap samples,
+to the authenticated proactive-selection endpoint. A hashed local scope and
+closed candidate IDs bind the result; no raw trace, audio or driver name is
+required. These compact telemetry-derived facts leave the host for inference
+only in model mode, in addition to any explicit ask/voice traffic below.
+
+The model returns only a supplied candidate ID or null. It cannot return speech,
+numbers, tools or a tactical order. One request is admitted at a time, no more
+often than every 15 seconds; the background inference deadline is six seconds.
+Each selection has a separate ephemeral server/turn, not the persistent voice
+interpreter connection. Foreground work cancels it, with up to 2.5 seconds for
+subprocess cleanup before admission is retried. If cleanup has not released
+the slot, the existing busy response remains fail-closed rather than running
+two inferences concurrently. Late or unavailable results are silent.
+
+The radio revalidates identity, development revision, live freshness, workload
+and its speech budget after selection and again at dispatch. Near closing
+developments bypass the background selector. The original candidate lifetime
+is never extended. See the [joint validation guide](proactive-radio-validation.md).
+
+## Radio voice interpretation
+
+The standalone radio sends every spoken request to `POST /api/v2/engineer/radio-intent`
+and `gpt-6-luna` decides what was asked. Luna only classifies: it returns one
+JSON object (action, targets, facts, task options) from a closed schema and never
+writes an answer or a number. The radio renders the validated intent into the
+fixed phrases its existing parsers and controller already handle, so every
+reading still comes from live telemetry.
+
+Unlike the engineer ask router, this path sends more than the question:
+
+- the transcript of the request;
+- the session's driver names, race numbers and positions, the track name and
+  reviewed corner labels, the active tracking tasks, the last three turns, and a
+  glossary of radio terms and common mishearings, so Luna can repair
+  misheard names and words.
+
+Each request's schema limits driver names and task numbers to that live
+session, and the reply is validated again against the same context. Exact
+phrases such as "stop speaking" are handled locally and never wait on the
+network. If Luna is busy, slow (8 seconds), or unavailable, the radio falls
+back with a spoken "Say again." and logs `radio_intent_fallback` with the
+reason; it never reinterprets failed requests with the fixed-phrase parser.
+Exact local speech controls bypass the interpreter. Use `--intent-mode parser`
+to explicitly select fixed phrases instead of Luna.
+
+The backend keeps one Codex app-server process for radio requests (recycled
+every 100 requests, login re-checked every minute) and starts a fresh
+ephemeral thread for each one. Requests share the single AI admission slot with
+transcription and `/engineer/ask`. Add your own mishearings or terms in
+`data/radio-glossary.toml` (`[mishearings]` and `[terms]` tables, or pass
+`--glossary-file`).
+
+The radio also sends a plain-ASCII vocabulary hint (driver and corner names) to
+the local whisper.cpp transcription as `--prompt`, via the `X-Speech-Hint`
+header, to improve name recognition. It is validated (ASCII letters, digits and
+basic punctuation, at most 300 bytes, never starting with a dash). Prompts can
+occasionally be echoed on near-silent audio; disable the hint with
+`--no-speech-hint` if transcripts start repeating names.
+
+### OpenAI transcription (optional)
+
+`f1-engineer api --speech-provider openai` replaces local whisper.cpp with OpenAI
+`gpt-transcribe` for radio transcription. Unlike the engineer and radio
+interpretation paths, this is not covered by the Codex subscription: it uses a
+separately billed OpenAI API key, and each recorded clip (plus the driver and
+corner hint) is sent to OpenAI. The key is read from an owner-only file
+(`chmod 600`), by default `.openai-api-key` beside the database, or
+`--openai-api-key-file`. It is never logged or returned by the API. The default
+remains `--speech-provider local`.
 
 ## Validation and remaining work
 

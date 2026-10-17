@@ -38,6 +38,10 @@ new Function("require", "module", "exports", javascript)(
 const { parseEngineerAskResult, parseEngineerRuntimeResponse } =
   commonJsModule.exports;
 
+assert.equal(commonJsModule.exports.parseEngineerApiFailure({ api_version: "v1", status: "unavailable",
+  reason: "engineer_ask_busy" }),
+  "The engineer is busy with another request, possibly on the radio. Try again in a moment.");
+
 const runtimeStatus = {
   status: "not_configured",
   reason: "model_pin_missing",

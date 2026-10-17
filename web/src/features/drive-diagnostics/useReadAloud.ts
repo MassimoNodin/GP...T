@@ -20,6 +20,8 @@ import {
 } from "@/features/settings/browser-voice";
 import { isSpeakable, speakingPreview, speechChunks, speechDecision, type Interruption, type PlaybackOutcome } from "./radio";
 import type { AudioState } from "./system-rows";
+import { useRadioPresence } from "@/features/settings/useRadioPresence";
+import { browserMaySpeak } from "@/features/settings/radio-settings";
 
 // Optional browser read-aloud of engineer calls. It is a browser-only setting
 // (localStorage), off by default, and uses the existing local speech
@@ -82,6 +84,7 @@ function chosenVoice(fallback: SpeechSynthesisVoice, voiceURI: string | null): S
 type QueueItem = { id: number; text: string; priority: "low" | "normal" | "high" };
 
 export type ReadAloud = {
+  radioConnected: boolean;
   enabled: boolean;
   setEnabled: (enabled: boolean) => void;
   /** Result of discovering a local voice; also feeds the Audio Output row. */
@@ -95,6 +98,7 @@ export type ReadAloud = {
 };
 
 export function useReadAloud(interruption: Interruption): ReadAloud {
+  const radioConnected = useRadioPresence().connected;
   const enabled = useSyncExternalStore(subscribeEnabled, readEnabled, () => false);
   const voicePreferences = useSyncExternalStore(
     subscribeToLocalVoicePreferences,
@@ -113,11 +117,11 @@ export function useReadAloud(interruption: Interruption): ReadAloud {
   const current = useRef<QueueItem | null>(null);
   const queue = useRef<QueueItem[]>([]);
   const suppressDrain = useRef(false);
-  const latest = useRef({ enabled, interruption, voice, voicePreferences, savedVoiceURI });
+  const latest = useRef({ enabled: browserMaySpeak(enabled, radioConnected), interruption, voice, voicePreferences, savedVoiceURI });
   // Declared before every other effect so callers' effects see current values.
   useEffect(() => {
-    latest.current = { enabled, interruption, voice, voicePreferences, savedVoiceURI };
-  }, [enabled, interruption, voice, voicePreferences, savedVoiceURI]);
+    latest.current = { enabled: browserMaySpeak(enabled, radioConnected), interruption, voice, voicePreferences, savedVoiceURI };
+  }, [enabled, radioConnected, interruption, voice, voicePreferences, savedVoiceURI]);
 
   const record = useCallback((id: number, outcome: PlaybackOutcome) => {
     setPlayback((previous) => (previous[id] === outcome || previous[id] === "played" ? previous : { ...previous, [id]: outcome }));
@@ -181,6 +185,7 @@ export function useReadAloud(interruption: Interruption): ReadAloud {
   }, [record]);
 
   useEffect(() => () => stopAll(), [stopAll]);
+  useEffect(() => { if (radioConnected) stopAll(); }, [radioConnected, stopAll]);
 
   const setEnabled = useCallback(
     (next: boolean) => {
@@ -229,5 +234,5 @@ export function useReadAloud(interruption: Interruption): ReadAloud {
           ? { kind: "unsupported" }
           : { kind: "checking" };
 
-  return { enabled, setEnabled, audio, speaking: speaking?.preview ?? null, playback, offer };
+  return { enabled, setEnabled, audio, speaking: speaking?.preview ?? null, playback, offer, radioConnected };
 }

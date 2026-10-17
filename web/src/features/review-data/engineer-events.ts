@@ -13,7 +13,7 @@ export const MAX_EVENTS_PAGE = 200;
 export const DEFAULT_EVENTS_PAGE = 50;
 
 export const EVENT_KINDS = ["proactive", "question", "response", "issue"] as const;
-export const EVENT_SOURCES = ["v1_ask", "v2_ask", "live_rules", "system"] as const;
+export const EVENT_SOURCES = ["v1_ask", "v2_ask", "live_rules", "system", "radio"] as const;
 export const EVENT_PRIORITIES = ["low", "normal", "high"] as const;
 
 export type EngineerEventKind = (typeof EVENT_KINDS)[number];

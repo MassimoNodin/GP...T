@@ -1,7 +1,7 @@
 // Connections tab: the telemetry connection test result and the speech
 // recognition card. Pure mapping so the exact copy can be tested.
 
-import { parseLocalSpeechStatus } from "@/lib/local-speech-draft";
+import { parseLocalSpeechStatus, speechPlacementLabel } from "@/lib/local-speech-draft";
 import { humanReason } from "@/features/review-data/reasons";
 import type { DisplayRow, DisplayTone } from "./display";
 
@@ -140,7 +140,7 @@ export function describeSpeech(body: unknown): SpeechView {
         { label: "Status", value: "Not set up", tone: "amber" },
         { label: "Reason", value: speechReasonText(status.reason) },
       ],
-      footnote: "Voice questions need local speech recognition. Nothing is sent to a cloud service.",
+      footnote: "Choose a ready speech provider in Voice & Controls to use voice questions.",
       runtimeId: null,
     };
   }
@@ -150,13 +150,15 @@ export function describeSpeech(body: unknown): SpeechView {
     statusLabel: "Ready",
     rows: [
       { label: "Status", value: "Ready", tone: "green" },
-      { label: "Runtime", value: `whisper.cpp ${status.runtime_version}` },
+      { label: "Runtime", value: status.runtime === "OpenAI" ? "OpenAI" : `whisper.cpp ${status.runtime_version}` },
       { label: "Model", value: status.model_name },
-      { label: "Placement", value: "CPU" },
+      { label: "Placement", value: speechPlacementLabel(status.placement) },
       { label: "Clip length", value: `Up to ${status.maximum_clip_seconds} s` },
       { label: "Audio", value: "Audio is not stored" },
     ],
-    footnote: "Recognition runs on this computer. Use Test microphone on the Voice & Controls tab to try it.",
+    footnote: status.runtime === "OpenAI"
+      ? "Audio is sent to OpenAI for recognition. OpenAI API billing applies."
+      : "Recognition runs on this computer. Nothing is sent to a cloud service. Use Test microphone on Voice & Controls to try it.",
     runtimeId: status.runtime_id,
   };
 }

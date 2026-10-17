@@ -1,0 +1,1787 @@
+from __future__ import annotations
+
+import json
+import math
+import re
+import time
+import uuid
+from copy import deepcopy
+from dataclasses import replace
+
+from ..driver_names import display_driver_name, driver_name_aliases
+from .gaps import GAP_CHANGES, LapGapTracker, relative_gap_ms
+from .questions import QuestionPlan, SESSION_FACTS, UNAVAILABLE_FACTS, plan_question, timing_fact
+from .scheduler import RadioMessage, RadioScheduler
+from .tasks import LapReportRegistry, TaskAction, parse_task_request
+from .watches import RaceWatchTracker
+from .proactive import (EVALUATION_INTERVAL_S, NOTICE_LIFETIME_S, PaceNotice,
+                        ProactiveGapTracker, ProactivePaceTracker, ProactiveSpeechPolicy)
+from .pace import PaceReference, PaceTracker
+from .lap_history import FieldLapHistory
+from .conversation import ConversationMemory, QuestionContext, TaskContext
+from .pit_benchmark import PitBenchmarkTracker
+from .regions import RegionTracker, RegionWindow
+from .region_progress import RegionProgress
+from .opponent_regions import compare_opponent_region
+from .intents import safe_name, safe_region
+from .track_geometry import geometry_binding, region_labels, resolve_named_region
+from .reported_history import reported_best_fact, reported_lap_fact
+from .focus_coach import FOCUS_POLICY, choose_focus_reference, choose_focus_loss, focus_cue, focus_progress
+from .spoken_numbers import regional_reply
+from ..analysis.resampling import TraceSample
+from ..analysis.region_context import scoped_region_context, regional_sample_context
+
+
+def _integer(value, minimum=0, maximum=2**64 - 1):
+    return type(value) is int and minimum <= value <= maximum
+
+
+def _number(value):
+    return type(value) in (float, int) and 0 <= value <= 86_400 and math.isfinite(value)
+
+
+def _identity(value):
+    return (isinstance(value, dict)
+            and set(value) == {"car_index", "tenure_ordinal", "participant_identity_fingerprint"}
+            and _integer(value.get("car_index"), 0, 23)
+            and _integer(value.get("tenure_ordinal"), 1)
+            and isinstance(value.get("participant_identity_fingerprint"), str)
+            and re.fullmatch(r"[a-f0-9]{64}", value["participant_identity_fingerprint"]) is not None)
+
+
+def _clip(text, limit: int) -> str:
+    return str(text).encode("utf-8")[:limit].decode("utf-8", errors="ignore")
+
+
+def lap_message(number: int, milliseconds: int) -> str:
+    minutes, remainder = divmod(milliseconds, 60_000)
+    clock = f"{minutes} minute{'s' if minutes != 1 else ''} " if minutes else ""
+    return f"Lap {number}: {clock}{remainder / 1000:.3f} seconds."
+
+
+_LIVE_TASK_CONTEXT = object()
+_LIVE_QUESTION_CONTEXT = object()
+
+
+class RadioController:
+    def __init__(self, scheduler: RadioScheduler, *, notify=None, backend_regions=False,
+                 proactive_mode="rules", selector=None) -> None:
+        if proactive_mode not in ("off", "rules", "model"):
+            raise ValueError("invalid proactive mode")
+        self.proactive_mode = proactive_mode
+        self.selector = selector
+        self.scheduler = scheduler
+        self.notify = notify or (lambda event: None)
+        self._cursor: int | None = None
+        self._player = None
+        self._received_at = 0.0
+        self._age_s = 0.0
+        self._answer_id = 0
+        self._status = None
+        self._drivers = []
+        self._observation_frame = None
+        self._fact_age_s = None
+        self._history = []
+        self.conversation = ConversationMemory()
+        self.tasks = LapReportRegistry(notify=self.notify)
+        self.gaps = LapGapTracker()
+        self.watches = RaceWatchTracker()
+        self.proactive = ProactiveGapTracker(notify=self.notify)
+        self.automatic_pace = ProactivePaceTracker()
+        self.proactive_policy = ProactiveSpeechPolicy()
+        self._developments = {}
+        self._development_attempt = 0
+        self._next_evaluation = None
+        self.pace = PaceTracker()
+        self.lap_history = FieldLapHistory()
+        self.pit_benchmarks = PitBenchmarkTracker()
+        self.regions = RegionTracker()
+        self.region_progress = RegionProgress()
+        self._track_length_m = None
+        self._backend_regions = backend_regions
+        self._capture_namespace = uuid.uuid4()
+        self._capture_results = []
+        self._pair_report_identity = None
+        self._geometry_binding = None
+        self._geometry_result = None
+        self._focus_context = None
+        self._focus_binding = None
+        self._focus_first_lap = None
+        self._clarification_id = 0
+        self._pending_region = None
+        self._session_binding = None
+        self._paused = False
+        self._last_lap = None
+        self._tracking_notice = None
+
+    def _unavailable(self, reason: str) -> None:
+        reason = reason if re.fullmatch(r"[a-z0-9_]{1,96}", reason) else "unavailable"
+        if self._session_binding is not None and reason != "backend_snapshot_invalid":
+            self._paused = True
+            self.scheduler.set_scope(None)
+            self._player = None
+            self._drivers = []
+            self._pending_region = None
+            self._reset_gaps()
+            self.pit_benchmarks.clear()
+            self.scheduler.cancel_owner("pit_benchmark")
+            for state in self.lap_history.drivers.values():
+                state.tracker.interrupt()
+                state.open_conditions = None
+                state.pending_conditions = None
+            self._report("unavailable", reason)
+            return
+        self._session_binding = None
+        self._paused = False
+        self._last_lap = None
+        self._pending_region = None
+        self._focus_context = None
+        self._focus_binding = None
+        self._focus_first_lap = None
+        self._geometry_binding = None
+        self._geometry_result = None
+        self.scheduler.set_scope(None)
+        self._cursor = None
+        self._player = None
+        self._drivers = []
+        self._history.clear()
+        self.conversation.clear()
+        safe_reason = reason if re.fullmatch(r"[a-z0-9_]{1,96}", reason) else "unavailable"
+        self._reset_gaps()
+        self._clear_task_registry(safe_reason)
+        self.watches.clear()
+        self.pace.clear()
+        self.lap_history.clear()
+        self.pit_benchmarks.clear()
+        self.regions.clear()
+        self.region_progress.clear()
+        self._report("unavailable", safe_reason)
+
+    def _report(self, status: str, reason=None) -> None:
+        if (status, reason) != self._status:
+            self._status = (status, reason)
+            self.notify({"event": "radio_backend", "status": status, "reason": reason})
+
+    def feed(self, snapshot: dict, *, now: float, transport_age_s: float = 0.0, region_captures=None) -> None:
+        self._capture_results = region_captures if isinstance(region_captures, list) else []
+        if snapshot.get("status") != "available":
+            self._unavailable(str(snapshot.get("reason", "unavailable")))
+            return
+        scope = snapshot.get("scope")
+        if (not _integer(snapshot.get("schema_version"), 1, 1) or not isinstance(scope, dict)
+                or set(scope) != {"session_uid", "packet_format", "epoch"}
+                or not _integer(scope.get("session_uid"), 1) or scope.get("packet_format") not in (2025, 2026)
+                or not _integer(scope.get("epoch")) or not _number(snapshot.get("age_s"))
+                or not _integer(snapshot.get("player_car_index"), 0, 23)
+                or not _number(transport_age_s) or not _integer(snapshot.get("received_monotonic_ns"))
+                or not _integer(snapshot.get("event_cursor")) or not _integer(snapshot.get("event_floor"))
+                or snapshot["event_floor"] > snapshot["event_cursor"]
+                or not isinstance(snapshot.get("drivers"), list) or len(snapshot["drivers"]) > 24
+                or not isinstance(snapshot.get("events"), list) or len(snapshot["events"]) > 128):
+            self._unavailable("backend_snapshot_invalid")
+            return
+        for field in ("generation", "session_id"):
+            value = snapshot.get(field)
+            if not isinstance(value, str) or re.fullmatch(r"[a-f0-9]{32}", value) is None:
+                self._unavailable("backend_snapshot_invalid")
+                return
+        age = snapshot["age_s"] + transport_age_s
+        if age >= 3:
+            self._unavailable("lap_observations_stale")
+            return
+        players = [row for row in snapshot["drivers"] if isinstance(row, dict)
+                   and _integer(row.get("car_index"), 0, 23)
+                   and row.get("car_index") == snapshot.get("player_car_index")]
+        if (len(players) != 1 or not _identity(players[0].get("identity"))
+                or players[0]["identity"]["car_index"] != players[0]["car_index"]
+                or not isinstance(players[0].get("lap"), dict)):
+            self._unavailable("player_binding_unavailable")
+            return
+        player = players[0]
+        binding = json.dumps([snapshot["generation"], snapshot["session_id"], scope, player["identity"]],
+                             sort_keys=True, separators=(",", ":"))
+        changed = self._session_binding != binding
+        resumed = self._paused and not changed
+        previous_lap = self._last_lap
+        self._session_binding = binding
+        self._paused = False
+        self.scheduler.set_scope(binding)
+        if changed:
+            self._pending_region = None
+            if self.selector is not None:
+                self.selector.cancel()
+            self.proactive.clear()
+            self.automatic_pace.clear()
+            self.proactive_policy.clear()
+            self._history.clear()
+            self.conversation.clear()
+            self._clear_task_registry("scope_changed")
+            self.watches.clear()
+            self.pace.clear()
+            self.lap_history.clear()
+            self.pit_benchmarks.clear()
+            self.regions.clear()
+            self.region_progress.clear()
+            self._reset_gaps()
+        elif not _integer(player["lap"].get("current_lap_number"), 1, 255):
+            self._clear_tasks("lap_number_unavailable")
+        elif _integer(previous_lap, 1, 255) and _integer(player["lap"].get("current_lap_number"), 1, 255):
+            difference = player["lap"]["current_lap_number"] - previous_lap
+            if difference < 0 or difference > 1:
+                self._clear_tasks("lap_number_discontinuity")
+        self._player = deepcopy(player)
+        self._last_lap = player["lap"].get("current_lap_number")
+        self._focus_context = deepcopy(scoped_region_context(snapshot))
+        focus_context = self._focus_context or {}
+        focus_length = focus_context.get("track_length_m")
+        focus_binding = (json.dumps([scope, player["identity"], focus_context["track_id"], focus_length], sort_keys=True)
+                         if _integer(focus_context.get("track_id"), 0, 127)
+                         and type(focus_length) in (int, float) and math.isfinite(focus_length)
+                         and 0 < focus_length <= 20_000 else None)
+        if changed or focus_binding != self._focus_binding:
+            self.region_progress.focus_candidates.clear()
+            for task in self.tasks.active():
+                if task.focus_coach:
+                    self.tasks.cancel(task.task_id, reason="focus_context_changed")
+                    self.regions.remove(task.task_id)
+                    self.scheduler.cancel_owner("lap_reports")
+            number = player["lap"].get("current_lap_number")
+            at_start = (type(player["lap"].get("current_lap_time_ms")) is int
+                        and player["lap"]["current_lap_time_ms"] == 0
+                        and type(player["lap"].get("lap_distance_m")) in (int, float)
+                        and player["lap"]["lap_distance_m"] <= 0)
+            self._focus_first_lap = number + (0 if at_start else 1) if _integer(number, 1, 255) else None
+        self._focus_binding = focus_binding
+        self._drivers = deepcopy(snapshot["drivers"])
+        if (self._pair_report_identity is not None
+                and self._resolve_target("self", self._pair_report_identity) is None):
+            self.scheduler.cancel_owner("opponent_regions")
+            self._pair_report_identity = None
+        self._received_at = now
+        self._age_s = age
+        self._observation_frame = {**scope, "frame_identifier": snapshot.get("frame_identifier"),
+                                   "frame_ordinal": snapshot.get("frame_ordinal"),
+                                   "session_time_s": snapshot.get("session_time_s"),
+                                   "lap_received_monotonic_ns": snapshot.get("received_monotonic_ns")}
+        context = snapshot.get("context")
+        length = (context["value"].get("track_length_m") if isinstance(context, dict)
+                  and context.get("status") == "available" and isinstance(context.get("value"), dict)
+                  and all(type(context["value"].get(key)) is int and context["value"][key] == scope[key]
+                          for key in ("session_uid", "packet_format")) else None)
+        if self._track_length_m is not None and length != self._track_length_m:
+            self.regions.interrupt()
+            self.region_progress.clear()
+            self.scheduler.cancel_owner("lap_reports")
+            self.scheduler.cancel_owner("opponent_regions")
+        self._track_length_m = length if type(length) in (int, float) and math.isfinite(length) and 0 < length <= 20_000 else None
+        self._geometry_binding = geometry_binding(snapshot)
+        changed_geometry = [task for task in self.tasks.views() if task["region_geometry_binding"] is not None
+                            and task["region_geometry_binding"] != self._geometry_binding]
+        for task in changed_geometry:
+            self.tasks.cancel(task["task_id"])
+            self.regions.remove(task["task_id"])
+            self.notify({"event": "radio_named_region_ended", "task_id": task["task_id"],
+                         "version": task["version"], "reason": "track_geometry_context_changed"})
+        if changed_geometry:
+            self.scheduler.cancel_owner("lap_reports")
+            self.scheduler.cancel_owner("opponent_regions")
+        geometry = [item for item in self._capture_results if isinstance(item, dict)
+                    and item.get("kind") == "track_geometry" and self._geometry_binding is not None
+                    and item.get("binding") == self._geometry_binding]
+        self._geometry_result = deepcopy(geometry[0].get("result")) if len(geometry) == 1 else None
+        self.regions.observe(() if self._backend_regions else self.tasks.active(), self._player, self._region_sample(now=now),
+                             track_length_m=self._track_length_m, context=scoped_region_context(snapshot))
+        if self.pace.observe(self._player, now=now):
+            self.scheduler.cancel_owner("pace_sectors")
+            if any("consistency" in task.plan.metrics for task in self.tasks.active()):
+                self.scheduler.cancel_owner("lap_reports")
+        if self.watches.observe(self.tasks.active(), self._player, self._resolve_target, now=now,
+                                track_length_m=self._track_length_m):
+            self.scheduler.cancel_owner("lap_reports")
+        context_value = context.get("value") if isinstance(context, dict) else None
+        race_eligible = (self.proactive_mode != "off" and isinstance(context_value, dict)
+                         and context.get("status") == "available"
+                         and all(type(context_value.get(key)) is int and context_value[key] == scope[key]
+                                 for key in ("session_uid", "packet_format"))
+                         and context_value.get("session_type") in ("race", "race_2", "race_3"))
+        self.proactive.observe(self._player, self._resolve_target, now=now, age_s=age,
+                               track_length_m=self._track_length_m, eligible=race_eligible)
+        if self._next_evaluation is None and race_eligible:
+            self._next_evaluation = now + EVALUATION_INTERVAL_S
+        self.automatic_pace.observe(self.pace, eligible=race_eligible, now=now, age_s=age)
+        for message in tuple(self.scheduler.pending):
+            if message.owner == "automatic_gaps" and message.dispatch_guard is not None:
+                reason = message.dispatch_guard(now)
+                if reason is not None:
+                    self.scheduler.cancel_owner("automatic_gaps")
+                    self.notify({"event": "radio_proactive_suppressed", "key": message.key, "reason": reason})
+                    break
+        prior_gap_results = dict(self.gaps.results)
+        self.gaps.observe(self._player, self._resolve_target, now=now)
+        if prior_gap_results and prior_gap_results != self.gaps.results:
+            self.scheduler.cancel_owner("gap_changes")
+            self.scheduler.cancel_owner("lap_reports")
+        cursor = snapshot["event_cursor"]
+        self._report("available")
+        self._flush_tracking_notice(now=now)
+        if (changed or resumed or self._cursor is None or cursor < self._cursor
+                or snapshot["event_floor"] > self._cursor):
+            if not changed and not resumed and self._cursor is not None:
+                self.scheduler.cancel()
+                self._clear_task_registry("event_history_gap")
+                self._history.clear()
+                self.conversation.clear()
+                self.watches.clear()
+                self.pace.clear()
+                self.lap_history.clear()
+                self.pit_benchmarks.clear()
+                self.regions.clear()
+                self.region_progress.clear()
+                self._reset_gaps()
+                self.notify({"event": "radio_resynchronised", "reason": "event_history_gap"})
+                self._flush_tracking_notice(now=now)
+            self._cursor = cursor
+            self.lap_history.feed(snapshot, now=now, after_cursor=cursor, age_s=age)
+            return
+        self.lap_history.feed(snapshot, now=now, after_cursor=self._cursor, age_s=age)
+        benchmark, invalidated = self.pit_benchmarks.feed(
+            snapshot, self._player, self.lap_history, self._participant_name,
+            after_cursor=self._cursor, age_s=age)
+        if invalidated:
+            self.scheduler.cancel_owner("pit_benchmark")
+        if benchmark is not None:
+            self.notify({"event": "radio_pit_benchmark", **benchmark, "observation_age_s": age})
+            self.scheduler.submit(RadioMessage(benchmark["key"], binding, benchmark["text"], "proactive",
+                                              now + 60, observation_age_s=age,
+                                              dispatch_before=now + 3 - age, owner="pit_benchmark"), now=now)
+        seen_events = set()
+        if any(isinstance(event, dict) and event.get("kind") == "driver_discontinuity"
+                    and _integer(event.get("id"), 1) and self._cursor < event["id"] <= cursor
+                    and event.get("scope") == scope for event in snapshot["events"]):
+            self._reset_gaps()
+            for task in self.tasks.active():
+                if task.opponent_first_lap is None:
+                    continue
+                identity = json.loads(task.fixed_bindings[1])
+                if any(isinstance(event, dict) and event.get("kind") == "driver_discontinuity"
+                       and _integer(event.get("id"), 1) and self._cursor < event["id"] <= cursor
+                       and event.get("scope") == scope and event.get("driver") == identity
+                       for event in snapshot["events"]):
+                    if self.tasks.end_region_pair(task.task_id, task.version, "opponent_discontinuity"):
+                        self._queue_opponent_region(
+                            task, f"Task {task.task_id}: opponent regional tracking ended after a driver discontinuity; no comparison available.",
+                            None, number=task.reported_through_lap + 1, age=age, now=now)
+        for event in snapshot["events"]:
+            if (not isinstance(event, dict) or not _integer(event.get("id"), 1)
+                    or not self._cursor < event["id"] <= cursor
+                    or event.get("scope") != scope or event.get("driver") != player["identity"]):
+                continue
+            if event["id"] in seen_events:
+                continue
+            seen_events.add(event["id"])
+            if event.get("kind") == "driver_discontinuity":
+                self._clear_tasks("driver_discontinuity")
+                continue
+            if event.get("kind") == "sector_completed":
+                if (not _integer(event.get("lap_number"), 1, 255)
+                        or not _integer(event.get("received_monotonic_ns"))):
+                    self.pace.reset_sectors()
+                    self.scheduler.cancel_owner("pace_sectors")
+                    continue
+                elapsed_ns = snapshot["received_monotonic_ns"] - event["received_monotonic_ns"]
+                event_age = age + elapsed_ns / 1e9
+                if elapsed_ns < 0 or event_age >= 3:
+                    self.pace.reset_sectors()
+                    self.scheduler.cancel_owner("pace_sectors")
+                    continue
+                captured = self.pace.sector(event, self._player)
+                if captured is None:
+                    continue
+                if not captured:
+                    self.scheduler.cancel_owner("pace_sectors")
+                self._report_pace_sector(event, now=now, age=event_age)
+                continue
+            if (event.get("kind") != "lap_completed"
+                    or event.get("qualification") != "observed_lap_transition"
+                    or not _integer(event.get("lap_number"), 1, 255)
+                    or not _integer(event.get("received_monotonic_ns"))):
+                continue
+            elapsed_ns = snapshot["received_monotonic_ns"] - event["received_monotonic_ns"]
+            if elapsed_ns < 0:
+                continue
+            event_age = age + elapsed_ns / 1e9
+            self.scheduler.cancel_owner("pace_sectors")
+            elapsed = event.get("lap_time_ms")
+            notices = []
+            if (event_age < 3 and player["lap"].get("current_lap_number") == event["lap_number"] + 1
+                    and (elapsed is None or _integer(elapsed, 1, 2**32 - 1)
+                         and elapsed == player["lap"].get("last_lap_time_ms"))):
+                self.gaps.complete(event["lap_number"])
+                notices = self.proactive.complete(event["lap_number"])
+                self.pace.complete(event)
+                notices.extend(self.automatic_pace.complete(self.pace.recent))
+                notices.sort(key=lambda notice: notice.rank, reverse=True)
+                self.notify({"event": "radio_pace_lap_observed", "lap_number": event["lap_number"],
+                             "valid_reference": self.pace.last_completed.view() if self.pace.last_completed else None})
+                self.notify({"event": "radio_gap_change_observed", "lap_number": event["lap_number"],
+                             "changes_ms": {metric: result[1] for metric, result in self.gaps.results.items()},
+                             "observation_age_s": event_age})
+            else:
+                self._reset_gaps()
+            reported = self._report_tasks(event, now=now, age=event_age)
+            automatic = self._report_proactive(notices, event, now=now, age=event_age, reported=reported)
+            if reported or automatic or not _integer(event.get("lap_time_ms"), 1, 2**32 - 1):
+                continue
+            text = lap_message(event["lap_number"], event["lap_time_ms"])
+            if event.get("previous_observed_invalid") == 1:
+                text += " Observed invalid."
+            self.scheduler.submit(RadioMessage(f"lap:{event['id']}", binding, text, "proactive",
+                                              now + 10 - event_age, observation_age_s=event_age,
+                                              owner="lap_time"), now=now)
+        self._cursor = cursor
+        number = player["lap"].get("current_lap_number")
+        if _integer(number, 1, 255):
+            if any(task["state"] == "active" and task["until_lap"] is not None
+                   and task["until_lap"] <= number - 1 for task in self.tasks.views()):
+                self.scheduler.cancel_owner("lap_reports")
+            self.tasks.complete_lap(number - 1)
+        self.regions.prune(self.tasks.active())
+        self._report_opponent_regions(now=now)
+        self._flush_tracking_notice(now=now)
+
+    def set_proactive_mode(self, mode):
+        if mode not in ("off", "rules", "model"):
+            raise ValueError("invalid proactive mode")
+        if mode != self.proactive_mode:
+            self.proactive_mode = mode
+            self._clear_developments("mode_changed")
+            self._next_evaluation = None
+            self.proactive.clear()
+            self.automatic_pace.clear()
+            self.scheduler.cancel_owner("automatic_gaps")
+            if self.selector is not None:
+                self.selector.cancel()
+        self.notify({"event": "radio_proactive_mode", "mode": mode})
+
+    def _validate_proactive(self, notice, *, now):
+        if self.proactive_mode == "off":
+            return "disabled"
+        tracker = self.automatic_pace if isinstance(notice, PaceNotice) else self.proactive
+        reason = tracker.validate(notice, now=now)
+        if reason is not None:
+            return reason
+        aligned = self._aligned_observation(self._player, now=now) if self._player is not None else None
+        if aligned is not None:
+            values = aligned[0]["value"]
+            brake, steering = values.get("brake"), values.get("steering")
+            if (type(brake) in (int, float) and math.isfinite(brake) and brake > 0.2
+                    or type(steering) in (int, float) and math.isfinite(steering) and abs(steering) > 0.15):
+                return "driver_workload"
+        return None
+
+    def _clear_developments(self, reason):
+        for topic in tuple(self._developments):
+            self._drop_development(topic, reason)
+
+    def _drop_development(self, topic, reason):
+        entry = self._developments.pop(topic, None)
+        if entry is not None:
+            self.scheduler.cancel_pending(entry.get("queue_key"))
+            self.notify({"event": "radio_proactive_discarded", "reason": reason, **entry["notice"].evidence()})
+
+    def _defer_development(self, entry, reason):
+        if entry.get("reason") != reason:
+            entry["reason"] = reason
+            self.notify({"event": "radio_proactive_deferred", "reason": reason, **entry["notice"].evidence()})
+
+    def poll_proactive(self, *, now):
+        notices = []
+        if (self.proactive_mode != "off" and self._player is not None and not self._paused
+                and self._next_evaluation is not None and now >= self._next_evaluation):
+            self._next_evaluation = now + EVALUATION_INTERVAL_S
+            started = time.perf_counter()
+            notices = self.proactive.evaluate(now=now)
+            self.notify({"event": "radio_proactive_evaluation", "candidates": len(notices),
+                         "duration_ms": (time.perf_counter() - started) * 1000})
+        if (self.proactive_mode == "off" or self.scheduler.muted or self.scheduler.suspended
+                or self._player is None or self._paused):
+            self._clear_developments("quiet" if self.scheduler.muted else
+                                     "listening" if self.scheduler.suspended else "inactive")
+            if self.selector is not None:
+                self.selector.cancel()
+            for notice in notices:
+                self.notify({"event": "radio_proactive_suppressed",
+                             "reason": "quiet" if self.scheduler.muted else "listening", **notice.evidence()})
+            return
+        if self.selector is not None and self.proactive_mode == "model":
+            result = self.selector.poll(scope=self.scheduler.scope, now=now)
+            if result is not None:
+                notice, event, deadline = result
+                topic = (notice.kind, notice.role)
+                entry = self._developments.get(topic)
+                if entry is not None and entry["notice"] == notice:
+                    entry["selected"] = True
+                    entry["expires_at"] = min(entry["expires_at"], deadline)
+            decision = getattr(self.selector, "last_decision", None)
+            for topic, entry in tuple(self._developments.items()):
+                generation = entry.get("selection_generation")
+                if generation is not None and decision is not None and decision[0] == generation and not entry["selected"]:
+                    self._drop_development(topic, "model_silence")
+                elif generation is not None and generation != getattr(self.selector, "generation", generation):
+                    self._drop_development(topic, "selection_cancelled")
+        if notices:
+            self._report_proactive(notices, {"id": f"window-{self._development_attempt}"},
+                                   now=now, age=self._age_s + now - self._received_at, reported=False)
+        self._dispatch_developments(now=now)
+
+    def _dispatch_developments(self, *, now):
+        queued = False
+        for topic, entry in sorted(tuple(self._developments.items()), key=lambda item: item[1]["notice"].rank, reverse=True):
+            notice = entry["notice"]
+            reason = ("expired" if now >= entry["expires_at"] else
+                      "scope_changed" if entry["scope"] != self.scheduler.scope else
+                      self._validate_proactive(notice, now=now))
+            if reason is not None and reason != "driver_workload":
+                self._drop_development(topic, reason)
+                continue
+            if reason is None:
+                reason = self.proactive_policy.suppression(notice, now=now)
+            if any(message.key == entry.get("queue_key") for message in self.scheduler.pending):
+                queued = True
+                continue
+            if reason is None and not entry["selected"]:
+                reason = "awaiting_selection"
+            if reason is None and queued:
+                reason = "higher_ranked_development"
+            if reason is None and (self.scheduler.active is not None or
+                    any(message.owner not in ("automatic_gaps", "lap_time")
+                        and not message.key.startswith("lap:") for message in self.scheduler.pending)):
+                reason = "radio_busy"
+            if reason is not None:
+                self._defer_development(entry, reason)
+                continue
+            self.scheduler.cancel_owner("automatic_gaps")
+            for message in tuple(self.scheduler.pending):
+                if message.owner == "lap_time" or message.key.startswith("lap:"):
+                    self.scheduler.cancel_pending(message.key, reason="replaced_by_development")
+            self._development_attempt += 1
+            key = f"automatic-{notice.kind}:{self._development_attempt}:{notice.role}"
+            entry["queue_key"] = key
+            def guard(dispatch_now, candidate=notice, retained=entry):
+                return ("expired" if dispatch_now >= retained["expires_at"] else
+                        self._validate_proactive(candidate, now=dispatch_now)
+                        or self.proactive_policy.suppression(candidate, now=dispatch_now))
+            def started(dispatch_now, candidate=notice, message_key=key, retained=entry, retained_topic=topic):
+                self.proactive_policy.record_started(candidate, now=dispatch_now)
+                if self._developments.get(retained_topic) is retained:
+                    del self._developments[retained_topic]
+                self.notify({"event": "radio_proactive_started", "key": message_key, **candidate.evidence()})
+            age = self._age_s + now - self._received_at
+            event = entry["event"]
+            text = notice.text
+            if isinstance(notice, PaceNotice) and _integer(event.get("lap_time_ms"), 1, 2**32 - 1):
+                text = lap_message(event["lap_number"], event["lap_time_ms"]) + " " + text
+            queued = self.scheduler.submit(RadioMessage(
+                key, self.scheduler.scope, text, "proactive", entry["expires_at"] + 30,
+                observation_age_s=age, dispatch_before=entry["expires_at"], owner="automatic_gaps",
+                dispatch_guard=guard, on_started=started), now=now)
+            self.notify({"event": "radio_proactive_candidate", "key": key, "queued": queued,
+                         "observation_age_s": age, **notice.evidence()})
+        return queued
+
+    def _report_proactive(self, notices, event, *, now, age, reported, selected=False, deadline=None):
+        deferred = []
+        admitted = False
+        for notice in notices:
+            reason = ("quiet" if self.scheduler.muted else
+                      "listening" if self.scheduler.suspended else self._validate_proactive(notice, now=now))
+            if reason in (None, "driver_workload") and self.proactive_policy.suppression(notice, now=now) == "outside_attention_range":
+                reason = "outside_attention_range"
+            if reason is not None and reason != "driver_workload":
+                self.notify({"event": "radio_proactive_suppressed", "reason": reason, **notice.evidence()})
+                continue
+            topic = (notice.kind, notice.role)
+            if topic in self._developments:
+                self._drop_development(topic, "replaced_by_newer_development")
+            entry = {"notice": notice, "event": dict(event), "scope": self.scheduler.scope,
+                     "expires_at": min(now + NOTICE_LIFETIME_S - age, deadline) if deadline is not None
+                     else now + NOTICE_LIFETIME_S - age,
+                     "selected": selected or self.proactive_mode != "model" or notice.rank[0]}
+            self._developments[topic] = entry
+            admitted = True
+            self.notify({"event": "radio_proactive_detected", **notice.evidence()})
+            if reported:
+                self._defer_development(entry, "explicit_report")
+            if not entry["selected"]:
+                deferred.append(notice)
+        if deferred:
+            if self.selector is not None:
+                if self.selector.submit(tuple(deferred), event, scope=self.scheduler.scope, now=now):
+                    for notice in deferred:
+                        self._developments[notice.kind, notice.role]["selection_generation"] = getattr(self.selector, "generation", None)
+                else:
+                    for notice in deferred:
+                        self._drop_development((notice.kind, notice.role), "selection_unavailable")
+            else:
+                self.notify({"event": "radio_strategy_unavailable", "reason": "selector_not_configured"})
+                for notice in deferred:
+                    self._drop_development((notice.kind, notice.role), "selector_not_configured")
+        self._dispatch_developments(now=now)
+        return admitted and any((notice.kind, notice.role) in self._developments for notice in notices)
+
+    def region_capture_requests(self):
+        if not self._backend_regions or self._player is None or self.scheduler.scope is None:
+            return []
+        generation, session_id, scope, player = json.loads(self.scheduler.scope)
+        requests = []
+        for task in self.tasks.active():
+            if task.region_window is None or task.opponent_first_lap is not None:
+                continue
+            lease_id = uuid.uuid5(self._capture_namespace,
+                                 f"{self.scheduler.scope}:{task.task_id}:{task.version}").hex
+            requests.append({"task_id": task.task_id, "version": task.version, "lease_id": lease_id,
+                             "body": {"generation": generation, "session_id": session_id,
+                                      "scope": scope, "player": player, "first_lap": task.first_lap,
+                                      "laps": task.until_lap - task.first_lap + 1,
+                                      "window_m": [task.region_window.start_m, task.region_window.end_m]}})
+        return requests
+
+    def opponent_capture_requests(self):
+        if not self._backend_regions or self._player is None or self.scheduler.scope is None:
+            return []
+        generation, session_id, scope, player = json.loads(self.scheduler.scope)
+        return [{"task_id": task.task_id, "version": task.version,
+                 "body": {"generation": generation, "session_id": session_id, "scope": scope,
+                          "player": json.loads(task.fixed_bindings[0]), "first_lap": task.first_lap,
+                          "laps": task.until_lap - task.first_lap + 1,
+                          "window_m": [task.region_window.start_m, task.region_window.end_m]},
+                 "opponent": json.loads(task.fixed_bindings[1]),
+                 "opponent_first_lap": task.opponent_first_lap}
+                for task in self.tasks.active() if task.opponent_first_lap is not None]
+
+    def _report_opponent_regions(self, *, now):
+        for request in self.opponent_capture_requests():
+            task = next(task for task in self.tasks.active() if task.task_id == request["task_id"])
+            matches = [item for item in self._capture_results if isinstance(item, dict)
+                       and all(type(item.get(key)) is type(value) and item.get(key) == value
+                               for key, value in request.items())]
+            if len(matches) != 1:
+                continue
+            captured = matches[0]
+            if (not all(_number(captured.get(key)) for key in ("request_age_s", "frame_age_s"))
+                    or type(captured.get("received_at")) not in (int, float)
+                    or not math.isfinite(captured["received_at"]) or not 0 <= captured["received_at"] <= now
+                    or now - captured["received_at"] + max(captured["request_age_s"], captured["frame_age_s"]) >= 3):
+                continue
+            row = self._resolve_target(task.plan.targets[1], json.loads(task.fixed_bindings[1]))
+            terminal = captured.get("state") == "unavailable" or row is None
+            number = task.reported_through_lap + 1
+            if terminal:
+                text = f"Task {task.task_id}: paired regional observations unavailable; tracking ended without changing the requested drivers or laps."
+                evidence = None
+                if not self.tasks.end_region_pair(task.task_id, task.version, "paired_capture_unavailable"):
+                    continue
+                self.scheduler.cancel_owner("opponent_regions")
+            else:
+                if captured.get("state") not in ("collecting", "complete"):
+                    continue
+                legs = captured.get("legs")
+                if not isinstance(legs, list) or len(legs) != 2:
+                    continue
+                completed = []
+                for leg, lap in zip(legs, (number, task.opponent_first_lap + number - task.first_lap)):
+                    response = leg.get("response") if isinstance(leg, dict) else None
+                    data = response.get("data") if isinstance(response, dict) else None
+                    results = data.get("results") if isinstance(data, dict) else None
+                    completed.append(isinstance(results, list) and any(
+                        isinstance(result, dict) and type(result.get("lap_number")) is int
+                        and result["lap_number"] == lap for result in results))
+                if not all(completed):
+                    continue
+                label = self._participant_name(row) or task.plan.targets[1].removeprefix("name:")
+                text, evidence = compare_opponent_region(request, captured, lap_number=number, label=label, now=now)
+                if not self.tasks.consume_region_pair(task.task_id, task.version, number):
+                    continue
+            age = max(self._age_s, captured["request_age_s"] + (now - captured["received_at"]),
+                      captured["frame_age_s"] + (now - captured["received_at"]))
+            latency = None
+            if evidence is not None:
+                intervals = []
+                for leg, completion_age in zip(captured["legs"], evidence["completion_ages_s"]):
+                    lower = completion_age + (now - leg["received_at"])
+                    intervals.append([lower, lower + leg["request_age_s"]])
+                latency = {"player_completion_to_queue_interval_s": intervals[0],
+                           "opponent_completion_to_queue_interval_s": intervals[1],
+                           "paired_ready_to_queue_interval_s": [min(interval[0] for interval in intervals),
+                                                                min(interval[1] for interval in intervals)],
+                           "pair_poll_s": captured["request_age_s"]}
+            self._queue_opponent_region(task, text, evidence, number=number, age=age, now=now, latency=latency)
+
+    def _queue_opponent_region(self, task, text, evidence, *, number, age, now, latency=None):
+        key = f"opponent-region:{task.task_id}:{task.version}:{number}"
+        if evidence is None:
+            self.scheduler.cancel_owner("opponent_regions")
+        self.notify({"event": "radio_opponent_region_report", "task_id": task.task_id,
+                     "version": task.version, "lap_number": number, "text": text,
+                     "evidence": evidence, "observation_age_s": age, "message_key": key,
+                     "latency": latency})
+        queued = self.scheduler.submit(RadioMessage(key, self.scheduler.scope, text, "proactive", now + 60,
+                                                   observation_age_s=age, dispatch_before=now + 3 - age,
+                                                   owner="opponent_regions"), now=now)
+        self._pair_report_identity = json.loads(task.fixed_bindings[1]) if evidence is not None else None
+        self.conversation.record("task_result", response=text,
+                                 tasks=[item for item in self.tasks.views() if item["task_id"] == task.task_id],
+                                 message_key=key, queued=queued)
+
+    def _captured_region(self, task, event, *, now):
+        unavailable = ("Regional observations unavailable: no fresh matching backend capture.", None)
+        expected = next((request for request in self.region_capture_requests()
+                         if request["task_id"] == task.task_id and request["version"] == task.version), None)
+        matches = [item for item in self._capture_results if isinstance(item, dict)
+                   and item.get("task_id") == task.task_id and item.get("version") == task.version]
+        if expected is None or len(matches) != 1:
+            return unavailable
+        item = matches[0]
+        response = item.get("response")
+        if (type(item.get("task_id")) is not int or type(item.get("version")) is not int
+                or any(item.get(key) != expected[key] for key in ("lease_id", "body"))
+                or not isinstance(response, dict) or response.get("status") != "available"
+                or not _number(item.get("request_age_s"))
+                or type(item.get("received_at")) not in (int, float)
+                or not math.isfinite(item["received_at"]) or item["received_at"] < 0
+                or now < item["received_at"]):
+            return unavailable
+        data = response.get("data")
+        binding = {key: expected["body"][key] for key in ("generation", "session_id", "scope", "player")}
+        if (not isinstance(data, dict) or data.get("lease_id") != expected["lease_id"]
+                or data.get("state") not in ("active", "complete") or data.get("binding") != binding
+                or data.get("window") != task.region_window.view()
+                or type(data.get("first_lap")) is not int or type(data.get("until_lap")) is not int
+                or data.get("first_lap") != task.first_lap
+                or data.get("until_lap") != task.until_lap or not isinstance(data.get("results"), list)
+                or len(data["results"]) > 20):
+            return unavailable
+        results = [result for result in data["results"] if isinstance(result, dict)
+                   and type(result.get("event_id")) is int and result["event_id"] == event["id"]
+                   and type(result.get("lap_number")) is int and result["lap_number"] == event["lap_number"]]
+        if len(results) != 1:
+            return unavailable
+        result = results[0]
+        if (not _number(result.get("completion_age_s"))
+                or type(result.get("received_monotonic_ns")) is not int
+                or result["received_monotonic_ns"] != event.get("received_monotonic_ns")
+                or not isinstance(result.get("text"), str) or not result["text"]):
+            return unavailable
+        try:
+            text_length = len(result["text"].encode("utf-8"))
+        except UnicodeError:
+            return unavailable
+        if text_length > 900:
+            return unavailable
+        age = result["completion_age_s"] + item["request_age_s"] + now - item["received_at"]
+        if age >= 3:
+            return unavailable
+        evidence = result.get("evidence")
+        if evidence is not None:
+            measurement = evidence.get("measurement") if isinstance(evidence, dict) else None
+            if (not isinstance(measurement, dict) or evidence.get("lap_number") != event["lap_number"]
+                    or measurement.get("diagnostic_only") is not True
+                    or any(measurement.get(key) is not False for key in
+                           ("layout_verified", "coaching_eligible", "ranking_eligible"))):
+                return unavailable
+        self._fact_age_s = max(self._fact_age_s or 0, age)
+        self.notify({"event": "radio_region_capture_consumed", "task_id": task.task_id,
+                     "version": task.version, "lease_id": expected["lease_id"],
+                     "event_id": event["id"], "completion_age_s": age,
+                     "request_latency_s": item["request_age_s"]})
+        return result["text"], deepcopy(evidence)
+
+    def intent_context(self) -> dict:
+        """Live facts the interpreter may use to repair mishearings; the glossary is added by the caller."""
+        player_position = (self._player or {}).get("lap", {}).get("car_position")
+        drivers = []
+        for row in self._drivers:
+            name = self._participant_name(row) if isinstance(row, dict) else None
+            if name is None or not safe_name(name):
+                continue
+            position = row.get("lap", {}).get("car_position")
+            position = position if _integer(position, 1, 24) else None
+            number = row["participant"]["value"].get("race_number")
+            is_player = self._player is not None and row.get("identity") == self._player.get("identity")
+            role = ("player" if is_player else "leader" if position == 1 else
+                    "ahead" if position is not None and position == (player_position or 0) - 1 else
+                    "behind" if position is not None and position == (player_position or 0) + 1 else "other")
+            drivers.append({"name": name, "race_number": number if _integer(number, 0, 255) else None,
+                            "position": position, "role": role})
+        drivers.sort(key=lambda driver: (driver["position"] is None, driver["position"] or 0))
+        track = (self._focus_context or {}).get("track_name")
+        tasks = []
+        for task in self.tasks.views():
+            if task["state"] != "active":
+                continue
+            targets = ", ".join(target.removeprefix("name:").replace("position:", "P") for target in task["targets"])
+            facts = ", ".join(metric.replace("_", " ") for metric in task["metrics"])
+            until = f"through lap {task['until_lap']}" if task["until_lap"] is not None else "until cancelled"
+            tasks.append({"task_id": task["task_id"], "summary": _clip(f"{targets}: {facts}; {until}", 240)})
+        recent = [{"heard": _clip(turn["request"], 240), "reply": _clip(turn["response"], 240)}
+                  for turn in self.conversation.turns
+                  if turn["kind"] in ("question", "instruction") and turn["request"] is not None][-3:]
+        pending = None
+        if self._pending_region is not None and self._pending_region.get("scope") == self.scheduler.scope:
+            opponent = self._pending_region.get("opponent")
+            pending = {"opponent": opponent if safe_name(opponent) else None,
+                       "laps": min(20, max(1, self._pending_region["requested_laps"])),
+                       "focus": bool(self._pending_region.get("focus_coach"))}
+        return {"drivers": drivers[:24], "track": _clip(track, 80) if isinstance(track, str) else None,
+                "regions": [label for label in region_labels(self._geometry_result) if safe_region(label)][:64],
+                "tasks": tasks[:8], "recent": recent, "pending_region": pending,
+                "glossary": {"terms": {}, "mishearings": {}}}
+
+    def answer_evidence(self, *, now: float) -> dict:
+        self.check_freshness(now=now)
+        facts = []
+        evidence_age = self._age_s + now - self._received_at if self._player is not None else None
+        if self._player is not None:
+            for candidate in self._drivers:
+                if not isinstance(candidate, dict) or not _identity(candidate.get("identity")):
+                    continue
+                row = self._resolve_target("self", candidate["identity"])
+                if row is None:
+                    continue
+                car = row["identity"]["car_index"]
+                label = "You" if row["identity"] == self._player["identity"] else self._participant_name(row)
+                if label is None:
+                    continue
+                for metric in ("position", "last_lap", "last_sector1", "last_sector2", "last_sector3",
+                               "relative_gap", "lap_comparison", "tyre_age", "tyre_compound", "session_best"):
+                    previous_age = self._fact_age_s
+                    self._fact_age_s = None
+                    try:
+                        text = self._timing_fact(metric, row, now=now)
+                        source_age = self._fact_age_s
+                    finally:
+                        self._fact_age_s = previous_age
+                    if "unavailable" not in text.lower():
+                        evidence_age = max(evidence_age, source_age or 0)
+                        facts.append({"id": f"car_{car}_{metric}", "text": f"{label}: {text}.",
+                                      "driver": deepcopy(row["identity"])})
+            for metric in ("track_name", "weather"):
+                text = self._timing_fact(metric, self._player, now=now)
+                if "unavailable" not in text.lower():
+                    facts.append({"id": metric, "text": text + ".", "driver": None})
+        return {"scope": self.scheduler.scope, "facts": facts,
+                "source": deepcopy(self._observation_frame),
+                "limitations": ["No rain forecast, fuel or ERS evidence in this bundle.",
+                                "No multi-lap trend or causal diagnosis is established by this snapshot."],
+                "age_s": evidence_age}
+
+    def answer_grounded(self, question: str, result: dict, *, now: float) -> bool:
+        self.check_freshness(now=now)
+        if result.get("scope") != self.scheduler.scope or result.get("scope") is None:
+            self.notify({"event": "radio_answer_dropped", "reason": "scope_changed"})
+            return False
+        deadline = result.get("dispatch_before")
+        if type(deadline) not in (int, float) or not math.isfinite(deadline) or deadline <= now:
+            self.notify({"event": "radio_answer_dropped", "reason": "observations_stale"})
+            return False
+        current = self.answer_evidence(now=now)
+        latest = {fact["id"]: fact for fact in current["facts"]}
+        if any(latest.get(fact["id"]) != fact for fact in result.get("evidence", [])):
+            self.notify({"event": "radio_answer_dropped", "reason": "evidence_changed"})
+            return False
+        self._answer_id += 1
+        text = result["reply"]["answer"]
+        key = f"answer:{self._answer_id}"
+        queued = self.scheduler.submit(RadioMessage(key, self.scheduler.scope, text, "answer", now + 60,
+                                                   dispatch_before=deadline), now=now)
+        self.notify({"event": "radio_grounded_answer", "question": question, "text": text,
+                     "evidence": result.get("evidence", []), "source": result.get("source"), "queued": queued})
+        self.conversation.record("question", request=question, response=text, message_key=key, queued=queued)
+        return queued
+
+    def check_freshness(self, *, now: float) -> None:
+        if self._player is not None and self._age_s + now - self._received_at >= 3:
+            self._unavailable("lap_observations_stale")
+
+    def answer_last_lap(self, *, now: float) -> None:
+        self.check_freshness(now=now)
+        text = "No fresh player telemetry is available."
+        if self._player is not None:
+            lap = self._player["lap"]
+            number, elapsed = lap.get("current_lap_number"), lap.get("last_lap_time_ms")
+            text = (lap_message(number - 1, elapsed)
+                    if _integer(number, 2, 255) and _integer(elapsed, 1, 2**32 - 1)
+                    else "No completed player lap time is available.")
+        self._answer_id += 1
+        self.scheduler.submit(RadioMessage(f"answer:{self._answer_id}", self.scheduler.scope,
+                                          text, "answer", now + 15,
+                                          observation_age_s=(self._age_s + now - self._received_at
+                                                             if self._player is not None else None)), now=now)
+
+    def status(self) -> dict:
+        return {"backend": self._status[0] if self._status else "unavailable",
+                "reason": self._status[1] if self._status else "not_connected",
+                "conversation_turns": len(self._history),
+                "tasks": self.tasks.views(),
+                "pending_region_clarification": ({key: deepcopy(value) for key, value in self._pending_region.items()
+                                                   if key != "action"} if self._pending_region is not None else None),
+                "watches": self.watches.views(),
+                "proactive_mode": self.proactive_mode,
+                "proactive_evaluation_interval_s": EVALUATION_INTERVAL_S,
+                "retained_developments": len(self._developments),
+                "strategy_running": bool(self.selector is not None and self.selector.thread is not None
+                                         and self.selector.thread.is_alive()),
+                "automatic_pace": {"trend": self.automatic_pace.trend,
+                                   "comparable_laps": len(self.automatic_pace.samples)},
+                "automatic_gaps": {role: {"trend": state.trend, "near": state.near,
+                                           "comparable_boundaries": len(state.history)}
+                                   for role, state in self.proactive.states.items()},
+                "pace_bests": [record.view() for record in self.pace.best.values()],
+                "quiet": self.scheduler.muted, "pending_messages": len(self.scheduler.pending),
+                "active_message": self.scheduler.active.key if self.scheduler.active else None}
+
+    def forget_conversation(self) -> None:
+        self._pending_region = None
+        self._history.clear()
+        self.conversation.clear()
+        self.notify({"event": "radio_conversation_cleared"})
+
+    def capture_task_context(self) -> TaskContext:
+        context = self.conversation.capture_tasks(
+            self.scheduler.scope, self.tasks.active(), self.scheduler.active or self.scheduler.last_completed)
+        return replace(context, clarification_id=self._pending_region["id"] if self._pending_region is not None else None)
+
+    def _await_region(self, action):
+        if (self._player is None or self.scheduler.scope is None
+                or not _integer(self._player["lap"].get("current_lap_number"), 1, 254)):
+            raise ValueError("Fresh player telemetry and a known upcoming lap are required; no tracking started.")
+        if action.task_id is not None:
+            raise ValueError("Specify the region in the complete task update; no existing task changed.")
+        opponent = None
+        if action.region_opponent is not None:
+            opponent = self._resolve_target("name:" + action.region_opponent)
+            if (opponent is None or opponent["identity"] == self._player["identity"]
+                    or not _integer(opponent["lap"].get("current_lap_number"), 1, 254)):
+                raise ValueError("Choose one available named opponent with a known upcoming lap; no tracking started.")
+        self._clarification_id += 1
+        self._pending_region = {"id": self._clarification_id, "scope": self.scheduler.scope,
+                                "revision": self.conversation.revision, "action": action,
+                                "player_first_lap": self._player["lap"]["current_lap_number"] + 1,
+                                "opponent_first_lap": opponent["lap"]["current_lap_number"] + 1 if opponent else None,
+                                "opponent_identity": deepcopy(opponent["identity"]) if opponent else None,
+                                "requested_laps": action.laps or (3 if action.kind == "focus_corner" else 1),
+                                "opponent": action.region_opponent, "focus_coach": action.kind == "focus_corner",
+                                "geometry_binding": self._geometry_binding, "track_length_m": self._track_length_m}
+
+    def _clarified_region(self, reply, captured):
+        pending = self._pending_region
+        context = self.capture_task_context() if captured is _LIVE_TASK_CONTEXT else captured
+        if (pending is None or not isinstance(context, TaskContext) or context.scope != self.scheduler.scope
+                or context.scope != pending["scope"] or context.clarification_id != pending["id"]
+                or context.revision != self.conversation.revision or context.revision != pending["revision"]):
+            raise ValueError("No matching current regional clarification was captured. Repeat the complete tracking instruction.")
+        if (pending["geometry_binding"] != self._geometry_binding or pending["track_length_m"] != self._track_length_m
+                or self._player is None):
+            self._pending_region = None
+            raise ValueError("The circuit context changed while choosing a region. Repeat the complete tracking instruction.")
+        if (not _integer(self._player["lap"].get("current_lap_number"), 1, 254)
+                or self._player["lap"]["current_lap_number"] + 1 != pending["player_first_lap"]):
+            self._pending_region = None
+            raise ValueError("Your originally requested next lap has started or changed; I will not shift it. Repeat the instruction.")
+        action = pending["action"]
+        if action.region_opponent is not None:
+            opponent = self._resolve_target("name:" + action.region_opponent, pending["opponent_identity"])
+            if (opponent is None or not _integer(opponent["lap"].get("current_lap_number"), 1, 254)
+                    or opponent["lap"]["current_lap_number"] + 1 != pending["opponent_first_lap"]):
+                self._pending_region = None
+                raise ValueError("The originally requested opponent or next lap changed; I will not substitute it. Repeat the instruction.")
+        bounds, name = reply
+        return replace(action, kind="create", question="my regional observations", laps=pending["requested_laps"],
+                       region_bounds_m=bounds, region_name=name,
+                       region_compare=action.kind == "focus_corner", focus_coach=action.kind == "focus_corner",
+                       region_opponent_binding=deepcopy(pending["opponent_identity"]))
+
+    def capture_question_context(self) -> QuestionContext | None:
+        if not self._history:
+            return None
+        previous = self._history[-1]
+        return QuestionContext(self.scheduler.scope, self.conversation.revision, previous["plan"],
+                               tuple(json.dumps(identity, sort_keys=True) if identity is not None else None
+                                     for identity in previous["bindings"]))
+
+    def _participant_name(self, row: dict) -> str | None:
+        participant = row.get("participant")
+        if (not isinstance(participant, dict) or participant.get("status") != "available"
+                or not _identity(row.get("identity")) or participant.get("identity") != row["identity"]
+                or not isinstance(participant.get("value"), dict)):
+            return None
+        value = participant["value"]
+        if (not _integer(value.get("driver_id"), 0, 65535)
+                or not _integer(value.get("team_id"), 0, 65535)
+                or not _integer(value.get("race_number"), 0, 255)):
+            return None
+        return display_driver_name(value.get("name"))
+
+    def _resolve_target(self, target: str, identity=None) -> dict | None:
+        rows = [row for row in self._drivers if isinstance(row, dict)
+                and _integer(row.get("car_index"), 0, 23)
+                and _identity(row.get("identity"))
+                and row.get("car_index") == row["identity"]["car_index"]
+                and isinstance(row.get("lap"), dict)]
+        if identity is not None:
+            matches = [row for row in rows if row["identity"] == identity]
+        elif target == "self":
+            matches = [row for row in rows if row["identity"] == self._player["identity"]]
+        elif target.startswith("name:"):
+            matches = [row for row in rows if (name := self._participant_name(row)) is not None
+                       and target[5:] in driver_name_aliases(name)]
+        else:
+            position = self._player["lap"].get("car_position")
+            if target in ("ahead", "behind"):
+                if not _integer(position, 1, 24):
+                    return None
+                wanted = position + (1 if target == "behind" else -1)
+            else:
+                wanted = 1 if target == "leader" else int(target.split(":")[1])
+            if not 1 <= wanted <= 24:
+                return None
+            if sum(isinstance(row, dict) and isinstance(row.get("lap"), dict)
+                   and row["lap"].get("car_position") == wanted for row in self._drivers) != 1:
+                return None
+            matches = [row for row in rows if type(row["lap"].get("car_position")) is int
+                       and row["lap"]["car_position"] == wanted]
+        if len(matches) != 1:
+            return None
+        match = matches[0]
+        if sum(isinstance(row, dict) and row.get("car_index") == match["car_index"]
+               for row in self._drivers) != 1:
+            return None
+        return match
+
+    def _clear_tasks(self, reason: str) -> None:
+        self._pending_region = None
+        self.scheduler.cancel_owner("opponent_regions")
+        if reason != "cancelled":
+            self._history.clear()
+            self.conversation.clear()
+            self.lap_history.clear()
+            self.pit_benchmarks.clear()
+            self.scheduler.cancel_owner("pit_benchmark")
+        self._clear_task_registry(reason)
+        self.watches.clear()
+        self.pace.clear()
+        self.regions.clear()
+        self.region_progress.clear()
+        self._reset_gaps()
+
+    def _clear_task_registry(self, reason: str) -> None:
+        if self.tasks.active() and reason != "cancelled":
+            labels = {"scope_changed": "session changed", "lap_number_discontinuity": "lap number changed",
+                      "driver_discontinuity": "telemetry discontinuity", "event_history_gap": "telemetry history gap"}
+            self._tracking_notice = "Tracking cleared: " + labels.get(reason, "telemetry reset") + "."
+        self.tasks.clear(reason)
+
+    def _flush_tracking_notice(self, *, now: float) -> None:
+        if self._tracking_notice is not None and self.scheduler.scope is not None:
+            self._answer_id += 1
+            self.scheduler.submit(RadioMessage(f"tracking-cleared:{self._answer_id}", self.scheduler.scope,
+                                              self._tracking_notice, "answer", now + 15), now=now)
+            self._tracking_notice = None
+
+    def _reset_gaps(self) -> None:
+        self._clear_developments("observation_continuity_lost")
+        self._next_evaluation = None
+        if self.selector is not None:
+            self.selector.cancel()
+        self.proactive.clear()
+        self.automatic_pace.clear()
+        self.scheduler.cancel_owner("automatic_gaps")
+        self.gaps.clear()
+        self.watches.reset_intervals()
+        self.pace.interrupt()
+        self.regions.interrupt()
+        self.scheduler.cancel_owner("gap_changes")
+        self.scheduler.cancel_owner("lap_reports")
+        self.scheduler.cancel_owner("pace_sectors")
+        self.scheduler.cancel_owner("opponent_regions")
+
+    def _aligned_observation(self, row: dict, *, now: float):
+        observation = row.get("observation")
+        if (row["identity"] != self._player["identity"] or not isinstance(observation, dict)
+                or observation.get("status") != "available" or observation.get("identity") != row["identity"]
+                or not isinstance(observation.get("value"), dict)):
+            return None
+        source = observation.get("source")
+        expected = self._observation_frame
+        if (not isinstance(source, dict) or expected is None
+                or any(value is None or source.get(key) != value for key, value in expected.items())
+                or any(not _integer(source.get(key), 0, 2**64 - 1) for key in
+                       ("session_uid", "packet_format", "epoch", "frame_identifier", "frame_ordinal",
+                        "lap_received_monotonic_ns", "telemetry_received_monotonic_ns", "telemetry_captured_at_ns"))
+                or type(source.get("session_time_s")) not in (int, float) or not math.isfinite(source["session_time_s"])
+                or any(observation["value"].get(key) is None
+                       or type(observation["value"].get(key)) is not type(row["lap"].get(field))
+                       or observation["value"].get(key) != row["lap"].get(field) for key, field in
+                       (("lap_number", "current_lap_number"), ("lap_distance_m", "lap_distance_m"),
+                        ("current_lap_time_ms", "current_lap_time_ms")))):
+            return None
+        telemetry_age = (self._age_s + now - self._received_at
+                         + (source["lap_received_monotonic_ns"] - source["telemetry_received_monotonic_ns"]) / 1e9)
+        return (observation, telemetry_age) if 0 <= telemetry_age < 3 else None
+
+    def _region_sample(self, *, now: float):
+        aligned = self._aligned_observation(self._player, now=now)
+        if aligned is None:
+            return None
+        observation = aligned[0]
+        values, source = observation["value"], observation["source"]
+        if (not _integer(source["frame_identifier"], 0, 2**32 - 1)
+                or not _integer(values.get("speed_kph"), 0, 65535)
+                or not _integer(values.get("current_lap_time_ms"), 0, 86_400_000)
+                or not _number(source["session_time_s"])
+                or type(values.get("lap_distance_m")) not in (int, float)
+                or not math.isfinite(values["lap_distance_m"])
+                or self._track_length_m is None or not 0 <= values["lap_distance_m"] <= self._track_length_m
+                or type(values.get("brake")) not in (int, float) or not math.isfinite(values["brake"])
+                or not 0 <= values["brake"] <= 1):
+            return None
+        return TraceSample(frame_identifier=source["frame_identifier"], distance_m=values["lap_distance_m"],
+                           time_s=values["current_lap_time_ms"] / 1000,
+                           session_time_s=source["session_time_s"], speed_mps=values["speed_kph"] / 3.6,
+                           brake=values["brake"], throttle=None, steering=None, gear=None, drs_active=None)
+
+    def _timing_fact(self, metric: str, row: dict, *, now: float) -> str:
+        if metric == "relative_gap":
+            gap = relative_gap_ms(self._player, row)
+            if gap is None:
+                return "gap to you unavailable; both cars must be racing on the same lap with known gaps"
+            if row["identity"] == self._player["identity"]:
+                return "this is your car"
+            if gap == 0:
+                return "level with you on reported timing"
+            return f"{abs(gap) / 1000:.3f} seconds {'behind' if gap > 0 else 'ahead of'} you"
+        if metric in ("car_ahead", "car_behind"):
+            position = row["lap"].get("car_position")
+            label = metric.replace("_", " ")
+            if not _integer(position, 1, 24):
+                return label + " unavailable; race position missing"
+            wanted = position + (1 if metric == "car_behind" else -1)
+            neighbour = self._resolve_target(f"position:{wanted}") if 1 <= wanted <= 24 else None
+            if neighbour is None:
+                return label + " unavailable; no unique neighbouring driver"
+            name = self._participant_name(neighbour)
+            if name is None:
+                return label + " unavailable; driver name missing"
+            gap = relative_gap_ms(row, neighbour)
+            interval = (f", {abs(gap) / 1000:.3f} seconds" if gap is not None
+                        else ", gap unavailable; cars must be racing on the same lap with known gaps")
+            return f"{label}: {name.title()}{interval}"
+        if metric == "lap_comparison" and row["identity"] == self._player["identity"]:
+            return "player comparison reference: " + timing_fact("last_lap", row["lap"], self._player["lap"])
+        if metric == "session_best":
+            result = reported_best_fact(row, self._observation_frame,
+                                        live_age_s=self._age_s + now - self._received_at)
+            if result is not None:
+                text, source_age = result
+                if source_age is not None:
+                    self._fact_age_s = max(self._fact_age_s or 0, source_age)
+                return text
+        if metric in UNAVAILABLE_FACTS:
+            return UNAVAILABLE_FACTS[metric]
+        if metric in SESSION_FACTS:
+            context = self._focus_context or {}
+            if metric == "track_name":
+                name = context.get("track_name")
+                return f"track {name}" if isinstance(name, str) and 0 < len(name) <= 80 else "track name unavailable"
+            weather = context.get("weather_name")
+            if not isinstance(weather, str) or not 0 < len(weather) <= 40:
+                return "weather unavailable"
+            temperatures = [f"{label} {context[key]} degrees" for label, key in
+                            (("air", "air_temperature_c"), ("track", "track_temperature_c"))
+                            if _integer(context.get(key), -50, 100)]
+            return ", ".join([f"weather {weather.lower()}", *temperatures])
+        if metric in ("tyre_age", "tyre_compound"):
+            tyre = row.get("tyre")
+            value = tyre.get("value") if isinstance(tyre, dict) and tyre.get("status") == "available" else None
+            label = "current tyre age" if metric == "tyre_age" else "current tyre compound"
+            if not isinstance(value, dict) or not _integer(value.get("actual_compound"), 1, 255):
+                return label + " unavailable"
+            if metric == "tyre_age":
+                age = value.get("age_laps")
+                return f"current tyre age {age} laps" if _integer(age, 0, 255) else label + " unavailable"
+            visual = value.get("visual_compound")
+            return (f"actual tyre compound {value['actual_compound']}, "
+                    + (f"visual compound {visual}" if _integer(visual, 1, 255) else "visual compound unavailable"))
+        if metric.startswith("lap_number:"):
+            number = int(metric.split(":", 1)[1])
+            state = self.lap_history.get(row)
+            record = next((record for record in state.laps if record.lap_number == number), None) if state else None
+            if record is None:
+                reported = reported_lap_fact(row, self._observation_frame, number)
+                if reported is not None:
+                    return reported
+                return f"lap {number} unavailable in retained eligible radio history; not complete session history"
+            return f"fully observed valid lap {number} {record.elapsed_ms / 1000:.3f} seconds, compound {record.compound}"
+        if metric in ("observed_best", "last_sector1", "last_sector2", "last_sector3"):
+            player = row["identity"] == self._player["identity"]
+            state = self.lap_history.get(row)
+            tracker = state.tracker if state else None
+            if tracker is None or not player and not state.laps:
+                return f"observed lap history unavailable for this {'player' if player else 'opponent'}"
+            if metric == "observed_best":
+                try:
+                    reference = tracker.reference(row)
+                except ValueError as error:
+                    return str(error) if player else "best observed valid lap unavailable; no eligible reference on this driver's current compound"
+                return (f"best fully observed valid radio lap on current compound {reference.compound}: "
+                        f"lap {reference.lap_number} {reference.elapsed_ms / 1000:.3f} seconds; "
+                        "not the complete session best")
+            reference = tracker.last_completed
+            number = row["lap"].get("current_lap_number")
+            sector = int(metric[-1])
+            if (reference is None or type(number) is not int or reference.lap_number != number - 1
+                    or reference.sector_times_ms is None
+                    or row["lap"].get("last_lap_time_ms") != reference.elapsed_ms):
+                return f"last lap sector {sector} unavailable; complete observed {'player' if player else 'opponent'} sector history missing"
+            elapsed = (reference.sector_times_ms[sector - 1] if sector < 3
+                       else reference.elapsed_ms - sum(reference.sector_times_ms))
+            source = "derived from lap minus sectors 1 and 2" if sector == 3 else "observed"
+            return f"lap {reference.lap_number} sector {sector} {elapsed / 1000:.3f} seconds ({source})"
+        if metric in ("speed", "brake_input"):
+            aligned = self._aligned_observation(row, now=now)
+            if aligned is None:
+                return "aligned player telemetry unavailable; opponent detail is not exposed by this radio feed"
+            observation, telemetry_age = aligned
+            self._fact_age_s = max(self._fact_age_s or 0, telemetry_age)
+            value = observation["value"].get("speed_kph" if metric == "speed" else "brake")
+            if metric == "speed" and _integer(value, 0, 65535):
+                return f"observed speed {value} kilometres per hour"
+            if metric == "brake_input" and type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 1:
+                return f"observed brake input {value * 100:.1f} percent, not a braking point"
+            return "aligned player telemetry unavailable"
+        if metric == "consistency":
+            return "use coach my consistency to track three consecutive valid observed laps"
+        if metric == "target_pace":
+            return "use help me stay within a tolerance of my best valid lap to set target pace"
+        if metric == "race_watch":
+            return "use watch followed by one driver to create a catch or defend watch"
+        if metric in GAP_CHANGES:
+            return self.gaps.answer(metric, is_player=row["identity"] == self._player["identity"])
+        return timing_fact(metric, row["lap"], self._player["lap"])
+
+    def answer_radio_control(self, text: str, *, now: float) -> None:
+        self.check_freshness(now=now)
+        self._answer_id += 1
+        self.scheduler.submit(RadioMessage(f"answer:{self._answer_id}", self.scheduler.scope,
+                                          text, "answer", now + 15), now=now)
+
+    def _control_answer(self, text: str, *, now: float) -> bool:
+        if len(text.encode("utf-8")) > 1024:
+            text = "Task details are too long to speak. Use status to review them."
+        self._answer_id += 1
+        self.notify({"event": "radio_task_answer", "text": text, "tasks": self.tasks.views()})
+        return self.scheduler.submit(RadioMessage(f"answer:{self._answer_id}", self.scheduler.scope,
+                                          text, "answer", now + 30), now=now)
+
+    def handle_request(self, question: str, *, now: float, task_context=_LIVE_TASK_CONTEXT,
+                       question_context=_LIVE_QUESTION_CONTEXT) -> None:
+        self.check_freshness(now=now)
+        memory_query = " ".join(question.lower().split()).rstrip("?.!") if isinstance(question, str) else ""
+        if memory_query in ("what was my last request", "what did you last report"):
+            turn = (self.conversation.previous_request() if memory_query == "what was my last request"
+                    else self.conversation.previous_tracking_result())
+            text = "No retained conversation reference is available."
+            if turn is not None:
+                text = (f"Your last retained request was: {turn['request']}" if memory_query == "what was my last request"
+                        else f"Historical computed tracking report, not proof you heard it: {turn['response']}")
+            self._control_answer(text, now=now)
+            return
+        selected_tasks = ()
+        try:
+            action = parse_task_request(question)
+            if action is None:
+                reply = regional_reply(question)
+                if reply is not None:
+                    action = self._clarified_region(reply, task_context)
+                    self._pending_region = None
+                else:
+                    self._pending_region = None
+                    self.answer_question(question, now=now, question_context=question_context)
+                    return
+            focus_selection = None
+            if action.kind in ("focus_corner", "clarify_region"):
+                self._pending_region = None
+            if action.kind == "focus_corner" and self._backend_regions and self._player is not None:
+                selected = choose_focus_loss(self.region_progress.focus_candidates, self._player,
+                                             regional_sample_context(self._focus_context, self._player))
+                if selected is not None:
+                    window, focus_selection = selected
+                    action = TaskAction("create", "my focus practice", laps=action.laps or 3,
+                                        region_bounds_m=(window.start_m, window.end_m),
+                                        region_compare=True, focus_coach=True)
+            if action.kind == "cancel_reference":
+                context = self.capture_task_context() if task_context is _LIVE_TASK_CONTEXT else task_context
+                if (self._pending_region is not None and isinstance(context, TaskContext)
+                        and context.scope == self.scheduler.scope and context.revision == self.conversation.revision
+                        and context.selected is None
+                        and context.clarification_id == self._pending_region["id"]):
+                    self._pending_region = None
+                    self._control_answer("Regional clarification cancelled. No existing tracking task changed.", now=now)
+                    self.conversation.record("instruction", request=question,
+                                             response="Regional clarification cancelled. No existing tracking task changed.")
+                    return
+                if (not isinstance(context, TaskContext) or context.scope != self.scheduler.scope
+                        or context.revision != self.conversation.revision or context.selected is None
+                        or context.selected not in context.versions):
+                    raise ValueError("No single current tracking reference is available. Say cancel task followed by its number, or cancel speech to stop audio only.")
+                action = TaskAction("cancel", task_id=context.selected[0])
+                task_context = context
+            if action.kind in ("update", "cancel") and task_context is not _LIVE_TASK_CONTEXT:
+                if (not isinstance(task_context, TaskContext) or task_context.scope != self.scheduler.scope
+                        or task_context.revision != self.conversation.revision):
+                    raise ValueError("No same-session task reference was captured. Repeat the task command after checking current tracking.")
+                reference = next((entry for entry in task_context.versions if entry[0] == action.task_id), None)
+                if reference is None or not any((task.task_id, task.version) == reference for task in self.tasks.active()):
+                    raise ValueError("The task changed, ended or was not active when listening began. Repeat the command for a current task.")
+            if action.kind not in ("focus_corner", "clarify_region", "list"):
+                self._pending_region = None
+            if action.kind == "list":
+                active = [task for task in self.tasks.views() if task["state"] == "active"]
+                lines = []
+                for task in active:
+                    targets = ", ".join(target.removeprefix("name:").replace("position:", "P") for target in task["targets"])
+                    metrics = ", ".join(metric.replace("_", " ") for metric in task["metrics"])
+                    if "race_watch" in task["metrics"]:
+                        targets += " (fixed driver identity, not a refreshed race-position role)"
+                    if task["pace_reference"] is not None:
+                        reference = task["pace_reference"]
+                        metrics += (f"; fixed observed lap {reference['lap_number']} "
+                                    f"{reference['elapsed_ms'] / 1000:.3f} seconds, compound {reference['actual_compound']}, "
+                                    f"tolerance {task['pace_tolerance_ms'] / 1000:.3f} seconds")
+                    if task["region_window"] is not None:
+                        window = task["region_window"]
+                        metrics += f"; numeric region {window['start_m']:g} to {window['end_m']:g} metres"
+                    if task["region_reference"] is not None:
+                        reference = task["region_reference"]
+                        metrics += f"; fixed observed lap {reference['lap_number']}, compound {reference['actual_compound']}"
+                    if task["focus_coach"]:
+                        metrics += "; one observation-guided repeatability focus, best retained admitted reference fixed"
+                    expiry = f"through lap {task['until_lap']}" if task["until_lap"] is not None else "until cancelled or session change"
+                    lines.append(f"Task {task['task_id']}: {targets}; {metrics}; {expiry}.")
+                text = " ".join(lines) if lines else "No active lap reports."
+                if self._pending_region is not None:
+                    text += " A regional clarification is pending; no new capture has started for it."
+            elif action.kind == "cancel_all":
+                self._clear_tasks("cancelled")
+                text = "All lap-report tracking cancelled."
+            elif action.kind == "focus_corner":
+                if self._player is None:
+                    raise ValueError("Fresh player telemetry is required to choose a driving focus. No new tracking started.")
+                duration = f" for your requested {action.laps} lap{'s' if action.laps != 1 else ''}" if action.laps else ""
+                text = ("I cannot rank a worst corner or prescribe a braking change from this live feed without "
+                        "verified corner geometry and an eligible reference. Choose an explicit start and end "
+                        f"distance in metres{duration}. I can track sampled braking and minimum speed there, "
+                        "or compare with a previous complete observed region if available. Those are numeric "
+                        "diagnostics, not verified corner coaching. No new tracking started; make an explicit regional request.")
+                self._await_region(action)
+                text += " You can reply with a named region or start/end metres before the requested next lap starts."
+            elif action.kind == "clarify_region":
+                self._await_region(action)
+                text = (f"Choose an explicit distance window in metres or a reviewed named region for "
+                        f"{action.region_opponent} versus you, for {action.laps} requested lap{'s' if action.laps != 1 else ''}. "
+                        "No new tracking started. Reply before either requested next lap starts; driver identities stay fixed.")
+            elif action.kind == "cancel":
+                paired = any(task["task_id"] == action.task_id and task["opponent_first_lap"] is not None
+                             for task in self.tasks.views())
+                if self.tasks.cancel(action.task_id):
+                    if paired:
+                        self.scheduler.cancel_owner("opponent_regions")
+                    self.watches.remove(action.task_id)
+                    self.regions.remove(action.task_id)
+                    self.scheduler.cancel_owner("lap_reports")
+                    self.scheduler.cancel_owner("pace_sectors")
+                    text = f"Task {action.task_id} cancelled."
+                else:
+                    text = "That task does not exist."
+            elif action.kind == "extend":
+                if self._player is None or not _integer(self._player["lap"].get("current_lap_number"), 1, 255):
+                    raise ValueError("Fresh player telemetry and a known lap number are required to extend tracking.")
+                context = self.capture_task_context() if task_context is _LIVE_TASK_CONTEXT else task_context
+                if (not isinstance(context, TaskContext) or context.scope != self.scheduler.scope
+                        or context.revision != self.conversation.revision):
+                    raise ValueError("No same-session task reference was captured. Specify a current task number.")
+                reference = (context.selected if action.task_id is None else
+                             next((entry for entry in context.versions if entry[0] == action.task_id), None))
+                if reference is None:
+                    raise ValueError("Which active task should I extend? Say extend task followed by its number and lap count.")
+                original = next((task for task in self.tasks.active()
+                                 if (task.task_id, task.version) == reference), None)
+                if original is None:
+                    raise ValueError("The selected task changed or ended since listening began. Specify a current task.")
+                for target, identity in zip(original.plan.targets, original.fixed_bindings):
+                    if identity is not None and self._resolve_target(target, json.loads(identity)) is None:
+                        raise ValueError("The fixed driver is unavailable or replaced; I will not rebind this task.")
+                opponent_lap = None
+                if original.opponent_first_lap is not None:
+                    opponent = self._resolve_target(original.plan.targets[1], json.loads(original.fixed_bindings[1]))
+                    opponent_lap = opponent["lap"].get("current_lap_number")
+                task = self.tasks.extend(*reference, additional_laps=action.laps, cursor=self._cursor or 0,
+                                         lap=self._player["lap"]["current_lap_number"], opponent_lap=opponent_lap)
+                self.regions.remove(task.task_id)
+                self.watches.extend_version(task.task_id, original.version, task.version)
+                self.scheduler.cancel_owner("lap_reports")
+                self.scheduler.cancel_owner("pace_sectors")
+                selected_tasks = (task,)
+                text = f"Task {task.task_id} extended through lap {task.until_lap}. Existing fixed references remain unchanged."
+                if task.opponent_first_lap is not None:
+                    self.scheduler.cancel_owner("opponent_regions")
+                    count = task.until_lap - task.first_lap + 1
+                    text = (f"Task {task.task_id} extended: new paired capture admission pending for your laps "
+                            f"{task.first_lap} to {task.until_lap}, and the fixed opponent's laps "
+                            f"{task.opponent_first_lap} to {task.opponent_first_lap + count - 1}. "
+                            "Driver identities and numeric region remain fixed. Both captures restart on each driver's "
+                            "next full lap; partial or unreported old pairs are discarded, not carried forward. "
+                            "Missing admission is unavailable, not shifted. Numeric diagnostics only.")
+                elif task.region_window is not None:
+                    text += " Regional capture restarts next lap; the partial current capture is discarded."
+            else:
+                if self._player is None or not _integer(self._player["lap"].get("current_lap_number"), 1, 255):
+                    raise ValueError("Fresh player telemetry and a known lap number are required to create a report.")
+                named_source = None
+                if action.region_name is not None:
+                    window, named_source = resolve_named_region(self._geometry_result, self._geometry_binding,
+                                                               action.region_name)
+                    action = replace(action, region_bounds_m=(window.start_m, window.end_m))
+                aliases = tuple(alias for row in self._drivers if isinstance(row, dict)
+                                and (name := self._participant_name(row)) is not None for alias in driver_name_aliases(name))
+                plan = (QuestionPlan(("self", "name:" + action.region_opponent), ("opponent_regional_observations",))
+                        if action.region_opponent is not None
+                        else QuestionPlan(("self",), ("regional_observations",)) if action.region_bounds_m is not None
+                        else plan_question(action.question, names=aliases))
+                if any(metric in UNAVAILABLE_FACTS for metric in plan.metrics):
+                    raise ValueError("Recurring reports cannot track session-best laps, fastest sectors or fuel from this feed. Ask a timing question for partial available results.")
+                region_window = None
+                region_reference = None
+                opponent_first_lap = None
+                if action.region_opponent is not None and not self._backend_regions:
+                    raise ValueError("Opponent regional tracking requires backend detail-demand capture; sparse polling is not a substitute.")
+                if action.region_bounds_m is not None:
+                    if self._track_length_m is None:
+                        raise ValueError("Regional tracking requires a known current track length.")
+                    region_window = RegionWindow(*action.region_bounds_m, self._track_length_m)
+                    if action.region_compare:
+                        region_reference = self.region_progress.reference(region_window, self._player)
+                    if action.focus_coach:
+                        if self._focus_binding is None:
+                            raise ValueError("Focus practice requires a stable reported circuit and track-length binding.")
+                        if not self._backend_regions:
+                            raise ValueError("Focus practice needs complete backend region capture; sparse polling cannot qualify coaching.")
+                        region_reference = choose_focus_reference(
+                            self.region_progress.focus_candidates, region_window, region_reference.actual_compound,
+                            regional_sample_context(self._focus_context, self._player))
+                pace_reference = None
+                game_pace_reference = False
+                if "target_pace" in plan.metrics:
+                    try:
+                        pace_reference = self.pace.reference(self._player)
+                    except ValueError:
+                        best = reported_best_fact(self._player, self._observation_frame,
+                                                  live_age_s=self._age_s + now - self._received_at)
+                        healthy, compound = self.pace._health(self._player)
+                        if not healthy or best is None or best[1] is None:
+                            raise
+                        selected = self._player["reported_history"]["session_best"]
+                        pace_reference = PaceReference(selected["lap_number"], selected["lap_time_ms"], compound)
+                        game_pace_reference = True
+                watching = "race_watch" in plan.metrics
+                if watching and (len(plan.targets) != 1 or plan.metrics != ("race_watch",)):
+                    raise ValueError("Watch one explicit driver at a time without additional facts.")
+                if watching and plan.targets == ("self",):
+                    raise ValueError("Choose another driver to watch.")
+                bindings = []
+                for target in plan.targets:
+                    row = self._resolve_target(target) if watching or target.startswith("name:") or action.region_opponent is not None else None
+                    if (watching or target.startswith("name:")) and row is None:
+                        raise ValueError("A named report target is unavailable or ambiguous. Use a full name or race position.")
+                    if watching and row["identity"] == self._player["identity"]:
+                        raise ValueError("Choose another driver to watch.")
+                    if action.region_opponent is not None and target.startswith("name:"):
+                        if action.region_opponent_binding is not None and row["identity"] != action.region_opponent_binding:
+                            raise ValueError("The clarified opponent identity changed; repeat the complete instruction.")
+                        if row["identity"] == self._player["identity"]:
+                            raise ValueError("Choose another driver for paired regional tracking.")
+                        if not _integer(row["lap"].get("current_lap_number"), 1, 254):
+                            raise ValueError("A known opponent lap number is required; I will not guess its next lap.")
+                        opponent_first_lap = row["lap"]["current_lap_number"] + 1
+                    bindings.append(json.dumps(row["identity"], sort_keys=True) if row is not None else None)
+                previous_pair = any(task.task_id == action.task_id and task.opponent_first_lap is not None
+                                    for task in self.tasks.active())
+                task = self.tasks.install(plan, tuple(bindings), cursor=self._cursor or 0,
+                                          lap=self._player["lap"]["current_lap_number"] + (1 if region_window else 0),
+                                          laps=action.laps, task_id=action.task_id,
+                                          pace_reference=pace_reference, pace_tolerance_ms=action.tolerance_ms,
+                                          region_window=region_window, region_reference=region_reference,
+                                          opponent_first_lap=opponent_first_lap,
+                                          region_geometry_binding=self._geometry_binding if named_source is not None else None,
+                                          focus_coach=action.focus_coach)
+                if opponent_first_lap is not None or previous_pair:
+                    self.scheduler.cancel_owner("opponent_regions")
+                selected_tasks = (task,)
+                if action.kind == "update":
+                    self.regions.remove(task.task_id)
+                self.scheduler.cancel_owner("lap_reports")
+                self.scheduler.cancel_owner("pace_sectors")
+                self.watches.observe(self.tasks.active(), self._player, self._resolve_target, now=now,
+                                     track_length_m=self._track_length_m)
+                expiry = f"through lap {task.until_lap}" if task.until_lap is not None else "until cancelled or the session changes"
+                text = f"Task {task.task_id} active: end-of-lap report from lap {task.first_lap}, {expiry}."
+                if "consistency" in plan.metrics:
+                    text += (" Rolling three consecutive fully observed valid laps on one compound since this request. "
+                             "Sector 1 and 2 fastest-to-slowest spreads, not pace deficits. "
+                             "Missing evidence restarts warm-up; short tasks may expire before three samples.")
+                if opponent_first_lap is not None:
+                    text = (f"Task {task.task_id}: paired capture admission pending. Tracking your laps {task.first_lap} "
+                            f"to {task.until_lap} against {action.region_opponent}'s laps {opponent_first_lap} "
+                            f"to {opponent_first_lap + action.laps - 1}, from {region_window.start_m:g} "
+                            f"to {region_window.end_m:g} metres. Both identities and upcoming lap windows fixed. "
+                            "Reports wait for both drivers; missed admission or incomplete evidence is unavailable, "
+                            "not shifted to later laps. Sampled numeric diagnostics, not corner coaching. "
+                            "Tyre age, fuel, conditions and traffic are not verified.")
+                elif action.focus_coach:
+                    text = (f"Task {task.task_id}: focus practice on your laps {task.first_lap} to {task.until_lap}, "
+                            f"region {region_window.start_m:g} to {region_window.end_m:g} metres. Fixed best retained "
+                            f"admitted lap {region_reference.lap_number}, compound {region_reference.actual_compound}. "
+                            f"{focus_cue(region_reference)} Backend capture admission pending. "
+                            "Reported weather must match; tyre age within three laps and temperatures within five degrees. "
+                            "Sampled context only; fuel, traffic and physical layout unverified. Experimental focus, not proven cause or guaranteed gain.")
+                    if focus_selection is not None:
+                        text += (f" Selected the largest measured loss, {focus_selection['loss_s']:.3f} seconds, "
+                                 f"among {focus_selection['candidate_windows']} admitted retained windows on lap "
+                                 f"{focus_selection['target_lap']}; not a whole-circuit worst-corner ranking.")
+                        self.notify({"event": "radio_focus_selection", "task_id": task.task_id,
+                                     "version": task.version, "selection": deepcopy(focus_selection)})
+                elif region_window is not None:
+                    capture_policy = ("Backend capture admission pending; incomplete data may leave partial coverage. "
+                                      if self._backend_regions else
+                                      "Sparse polling may leave partial coverage or unavailable onset and region time. ")
+                    text += (f" Tracking your sampled braking and minimum speed from {region_window.start_m:g} "
+                             f"to {region_window.end_m:g} metres on upcoming laps, not this partial lap. "
+                             f"{capture_policy}"
+                             "Numeric observations only, not corner coaching or opponent tracking.")
+                    if region_reference is not None:
+                        text += (f" Fixed reference: previous complete observed region on lap {region_reference.lap_number}, "
+                                 f"compound {region_reference.actual_compound}, {region_reference.elapsed_s:.3f} seconds. "
+                                 "Reference stays fixed; matching compound does not establish matching tyre age, fuel, conditions or traffic.")
+                if watching:
+                    name = self._participant_name(row) or plan.targets[0].removeprefix("name:").replace("position:", "P")
+                    text += (f" Watching {name}; driver identity fixed. Three comparable lap boundaries required. "
+                             "Named non-adjacent drivers use qualified shared-leader gap differences. Alerts report trend changes.")
+                if pace_reference is not None:
+                    source = "game-reported session-best valid lap" if game_pace_reference else "best fully observed valid radio lap"
+                    text += (f" Fixed reference: {source} {pace_reference.lap_number}, "
+                             f"{pace_reference.elapsed_ms / 1000:.3f} seconds on compound {pace_reference.compound}. "
+                             f"Stay within {task.pace_tolerance_ms / 1000:.3f} seconds; reference does not update automatically.")
+                    if game_pace_reference:
+                        text += " Historical tyre compound is unverified; current compound is used only to bind this report."
+                    text += (" Observed sector feedback enabled." if pace_reference.sector_times_ms is not None
+                             else " Sector feedback unavailable for this reference; lap feedback remains enabled.")
+                if named_source is not None:
+                    text += " Using reviewed distance bounds; the actual live layout is not independently verified."
+                    self.notify({"event": "radio_named_region", "task_id": task.task_id, "version": task.version,
+                                 "requested_region": action.region_name, "source": named_source,
+                                 "window": region_window.view(), "diagnostic_only": True,
+                                 "coaching_eligible": False})
+                if region_window is None and not watching and pace_reference is None:
+                    labels = {"self": "you", "ahead": "car ahead", "behind": "car behind"}
+                    targets = ", ".join(labels.get(target, target.removeprefix("name:").replace("position:", "P"))
+                                        for target in plan.targets)
+                    text += f" Facts: {', '.join(metric.replace('_', ' ') for metric in plan.metrics)}. Targets: {targets}."
+        except ValueError as error:
+            text = str(error)
+        queued = self._control_answer(text, now=now)
+        self.conversation.record("instruction", request=question, response=text, tasks=selected_tasks,
+                                 message_key=f"answer:{self._answer_id}", queued=queued)
+
+    def _report_pace_sector(self, event: dict, *, now: float, age: float) -> None:
+        tasks = [task for task in self.tasks.eligible(event_id=event["id"], lap=event["lap_number"])
+                 if "target_pace" in task.plan.metrics]
+        if not tasks:
+            return
+        reports = []
+        for task in tasks:
+            feedback = self.pace.answer_sector(event, task.pace_reference, task.pace_tolerance_ms, self._player)
+            reports.append(f"Task {task.task_id}: " + feedback)
+            self.notify({"event": "radio_target_pace_sector", "task_id": task.task_id, "version": task.version,
+                         "lap_number": event["lap_number"], "sector": event.get("sector"),
+                         "reference": task.pace_reference.view(), "text": feedback})
+        text = f"Lap {event['lap_number']} sector progress. " + " ".join(reports)
+        if len(text.encode("utf-8")) > 1024:
+            text = "The sector pace reports are too long to speak safely. Request fewer tasks."
+        self.scheduler.cancel_owner("pace_sectors")
+        queued = self.scheduler.submit(RadioMessage(f"pace-sector:{event['id']}", self.scheduler.scope, text, "proactive",
+                                          now + 60, observation_age_s=age, dispatch_before=now + 3 - age,
+                                          owner="pace_sectors"), now=now)
+        self.conversation.record("task_result", response=text, tasks=tasks,
+                                 message_key=f"pace-sector:{event['id']}", queued=queued)
+
+    def _report_tasks(self, event: dict, *, now: float, age: float) -> bool:
+        self._fact_age_s = None
+        tasks = self.tasks.eligible(event_id=event["id"], lap=event["lap_number"])
+        if not tasks or self._player["lap"].get("current_lap_number") != event["lap_number"] + 1:
+            return False
+        elapsed = event.get("lap_time_ms")
+        if elapsed is not None and (not _integer(elapsed, 1, 2**32 - 1)
+                                   or elapsed != self._player["lap"].get("last_lap_time_ms")):
+            return False
+        reports = []
+        for task in tasks:
+            if task.region_window is not None:
+                feedback, evidence = (self._captured_region(task, event, now=now) if self._backend_regions
+                                      else self.regions.complete(task, event))
+                comparison = None
+                if task.region_reference is not None:
+                    feedback, comparison = self.region_progress.compare(task.region_reference, event, evidence)
+                coaching = None
+                if task.focus_coach:
+                    feedback, coaching = focus_progress(task.region_reference, comparison)
+                    self.notify({"event": "radio_focus_report", "task_id": task.task_id, "version": task.version,
+                                 "lap_number": event["lap_number"], "policy": FOCUS_POLICY,
+                                 "reference_lap": task.region_reference.lap_number, "coaching": coaching,
+                                 "text": feedback})
+                if max(age, self._fact_age_s or 0) < 3:
+                    self.region_progress.observe(task.region_window, event, evidence,
+                                                 focus_allowed=self._focus_binding is not None
+                                                 and self._focus_first_lap is not None
+                                                 and event["lap_number"] >= self._focus_first_lap)
+                reports.append(f"Task {task.task_id}: " + feedback)
+                self.notify({"event": "radio_region_report", "task_id": task.task_id, "version": task.version,
+                             "lap_number": event["lap_number"], "event_id": event["id"],
+                             "binding": self.scheduler.scope, "player": deepcopy(self._player["identity"]),
+                             "evidence": evidence, "comparison": comparison, "coaching": coaching, "text": feedback})
+                continue
+            if "consistency" in task.plan.metrics:
+                feedback, samples = self.pace.consistency(task)
+                reports.append(f"Task {task.task_id}: " + feedback)
+                self.notify({"event": "radio_consistency_report", "task_id": task.task_id, "version": task.version,
+                             "lap_number": event["lap_number"], "samples": samples, "text": feedback})
+                continue
+            if "target_pace" in task.plan.metrics:
+                feedback = self.pace.answer(event, task.pace_reference, task.pace_tolerance_ms)
+                reports.append(f"Task {task.task_id}: " + feedback)
+                self.notify({"event": "radio_target_pace_report", "task_id": task.task_id, "version": task.version,
+                             "lap_number": event["lap_number"], "reference": task.pace_reference.view(),
+                             "tolerance_ms": task.pace_tolerance_ms, "text": feedback})
+                continue
+            if "race_watch" in task.plan.metrics:
+                watch = self.watches.complete(task, event["lap_number"])
+                if watch is not None:
+                    row = self._resolve_target(task.plan.targets[0], json.loads(task.fixed_bindings[0]))
+                    label = self._participant_name(row) if row is not None else None
+                    label = label or task.plan.targets[0].removeprefix("name:").replace("position:", "P")
+                    reports.append(f"Task {task.task_id}, {label}: " + watch)
+                    self.notify({"event": "radio_watch_notice", "task_id": task.task_id,
+                                 "version": task.version, "lap_number": event["lap_number"], "text": watch})
+                continue
+            pieces = []
+            for target, fixed in zip(task.plan.targets, task.fixed_bindings):
+                row = self._resolve_target(target, json.loads(fixed)) if fixed is not None else self._resolve_target(target)
+                label = "You" if target == "self" else target.removeprefix("name:").replace("position:", "P")
+                if row is None:
+                    pieces.append(f"{label}: driver unavailable.")
+                else:
+                    name = self._participant_name(row)
+                    if name is not None and target != "self":
+                        label = name
+                    pieces.append(f"{label}: " + ", ".join(self._timing_fact(metric, row, now=now) for metric in task.plan.metrics) + ".")
+            reports.append(f"Task {task.task_id}: " + " ".join(pieces))
+        if not reports:
+            self.tasks.complete_lap(event["lap_number"])
+            return False
+        prefix = lap_message(event["lap_number"], elapsed) if _integer(elapsed, 1, 2**32 - 1) else ""
+        if prefix and event.get("previous_observed_invalid") == 1:
+            prefix += " Observed invalid."
+        text = prefix + f" Lap {event['lap_number']} reports. " + " ".join(reports)
+        if len(text.encode("utf-8")) > 1024:
+            text = prefix + " The lap reports are too long to speak safely. Request fewer drivers or facts."
+        self.notify({"event": "radio_task_report", "task_ids": [task.task_id for task in tasks],
+                     "lap_number": event["lap_number"], "text": text})
+        age = max(age, self._fact_age_s or 0)
+        queued = self.scheduler.submit(RadioMessage(f"reports:{event['id']}", self.scheduler.scope, text, "proactive",
+                                          now + 60, observation_age_s=age, dispatch_before=now + 3 - age,
+                                          owner="lap_reports"), now=now)
+        self.tasks.complete_lap(event["lap_number"])
+        identifiers = {task.task_id for task in tasks}
+        self.conversation.record("task_result", response=text,
+                                 tasks=[task for task in self.tasks.views() if task["task_id"] in identifiers],
+                                 message_key=f"reports:{event['id']}", queued=queued)
+        return True
+
+    def answer_question(self, question: str, *, now: float, question_context=_LIVE_QUESTION_CONTEXT) -> None:
+        self._fact_age_s = None
+        self.check_freshness(now=now)
+        previous = None
+        if question_context is _LIVE_QUESTION_CONTEXT:
+            previous = self._history[-1] if self._history else None
+        elif (isinstance(question_context, QuestionContext) and question_context.scope == self.scheduler.scope
+              and question_context.revision == self.conversation.revision):
+            previous = {"plan": question_context.plan,
+                        "bindings": [json.loads(identity) if identity is not None else None
+                                     for identity in question_context.bindings]}
+        started = time.perf_counter()
+        text = "No fresh player telemetry is available."
+        results = []
+        plan = None
+        bindings = None
+        gap_question = False
+        if self._player is not None:
+            try:
+                aliases = tuple(alias for row in self._drivers if isinstance(row, dict)
+                                and (name := self._participant_name(row)) is not None
+                                for alias in driver_name_aliases(name))
+                plan = plan_question(question, previous["plan"] if previous else None, names=aliases)
+            except ValueError as error:
+                text = str(error)
+            else:
+                gap_question = any(metric in GAP_CHANGES for metric in plan.metrics)
+                bindings = []
+                for index, target in enumerate(plan.targets):
+                    if plan.inherited_targets:
+                        identity = previous["bindings"][index]
+                        row = self._resolve_target(target, identity) if identity is not None else None
+                    else:
+                        row = self._resolve_target(target)
+                        identity = row["identity"] if row else None
+                    bindings.append(deepcopy(identity))
+                    label = "You" if target == "self" else target.replace("position:", "P").capitalize()
+                    if target.startswith("name:"):
+                        label = target[5:]
+                    name = self._participant_name(row) if row is not None else None
+                    if name is not None and target != "self":
+                        label = name
+                    if plan.inherited_targets and target != "self":
+                        label = f"Previously selected {label}"
+                    if row is None:
+                        result = f"{label}: driver unavailable or ambiguous."
+                        if target.startswith("name:"):
+                            result += " Use a full name or P1 to P24."
+                    elif all(metric in SESSION_FACTS for metric in plan.metrics):
+                        result = ", ".join(self._timing_fact(metric, row, now=now) for metric in plan.metrics) + "."
+                    else:
+                        result = f"{label} (car slot {row['car_index']}): " + ", ".join(
+                            self._timing_fact(metric, row, now=now) for metric in plan.metrics) + "."
+                    results.append(result)
+                text = re.sub(r" \(car slot [0-9]+\)", "", " ".join(results))
+                self._history.append({"question": question, "plan": plan, "bindings": bindings})
+                self._history = self._history[-8:]
+        self._answer_id += 1
+        self.notify({"event": "radio_question_answer", "question": question, "text": text,
+                     "results": results, "planning_s": time.perf_counter() - started})
+        age = self._age_s + now - self._received_at if self._player is not None else None
+        if self._fact_age_s is not None:
+            age = max(age or 0, self._fact_age_s)
+        queued = self.scheduler.submit(RadioMessage(f"answer:{self._answer_id}", self.scheduler.scope,
+                                          text, "answer", now + 60, observation_age_s=age,
+                                          dispatch_before=now + 3 - (age or 0),
+                                          owner="gap_changes" if gap_question else None), now=now)
+        self.conversation.record("question", request=question, response=text,
+                                 message_key=f"answer:{self._answer_id}", queued=queued, plan=plan, bindings=bindings)

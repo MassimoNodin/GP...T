@@ -118,6 +118,9 @@ export const SILENT_TEXT = "No sound was picked up. Check the input device and s
 
 /** Text for a failed transcription request (HTTP status and the proxy or engine reason code). */
 export function transcribeFailureText(status: number | null, reason: string | null): string {
+  if (status === 409 && reason === "engineer_ask_busy") {
+    return "The engineer is busy with another request, possibly on the radio. Try again in a moment.";
+  }
   if (status === null) return "The local engine is not reachable.";
   if (status === 403 || status === 401) {
     return "The web app is not allowed to use speech recognition. Check the engine's control token.";

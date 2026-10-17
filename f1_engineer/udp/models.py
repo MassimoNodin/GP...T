@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum
 
 
@@ -72,6 +72,8 @@ class DecodedPacket:
     body: bytes
     wire_fingerprint: bytes
     source_sequence: int | None = None
+    received_monotonic_ns: int | None = field(default=None, compare=False)
+    captured_at_ns: int | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True, slots=True)

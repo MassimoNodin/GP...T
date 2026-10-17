@@ -95,10 +95,75 @@ Install Ollama, then run from the repository root:
 Later model starts omit `-InstallModel`; stop it with
 `.\scripts\stop-private-ollama.ps1`. The private model endpoint is
 `127.0.0.1:11435`. Microphone input produces an editable transcript; questions
-are submitted explicitly. Playback uses browser speech synthesis. Typed input
+are submitted explicitly. Dashboard playback uses browser speech synthesis. Typed input
 and telemetry workflows do not require the optional speech/model runtimes.
 
+## Standalone lap radio on Windows
+
+An initial browser-independent radio client speaks fresh player lap completions
+and answers the fixed console command `lap` using the authenticated live backend.
+In verified race sessions it also notices new adjacent-car gap and valid-lap
+pace trends, with freshness checks and bounded chatter. Rules mode needs no
+model; optional model mode can select an evidenced notice or silence, never
+invent speech or tactical orders. See the
+[proactive radio validation guide](docs/proactive-radio-validation.md) for modes,
+offline scenarios and the deferred joint test sequence.
+Optional wheel-triggered microphone capture and listening cues now produce an
+unverified transcript draft; the full conversational engineer remains pending.
+
+```powershell
+uv run --extra app f1-engineer radio --list-voices
+uv run --extra app f1-engineer radio --dry-run
+uv run --extra app --extra radio f1-engineer radio
+```
+
+See the [standalone radio guide](docs/working-engineer-standalone-radio.md) for
+split-host token/tunnel settings, controls, timing diagnostics and pending
+hardware acceptance. The backend must already be running; no browser is needed.
+Optional wheel-button learning and live reassignment use `radio-input` with
+`--extra radio`; see the guide. `radio --capture-test` tests listening and cues
+without a backend, uploaded audio or saved recordings. Capture starts only on
+an explicit button press or console `listen` command.
+
+### Using the dashboard with the radio
+
+The dashboard and the radio share one backend and can run together.
+
+- **Settings reach the running radio live.** Assistance topics, interruption,
+  verbosity and depth, and the Radio card in **Settings › Voice & Controls**
+  (proactive and answer mode, voice, rate, volume, microphone, cue output and
+  capture length) arrive on the radio's existing live poll, normally within a
+  few hundred milliseconds. Nothing restarts: the current sentence, capture or
+  request finishes, and each change applies at its next natural point. Until
+  the Radio card is saved, the radio keeps its command-line values for voice,
+  rate, volume, modes and capture. Assistance preferences apply on their own,
+  including before that first save. After a Radio card save, those dashboard
+  values win. See [radio live settings](docs/radio-live-settings.md).
+- **Radio History includes the radio.** Questions asked on the radio and what
+  it actually spoke appear on **Drive** with the **Radio** filter. See
+  [radio activity history](docs/radio-activity-history.md).
+- **One voice at a time.** While a radio is connected, Drive's "Read calls
+  aloud" stays switched on but does not speak. A call already queued or
+  playing is cancelled. Speech starts again after the radio disconnects.
+- **Speech recognition is selectable** in **Settings › Voice & Controls**: local
+  whisper.cpp (`tiny.en` or `large-v3`, CPU or CUDA, for each variant installed
+  with the setup script below) or OpenAI transcription. Switching needs no
+  restart; a clip already being transcribed finishes on its original runtime.
+  OpenAI needs an API key, added under **Settings › Connections › API keys**.
+  The key file sits beside the database. On Ubuntu it is owner-only; on
+  Windows, access relies on the data folder's permissions. The key itself is
+  never returned, and Settings shows only its last four characters.
+  The `--speech-provider` flag only sets the starting choice.
+
 ## Validation and diagnostics
+
+The first working-engineer backend increment exposes authenticated live facts
+at `GET /api/v2/engineer/live`. It includes freshness-qualified field timing,
+verified driver bindings and bounded lap/sector/pit events. See the
+[live facts contract](docs/working-engineer-live-facts.md) and
+[v1 acceptance criteria](docs/working-engineer-v1-acceptance.md).
+The standalone lap radio consumes these facts, but the full spoken engineer's
+acceptance criteria remain pending.
 
 ```powershell
 uv run --extra dev --extra app pytest
@@ -237,7 +302,16 @@ The default build uses two jobs, CPU-only static whisper/ggml libraries and
 the system C/C++ runtime. Source, build output and model live under
 `~/.local/share/GP...T/speech-runtime/v1.9.3`; the verified pin is beside the
 configured database. Pass `--database` when using a different data directory.
-The API rereads this pin, so installing speech does not require a service
+For a CUDA host, install the matching CUDA toolkit and build tools, then pass
+`--model large-v3 --device cuda --cuda-architectures 61` with the GPU's compute
+capability. `--cuda-host-compiler` can select a supported host compiler. The
+full large-v3 model requires several gigabytes of storage and GPU memory; build
+and inference fit depends on the GPU and other active GPU workloads.
+Each model and device is pinned separately
+(`.f1-engineer-whisper-pin.<model>.<device>.json`), so several variants can be
+installed and chosen in the dashboard; an existing
+`.f1-engineer-whisper-pin.json` is still used for the variant it declares.
+The API rereads these pins, so installing speech does not require a service
 restart. A changed pin is refused unless you explicitly review and accept it
 with `--accept-runtime-update`. Microphone clips remain bounded to 12 seconds;
 transcripts are editable drafts, not verified telemetry evidence.
