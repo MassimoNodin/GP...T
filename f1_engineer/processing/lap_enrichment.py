@@ -13,7 +13,7 @@ import json
 import struct
 import threading
 import time
-from collections import OrderedDict, deque
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -32,6 +32,8 @@ LAP_TIME_TOLERANCE_MS = 1
 _HEADER_SIZE = 29
 _SESSION_HISTORY_CAR_OFFSET = _HEADER_SIZE
 _LAP_DATA_RING = 4
+# Older Session History packets read only to recover laps the newest one reports incomplete.
+_HISTORY_BACKFILL_ROWS = 512
 
 # Same label tables as analysis/quality.py, keyed by the session's formula id.
 _ACTUAL_LABELS = {
@@ -48,7 +50,9 @@ _VISUAL_LABELS = {
 
 @dataclass(frozen=True)
 class LapEnrichmentLimits:
-    scan_rows: int = 250_000
+    # Journal span a session may cover. Packets are looked up per lap through the
+    # (generation, sequence) key, so cost follows the lap count, not this span.
+    scan_rows: int = 20_000_000
     matched_bytes: int = 64 * 1024 * 1024
     duration_s: float = 10.0
     max_laps: int = 500
@@ -56,7 +60,7 @@ class LapEnrichmentLimits:
     concurrency: int = 2
 
     def __post_init__(self) -> None:
-        maxima = (1_000_000, 256 * 1024 * 1024, 30.0, 500, 64, 4)
+        maxima = (100_000_000, 256 * 1024 * 1024, 30.0, 500, 64, 4)
         values = (self.scan_rows, self.matched_bytes, self.duration_s, self.max_laps,
                   self.cache_entries, self.concurrency)
         if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= maximum
@@ -248,47 +252,45 @@ class LapEnrichmentService:
         cars = {target.car_index for target in targets if target.car_index >= 0}
         history: dict[int, _CarHistory] = {car: _CarHistory({}) for car in cars}
         result["history"] = history
-        pending = sorted((target for target in targets if target.end is not None), key=lambda item: item.end)
-        pointer = 0
-        status: tuple[int, bytes] | None = None
-        ring: deque[tuple[int, bytes]] = deque(maxlen=_LAP_DATA_RING)
-        cursor = database.execute(
-            """SELECT sequence,payload FROM journal WHERE generation=? AND sequence BETWEEN ? AND ?
-               AND kind='datagram' AND substr(payload,8,8)=?
-               AND substr(payload,7,1) IN (X'02',X'07',X'0B') ORDER BY sequence""",
-            (generation["id"], lower, upper, uid),
-        )
-        for entry in cursor:
-            sequence = entry["sequence"]
-            payload = bytes(entry["payload"])
-            if result["rows"] % 256 == 0 and self.clock() - started >= self.limits.duration_s:
+        packets = """SELECT sequence,payload FROM journal WHERE generation=? AND sequence BETWEEN ? AND ?
+                     AND kind='datagram' AND substr(payload,8,8)=? AND substr(payload,7,1)=?{car}
+                     ORDER BY sequence DESC LIMIT ?"""
+
+        def read(packet_id: PacketId, until: int, limit: int, car: int | None = None):
+            """Newest matching packets at or before `until`, walking back the primary key."""
+            if self.clock() - started >= self.limits.duration_s:
                 result["truncation"] = "time_budget_exceeded"
-                break
-            result["rows"] += 1
-            result["bytes"] += len(payload)
-            if result["bytes"] > self.limits.matched_bytes:
-                result["truncation"] = "byte_budget_exceeded"
-                break
-            if len(payload) <= _HEADER_SIZE:
-                continue
-            while pointer < len(pending) and pending[pointer].end < sequence:
-                pending[pointer].status = status
-                pending[pointer].lap_data = tuple(ring)
-                pending[pointer].resolved = True
-                pointer += 1
-            result["last_sequence"] = sequence
-            packet_id = payload[6]
-            if packet_id == int(PacketId.CAR_STATUS):
-                status = (sequence, payload)
-                result["counts"]["car_status"] += 1
-            elif packet_id == int(PacketId.LAP_DATA):
-                ring.append((sequence, payload))
-                result["counts"]["lap_data"] += 1
-            elif packet_id == int(PacketId.SESSION_HISTORY):
-                car = payload[_SESSION_HISTORY_CAR_OFFSET]
-                owner = history.get(car)
-                if owner is None:
-                    continue
+                return None
+            rows = database.execute(
+                packets.format(car="" if car is None else " AND substr(payload,30,1)=?"),
+                (generation["id"], lower, until, uid, bytes((int(packet_id),)),
+                 *(() if car is None else (bytes((car,)),)), limit),
+            ).fetchall()
+            matched = []
+            for entry in rows:
+                payload = bytes(entry["payload"])
+                result["rows"] += 1
+                result["bytes"] += len(payload)
+                if result["bytes"] > self.limits.matched_bytes:
+                    result["truncation"] = "byte_budget_exceeded"
+                    return None
+                if len(payload) > _HEADER_SIZE:
+                    matched.append((entry["sequence"], payload))
+                    result["last_sequence"] = max(result["last_sequence"] or 0, entry["sequence"])
+            return matched
+
+        # Session History carries every lap so far: start from the newest packet and read
+        # older ones only for laps it still reports incomplete. The newest complete copy of
+        # a lap wins, otherwise the newest copy, as when replaying the packets in order.
+        laps_by_car: dict[int, set[int]] = {}
+        for target in targets:
+            if target.car_index in history and target.lap_number > 0:
+                laps_by_car.setdefault(target.car_index, set()).add(target.lap_number)
+        for car, owner in history.items():
+            entries = read(PacketId.SESSION_HISTORY, upper, _HISTORY_BACKFILL_ROWS, car)
+            if entries is None:
+                return result
+            for sequence, payload in entries:
                 body = payload[_HEADER_SIZE:]
                 if body == owner.last_body:
                     continue
@@ -303,21 +305,30 @@ class LapEnrichmentService:
                     continue
                 owner.packets += 1
                 result["counts"]["session_history"] += 1
-                owner.stints = decoded.history.tyre_stints
+                if owner.packets == 1:
+                    owner.stints = decoded.history.tyre_stints
                 for lap in decoded.history.lap_history:
                     number = lap.lap_index + 1
                     existing = owner.laps.get(number)
-                    if existing is None or _complete(lap) or not _complete(existing[0]):
+                    if existing is None or (_complete(lap) and not _complete(existing[0])):
                         owner.laps[number] = (lap, sequence)
-        else:
-            # Full range scanned: remaining targets end at or after the last matched packet.
-            last = result["scanned_upper"]
-            while pointer < len(pending) and pending[pointer].end <= last:
-                pending[pointer].status = status
-                pending[pointer].lap_data = tuple(ring)
-                pending[pointer].resolved = True
-                pointer += 1
-            return result
+                if all(number in owner.laps and _complete(owner.laps[number][0])
+                       for number in laps_by_car.get(car, ())):
+                    break
+
+        # Tyre state and the Lap Data fallback come from the packets just before each lap ends.
+        for target in sorted((target for target in targets if target.end is not None), key=lambda item: item.end):
+            if target.end > upper:
+                break
+            status = read(PacketId.CAR_STATUS, target.end, 1)
+            ring = None if status is None else read(PacketId.LAP_DATA, target.end, _LAP_DATA_RING)
+            if ring is None:
+                return result
+            result["counts"]["car_status"] += len(status)
+            result["counts"]["lap_data"] += len(ring)
+            target.status = status[0] if status else None
+            target.lap_data = tuple(reversed(ring))
+            target.resolved = True
         return result
 
     # ------------------------------------------------------------------ assembly
@@ -421,8 +432,11 @@ class LapEnrichmentService:
             return fallback, "lap_data", None
         if target.end is None:
             return None, None, "lap_source_range_unavailable"
-        if scan_truncation is not None and history_reason in (
-                "session_history_not_in_journal", "lap_not_in_session_history"):
+        # A stopped read leaves Session History partial: a lap that was still being driven
+        # in the last packet read can look mismatched, so report the budget instead.
+        if scan_truncation is not None and (not target.resolved or history_reason in (
+                "session_history_not_in_journal", "lap_not_in_session_history",
+                "session_history_lap_time_mismatch", "sectors_unavailable_in_session_history")):
             return None, None, "journal_scan_budget_exceeded"
         if history_reason == "session_history_not_in_journal":
             return None, None, fallback_reason or history_reason
