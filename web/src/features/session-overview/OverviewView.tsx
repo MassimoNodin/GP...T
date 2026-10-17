@@ -2,28 +2,26 @@
 
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
-import { Bone } from "@/features/route-states/Skeleton";
 import { StatusGlyph } from "@/features/ui-foundation/icons";
 import { Card, Checkbox, Select } from "@/features/ui-foundation/primitives";
-import { EmptyState, InlineAlert } from "@/features/ui-foundation/states";
+import { EmptyState } from "@/features/ui-foundation/states";
 import { LapTimeChart } from "./LapTimeChart";
 import { SessionQuestion } from "./SessionQuestion";
 import {
   buildSeries,
   deriveSummary,
-  lapsWithoutStint,
-  formatLapRanges,
   METRIC_LABELS,
   metricOptions,
   scanStoppedText,
   lapMarkers,
   outlierLapIds,
   scopeEvents,
-  pitMarkers,
-  totalLapsOf,
+  compoundBands,
+  compoundColor,
+  COMPOUND_TINT,
   type ChartMetric,
 } from "./overview-data";
-import { BoneLines, EventGlyph, StintBar, Unavailable } from "./shared";
+import { BoneLines, EventGlyph, Unavailable } from "./shared";
 import type { ViewData } from "./view-types";
 import styles from "./SessionOverview.module.css";
 import viewStyles from "./OverviewViews.module.css";
@@ -49,7 +47,6 @@ export function OverviewView({
     <div className={styles.grid}>
       <div className={styles.col}>
         <ProgressionCard data={data} onMetric={onMetric} onSelectLap={onSelectLap} onCompareLap={onCompareLap} />
-        <StintCard data={data} />
       </div>
       <div className={styles.col}>
         <SummaryCard data={data} />
@@ -71,7 +68,7 @@ function ProgressionCard({
   onSelectLap?: (id: string) => void;
   onCompareLap?: (id: string) => void;
 }) {
-  const { model, laps, best, selectedId, referenceId, metric, summary } = data;
+  const { model, laps, best, selectedId, referenceId, metric, summary, enrichment } = data;
   const [excludeOutliers, setExcludeOutliers] = useState(true);
   const summaryEvents = summary.status === "loaded" ? summary.value.events : null;
   const markers = useMemo(
@@ -97,6 +94,14 @@ function ProgressionCard({
       ...model.progression,
       values: Object.fromEntries(model.progression.points.map((point) => [point.lap, point.ms])),
     } as NonNullable<typeof series>);
+  const tyres = useMemo(
+    () =>
+      enrichment.status === "loaded" && !illustrative && enrichment.stints.length > 0
+        ? compoundBands(enrichment.stints, laps, chart.xMax)
+        : null,
+    [chart.xMax, enrichment, illustrative, laps],
+  );
+  const legendCompounds = tyres ? [...new Map(tyres.bands.map((band) => [band.compound, band])).values()] : [];
   return (
     <Card title="Lap Time Progression" labelledBy="lap-progression" className={styles.progressionCard}>
       <div className={styles.legend}>
@@ -125,6 +130,18 @@ function ProgressionCard({
           <i style={{ background: "#2563eb" }} />
           Selected Lap
         </span>
+        {legendCompounds.map((band) => (
+          <span key={band.compound} className={styles.key}>
+            <i className={styles.tintKey} style={{ background: compoundColor(band.compound), opacity: COMPOUND_TINT * 2.5 }} />
+            {band.label}
+          </span>
+        ))}
+        {tyres && tyres.stops.length > 0 && (
+          <span className={styles.key}>
+            <i className={styles.pitKey} />
+            Pit stop
+          </span>
+        )}
         {reference && (
           <span className={styles.key}>
             <i className={viewStyles.keyRing} />
@@ -150,6 +167,8 @@ function ProgressionCard({
           selectedValue={chart.values[selected.lap]}
           reference={reference && chart.values[reference.lap] !== undefined ? { lap: reference.lap, value: chart.values[reference.lap] } : null}
           markers={markers}
+          bands={tyres?.bands}
+          stops={tyres?.stops}
           onPick={
             onSelectLap
               ? (lapNumber, compareWith) => {
@@ -169,44 +188,6 @@ function ProgressionCard({
       )}
       {model.lapDataNote && <p className={styles.dataNote}>{model.lapDataNote}</p>}
     </Card>
-  );
-}
-
-function StintCard({ data }: { data: ViewData }) {
-  const { enrichment, laps, model } = data;
-  const title = (children: ReactNode) => (
-    <Card title="Stint Structure" labelledBy="stint-structure" className={styles.stintCard}>
-      {children}
-    </Card>
-  );
-  if (enrichment.status === "loading") {
-    return title(
-      <div aria-hidden="true">
-        <Bone width="60%" height={12} style={{ marginBottom: 22 }} />
-        <Bone height={20} />
-      </div>,
-    );
-  }
-  if (enrichment.status === "unavailable") {
-    return title(
-      <Unavailable>
-        {model.source === "v1" ? enrichment.reason : "Tyre stint data is not available for this session."}
-      </Unavailable>,
-    );
-  }
-  if (enrichment.stints.length === 0) {
-    return title(<EmptyState size="inline" title="Tyre data was not recorded for this session." />);
-  }
-  const missing = lapsWithoutStint(laps, enrichment.stints);
-  return title(
-    <>
-      {missing.length > 0 && (
-        <div className={viewStyles.alertGap}>
-          <InlineAlert tone="warning">Tyre data is missing for laps {formatLapRanges(missing)}.</InlineAlert>
-        </div>
-      )}
-      <StintBar stints={enrichment.stints} total={totalLapsOf(laps, enrichment.stints)} pits={pitMarkers(enrichment.stints, laps)} />
-    </>,
   );
 }
 

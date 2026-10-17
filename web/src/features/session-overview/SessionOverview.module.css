@@ -233,6 +233,18 @@
   border-radius: 2px;
 }
 
+.key i.tintKey {
+  width: 12px;
+  border-radius: 2px;
+}
+
+.key i.pitKey {
+  width: 0;
+  height: 12px;
+  border-radius: 0;
+  border-left: 2px dotted var(--text);
+}
+
 .chartWrap {
   position: relative;
 }

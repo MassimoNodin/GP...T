@@ -2,7 +2,16 @@ import type { ProgressionPoint } from "@/features/review-data/fixtures";
 import { formatDelta, formatLapTime } from "@/features/review-data/format";
 import { chartHeight, useElementWidth } from "@/features/ui-foundation/chart-frame";
 import { displayDelta, useUnits } from "@/features/ui-foundation/units";
-import { formatAxisValue, formatMetricValue, type ChartMetric, type LapMarker } from "./overview-data";
+import {
+  COMPOUND_TINT,
+  compoundColor,
+  formatAxisValue,
+  formatMetricValue,
+  type ChartMetric,
+  type CompoundBand,
+  type LapMarker,
+  type PitStop,
+} from "./overview-data";
 import styles from "./SessionOverview.module.css";
 
 const MARKER_LABELS: Record<LapMarker["kind"], string> = { pit: "PIT", sc: "SC", vsc: "VSC" };
@@ -30,6 +39,8 @@ export function LapTimeChart({
   selectedValue,
   reference,
   markers = [],
+  bands = [],
+  stops = [],
   onPick,
 }: {
   points: ProgressionPoint[];
@@ -47,6 +58,10 @@ export function LapTimeChart({
   reference?: { lap: number; value: number } | null;
   /** Pit and safety car laps, tagged along the bottom of the plot. */
   markers?: LapMarker[];
+  /** Tyre compound tint behind the plot, per stint. */
+  bands?: CompoundBand[];
+  /** Pit stops as dotted lines; without them pit laps keep their tag. */
+  stops?: PitStop[];
   /**
    * Point clicks: `compare` is true for a shift-click. Keyboard users change
    * laps with the Lap Selection stepper, so the points stay out of the tab order.
@@ -101,6 +116,18 @@ export function LapTimeChart({
         role="img"
         aria-label={`${metricName} progression across ${points.length} laps. Lap ${selected.lap} selected at ${formatMetricValue(metric, own)}${showReference ? `, compared with lap ${reference.lap}` : ""}.`}
       >
+        {bands.map((band) => (
+          <rect
+            key={`${band.from}-${band.compound}`}
+            x={x(band.from)}
+            y={PAD.top}
+            width={Math.max(x(band.to) - x(band.from), 0)}
+            height={plotH}
+            fill={compoundColor(band.compound)}
+            fillOpacity={COMPOUND_TINT}
+            data-compound={band.compound}
+          />
+        ))}
         {yTicks.map((tick) => (
           <g key={tick}>
             <line x1={PAD.left} x2={W - PAD.right} y1={y(tick)} y2={y(tick)} stroke="var(--chart-grid)" />
@@ -139,7 +166,25 @@ export function LapTimeChart({
             <circle key={point.lap} cx={x(point.lap)} cy={y(point.ms)} r="2.9" fill={TONES[point.tone]} />
           ),
         )}
+        {stops.map((stop) => (
+          <g key={`stop-${stop.after}`} role="img" aria-label={`Pit stop after lap ${stop.after}`}>
+            <title>{`Pit stop after lap ${stop.after}`}</title>
+            <line x1={x(stop.at)} x2={x(stop.at)} y1={PAD.top} y2={H - PAD.bottom} stroke="transparent" strokeWidth="12" />
+            <line
+              x1={x(stop.at)}
+              x2={x(stop.at)}
+              y1={PAD.top}
+              y2={H - PAD.bottom}
+              stroke="var(--text)"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeDasharray="0.1 5"
+              strokeOpacity={0.7}
+            />
+          </g>
+        ))}
         {markers.map((marker) => {
+          if (marker.kind === "pit" && stops.length > 0) return null;
           // Stack a lap's tags upward from the axis.
           const stack = markers.filter((other) => other.lap === marker.lap).indexOf(marker);
           const label = MARKER_LABELS[marker.kind];

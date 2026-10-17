@@ -982,9 +982,6 @@ test("fixture session keeps its reference content on every tab", async () => {
   assert.match(overview, /Monaco Grand Prix/);
   assert.match(overview, /Game Build<\/dt><dd>1\.22/);
   assert.match(overview, /Track Grip/);
-  assert.match(overview, /Soft \(12\)/);
-  assert.match(overview, /Medium \(42\)/);
-  assert.match(overview, /Hard \(24\)/);
   assert.match(overview, /A strong and consistent race/);
   assert.match(overview, /Notable Events \(8\)/);
   assert.match(overview, /Personal best \(1:12\.842\)/);
@@ -1003,6 +1000,9 @@ test("fixture session keeps its reference content on every tab", async () => {
   assert.doesNotMatch(laps, /Game Build/, "the hero is not shown on the Laps tab");
 
   const stints = renderOverview(model, at("stints"));
+  assert.match(stints, /Soft \(12\)/);
+  assert.match(stints, /Medium \(42\)/);
+  assert.match(stints, /Hard \(24\)/);
   assert.match(stints, /Stint Pace/);
   assert.match(stints, /Pit stop after lap 12/);
   assert.match(stints, /aria-label="Lap times by stint"/);
@@ -1095,8 +1095,8 @@ test("a v2 session whose sections loaded on the server shows derived summary, st
   assert.equal(model.header[2], "4 Jun 2024");
   const overview = renderOverview(model, at("overview", { selectedId: "3" }));
   assert.match(overview, /3 timed laps recorded across 1 stint. Best lap 1:20\.000 on lap 2/);
-  assert.match(overview, /Medium \(2\)/);
-  assert.match(overview, /Tyre data is missing for laps 3/);
+  assert.match(overview, /data-compound="medium"/, "the lap chart is tinted by the stint compound");
+  assert.doesNotMatch(overview, /Stint Structure/, "the overview has no stint bar");
   assert.match(overview, /4 Jun 2024, 15:00/);
   assert.match(overview, /Lights out/);
   assert.match(overview, /<option value="s1"[^>]*>Sector 1<\/option>/);

@@ -341,6 +341,41 @@ export function pitMarkers(stints: OverviewStint[], laps: OverviewLap[]): PitMar
   return markers;
 }
 
+/** Opacity of the compound tint behind the lap chart. */
+export const COMPOUND_TINT = 0.2;
+
+export type CompoundBand = { from: number; to: number; compound: Compound; label: string };
+export type PitStop = { at: number; after: number };
+
+/**
+ * Compound bands over the lap chart's x axis (lap units, 0..total), meeting at each pit stop with no hole
+ * at unrecorded laps. A stop falls between its pit lap and the next lap; without a pit lap it is halfway
+ * across the gap. The first and last bands run to the plot edges.
+ */
+export function compoundBands(
+  stints: OverviewStint[],
+  laps: OverviewLap[],
+  total: number,
+): { bands: CompoundBand[]; stops: PitStop[] } {
+  const ordered = stints.filter((stint) => stint.endLap >= 1 && stint.startLap <= total).sort((a, b) => a.startLap - b.startLap);
+  const bands: CompoundBand[] = [];
+  const stops: PitStop[] = [];
+  let cursor = 0;
+  ordered.forEach((stint, i) => {
+    const next = ordered[i + 1];
+    let end = total;
+    if (next) {
+      const pit = laps.filter((lap) => lap.pit && lap.lap >= stint.endLap && lap.lap <= next.startLap).sort((a, b) => a.lap - b.lap)[0];
+      end = pit ? Math.min(pit.lap + 0.5, next.startLap) : (stint.endLap + next.startLap) / 2;
+      stops.push({ at: end, after: pit ? pit.lap : stint.endLap });
+    }
+    if (i === 0 && stint.startLap > 1) cursor = stint.startLap - 0.5;
+    bands.push({ from: cursor, to: end, compound: stint.compound, label: stint.label });
+    cursor = end;
+  });
+  return { bands, stops };
+}
+
 /** "Medium 42 laps" description of the stint bar for assistive technology. */
 export function stintBarLabel(stints: OverviewStint[], pits: PitMarker[]): string {
   const parts = stints.map((stint) => `${stint.label} ${stint.lapCount} ${stint.lapCount === 1 ? "lap" : "laps"}`);
