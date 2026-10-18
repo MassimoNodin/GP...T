@@ -76,14 +76,16 @@ _SUPPRESSED_CODES = frozenset({"BUTN", "STLG", "TMPT", "PMEN", "PMDI", "OVEN", "
 _PLAIN_EVENTS = {
     "SSTA": ("session_started", "Session started"), "SEND": ("session_ended", "Session ended"),
     "DRSE": ("drs_enabled", "DRS enabled"), "DRSD": ("drs_disabled", "DRS disabled"),
-    "CHQF": ("chequered_flag", "Chequered flag"), "LGOT": ("lights_out", "Lights out"),
+    "CHQF": ("chequered_flag", "Chequered flag"), "LGOT": ("lights_out", "Race start (lights out)"),
     "RDFL": ("red_flag", "Red flag"),
 }
 _MIN_PLAUSIBLE_CAPTURE_NS = 946_684_800 * 1_000_000_000  # 2000-01-01T00:00:00Z
 _MAX_PLAUSIBLE_CAPTURE_NS = 4_102_444_800 * 1_000_000_000  # 2100-01-01T00:00:00Z
 
 _SCAN_SQL = (
-    "SELECT j.sequence,j.payload,m.payload AS route FROM journal j LEFT JOIN metadata m "
+    "SELECT j.sequence,CASE WHEN substr(j.payload,7,1) IN (X'01',X'02',X'03',X'04',X'05') "
+    f"THEN j.payload ELSE substr(j.payload,1,{HEADER_SIZE}) END,m.payload AS route "
+    "FROM journal j LEFT JOIN metadata m "
     "ON m.generation=j.generation AND m.sequence=j.sequence AND m.kind='input_route' AND m.ordinal=0 "
     "WHERE j.generation=? AND j.sequence>=? AND j.sequence<=? AND j.kind='datagram' ORDER BY j.sequence"
 )
