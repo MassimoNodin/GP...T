@@ -130,13 +130,17 @@ function toRow(record: SessionRecord, captures: CaptureLinks): LibraryRow {
 }
 
 const DATE_READ_TIMEOUT_MS = 4_000;
+/** The library waits at most this long for dates; reads still running finish in the background. */
+const DATE_READ_BUDGET_MS = 2_500;
 
 /**
  * Capture start time of each session. The sessions list carries none, so it
- * comes from `/summary` (a small document), read once per session with a few
- * requests in flight and remembered in memory; later loads cost nothing.
- * Sessions beyond `ATTEMPT_READ_CAP` or whose summary cannot be read keep the
- * "Date not recorded" placeholder.
+ * comes from `/summary`, read once per session with a few requests in flight
+ * and remembered in memory; later loads cost nothing. A summary the engine has
+ * not built yet can take seconds, so the library renders after
+ * `DATE_READ_BUDGET_MS` with what it has, and reads still running are
+ * remembered for the next load. Sessions beyond `ATTEMPT_READ_CAP`, or whose
+ * summary cannot be read, keep the "Date not recorded" placeholder.
  */
 async function captureDates(sessions: EvidenceSession[]): Promise<Map<string, string>> {
   const dates = new Map<string, string>();
@@ -146,11 +150,17 @@ async function captureDates(sessions: EvidenceSession[]): Promise<Map<string, st
     if (known) dates.set(session.id, known);
     else missing.push(session);
   }
-  await mapLimit(missing, ATTEMPT_READ_CONCURRENCY, async (session) => {
+  const reads = mapLimit(missing, ATTEMPT_READ_CONCURRENCY, async (session) => {
     const read = await fetchSummary(session.id, { timeoutMs: DATE_READ_TIMEOUT_MS });
     if (read.state === "ok" && read.value.startedAtUtc) dates.set(session.id, read.value.startedAtUtc);
   });
-  return dates;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, DATE_READ_BUDGET_MS);
+  });
+  await Promise.race([reads.catch(() => undefined), budget]);
+  clearTimeout(timer);
+  return new Map(dates);
 }
 
 /**

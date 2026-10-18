@@ -395,8 +395,9 @@ export function cachedSummaryDates(): ReadonlyMap<string, string> {
 
 /**
  * Timeline and summary of a v2 session (`/summary`). Reused for 10 s per
- * session; every successful read also remembers the session's start time for
- * the Library (which must not call `/summary` once per row).
+ * session; every successful read also remembers the session's start time, so
+ * the Library reads each session's `/summary` at most once (within a time
+ * budget, see `captureDates`).
  */
 export function fetchSummary(
   sessionId: string,
