@@ -149,7 +149,7 @@ export function RegionPanel() {
       <div className={styles.trackSection} aria-busy="true">
         <div className={styles.fieldLabel}>Selected Region</div>
         <Bone height={34} />
-        <p className={viewStyles.regionNote}>Reading the track model…</p>
+        <p className={viewStyles.regionNote}>Reading circuit details…</p>
       </div>
     );
   }
@@ -180,7 +180,7 @@ export function RegionPanel() {
             <label className={styles.fieldLabel} htmlFor={selectId}>
               Selected Region
             </label>
-            {regionModel.validation === "draft" && <Badge tone="amber">Draft model</Badge>}
+            {regionModel.validation === "draft" && <Badge tone="amber">Approximate corners</Badge>}
           </div>
           <Select
             id={selectId}

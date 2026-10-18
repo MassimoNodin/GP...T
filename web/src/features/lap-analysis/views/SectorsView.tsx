@@ -291,7 +291,7 @@ function CornersCard() {
     <Card
       title={
         <span className={styles.cornersTitle}>
-          Corners ({regionModel.trackName} r{regionModel.revision} · {regionModel.validation === "draft" ? "Draft" : "Validated"})
+          Corners ({regionModel.trackName})
           {regionModel.validation === "draft" && <Badge tone="amber">Draft</Badge>}
         </span>
       }
@@ -310,7 +310,7 @@ function CornersCard() {
         selectedKey={selectedChoice?.id ?? null}
         onSelect={(row) => setSelection(row.choice.id)}
         density="compact"
-        empty={<EmptyState size="inline" title="This track model has no regions." />}
+        empty={<EmptyState size="inline" title="No corner regions are available for this circuit." />}
       />
     </Card>
   );

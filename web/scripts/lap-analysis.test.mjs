@@ -244,7 +244,7 @@ test("differences and quality come from lap times, flags and measured traces", (
   assert.ok(texts.includes("Lap 5 includes the pit lane"));
   assert.ok(texts.includes("Complete telemetry for Lap 5"));
   assert.ok(texts.includes("No telemetry samples for Lap 3"));
-  assert.ok(texts.includes("No track model for this circuit"));
+  assert.ok(texts.every((text) => !/track model/i.test(text)));
   assert.ok(texts.some((text) => /could be read/.test(text)));
   assert.doesNotMatch(JSON.stringify({ differences, timesOnly, quality }), /monaco/i);
 });

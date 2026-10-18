@@ -58,7 +58,7 @@ const REASONS: Record<string, string> = {
   /* ---- track models ---- */
   compatible_track_model_unavailable: "No corner regions are available for this circuit.",
   session_track_context_unavailable: "The recording does not say which circuit it was made at.",
-  unknown_track_model_revision: "That track model revision is not installed.",
+  unknown_track_model_revision: "Corner details for this circuit are unavailable.",
 
   /* ---- engineer activity and preferences ---- */
   engineer_activity_unavailable: "The engineer activity log could not be read.",

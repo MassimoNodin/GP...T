@@ -8,7 +8,6 @@ import { NotAvailable } from "@/features/ui-foundation/states";
 import { useAnalysis } from "../analysis-context";
 import type { AnalysisLap } from "../load";
 import { ALL_CHANNEL_KEYS, type ChannelKey, type LapTrace } from "../lap-telemetry";
-import { describeRegionModel } from "../regions";
 import { LegendDot } from "./parts";
 import styles from "../Views.module.css";
 
@@ -117,7 +116,7 @@ function LapQuality({ lap, trace, role, source, trackLengthM }: { lap: AnalysisL
 
 /** Per-lap coverage of the compared laps and what the session data does and does not include. */
 export function QualityView() {
-  const { model, target, reference, targetTrace, referenceTrace, regions, regionModel, enrichment, laps } = useAnalysis();
+  const { model, target, reference, targetTrace, referenceTrace, enrichment, laps } = useAnalysis();
   const source = model.source === "v2" ? "Live session evidence (v2)" : model.source === "v1" ? "Imported capture (v1)" : "Reference data";
   const sectorsKnown = laps.some((lap) => lap.sectors);
   const sectorSource = laps.find((lap) => lap.sectorsSource)?.sectorsSource;
@@ -137,18 +136,6 @@ export function QualityView() {
       </div>
       <Card title="Session data" labelledBy="quality-session" className={styles.qualityCard}>
         <dl className={styles.kv}>
-          <div>
-            <dt>Track model</dt>
-            <dd>
-              {regionModel ? (
-                describeRegionModel(regionModel)
-              ) : regions.state === "deferred" ? (
-                "Checking…"
-              ) : (
-                <NotAvailable reason={regions.state === "none" ? regions.reason : "No track model for this circuit"} />
-              )}
-            </dd>
-          </div>
           <div>
             <dt>Laps read</dt>
             <dd>

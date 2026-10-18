@@ -497,7 +497,6 @@ export function lapQuality(input: {
     );
   }
   if (input.lapDataNote) items.push({ text: input.lapDataNote, tone: "amber" });
-  items.push({ text: input.trackModel ? `Track model: ${input.trackModel}` : "No track model for this circuit", tone: "grey" });
   return items;
 }
 

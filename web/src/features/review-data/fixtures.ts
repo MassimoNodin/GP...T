@@ -449,7 +449,6 @@ export const lapAnalysisFixture = {
   quality: [
     { text: "Complete telemetry for this lap", tone: "green" as const },
     { text: "All channels available", tone: "grey" as const },
-    { text: "Track model: v2.1 (Monaco)", tone: "grey" as const },
   ],
   question: {
     prompt: "Why did I lose time in Turns 6 to 8 on this lap?",
