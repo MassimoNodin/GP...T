@@ -1092,7 +1092,7 @@ test("a v2 session whose sections loaded on the server shows derived summary, st
     { enrichment: { state: "ok", value: enrichment }, summary: { state: "ok", value: summary } },
   );
   assert.equal(model.enrichment.state, "loaded");
-  assert.equal(model.header[2], "4 Jun 2024");
+  assert.deepEqual(model.header[2], { iso: "2024-06-04T15:00:00Z" });
   const overview = renderOverview(model, at("overview", { selectedId: "3" }));
   assert.match(overview, /3 timed laps recorded across 1 stint. Best lap 1:20\.000 on lap 2/);
   assert.match(overview, /data-compound="medium"/, "the lap chart is tinted by the stint compound");

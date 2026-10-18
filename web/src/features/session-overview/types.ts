@@ -1,6 +1,6 @@
 import type { SessionSummary } from "@/features/review-data/summary";
 import type { ProgressionPoint } from "@/features/review-data/fixtures";
-import type { ShellFooter, ShellStatus } from "@/features/ui-foundation/AppShell";
+import type { HeaderItem, ShellFooter, ShellStatus } from "@/features/ui-foundation/AppShell";
 import type { Tone } from "@/features/ui-foundation/primitives";
 
 // Types shared by the Session Overview loader (server), the pure helpers in
@@ -122,7 +122,7 @@ export type OverviewModel = {
   source: "fixture" | "v1" | "v2";
   /** v2 session id used to fetch deferred sections; null for fixture and v1. */
   evidenceId: string | null;
-  header: string[];
+  header: HeaderItem[];
   /** Header pill; `live` keeps it in sync with telemetry acquisition. */
   shell: { live: boolean; status: ShellStatus };
   footer: ShellFooter;

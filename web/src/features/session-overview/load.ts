@@ -22,7 +22,6 @@ import {
   shellFixture,
 } from "@/features/review-data/fixtures";
 import {
-  formatDay,
   formatDayTime,
   formatGame,
   formatSessionType,
@@ -333,7 +332,7 @@ function realModel(session: SessionRecord, records: LapRecord[], footer: ShellFo
     ...base,
     sessionKey: session.session_key,
     source: "v1",
-    header: [title, type, formatDay(session.started_at_utc)],
+    header: [title, type, { iso: session.started_at_utc }],
     photo: trackPhotoUrl(track),
     hero: {
       title,
@@ -472,7 +471,7 @@ export function evidenceModel(
     sessionKey: session.id,
     source: "v2",
     evidenceId: session.id,
-    header: [title, type, startedAt ? formatDay(startedAt) : `Session #${shortId}`],
+    header: [title, type, startedAt ? { iso: startedAt } : `Session #${shortId}`],
     photo: trackPhotoUrl(track),
     hero: {
       title,

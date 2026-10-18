@@ -4,12 +4,16 @@ import { LiveShellFooter, LiveShellProvider, LiveStatusPill } from "@/features/l
 import { ReviewBadge } from "@/features/live-status/ReviewBadge";
 import { SessionWatcher } from "@/features/live-status/SessionWatcher";
 import { ShellFooterBlock, StatusPill } from "@/features/live-status/ShellParts";
+import { LocalDay } from "@/features/review-data/LocalDay";
 import { F1Logo } from "./F1Logo";
 import { DriveIcon, ReviewIcon, SettingsIcon } from "./icons";
 import { ToastProvider } from "./Toast";
 import { ThemeSync } from "./theme";
 import { UnitsProvider } from "./units";
 import styles from "./AppShell.module.css";
+
+/** A header item: plain text, or a capture date shown in the viewer's time zone. */
+export type HeaderItem = string | { iso: string };
 
 export type ShellTone = "green" | "amber" | "red" | "grey";
 
@@ -115,7 +119,7 @@ export function HeaderContext({
   trailing,
   action,
 }: {
-  items: string[];
+  items: HeaderItem[];
   trailing?: string;
   action?: ReactNode;
 }) {
@@ -123,13 +127,13 @@ export function HeaderContext({
     <>
       <span className={styles.contextItems}>
         {items.map((item, index) => (
-          <span key={`${item}-${index}`} className={styles.contextItem}>
+          <span key={`${typeof item === "string" ? item : item.iso}-${index}`} className={styles.contextItem}>
             {index > 0 && (
               <span className={styles.contextDot} aria-hidden="true">
                 •
               </span>
             )}
-            {item}
+            {typeof item === "string" ? item : <LocalDay iso={item.iso} />}
           </span>
         ))}
       </span>
