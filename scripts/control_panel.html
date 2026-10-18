@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control panel</title>
+<style>
+  :root { color-scheme: dark; --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#e6e8ee; --dim:#8b92a3;
+          --ok:#3ecf8e; --warn:#f5a524; --bad:#f31260; --info:#4aa3ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:24px; background:var(--bg); color:var(--text); font:14px/1.45 system-ui, sans-serif; }
+  h1 { font-size:18px; margin:0 0 16px; }
+  main { display:grid; grid-template-columns:repeat(auto-fit, minmax(420px, 1fr)); gap:16px; align-items:start; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; }
+  h2 { font-size:16px; margin:0; }
+  .where { color:var(--dim); font-size:12px; word-break:break-all; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .grow { flex:1 1 auto; }
+  .meta { margin:12px 0; padding:12px; border:1px solid var(--line); border-radius:6px; }
+  .meta .line { color:var(--dim); font-size:12px; margin-bottom:8px; }
+  .blockers { color:var(--warn); font-size:12px; margin-top:8px; }
+  .component { padding:12px 0; border-top:1px solid var(--line); }
+  .name { font-weight:600; }
+  .detail { color:var(--dim); font-size:12px; }
+  .note { color:var(--warn); font-size:12px; white-space:pre-wrap; margin-top:4px; }
+  .pill { display:inline-block; min-width:76px; text-align:center; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; border:1px solid currentColor; }
+  .running { color:var(--ok); } .starting, .stopping, .external { color:var(--info); }
+  .stopped, .unknown { color:var(--dim); } .exited, .failed { color:var(--bad); }
+  button, select { font:inherit; color:var(--text); background:#232834; border:1px solid var(--line); border-radius:6px; padding:5px 12px; }
+  button:hover:enabled { background:#2d3444; cursor:pointer; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  select { max-width:100%; min-width:200px; }
+  pre { margin:12px 0 0; padding:10px; background:#0b0d11; border:1px solid var(--line); border-radius:6px; max-height:220px; overflow:auto; white-space:pre-wrap; font-size:12px; }
+  .job-title { font-size:12px; color:var(--dim); margin-top:12px; }
+  .job-ok { color:var(--ok); } .job-bad { color:var(--bad); }
+  #error { color:var(--bad); margin-bottom:12px; }
+</style>
+</head>
+<body>
+<h1>Control panel</h1>
+<div id="error" role="alert"></div>
+<main id="hosts"></main>
+<script>
+const selected = {};
+const rendered = {};
+const sections = {};
+
+function el(tag, props, ...children) {
+  const node = document.createElement(tag);
+  Object.assign(node, props || {});
+  for (const child of children) node.append(child);
+  return node;
+}
+
+async function act(host, body) {
+  const response = await fetch('/api/action', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Control-Panel': '1' },
+    body: JSON.stringify({ host, ...body }),
+  });
+  const result = await response.json();
+  document.getElementById('error').textContent = result.ok ? '' : result.message;
+  refresh();
+}
+
+function renderHost(host) {
+  const busy = host.job.running;
+  const current = host.branch || '(detached)';
+  const choice = selected[host.key] ?? host.branch;
+  const names = host.branches || [];
+  const blocked = host.blockers.length > 0;
+
+  const select = el('select', { id: `branch-${host.key}`, ariaLabel: `${host.label} branch` });
+  for (const branch of names) {
+    const label = branch.remote_only ? `${branch.name} (origin only)` : branch.name;
+    select.append(el('option', { value: branch.name, textContent: label, selected: branch.name === choice }));
+  }
+  select.onchange = () => { selected[host.key] = select.value; renderAll(); };
+  select.disabled = blocked || !host.reachable;
+
+  const switchButton = el('button', { textContent: 'Switch branch', disabled: blocked || choice === host.branch || !choice });
+  switchButton.onclick = () => act(host.key, { action: 'switch', branch: select.value });
+  const updateButton = el('button', { textContent: 'Update', disabled: blocked || !host.branch });
+  updateButton.onclick = () => act(host.key, { action: 'update' });
+
+  const meta = el('div', { className: 'meta' },
+    el('div', { className: 'line', textContent: host.reachable
+        ? `On ${current} at ${host.rev}${host.tracking ? ` · ${host.tracking}` : ''}${host.dirty ? ` · ${host.dirty} uncommitted` : ''}`
+        : (host.error || 'Unreachable') }),
+    el('div', { className: 'row' }, select, switchButton, updateButton));
+  if (blocked) meta.append(el('div', { className: 'blockers', textContent: `Branch changes and updates are off: ${host.blockers.join('; ')}.` }));
+
+  const node = el('section', {},
+    el('div', { className: 'row' }, el('div', { className: 'grow' }, el('h2', { textContent: host.label }), el('div', { className: 'where', textContent: host.where }))),
+    meta);
+
+  for (const component of host.components) {
+    const buttons = [['start', 'Start', component.can_start], ['stop', 'Stop', component.can_stop], ['restart', 'Restart', component.can_restart]]
+      .map(([action, label, enabled]) => {
+        const button = el('button', { textContent: label, disabled: !enabled });
+        button.onclick = () => act(host.key, { action, component: component.id });
+        return button;
+      });
+    const row = el('div', { className: 'component' },
+      el('div', { className: 'row' },
+        el('div', { className: 'grow' }, el('div', { className: 'name', textContent: component.label }), el('div', { className: 'detail', textContent: component.detail })),
+        el('span', { className: `pill ${component.status}`, textContent: component.status }), ...buttons));
+    if (component.note) row.append(el('div', { className: 'note', textContent: component.note }));
+    node.append(row);
+  }
+
+  if (host.job.title) {
+    const state = busy ? 'running…' : (host.job.ok ? 'done' : 'failed');
+    node.append(el('div', { className: 'job-title' }, `Last operation: ${host.job.title} — `,
+      el('span', { className: busy ? '' : (host.job.ok ? 'job-ok' : 'job-bad'), textContent: state })));
+    node.append(el('pre', { textContent: host.job.output || '' }));
+  }
+  return node;
+}
+
+let latest = null;
+function renderAll() {
+  if (!latest) return;
+  const container = document.getElementById('hosts');
+  for (const host of latest.hosts) {
+    const key = JSON.stringify([host, selected[host.key]]);
+    if (rendered[host.key] === key) continue;
+    const open = document.activeElement && document.activeElement.id === `branch-${host.key}`;
+    if (open) continue;  // leave an open branch list alone until it closes
+    rendered[host.key] = key;
+    const node = renderHost(host);
+    if (sections[host.key]) sections[host.key].replaceWith(node); else container.append(node);
+    sections[host.key] = node;
+  }
+}
+
+async function refresh() {
+  try {
+    latest = await (await fetch('/api/state')).json();
+    renderAll();
+  } catch (error) {
+    document.getElementById('error').textContent = 'Control panel server is not responding.';
+  }
+}
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

@@ -185,6 +185,20 @@ measurement artifacts out of Git; `data/` and `recordings/` are ignored. Stop
 writers and take consistent backups before moving persistent data.
 Framework-generated web agent files are ignored, not maintained project docs.
 
+## Control panel
+
+`.\scripts\start-control-panel.ps1` opens a loopback-only page
+(`http://127.0.0.1:8800`) that shows the status of each component on Windows
+(local backend, dashboard with Ubuntu tunnel, radio) and Ubuntu (backend and
+private model services) and can start, stop and restart them. Each host also
+has a branch picker and an **Update** button (fetch, fast-forward pull and
+dependency sync). Branch changes and updates are refused while a component that
+runs from that checkout is running, while the checkout has uncommitted tracked
+changes, or while another operation is in progress. Components it did not
+start show as `external` and cannot be stopped from the page. Stopping the
+panel leaves the components running. Windows stops are forceful (process tree
+kill). Output of Windows components is in `data/control-panel/logs/`.
+
 ## Ubuntu test host
 
 The checkout is `/home/massimo-nodin/GP...T` on `192.168.1.115`, with user-local
