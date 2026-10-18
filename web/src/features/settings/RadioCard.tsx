@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Select } from "@/features/ui-foundation/primitives";
 import { Field } from "./shared";
-import { initialRadioForm, radioStatus, type RadioSettings } from "./radio-settings";
+import { DEFAULT_RADIO_VOICE, initialRadioForm, radioStatus, radioVoiceChoices, radioVoiceLabel, type RadioSettings } from "./radio-settings";
 import { useRadioPresence } from "./useRadioPresence";
 import styles from "./Settings.module.css";
 
@@ -33,6 +33,7 @@ export function RadioCard() {
   function edit(key: keyof RadioSettings, value: string | number | null) {
     setDirty(true);
     setForm((current) => current ? { ...current, [key]: value,
+      ...(key === "tts_engine" ? { voice: value === "edge" ? DEFAULT_RADIO_VOICE : null } : {}),
       ...(key === "answer_mode" && value === "grounded" ? { intent_mode: "luna" } : {}),
     } : current);
     if (!conflict) setMessage("");
@@ -53,9 +54,9 @@ export function RadioCard() {
     } catch { setMessage("The engine could not be reached. Your edits have been kept."); }
     finally { setSaving(false); }
   }
-  return <Card title="Radio" labelledBy="radio-settings">
+  return <Card title="Engineer Voice & Radio" labelledBy="radio-settings">
     <p className={styles.cardDesc} role="status">{radioStatus(presence, revision)}</p>
-    <p className={styles.help}>Saved values override radio command-line defaults. Active speech and captures continue unchanged.</p>
+    <p className={styles.help}>Microphone capture and engineer speech run on the standalone radio, not in this browser. Saved values override radio command-line defaults after the current speech or capture finishes.</p>
     <Button onClick={() => { void fetch("/api/engineer/radio/presence/refresh", { method: "PUT", headers: { "Content-Type": "application/json" }, body: "{}" }).then((response) => setMessage(response.ok ? "Device refresh requested." : "Device refresh was not authorized or the engine is unavailable.")).catch(() => setMessage("Device refresh could not reach the engine.")); }}>Refresh radio devices</Button>
     {form && <fieldset disabled={saving} style={{ border: 0, padding: 0, margin: 0 }}>
       {([
@@ -67,13 +68,13 @@ export function RadioCard() {
           {choices.map((value) => <option key={value} value={value}>{value}</option>)}
         </Select>
       </Field>)}
-      <Field label="Radio voice" help=""><Select aria-label="Radio voice" value={form.voice ?? ""} onChange={(event) => edit("voice", event.target.value || null)}>
-        <option value="">Engine default</option>
-        {Array.from(new Set([...(presence.tts_engine === form.tts_engine ? presence.voices ?? [] : []), ...(form.voice ? [form.voice] : [])])).map((value) => <option key={value} value={value}>{value}</option>)}
+      <Field label="Engineer voice" help="William is the default Edge neural voice. Voice playback runs on the radio computer."><Select aria-label="Engineer voice" value={form.voice ?? (form.tts_engine === "edge" ? DEFAULT_RADIO_VOICE : "")} onChange={(event) => edit("voice", event.target.value || null)}>
+        {form.tts_engine !== "edge" && <option value="">Radio system default</option>}
+        {radioVoiceChoices(form.tts_engine, presence, form.voice).map((value) => <option key={value} value={value}>{radioVoiceLabel(value)}</option>)}
       </Select></Field>
-      {([ ["microphone", "Radio microphone", "input"], ["cue_output", "Cue output", "output"] ] as const).map(([key, label, direction]) => <Field key={key} label={label} help="">
+      {([ ["microphone", "Radio microphone", "input"], ["cue_output", "Cue output", "output"] ] as const).map(([key, label, direction]) => <Field key={key} label={label} help="Devices are reported by the connected radio computer. This page never requests browser microphone access.">
         <Select aria-label={label} value={form[key] ?? ""} onChange={(event) => edit(key, event.target.value === "" ? null : Number(event.target.value))}>
-          <option value="">System default</option>
+          <option value="">Radio system default</option>
           {form[key] !== null && !presence.devices?.some((device) => device[direction] && device.index === form[key]) && <option value={form[key]!}>Device {form[key]} (not currently available)</option>}
           {presence.devices?.filter((device) => device[direction]).map((device) => <option key={device.index} value={device.index}>{device.name}</option>)}
         </Select>

@@ -1,13 +1,10 @@
 import { GamepadIcon, MicrophoneIcon, SpeakerIcon, StorageIcon } from "@/features/ui-foundation/icons";
 import { Card } from "@/features/ui-foundation/primitives";
-import { resolveTrackOutline, TrackMap } from "@/features/ui-foundation/TrackMap";
 import type { DeviceTile } from "./devices";
 import type { SettingsModel } from "./load";
 import { RuntimeChip } from "./shared";
-import { trackModelsTile } from "./track-models";
 import styles from "./Settings.module.css";
 
-/** The five-tile "Current Configuration & Status" card shown on every tab. */
 export function StatusTiles({
   model,
   microphone,
@@ -19,7 +16,6 @@ export function StatusTiles({
   audio: DeviceTile;
   showRuntimeChip: boolean;
 }) {
-  const models = trackModelsTile(model.trackModels);
   return (
     <Card
       title="Current Configuration & Status"
@@ -31,7 +27,7 @@ export function StatusTiles({
         <li className={styles.tile}>
           <MicrophoneIcon size={30} strokeWidth={1.4} className={styles.tileIcon} />
           <div>
-            <div className={styles.tileLabel}>Microphone</div>
+            <div className={styles.tileLabel}>Radio microphone</div>
             <div className={styles.tileName} title={microphone.name}>
               {microphone.name}
             </div>
@@ -43,7 +39,7 @@ export function StatusTiles({
         <li className={styles.tile}>
           <SpeakerIcon size={30} strokeWidth={1.4} className={styles.tileIcon} />
           <div>
-            <div className={styles.tileLabel}>Audio Output</div>
+            <div className={styles.tileLabel}>Engineer voice</div>
             <div className={styles.tileName} title={audio.name}>
               {audio.name}
             </div>
@@ -68,18 +64,6 @@ export function StatusTiles({
             <div className={styles.tileLabel}>Storage</div>
             <div className={styles.tileName}>{model.status.storage.used}</div>
             <div className={styles.tileState}>{model.status.storage.available}</div>
-          </div>
-        </li>
-        <li className={styles.tile}>
-          <TrackMap
-            track={model.trackKey}
-            className={resolveTrackOutline(model.trackKey) === "monaco" ? `${styles.tileMap} ${styles.tileMapMonaco}` : styles.tileMap}
-            strokeWidth={1.6}
-          />
-          <div>
-            <div className={styles.tileLabel}>Track Models</div>
-            <div className={styles.tileName}>{models.name}</div>
-            <span className={styles.tileBadge}>{models.badge}</span>
           </div>
         </li>
       </ul>

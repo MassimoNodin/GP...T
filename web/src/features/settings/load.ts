@@ -1,10 +1,8 @@
 import { loadCurrentSession } from "@/features/drive-diagnostics/load";
 import type { SessionContextModel } from "@/features/drive-diagnostics/session";
-import { fetchPreferences, fetchStorage, fetchTrackModels } from "@/features/review-data/backend";
-import type { ReadResult } from "@/features/review-data/backend";
+import { fetchPreferences, fetchStorage } from "@/features/review-data/backend";
 import { settingsFixture } from "@/features/review-data/fixtures";
 import type { PreferencesRead } from "@/features/review-data/preferences";
-import type { TrackModelSummary } from "@/features/review-data/regions";
 import type { ShellStatus } from "@/features/ui-foundation/AppShell";
 import { forwardLocalRequest } from "@/lib/local-proxy";
 import { describeSpeech, type SpeechView } from "./connections";
@@ -20,7 +18,6 @@ import {
   type RuntimeView,
 } from "./display";
 import { buildStorageView, type StorageView } from "./storage-view";
-import { describeTrackModels, type TrackModelsView } from "./track-models";
 
 export type { StorageScopeView, StorageView } from "./storage-view";
 
@@ -37,9 +34,6 @@ export type SettingsModel = typeof settingsFixture & {
   /** Saved engineer preferences as read on the server. */
   preferences: PreferencesRead;
   speech: SpeechView;
-  trackModels: TrackModelsView;
-  /** Outline key for the Track Models tile (current session's circuit, else generic). */
-  trackKey: string;
 };
 
 async function readJson(path: string): Promise<unknown> {
@@ -60,13 +54,12 @@ export function runtimePill(info: RuntimeInfo | null): ShellStatus {
 }
 
 export async function loadSettings(): Promise<SettingsModel> {
-  const [runtimeBody, receiverBody, speechBody, storage, preferences, trackModels] = await Promise.all([
+  const [runtimeBody, receiverBody, speechBody, storage, preferences] = await Promise.all([
     readJson("/api/v1/engineer/runtime"),
     readJson("/api/v2/session-evidence/status"),
     readJson("/api/v1/engineer/transcribe"),
     fetchStorage(),
     fetchPreferences(),
-    fetchTrackModels({ timeoutMs: 2500 }),
   ]);
   const runtimeInfo = parseRuntimeInfo(runtimeBody);
   const receiverInfo = parseReceiverInfo(receiverBody);
@@ -78,7 +71,6 @@ export async function loadSettings(): Promise<SettingsModel> {
     session,
     preferences,
     speechBody,
-    trackModels,
   });
 }
 
@@ -89,7 +81,6 @@ export function buildSettingsModel({
   session = null,
   preferences = { state: "unreachable" },
   speechBody = null,
-  trackModels = { state: "unreachable" },
 }: {
   runtimeInfo: RuntimeInfo | null;
   receiverInfo: ReceiverInfo | null;
@@ -99,7 +90,6 @@ export function buildSettingsModel({
   preferences?: PreferencesRead;
   /** Body of `GET /api/v1/engineer/transcribe`; null when it could not be read. */
   speechBody?: unknown;
-  trackModels?: ReadResult<TrackModelSummary[]>;
 }): SettingsModel {
   const speech = describeSpeech(speechBody);
   const engineReachable = Boolean(
@@ -107,16 +97,13 @@ export function buildSettingsModel({
       receiverInfo ||
       storage ||
       preferences.state !== "unreachable" ||
-      speech.state !== "unreachable" ||
-      trackModels.state !== "unreachable",
+      speech.state !== "unreachable",
   );
   const receiver = describeReceiver(receiverInfo);
   const gameName = session?.facts.find(([label]) => label === "Game")?.[1];
   const game = describeGameTile(receiverInfo, gameName ? { ...settingsFixture.status.game, name: gameName } : settingsFixture.status.game);
   const status = { ...settingsFixture.status };
 
-  // Microphone, audio output and the track model tile are derived in the
-  // browser or from the catalog; the reference values are never shown as fact.
   let storageView: StorageView | null = null;
   if (storage) {
     storageView = buildStorageView(storage);
@@ -139,7 +126,5 @@ export function buildSettingsModel({
     storage: storageView,
     preferences,
     speech,
-    trackModels: describeTrackModels(trackModels),
-    trackKey: session?.track ?? "generic",
   };
 }

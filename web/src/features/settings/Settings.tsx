@@ -1,17 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { formToDoc, type AssistanceForm } from "@/features/review-data/preferences";
 import { ConfirmDialog } from "@/features/ui-foundation/Drawer";
 import { Tabs } from "@/features/ui-foundation/primitives";
 import { useToast } from "@/features/ui-foundation/Toast";
 import { AdvancedPanel } from "./AdvancedPanel";
 import { AssistancePanel } from "./AssistancePanel";
-import { pickVoice } from "./audio";
-import { getBrowserVoiceSnapshot, getServerBrowserVoiceSnapshot, subscribeBrowserVoice } from "./browser-voice";
 import { ConnectionsPanel } from "./ConnectionsPanel";
 import { DataPanel } from "./DataPanel";
-import { audioOutputTile, microphoneTile } from "./devices";
 import {
   assistanceView,
   initPrefsState,
@@ -25,8 +22,9 @@ import { PREFERENCES_KEY, parseLegacyPreferences } from "./preferences";
 import { getPreferences, putPreferences } from "./preferences-client";
 import { SECTIONS, TAB_ID_PREFIX, panelId, searchWithSection, type Section } from "./sections";
 import { StatusTiles } from "./StatusTiles";
-import { useBrowserAudio } from "./useBrowserAudio";
 import { VoicePanel } from "./VoicePanel";
+import { radioMicrophoneTile, radioVoiceTile } from "./radio-settings";
+import { useRadioPresence } from "./useRadioPresence";
 import styles from "./Settings.module.css";
 import tabStyles from "./SettingsTabs.module.css";
 
@@ -60,9 +58,7 @@ export function Settings({ model, initialSection }: { model: SettingsModel; init
   const adoptedMigration = useRef(false);
   const [confirmOverwrite, setConfirmOverwrite] = useState(false);
 
-  const { audio, requestAccess } = useBrowserAudio();
-  const [micDeviceId, setMicDeviceId] = useState<string | null>(null);
-  const browserVoice = useSyncExternalStore(subscribeBrowserVoice, getBrowserVoiceSnapshot, getServerBrowserVoiceSnapshot);
+  const presence = useRadioPresence();
 
   const changeSection = useCallback((next: Section) => {
     setSection(next);
@@ -142,9 +138,8 @@ export function Settings({ model, initialSection }: { model: SettingsModel; init
 
   const overwriteRevision = prefs.failure?.kind === "conflict" ? prefs.failure.currentRevision : null;
 
-  const voice = pickVoice(audio.voices, browserVoice.voiceURI);
-  const microphone = microphoneTile(audio, micDeviceId);
-  const output = audioOutputTile(audio, voice);
+  const microphone = radioMicrophoneTile(presence);
+  const output = radioVoiceTile(presence);
 
   return (
     <>
@@ -190,18 +185,11 @@ export function Settings({ model, initialSection }: { model: SettingsModel; init
             />
           )}
           {key === section && key === "voice" && (
-            <VoicePanel
-              audio={audio}
-              requestAccess={requestAccess}
-              micDeviceId={micDeviceId}
-              onMicDevice={setMicDeviceId}
-              speech={model.speech}
-              onShowAssistance={() => changeSection("assistance")}
-            />
+            <VoicePanel />
           )}
           {key === section && key === "connections" && <ConnectionsPanel model={model} />}
           {key === section && key === "data" && <DataPanel storage={model.storage} />}
-          {key === section && key === "advanced" && <AdvancedPanel trackModels={model.trackModels} />}
+          {key === section && key === "advanced" && <AdvancedPanel />}
         </div>
       ))}
 

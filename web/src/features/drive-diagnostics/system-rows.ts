@@ -1,3 +1,4 @@
+import type { DeviceTile } from "@/features/settings/devices";
 import type { AcquisitionStatus } from "@/lib/acquisition-status";
 import {
   ROW_ENGINEER,
@@ -24,9 +25,10 @@ export const ROW_SPEECH = "Speech Recognition";
 export const ROW_AUDIO = "Audio Output";
 export const ROW_PROACTIVE = "Proactive Assistance";
 
-export const BROWSER_FOOTNOTE = "Microphone and audio are this computer's devices, used by the browser.";
+export const BROWSER_FOOTNOTE = "Microphone input is captured by the standalone radio, never by this browser. Optional browser playback is separate from the radio voice.";
 
 export type MicrophoneState =
+  | { kind: "radio"; device: DeviceTile }
   | { kind: "checking" }
   | { kind: "allowed"; label: string | null }
   | { kind: "not_set_up" }
@@ -103,6 +105,10 @@ function unavailableRow(label: string, detail = "Service unreachable"): StatusRo
 
 export function microphoneRow(state: MicrophoneState): StatusRow {
   switch (state.kind) {
+    case "radio":
+      return { label: ROW_MICROPHONE, status: state.device.state,
+        tone: state.device.tone === "green-text" ? "green" : state.device.tone === "red-text" ? "red" : "grey",
+        detail: state.device.name };
     case "allowed":
       return { label: ROW_MICROPHONE, status: "Allowed", tone: "green", detail: state.label ?? "Default microphone" };
     case "not_set_up":

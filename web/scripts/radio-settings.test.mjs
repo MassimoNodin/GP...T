@@ -4,12 +4,24 @@ import { createRequire } from "node:module";
 import { test } from "node:test";
 const typescript = createRequire(import.meta.url)("typescript");
 const source = await readFile(new URL("../src/features/settings/radio-settings.ts", import.meta.url), "utf8");
-const code = typescript.transpileModule(source, { compilerOptions: { module: typescript.ModuleKind.ESNext } }).outputText;
-const { radioStatus, browserMaySpeak } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+const code = typescript.transpileModule(source, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2020 } }).outputText;
+const { radioStatus, browserMaySpeak, initialRadioForm, radioVoiceChoices, radioMicrophoneTile, radioVoiceTile, DEFAULT_RADIO_VOICE } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
 test("radio status distinguishes offline, waiting, and applied revisions", () => {
   assert.match(radioStatus({ connected: false }, 2), /not connected/);
   assert.match(radioStatus({ connected: true, applied_revision: "8:1" }, 2), /waiting/);
   assert.match(radioStatus({ connected: true, applied_revision: "8:2" }, 2), /applied \(rev 2\)/);
+  const stored = { tts_engine: "edge", voice: null, microphone: null };
+  assert.equal(initialRadioForm(stored, 0, { connected: false }).voice, DEFAULT_RADIO_VOICE);
+  assert.equal(initialRadioForm(stored, 0, { connected: true, settings: { ...stored, voice: "custom", microphone: 2 } }).voice, "custom");
+  assert.equal(initialRadioForm({ ...stored, tts_engine: "windows" }, 1, { connected: false }).voice, null);
+  assert.deepEqual(radioVoiceChoices("edge", { connected: false }, null), [DEFAULT_RADIO_VOICE, "en-AU-NatashaNeural"]);
+  assert.deepEqual(radioVoiceChoices("windows", { connected: true, tts_engine: "edge", voices: [DEFAULT_RADIO_VOICE] }, null), []);
+  assert.equal(radioMicrophoneTile({ connected: false }).state, "Radio not connected");
+  const presence = { connected: true, settings: { ...stored, microphone: 2 }, devices: [{ index: 2, name: "Radio USB mic", input: true, output: false }] };
+  assert.equal(radioMicrophoneTile(presence).name, "Radio USB mic");
+  assert.equal(radioMicrophoneTile({ ...presence, devices: [] }).tone, "red-text");
+  assert.equal(radioMicrophoneTile({ connected: true, settings: stored }).name, "Radio system default");
+  assert.match(radioVoiceTile(presence).name, /William/);
 });
 test("radio temporarily suppresses browser speech without changing stored choice", () => {
   assert.equal(browserMaySpeak(true, true), false);

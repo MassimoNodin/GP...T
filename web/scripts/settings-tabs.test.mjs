@@ -527,13 +527,17 @@ test("the Microphone card stage and permission errors", () => {
 
 /* ------------------------------------------------------- panel structure */
 
-test("the status card keeps the five reference tiles and the panels have ids", async () => {
+test("the status card reports radio devices without track models and the panels have ids", async () => {
   const tiles = await readFile(new URL("StatusTiles.tsx", settingsRoot), "utf8");
-  for (const label of ["Microphone", "Audio Output", "Game Connection", "Storage", "Track Models"]) {
+  for (const label of ["Radio microphone", "Engineer voice", "Game Connection", "Storage"]) {
     assert.ok(tiles.includes(`>${label}</div>`), label);
   }
   assert.doesNotMatch(tiles, /model\.status\.(microphone|audio|trackModels)/, "no reference device values");
+  assert.doesNotMatch(tiles, /Track Models|Audio Output/);
   const root = await readFile(new URL("Settings.tsx", settingsRoot), "utf8");
+  assert.doesNotMatch(root, /useBrowserAudio/);
+  const voice = await readFile(new URL("VoicePanel.tsx", settingsRoot), "utf8");
+  assert.doesNotMatch(voice, /getUserMedia|openMic|LevelMeter/);
   assert.match(root, /role="tabpanel"/);
   assert.match(root, /aria-labelledby=\{`\$\{TAB_ID_PREFIX\}-\$\{key\}`\}/);
   assert.match(root, /controls=\{panelId\}/);

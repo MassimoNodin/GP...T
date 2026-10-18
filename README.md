@@ -94,9 +94,10 @@ Install Ollama, then run from the repository root:
 
 Later model starts omit `-InstallModel`; stop it with
 `.\scripts\stop-private-ollama.ps1`. The private model endpoint is
-`127.0.0.1:11435`. Microphone input produces an editable transcript; questions
-are submitted explicitly. Dashboard playback uses browser speech synthesis. Typed input
-and telemetry workflows do not require the optional speech/model runtimes.
+`127.0.0.1:11435`. Microphone capture belongs to the standalone radio; the
+dashboard never requests microphone access. Optional dashboard playback uses
+browser speech synthesis. Typed input and telemetry workflows do not require
+the optional speech/model runtimes.
 
 ## Standalone lap radio on Windows
 
@@ -128,6 +129,9 @@ an explicit button press or console `listen` command.
 ### Using the dashboard with the radio
 
 The dashboard and the radio share one backend and can run together.
+**Settings > Voice & Controls** selects the microphone on the radio computer,
+not a browser device. The engineer voice defaults to William
+(`en-AU-WilliamNeural`) with the Edge voice engine; Natasha is also available.
 
 - **Settings reach the running radio live.** Assistance topics, interruption,
   verbosity and depth, and the Radio card in **Settings › Voice & Controls**
