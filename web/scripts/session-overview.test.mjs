@@ -280,7 +280,7 @@ test("lap ranges, uncovered laps and stint bar gaps", () => {
   const pitted = data.stintSegments([stint(1, "medium", 1, 6), stint(2, "hard", 8, 13)], 13, [{ lap: 6 }]);
   assert.deepEqual(
     pitted.map((segment) => [segment.kind, segment.laps]),
-    [["stint", 5], ["stint", 7]],
+    [["stint", 5.5], ["stint", 6.5]],
   );
   assert.deepEqual(data.stintSegments([stint(1, "soft", 1, 5)], 5).map((segment) => [segment.kind, segment.laps]), [["stint", 4]]);
   assert.equal(data.totalLapsOf(laps, stints), 20);
@@ -687,6 +687,7 @@ test("URL state: parse, ignore unknown ids, and write only non-default values", 
   );
   assert.equal(data.parseOverviewParams({ view: "nope", lap: "404", mode: "compare", reference: "28" }, compareLaps, defaults).view, "overview");
   assert.equal(data.parseOverviewParams({ lap: "404" }, compareLaps, defaults).selectedId, "28");
+  assert.equal(data.parseOverviewParams({ view: "engineer" }, compareLaps, defaults).view, "engineer");
   assert.equal(
     data.parseOverviewParams({ mode: "compare", target: "28", reference: "28" }, compareLaps, defaults).referenceId,
     null,
@@ -694,6 +695,7 @@ test("URL state: parse, ignore unknown ids, and write only non-default values", 
 
   const state = { view: "overview", mode: "single", selectedId: "28", referenceId: null, resolvedReferenceId: "57" };
   assert.equal(data.overviewQuery("", state, defaults), "");
+  assert.equal(data.overviewQuery("", { ...state, view: "engineer" }, defaults), "?view=engineer");
   assert.equal(data.overviewQuery("?x=1&lap=9&view=stints", { ...state, selectedId: "58", view: "laps" }, defaults), "?x=1&view=laps&lap=58");
   assert.equal(
     data.overviewQuery("?lap=9", { ...state, mode: "compare", selectedId: "28", referenceId: "57" }, defaults),
@@ -988,7 +990,13 @@ test("fixture session keeps its reference content on every tab", async () => {
   assert.doesNotMatch(overview, /View all events/);
   assert.match(overview, /<option value="lap"[^>]*>Lap Time<\/option>/);
   assert.doesNotMatch(overview, /Delta to Best/);
-  assert.match(overview, /Session best: 1:12\.842 \(Lap 57\)/);
+  assert.doesNotMatch(overview, /aria-label="Lap selection mode"|Shift-click|id="session-question"/);
+  assert.doesNotMatch(overview, /Personal Best|Session Best|Selected Lap|Reference Lap/);
+  assert.equal([...overview.matchAll(/r="5" fill="var\(--(?:stint-[a-z]+|grey-soft)\)"/g)].length, model.progression.points.length);
+  assert.match(overview, /tabindex="0" aria-label="Lap \d+: [^"]+"/);
+  assert.match(overview, /r="5" fill="var\(--stint-soft\)"/);
+  assert.match(overview, /r="5" fill="var\(--stint-medium\)"/);
+  assert.match(overview, /r="5" fill="var\(--stint-hard\)"/);
   assert.match(overview, /href="\/review\/monaco-2024-race\/laps\?target=28&amp;reference=57"/);
 
   const laps = renderOverview(model, at("laps"));
@@ -998,6 +1006,7 @@ test("fixture session keeps its reference content on every tab", async () => {
   assert.match(laps, /18\.420/);
   assert.match(laps, /Analyse lap 28/);
   assert.doesNotMatch(laps, /Game Build/, "the hero is not shown on the Laps tab");
+  assert.match(laps, /Session best: 1:12\.842 \(Lap 57\)/);
 
   const stints = renderOverview(model, at("stints"));
   assert.match(stints, /Soft \(12\)/);
@@ -1018,16 +1027,21 @@ test("fixture session keeps its reference content on every tab", async () => {
   assert.match(setup, /Assists<\/dt><dd>Off/);
   assert.match(setup, /Light Cloud/);
   assert.match(setup, /1:42:18 \(2:00:00 scheduled\)/);
+
+  const engineer = renderOverview(model, at("engineer"));
+  assert.match(engineer, /role="tabpanel" id="overview-panel-engineer" aria-labelledby="overview-tab-engineer"/);
+  assert.match(engineer, /id="session-question"/);
+  assert.match(engineer, /Questions work on your own recorded sessions/);
+  assert.doesNotMatch(engineer, /aria-label="Lap selection mode"/);
 });
 
 test("compare mode from the URL renders both laps and a compare link", async () => {
   const model = await loader.loadOverview("monaco-2024-race");
   const markup = renderOverview(model, at("overview", { mode: "compare", referenceId: "55" }));
-  assert.match(markup, /Lap 28 is \+0\.\d{3} slower than Lap 55\./);
+  assert.doesNotMatch(markup, /Lap 28 is|Reference Lap|stroke="var\(--reference\)"|vs Lap 55/);
   assert.match(markup, /href="\/review\/monaco-2024-race\/laps\?target=28&amp;reference=55"/);
-  assert.match(markup, /Reference Lap/);
-  assert.match(markup, /stroke="var\(--reference\)"/);
-  assert.match(markup, /vs Lap 55/);
+  const laps = renderOverview(model, at("laps", { mode: "compare", referenceId: "55" }));
+  assert.match(laps, /Lap 28 is \+0\.\d{3} slower than Lap 55\./);
 });
 
 test("a v2 session with deferred sections renders skeletons, no reference content and the v2 hero fields", () => {

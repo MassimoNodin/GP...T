@@ -295,8 +295,8 @@ export function totalLapsOf(laps: OverviewLap[], stints: OverviewStint[]): numbe
 
 /**
  * Bar segments over lap positions 1..total; `laps` is the width in lap units, matching the axis ticks.
- * Laps between two stints are absorbed: the stints meet at the pit stop, or halfway across the gap when
- * no pit lap is known. Only laps before the first stint or after the last one stay grey gaps.
+ * Laps between two stints are absorbed: the stints meet just after the pit lap (as on the lap chart), or
+ * halfway across the gap when no pit lap is known. Only laps before the first stint or after the last one stay grey gaps.
  */
 export function stintSegments(stints: OverviewStint[], total: number, pits: PitMarker[] = []): StintSegment[] {
   const ordered = stints.filter((stint) => stint.endLap >= 1 && stint.startLap <= total).sort((a, b) => a.startLap - b.startLap);
@@ -311,7 +311,7 @@ export function stintSegments(stints: OverviewStint[], total: number, pits: PitM
     let end = Math.min(stint.endLap, total);
     if (next) {
       const pit = pits.find((marker) => marker.lap >= stint.endLap && marker.lap <= next.startLap);
-      end = pit ? pit.lap : (stint.endLap + next.startLap) / 2;
+      end = pit ? Math.min(pit.lap + 0.5, next.startLap) : (stint.endLap + next.startLap) / 2;
     }
     segments.push({ kind: "stint", stint, laps: Math.max(end - cursor, 0) });
     cursor = end;
@@ -348,7 +348,7 @@ export type CompoundBand = { from: number; to: number; compound: Compound; label
 export type PitStop = { at: number; after: number };
 
 /**
- * Compound bands over the lap chart's x axis (lap units, 0..total), meeting at each pit stop with no hole
+ * Compound bands over the lap chart's x axis (lap units), meeting at each pit stop with no hole
  * at unrecorded laps. A stop falls between its pit lap and the next lap; without a pit lap it is halfway
  * across the gap. The first and last bands run to the plot edges.
  */
@@ -840,11 +840,22 @@ export function mergeEvents(base: OverviewEvent[], summaryEvents: SummaryEvent[]
     .map(summaryEventToOverview);
   const seen = new Set(fromSummary.map((event) => `${event.lap}|${event.kind}|${event.isPlayer}`));
   const extra = base.filter((event) => !seen.has(`${event.lap}|${event.kind}|${event.isPlayer}`));
-  return [...fromSummary, ...extra]
-    .map((event, index) => ({ event, index }))
+  const events = [...fromSummary, ...extra];
+  const timedLaps = events.filter((event) => event.lap !== null && event.timeS !== null);
+  const sortLap = (event: OverviewEvent): number => {
+    if (event.lap !== null) return event.lap;
+    if (event.kind === "session_ended") return Number.POSITIVE_INFINITY;
+    if (event.timeS === null) return 0;
+    return timedLaps.reduce(
+      (latest, candidate) => candidate.timeS! <= event.timeS! ? Math.max(latest, candidate.lap!) : latest,
+      0,
+    );
+  };
+  return events
+    .map((event, index) => ({ event, index, sortLap: sortLap(event) }))
     .sort(
       (a, b) =>
-        (a.event.lap ?? 0) - (b.event.lap ?? 0) ||
+        a.sortLap - b.sortLap ||
         (a.event.timeS ?? Number.POSITIVE_INFINITY) - (b.event.timeS ?? Number.POSITIVE_INFINITY) ||
         a.index - b.index,
     )
@@ -875,8 +886,10 @@ export function eventCounts(events: OverviewEvent[]): Record<EventFilter, number
   return counts;
 }
 
-/** Race control that changes how everyone drives; DRS toggles and session bookkeeping are left out. */
+/** Session boundaries and race control that affect everyone; DRS toggles are left out. */
 const KEY_RACE_CONTROL = new Set([
+  "session_started",
+  "session_ended",
   "lights_out",
   "chequered_flag",
   "safety_car",
@@ -1395,7 +1408,7 @@ export function analysisHref(sessionKey: string, targetId: string | null, refere
 
 /* --------------------------------------------------------------- URL state */
 
-export const OVERVIEW_VIEWS = ["overview", "laps", "stints", "events", "setup"] as const;
+export const OVERVIEW_VIEWS = ["overview", "laps", "stints", "events", "setup", "engineer"] as const;
 export type OverviewView = (typeof OVERVIEW_VIEWS)[number];
 export type LapMode = "single" | "compare";
 

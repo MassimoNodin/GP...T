@@ -6,7 +6,6 @@ import { StatusGlyph } from "@/features/ui-foundation/icons";
 import { Card, Checkbox, Select } from "@/features/ui-foundation/primitives";
 import { EmptyState } from "@/features/ui-foundation/states";
 import { LapTimeChart } from "./LapTimeChart";
-import { SessionQuestion } from "./SessionQuestion";
 import {
   buildSeries,
   deriveSummary,
@@ -32,26 +31,19 @@ export function OverviewView({
   data,
   onMetric,
   onShowEvents,
-  onSelectLap,
-  onCompareLap,
 }: {
   data: ViewData;
   onMetric: (metric: ChartMetric) => void;
   onShowEvents: () => void;
-  /** Click on a chart point. */
-  onSelectLap?: (id: string) => void;
-  /** Shift-click on a chart point: compare against that lap. */
-  onCompareLap?: (id: string) => void;
 }) {
   return (
     <div className={styles.grid}>
       <div className={styles.col}>
-        <ProgressionCard data={data} onMetric={onMetric} onSelectLap={onSelectLap} onCompareLap={onCompareLap} />
+        <ProgressionCard data={data} onMetric={onMetric} />
       </div>
       <div className={styles.col}>
         <SummaryCard data={data} />
         <EventsCard data={data} onShowAll={onShowEvents} />
-        {data.model.source !== "fixture" && <SessionQuestion data={data} />}
       </div>
     </div>
   );
@@ -60,15 +52,11 @@ export function OverviewView({
 function ProgressionCard({
   data,
   onMetric,
-  onSelectLap,
-  onCompareLap,
 }: {
   data: ViewData;
   onMetric: (metric: ChartMetric) => void;
-  onSelectLap?: (id: string) => void;
-  onCompareLap?: (id: string) => void;
 }) {
-  const { model, laps, best, selectedId, referenceId, metric, summary, enrichment } = data;
+  const { model, laps, selectedId, metric, summary, enrichment } = data;
   const [excludeOutliers, setExcludeOutliers] = useState(true);
   const summaryEvents = summary.status === "loaded" ? summary.value.events : null;
   const markers = useMemo(
@@ -77,7 +65,6 @@ function ProgressionCard({
   );
   const outliers = useMemo(() => outlierLapIds(laps, markers), [laps, markers]);
   const selected = laps.find((lap) => lap.id === selectedId) ?? null;
-  const reference = referenceId ? (laps.find((lap) => lap.id === referenceId) ?? null) : null;
   const illustrative = model.progression.illustrative;
   const options = metricOptions(laps, illustrative);
   const activeMetric = options.includes(metric) ? metric : "lap";
@@ -118,18 +105,6 @@ function ProgressionCard({
             </option>
           ))}
         </Select>
-        <span className={styles.key}>
-          <i style={{ background: "#22a36b" }} />
-          Personal Best
-        </span>
-        <span className={styles.key}>
-          <i style={{ background: "#9b34ef" }} />
-          Session Best
-        </span>
-        <span className={styles.key}>
-          <i style={{ background: "#2563eb" }} />
-          Selected Lap
-        </span>
         {legendCompounds.map((band) => (
           <span key={band.compound} className={styles.key}>
             <i className={styles.tintKey} style={{ background: compoundColor(band.compound), opacity: COMPOUND_TINT * 2.5 }} />
@@ -140,12 +115,6 @@ function ProgressionCard({
           <span className={styles.key}>
             <i className={styles.pitKey} />
             Pit stop
-          </span>
-        )}
-        {reference && (
-          <span className={styles.key}>
-            <i className={viewStyles.keyRing} />
-            Reference Lap
           </span>
         )}
         {!illustrative && outliers.size > 0 && (
@@ -161,30 +130,14 @@ function ProgressionCard({
       {selected ? (
         <LapTimeChart
           {...chart}
-          selected={{ lap: selected.lap, ms: selected.ms }}
-          bestMs={best?.ms ?? null}
           metric={activeMetric}
-          selectedValue={chart.values[selected.lap]}
-          reference={reference && chart.values[reference.lap] !== undefined ? { lap: reference.lap, value: chart.values[reference.lap] } : null}
           markers={markers}
+          compounds={Object.fromEntries(laps.flatMap((lap) => lap.tyre ? [[lap.lap, lap.tyre.compound]] : []))}
           bands={tyres?.bands}
           stops={tyres?.stops}
-          onPick={
-            onSelectLap
-              ? (lapNumber, compareWith) => {
-                  const picked = laps.find((lap) => lap.lap === lapNumber);
-                  if (!picked) return;
-                  if (compareWith && onCompareLap) onCompareLap(picked.id);
-                  else onSelectLap(picked.id);
-                }
-              : undefined
-          }
         />
       ) : (
         <EmptyState size="inline" title="No timed laps were recorded for this session." />
-      )}
-      {selected && onSelectLap && (
-        <p className={viewStyles.chartHint}>Click a lap to select it. Shift-click to compare against it.</p>
       )}
       {model.lapDataNote && <p className={styles.dataNote}>{model.lapDataNote}</p>}
     </Card>

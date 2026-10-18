@@ -11,6 +11,7 @@ import { Hero } from "./Hero";
 import { LapSelection } from "./LapSelection";
 import { LapsView } from "./LapsView";
 import { OverviewView } from "./OverviewView";
+import { SessionQuestion } from "./SessionQuestion";
 import { SetupView } from "./SetupView";
 import { StintsView } from "./StintsView";
 import {
@@ -39,6 +40,7 @@ const VIEWS: Array<{ key: View; label: string }> = [
   { key: "stints", label: "Stints" },
   { key: "events", label: "Events" },
   { key: "setup", label: "Setup & Conditions" },
+  { key: "engineer", label: "Ask the Engineer" },
 ];
 
 const tabId = (key: View) => `overview-tab-${key}`;
@@ -132,15 +134,6 @@ export function SessionOverview({
     },
     [selectedId],
   );
-  /** Shift-click on the chart: compare the selected lap against this one. */
-  const compareWith = useCallback(
-    (id: string) => {
-      if (id === selectedId || model.laps.length < 2) return;
-      setMode("compare");
-      setReferenceChoice(id);
-    },
-    [model.laps.length, selectedId],
-  );
   const swap = useCallback(() => {
     if (!compare.target || !compare.reference) return;
     setSelectedId(compare.reference.id);
@@ -190,8 +183,6 @@ export function SessionOverview({
             data={data}
             onMetric={setMetric}
             onShowEvents={() => setView("events")}
-            onSelectLap={selectLap}
-            onCompareLap={compareWith}
           />
         )}
         {view === "laps" && (
@@ -206,20 +197,23 @@ export function SessionOverview({
         {view === "stints" && <StintsView data={data} />}
         {view === "events" && <EventsView data={data} />}
         {view === "setup" && <SetupView data={data} />}
+        {view === "engineer" && <SessionQuestion data={data} />}
       </div>
 
-      <LapSelection
-        laps={laps}
-        bestId={model.bestId}
-        mode={mode}
-        onModeChange={setMode}
-        selectedId={target?.id ?? ""}
-        onSelect={selectLap}
-        compare={compare}
-        onReference={chooseReference}
-        onSwap={swap}
-        compareHref={analysis}
-      />
+      {view !== "overview" && view !== "engineer" && (
+        <LapSelection
+          laps={laps}
+          bestId={model.bestId}
+          mode={mode}
+          onModeChange={setMode}
+          selectedId={target?.id ?? ""}
+          onSelect={selectLap}
+          compare={compare}
+          onReference={chooseReference}
+          onSwap={swap}
+          compareHref={analysis}
+        />
+      )}
     </>
   );
 }

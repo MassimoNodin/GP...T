@@ -249,14 +249,21 @@
   position: relative;
 }
 
-.pointHit {
-  fill: transparent;
-  cursor: pointer;
-}
-
-.pointHit:hover {
-  fill: var(--blue);
-  fill-opacity: 0.12;
+.chartTooltip {
+  position: absolute;
+  z-index: 1;
+  display: grid;
+  gap: 4px;
+  width: 160px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  transform: translateY(-100%);
+  pointer-events: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
 }
 
 .lapMarker rect {
@@ -293,47 +300,6 @@
   font-size: 11px;
   font-family: inherit;
 }
-
-.tooltip {
-  position: absolute;
-  min-width: 92px;
-  padding: 9px 12px 8px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface);
-  box-shadow: 0 4px 14px rgba(16, 24, 40, 0.1);
-  transform: translateX(-4px);
-  pointer-events: none;
-}
-
-/* Laps near the right edge: open the tooltip to the left so it stays inside the card */
-.tooltip[data-flip] {
-  transform: translateX(calc(-100% + 4px));
-}
-
-.tooltipLap {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.tooltipTime {
-  margin-top: 2px;
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-
-.tooltipDelta {
-  margin-top: 3px;
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-}
-
-.tooltipDelta[data-sign="pos"] { color: var(--red-text); }
-.tooltipDelta[data-sign="neg"] { color: var(--green-text); }
-.tooltipDelta[data-sign="zero"] { color: var(--purple-text); }
 
 /* Summary */
 .summaryCard {
@@ -714,8 +680,19 @@
     white-space: normal;
   }
 
+  .heroStats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 12px;
+  }
+
+  .heroStats > div:nth-child(odd) {
+    border-left: 0;
+  }
+
   .heroStats dd {
     font-size: 14px;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .stintLegend {

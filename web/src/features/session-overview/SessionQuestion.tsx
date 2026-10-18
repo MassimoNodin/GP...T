@@ -38,7 +38,7 @@ type Turn =
   | { state: "failed"; question: string; failure: AskFailure };
 
 /**
- * "Ask the engineer" on the Overview: a question about the session, answered
+ * "Ask the engineer" in its session tab: a question about the session, answered
  * from the selected lap measured against the session best (the engineer
  * reads one lap, or a pair, at a time).
  */
