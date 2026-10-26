@@ -82,6 +82,21 @@ f1-ingest --listen 0.0.0.0:20777 --archive /mnt/nvme/f1-engineer/archive --test-
   (`systemctl --user disable f1-engineer`).
 - The UFW rule for 20777/udp must name the Windows PC's current address.
 
+### Track lap times for all cars
+
+Run `f1-ingest` with `--track-lap-times` to enable a separate consumer for
+F1 25 Lap Data v1 packets. It emits JSON `lap_time_completed` events with the
+session UID, car index, completed lap number and reported time in milliseconds.
+A `lap_session_started` event marks a new session; `lap_time_retracted` removes
+a previously reported lap after a rewind. The consumer only reports a lap when
+it observes consecutive lap numbers and a nonzero last-lap time. It cannot
+recover laps missed before it starts or across skipped lap numbers, and car
+indices do not by themselves establish driver identity.
+
+The feature targets receive-to-processed p99 within 100 ms. Its full-corpus
+acceptance runs are still required; the preliminary synthetic load model and
+its Jeddah race results are recorded in `docs/lap-time-cost-experiment.md`.
+
 ### Record a session (Windows)
 
 Point the game's UDP telemetry at the Windows PC, then:
