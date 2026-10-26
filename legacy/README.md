@@ -1,3 +1,7 @@
+> **Frozen reference.** This is the retired Python/Next.js implementation, kept
+> only for reference while the Rust pipeline is rebuilt at the repository root.
+> It is not maintained and its paths assume it lived at the root.
+
 # GP...T
 
 A telemetry-backed race engineer for F1 25 and the 2026 Season Pack, with a
