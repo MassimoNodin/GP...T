@@ -76,9 +76,11 @@ f1-ingest --listen 0.0.0.0:20777 --archive /mnt/nvme/f1-engineer/archive --test-
   with a footer.
 - `--test-control` lets `f1-rec stress` run tests on the same port. Test data
   goes to `<archive>/tests/`, never into `live/`.
-- Only one process can own the port. The legacy `f1-engineer` service on the
-  Ubuntu host listens on 20777: stop it, or give `f1-ingest` another port
-  while both exist.
+- Only one process can own the port. The legacy `f1-engineer` user service on
+  the Ubuntu host also uses 20777. It is currently stopped, but still enabled,
+  so it will reclaim the port after a reboot unless it is disabled
+  (`systemctl --user disable f1-engineer`).
+- The UFW rule for 20777/udp must name the Windows PC's current address.
 
 ### Record a session (Windows)
 
@@ -132,20 +134,47 @@ f1-rec info <file-or-dir>... [--json]                             sessions, pack
 f1-rec verify <file-or-dir>...                                    check every block and the footer
 ```
 
-## Validation so far (Windows development PC, loopback only)
+## Validation so far
 
-These are development checks, not acceptance runs: acceptance must happen on
-the Ubuntu host (see the feasibility rules).
+### Ubuntu host, sent from the Windows PC over the LAN (2026-10-26)
+
+`f1-ingest` runs on Ubuntu as the user unit `f1-ingest` (started with
+`systemd-run --user`; it is not yet a permanent service). It listens on
+`0.0.0.0:20777`, archives to `/mnt/nvme/f1-engineer/archive`, and has
+`--test-control` enabled. Linux reports socket drops, so kernel drops below
+are measured, not unknown.
+
+- **Acceptance baseline: the full Jeddah race (444,689 datagrams) at 1x and
+  2x passes.**
+  - Every datagram was archived, with zero app drops and zero kernel drops.
+  - Socket queue peak was 8–15 KB; durable p99 was about 1 s (the fsync
+    interval).
+  - Sender lateness p99 was under 0.1 ms.
+  - Report: `stress-results/20261026T064451Z-jeddah-race.json`.
+- **Latency bug found by the baseline.** Written latency maxed at exactly 50 ms,
+  because the writer was not woken when a new batch started.
+  - After the fix, a 10-minute race window at 1x was lossless, with written
+    p99 10.2 ms and max 13.2 ms (previously p99 30.9 ms and max 50 ms).
+  - The full 1x/2x baseline has not been re-run since the fix.
+- **Headroom.** The full race at 16x and 64x (about 20k datagrams/s) is
+  lossless with zero kernel drops.
+- **Unpaced speed (about 100k datagrams/s) loses datagrams on the network,
+  not in the ingest.** Ubuntu's socket and UDP error counters did not move,
+  and its NIC received only what was archived.
+  - Ubuntu is connected by **Wi-Fi** (`wlp6s0`); the Windows PC is on wired
+    gigabit.
+  - Real sessions need about 300 datagrams/s (about 3 Mbit/s), far below that
+    limit. Still, a wired connection would remove Wi-Fi loss as a variable for
+    live sessions; the stress test cannot reproduce air-side loss.
+
+### Windows development PC, loopback (development checks only)
 
 - **Corpus conversion.** All four legacy captures convert and verify. Counts
   match the legacy tool exactly, e.g. 83,139 datagrams for Melbourne with
   identical per-packet-type totals.
-- **Full Jeddah race (444,689 datagrams) at 16x and 64x.** Lossless, run three
-  times each. Written p99 was 11–17 ms; durable p99 was about 1 s (the fsync
-  interval).
-- **Maximum unpaced speed (about 100k datagrams/s, about 320x real time).**
-  Lossless, but written p99 was about 140 ms, so the run correctly fails the
-  50 ms budget.
+- **Full race at 16x and 64x.** Lossless, run three times each.
+- **Unpaced speed (about 100k datagrams/s).** Lossless, but written p99 was
+  about 140 ms, so the run correctly fails the 50 ms budget.
 - **Synthetic 20 µs/packet consumer.** It keeps up at 64x. At maximum speed it
   falls behind, and the verdict reports it while the archive stays complete.
 - **Recorder with forwarding.** The recording and the ingest's live archive
@@ -154,9 +183,6 @@ the Ubuntu host (see the feasibility rules).
   run, at random positions. The cause was the receive timeout on Windows. The
   receiver now blocks without one, and nine subsequent full-race runs were
   lossless.
-
-The Linux build type-checks (`cargo check --target x86_64-unknown-linux-gnu`),
-but the ingest has not yet been run on the Ubuntu host.
 
 ## Contributing
 
