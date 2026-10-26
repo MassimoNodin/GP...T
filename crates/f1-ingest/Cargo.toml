@@ -1,0 +1,15 @@
+[package]
+name = "f1-ingest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+f1-pipeline.workspace = true
+clap.workspace = true
+ctrlc.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
