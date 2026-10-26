@@ -55,6 +55,26 @@ per contribution branch and one logical change per commit.
   explicitly requested. Do not rewrite existing history without permission.
 - In the final handoff, summarize changes, validation, and any remaining risks.
 
+## Feasibility first
+
+- Follow [docs/feasibility-rules.md](docs/feasibility-rules.md). Do not propose
+  or build a telemetry feature without stating its data needs and showing (or
+  planning) a passing stress run against the corpus on the deployment host.
+- Never add work to the receiver or writer threads; new computation runs as a
+  consumer. Never relax stress budgets, buffers or checks to make work fit.
+- Do not suggest new feature ideas unprompted; keep to the requested task.
+- `legacy/` is frozen reference code. Do not modify or extend it.
+
+## Rust validation
+
+Run before every commit that touches Rust code:
+
+```text
+cargo fmt --check
+cargo clippy --all-targets   # must report no warnings
+cargo test
+```
+
 ## UI icons and logos
 
 - Use SVG for all UI icons and logos, including the F1 logo. This applies to
