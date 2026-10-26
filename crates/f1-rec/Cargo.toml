@@ -1,0 +1,19 @@
+[package]
+name = "f1-rec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+f1-wire.workspace = true
+f1-format.workspace = true
+f1-pipeline.workspace = true
+clap.workspace = true
+ctrlc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+socket2.workspace = true
+
+[lints]
+workspace = true
