@@ -81,11 +81,15 @@ impl Intake {
             let loss = std::mem::take(&mut state.pending_loss);
             state.batch.push(ts, RecordKind::LOSS, &LossCounts { app_dropped: loss, kernel_dropped: 0 }.encode());
         }
+        let was_empty = state.batch.is_empty();
         state.batch.push(ts, kind, payload);
-        // Signal on arrival rather than leaving it to the writer's timed
-        // wait, whose resolution is coarse on some platforms (~15 ms on Windows).
-        let due =
-            state.batch.len_bytes() >= self.max_bytes || ts.saturating_sub(state.batch.first_ts_ns) >= self.max_age_ns;
+        // Wake the writer when a batch starts, so it waits on this batch's age
+        // rather than its idle tick, and when the batch is due, rather than
+        // relying on its timed wait, whose resolution is coarse on some
+        // platforms (~15 ms on Windows).
+        let due = was_empty
+            || state.batch.len_bytes() >= self.max_bytes
+            || ts.saturating_sub(state.batch.first_ts_ns) >= self.max_age_ns;
         drop(state);
         if due {
             self.ready.notify_one();

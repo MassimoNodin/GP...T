@@ -157,3 +157,32 @@ fn recorder_writes_one_complete_file() {
     assert_eq!(scan(&path).unwrap().rebuilt, summary);
     assert!(Pipeline::start(config(SinkConfig::File { path }, false), Vec::new(), Box::new(|_| {})).is_err());
 }
+
+#[test]
+fn isolated_packets_are_written_within_the_batch_age_not_the_idle_tick() {
+    let mut config = config(SinkConfig::Archive { root: temp_dir(), segment_bytes: 1 << 30 }, true);
+    // With these settings the writer's idle wait is 50 ms; a batch of one
+    // packet must still be written after ~2 ms (plus OS timer resolution).
+    config.writer.fsync_interval = Duration::from_secs(1);
+    let pipeline = Pipeline::start(config, Vec::new(), Box::new(|_| {})).unwrap();
+    let target = pipeline.local_addr();
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    socket.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+    let started = exchange(&socket, target, &ControlMessage::StartRun { run_id: "sparse".into(), info: json!({}) });
+    assert!(matches!(started, ControlMessage::Started { .. }), "{started:?}");
+    let mut sent = Digest::default();
+    for index in 0..40 {
+        let bytes = packet(index);
+        socket.send_to(&bytes, target).unwrap();
+        sent.add(&bytes);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    let verdict = match exchange(&socket, target, &ControlMessage::EndRun { run_id: "sparse".into(), sent }) {
+        ControlMessage::Verdict(verdict) => *verdict,
+        other => panic!("expected a verdict, got {other:?}"),
+    };
+    assert!(verdict.archive_lossless, "{verdict:#?}");
+    // Without the wake-up the median sits near half the idle wait (~25 ms).
+    assert!(verdict.written_latency.p50_ms < 16.0, "{:?}", verdict.written_latency);
+    pipeline.stop().unwrap();
+}
