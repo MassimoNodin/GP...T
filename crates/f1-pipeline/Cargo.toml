@@ -1,0 +1,16 @@
+[package]
+name = "f1-pipeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+f1-wire.workspace = true
+f1-format.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+socket2.workspace = true
+
+[lints]
+workspace = true
