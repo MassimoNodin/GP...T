@@ -11,8 +11,7 @@ use std::time::Duration;
 
 use clap::Parser;
 use f1_pipeline::{
-    Consumer, LapTimeTracker, Pipeline, PipelineConfig, PipelineEvent, ReceiverConfig, SinkConfig, SyntheticLoad,
-    WriterConfig,
+    Consumer, Pipeline, PipelineConfig, PipelineEvent, ReceiverConfig, SinkConfig, SyntheticLoad, WriterConfig,
 };
 use serde_json::json;
 
@@ -50,9 +49,6 @@ struct Args {
     /// model the cost of a planned feature.
     #[arg(long)]
     synthetic_consumer_us: Option<u64>,
-    /// Emit observed completed lap times for all cars as JSON events.
-    #[arg(long)]
-    track_lap_times: bool,
 }
 
 fn emit(value: serde_json::Value) {
@@ -82,14 +78,11 @@ fn main() -> ExitCode {
             test_control: args.test_control,
         },
     };
-    let mut consumers: Vec<Box<dyn Consumer>> = args
+    let consumers: Vec<Box<dyn Consumer>> = args
         .synthetic_consumer_us
         .map(|us| Box::new(SyntheticLoad::new(Duration::from_micros(us))) as Box<dyn Consumer>)
         .into_iter()
         .collect();
-    if args.track_lap_times {
-        consumers.push(Box::new(LapTimeTracker::new(|event| emit(json!(event)))));
-    }
 
     let on_event = Box::new(|event: PipelineEvent<'_>| match event {
         PipelineEvent::Stats(stats) => emit(json!({"event": "stats", "stats": stats})),
